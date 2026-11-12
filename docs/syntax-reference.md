@@ -12,7 +12,7 @@ One section per topic of `alchem syntax`. Every example is compiled and run by t
 
 **Data**: [lists](#lists), [tuples](#tuples), [maps](#maps), [structs](#structs), [sum-types](#sum-types), [option-result](#option-result), [atoms](#atoms), [ranges](#ranges), [streams](#streams), [sigils](#sigils)
 
-**Modules**: [modules](#modules), [protocols](#protocols), [macros](#macros), [extern](#extern)
+**Modules**: [modules](#modules), [constants](#constants), [protocols](#protocols), [macros](#macros), [extern](#extern)
 
 **Concurrency**: [nodes](#nodes), [processes](#processes)
 
@@ -1052,6 +1052,34 @@ end
 ```
 
 See also: alchem syntax program, alchem syntax extern, alchem syntax functions
+
+## constants
+
+@name value declares a module constant; @name anywhere in the module stands for the value.
+
+- The value is built from literals, lists, tuples, maps, operators and earlier constants: @timeout 60 * 1000, @colors [:red, :green]. It cannot call functions or read bindings.
+- A constant is visible throughout its module, including tests and struct field defaults, but not in other modules; share a value between modules with a function.
+- Each use is replaced by the value when the program is compiled. A name may be defined once; @doc, @moduledoc, @typedoc and the test tags are not constants.
+
+Example: limits as constants
+
+```elixir
+defmodule Example do
+  @attempts 3
+  @delay_ms 250
+  @budget_ms @attempts * @delay_ms
+
+  def plan(): string do
+    Integer.to_string(@attempts) <> " tries within " <> Integer.to_string(@budget_ms) <> " ms"
+  end
+
+  def main() do
+    assert(plan() == "3 tries within 750 ms")
+  end
+end
+```
+
+See also: alchem syntax modules, alchem syntax values, alchem syntax operators
 
 ## protocols
 

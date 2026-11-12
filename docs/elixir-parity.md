@@ -51,6 +51,7 @@ Status: **done** (implemented and covered by a fixture), **partial**, **todo**, 
 | guards with `is_integer/1` and friends | n/a | types are static |
 | multi-clause anonymous functions | done | clauses on the lines after `fn`; one argument, so match a tuple for several |
 | default arguments (`\\`) | done | trailing parameters; the value is a constant, filled in at each call |
+| module attributes as constants (`@name value`) | done | built from literals, operators and earlier constants; visible in the whole module, defined once; not readable from other modules |
 
 ## Modules
 

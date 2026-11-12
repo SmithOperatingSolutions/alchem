@@ -64,9 +64,15 @@ func Format(source string) (string, error) {
 	for _, require := range p.Requires {
 		b.WriteString("  require " + strconv.Quote(require.Path) + " " + strconv.Quote(require.Version) + "\n")
 	}
+	for i, constant := range p.Constants {
+		if i == 0 && len(p.Imports)+len(p.Requires)+len(p.Uses)+len(p.Doctests)+len(p.GroupTags[""])+len(p.Constants)+len(p.ModuleDoc) > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("  @" + constant.Name + " " + formatExpr(constant.Value, 1) + "\n")
+	}
 	implementing := ""
 	for i, decl := range p.Types {
-		if i > 0 || len(p.Imports)+len(p.Requires)+len(p.ModuleDoc) > 0 {
+		if i > 0 || len(p.Imports)+len(p.Requires)+len(p.Constants)+len(p.ModuleDoc) > 0 {
 			b.WriteString("\n")
 		}
 		remark(decl.Comments, 1)
@@ -112,7 +118,7 @@ func Format(source string) (string, error) {
 		}
 	}
 	for i, protocol := range p.Protocols {
-		if i > 0 || len(p.Imports)+len(p.Requires)+len(p.Types)+len(p.Doctests)+len(p.GroupTags[""])+len(p.ModuleDoc) > 0 {
+		if i > 0 || len(p.Imports)+len(p.Requires)+len(p.Types)+len(p.Doctests)+len(p.GroupTags[""])+len(p.Constants)+len(p.ModuleDoc) > 0 {
 			b.WriteString("\n")
 		}
 		b.WriteString("  defprotocol " + protocol.Name + " do\n")
@@ -126,7 +132,7 @@ func Format(source string) (string, error) {
 		b.WriteString("  end\n")
 	}
 	for i, macro := range p.Macros {
-		if i > 0 || len(p.Imports)+len(p.Requires)+len(p.Types)+len(p.Protocols)+len(p.Doctests)+len(p.GroupTags[""])+len(p.ModuleDoc) > 0 {
+		if i > 0 || len(p.Imports)+len(p.Requires)+len(p.Types)+len(p.Protocols)+len(p.Doctests)+len(p.GroupTags[""])+len(p.Constants)+len(p.ModuleDoc) > 0 {
 			b.WriteString("\n")
 		}
 		parameters := append([]string{}, macro.Params...)
@@ -168,7 +174,7 @@ func Format(source string) (string, error) {
 		if block != implementing && implementing != "" {
 			b.WriteString("  end\n")
 		}
-		if i > 0 || len(p.Imports)+len(p.Requires)+len(p.Types)+len(p.Protocols)+len(p.Macros)+len(p.Doctests)+len(p.GroupTags[""])+len(p.ModuleDoc) > 0 {
+		if i > 0 || len(p.Imports)+len(p.Requires)+len(p.Types)+len(p.Protocols)+len(p.Macros)+len(p.Doctests)+len(p.GroupTags[""])+len(p.Constants)+len(p.ModuleDoc) > 0 {
 			b.WriteString("\n")
 		}
 		if block != implementing && block != "" {
@@ -332,6 +338,8 @@ func formatExpr(e *ast.Expr, n int) string {
 		return formatLiteral(e.Value)
 	case "name":
 		return e.Name
+	case "constant":
+		return "@" + e.Name
 	case "template":
 		text := ""
 		for i, part := range e.Args {

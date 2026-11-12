@@ -216,6 +216,14 @@ func parse(source string, check bool, raw ...bool) (ast.Program, error) {
 				}
 				continue
 			}
+			if name := p.tokens[p.pos+1]; name.Kind == lexer.Ident && !reservedAttribute[name.Text] {
+				constant, err := p.constant(result.Constants)
+				if err != nil {
+					return ast.Program{}, err
+				}
+				result.Constants = append(result.Constants, constant)
+				continue
+			}
 			if err := p.tag(&result); err != nil {
 				return ast.Program{}, err
 			}
@@ -323,6 +331,9 @@ func parse(source string, check bool, raw ...bool) (ast.Program, error) {
 		return ast.Program{}, err
 	}
 	if len(raw) == 0 {
+		if err = resolveConstants(&result); err != nil {
+			return ast.Program{}, err
+		}
 		if err = lower(&result); err != nil {
 			return ast.Program{}, err
 		}
@@ -885,6 +896,13 @@ func (p *parser) atom() (*ast.Expr, error) {
 		}
 		_, err = p.expect(lexer.RParen, "")
 		return v, err
+	}
+	if t.Kind == lexer.At && p.pos+1 < len(p.tokens) && p.tokens[p.pos+1].Kind == lexer.Ident && p.tokens[p.pos+1].Line == t.Line && p.tokens[p.pos+1].Column == t.Column+1 {
+		name := p.tokens[p.pos+1]
+		// @name stands for the module constant of that name.
+		p.pos += 2
+		e.Kind, e.Name = "constant", name.Text
+		return e, nil
 	}
 	if t.Text == "-" || t.Text == "not" || t.Text == "~~~" {
 		p.pos++
@@ -2547,4 +2565,131 @@ func (p *parser) use() (ast.Use, error) {
 		use.Names, use.Values = append(use.Names, name.Text), append(use.Values, value)
 	}
 	return use, nil
+}
+
+// reservedAttribute names the attributes that are not module constants.
+var reservedAttribute = map[string]bool{"moduledoc": true, "doc": true, "typedoc": true, "tag": true, "moduletag": true, "describetag": true}
+
+// constant parses @name value, a module constant. The value is a literal,
+// or lists, tuples, maps, operators and earlier constants built from
+// literals; it may not call functions or read bindings.
+func (p *parser) constant(earlier []ast.Constant) (ast.Constant, error) {
+	at := p.peek()
+	name := p.tokens[p.pos+1]
+	p.pos += 2
+	if !unicode.IsLower([]rune(name.Text)[0]) && name.Text[0] != '_' {
+		return ast.Constant{}, diagnostic(name.Line, name.Column, "a module constant's name starts with a lower-case letter")
+	}
+	for _, other := range earlier {
+		if other.Name == name.Text {
+			return ast.Constant{}, diagnostic(at.Line, at.Column, "module constant @%s is defined twice", name.Text)
+		}
+	}
+	if p.peek().Line != name.Line || p.peek().Kind == lexer.EOF {
+		return ast.Constant{}, diagnostic(at.Line, at.Column, "@%s needs a value on the same line: @%s value", name.Text, name.Text)
+	}
+	value, err := p.expr(0)
+	if err != nil {
+		return ast.Constant{}, err
+	}
+	if problem := nonConstant(value); problem != nil {
+		return ast.Constant{}, diagnostic(problem.Line, problem.Column, "the value of @%s must be built from literals and earlier constants", name.Text)
+	}
+	return ast.Constant{Name: name.Text, Value: value, Line: at.Line, Column: at.Column}, nil
+}
+
+// nonConstant returns the first part of an expression that a module
+// constant may not hold, or nil.
+func nonConstant(e *ast.Expr) *ast.Expr {
+	if e == nil {
+		return nil
+	}
+	switch e.Kind {
+	case "literal", "constant":
+	case "name":
+		if e.Name != "none" {
+			return e
+		}
+	case "sigil":
+		if e.Left != nil {
+			return e
+		}
+	case "list", "tuple", "map", "unary", "binary":
+	default:
+		return e
+	}
+	for _, part := range append(append([]*ast.Expr{e.Left, e.Right}, e.Args...), e.Keys...) {
+		if problem := nonConstant(part); problem != nil {
+			return problem
+		}
+	}
+	return nil
+}
+
+// resolveConstants replaces every @name in the program with a copy of its
+// constant's value, positioned where @name was written.
+func resolveConstants(program *ast.Program) error {
+	values := map[string]*ast.Expr{}
+	var problem error
+	var substitute func(e *ast.Expr)
+	substitute = func(e *ast.Expr) {
+		if e.Kind != "constant" || problem != nil {
+			return
+		}
+		value, ok := values[e.Name]
+		if !ok {
+			problem = diagnostic(e.Line, e.Column, "@%s is not a module constant; define it with @%s value", e.Name, e.Name)
+			return
+		}
+		line, column := e.Line, e.Column
+		*e = *copyExpr(value)
+		e.Line, e.Column = line, column
+	}
+	for _, constant := range program.Constants {
+		// A constant may use the constants before it.
+		walkExpr(constant.Value, substitute)
+		if problem != nil {
+			return problem
+		}
+		values[constant.Name] = constant.Value
+	}
+	for i := range program.Functions {
+		walkFunction(&program.Functions[i], substitute)
+	}
+	for i := range program.Types {
+		for j := range program.Types[i].Fields {
+			walkExpr(program.Types[i].Fields[j].Default, substitute)
+		}
+	}
+	walkBlock(program.Statements, substitute)
+	for i := range program.Macros {
+		walkBlock(program.Macros[i].Body, substitute)
+		for j := range program.Macros[i].Definitions {
+			walkFunction(&program.Macros[i].Definitions[j], substitute)
+		}
+	}
+	return problem
+}
+
+func copyExpr(e *ast.Expr) *ast.Expr {
+	if e == nil {
+		return nil
+	}
+	out := *e
+	out.Left, out.Right = copyExpr(e.Left), copyExpr(e.Right)
+	out.Args = make([]*ast.Expr, len(e.Args))
+	for i, arg := range e.Args {
+		out.Args[i] = copyExpr(arg)
+	}
+	out.Keys = make([]*ast.Expr, len(e.Keys))
+	for i, key := range e.Keys {
+		out.Keys[i] = copyExpr(key)
+	}
+	if e.Args == nil {
+		out.Args = nil
+	}
+	if e.Keys == nil {
+		out.Keys = nil
+	}
+	return &out
 }

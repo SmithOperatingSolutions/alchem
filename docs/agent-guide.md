@@ -119,6 +119,7 @@ Run `alchem syntax <topic>`.
 **Modules**
 
 - `modules`: import "file.alc" brings another module's public functions and types.
+- `constants`: @name value declares a module constant; @name anywhere in the module stands for the value.
 - `protocols`: defprotocol declares functions; defimpl supplies them for one type.
 - `macros`: defmacro defines a template; a call is replaced by the template with its arguments filled in.
 - `extern`: extern name(params): result = "package.Function" calls a Go function.

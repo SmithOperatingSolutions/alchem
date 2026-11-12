@@ -1,0 +1,27 @@
+defmodule ConstantsTest do
+  @moduletag area: "module constants"
+
+  @base 10
+  @limit @base * 3
+  @names ["ada", "grace"]
+  @word "constant"
+  @options [timeout: 500]
+
+  def within?(n: integer): boolean do
+    n <= @limit
+  end
+
+  test "constants stand for their values" do
+    assert(@limit == 30)
+    assert(within?(30) and not within?(31))
+    assert(Enum.map(@names, &String.upcase/1) == ["ADA", "GRACE"])
+    assert(String.length(@word) == 8)
+    assert(Keyword.get(@options, :timeout, 0) == 500)
+  end
+
+  describe "inside a describe block" do
+    test "the same constants" do
+      assert(@base + @limit == 40)
+    end
+  end
+end

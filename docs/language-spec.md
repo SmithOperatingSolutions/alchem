@@ -494,6 +494,8 @@ def greet(name: string, greeting: string \\ "hello"): string do
 end
 ```
 
+`@name value` declares a module constant, and `@name` anywhere in the same module stands for the value: `@timeout 60 * 1000`. The value is built from literals, lists, tuples, maps, operators and earlier constants; it cannot call functions or read bindings. Each use is replaced by the value when the module is compiled, so a constant has no cost at run time. A name is defined once per module and is not visible from other modules. `@doc`, `@moduledoc`, `@typedoc`, `@tag`, `@describetag` and `@moduletag` keep their own meanings.
+
 `name: type \\ value` gives a parameter a default value, which a call may leave out: `greet("ada")` is `greet("ada", "hello")`. Only trailing parameters may have one, and in a function with several clauses they are written in the first. The value is a constant: literals, lists, tuples and maps of them, `none`, `some(...)`, `ok(...)` or `error(...)`. A function still has one number of parameters; a reference `&greet` is to the function with all of them.
 
 An anonymous function written with its clauses on the lines after `fn` takes one argument and tries the clauses in order, each `pattern -> body` with an optional guard:

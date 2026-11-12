@@ -344,6 +344,14 @@ func init() {
 		Sample{Title: "two files", File: "defmodule ShapesTest do\n  import \"geometry.alc\"\n\n  test \"imported functions and types\" do\n    size = %Geometry.Size{width: 2, height: 3}\n    assert(Geometry.area(size) == 6)\n  end\nend\n",
 			Files: map[string]string{"geometry.alc": "defmodule Geometry do\n  struct Size do\n    width: integer\n    height: integer\n  end\n\n  def area(size: Size): integer do\n    size.width * size.height\n  end\nend\n"}})
 
+	topic("Modules", "constants", "@name value declares a module constant; @name anywhere in the module stands for the value.",
+		[]string{
+			"The value is built from literals, lists, tuples, maps, operators and earlier constants: @timeout 60 * 1000, @colors [:red, :green]. It cannot call functions or read bindings.",
+			"A constant is visible throughout its module, including tests and struct field defaults, but not in other modules; share a value between modules with a function.",
+			"Each use is replaced by the value when the program is compiled. A name may be defined once; @doc, @moduledoc, @typedoc and the test tags are not constants.",
+		}, []string{"modules", "values", "operators"},
+		Sample{Title: "limits as constants", File: "defmodule Example do\n  @attempts 3\n  @delay_ms 250\n  @budget_ms @attempts * @delay_ms\n\n  def plan(): string do\n    Integer.to_string(@attempts) <> \" tries within \" <> Integer.to_string(@budget_ms) <> \" ms\"\n  end\n\n  def main() do\n    assert(plan() == \"3 tries within 750 ms\")\n  end\nend\n"})
+
 	topic("Modules", "protocols", "defprotocol declares functions; defimpl supplies them for one type.",
 		[]string{
 			"defprotocol Name do def function(value): type ... end declares functions without bodies.",

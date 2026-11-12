@@ -13,6 +13,14 @@ func TestTopLevelDiagnostics(t *testing.T) {
 	const main = "\n  def main() do\n    IO.inspect(1)\n  end\nend\n"
 	cases := []struct{ name, source, want string }{
 		{"type name", "defmodule Main do\n  type foo = integer" + main, "type name must be one capitalized word"},
+		{"constant twice", "defmodule Main do\n  @limit 1\n  @limit 2" + main, "module constant @limit is defined twice"},
+		{"constant without value", "defmodule Main do\n  @limit\n  def f(): integer do\n    1\n  end" + main, "@limit needs a value on the same line"},
+		{"constant calls", "defmodule Main do\n  @limit String.length(\"abc\")" + main, "must be built from literals and earlier constants"},
+		{"constant reads a binding", "defmodule Main do\n  @limit x" + main, "must be built from literals and earlier constants"},
+		{"constant interpolates", "defmodule Main do\n  @name ~s(#{1})" + main, "must be built from literals and earlier constants"},
+		{"constant name", "defmodule Main do\n  @Limit 1" + main, "starts with a lower-case letter"},
+		{"undefined constant", "defmodule Main do\n  def main() do\n    IO.inspect(@missing)\n  end\nend\n", "@missing is not a module constant"},
+		{"constant used before its own definition", "defmodule Main do\n  @a @b\n  @b 1" + main, "@b is not a module constant"},
 		{"macro twice", "defmodule Main do\n  defmacro m() do\n    quote do\n      1\n    end\n  end\n  defmacro m() do\n    quote do\n      2\n    end\n  end" + main, "macro m is defined twice"},
 		{"macro and function", "defmodule Main do\n  defmacro m() do\n    quote do\n      1\n    end\n  end\n  def m(): integer do\n    1\n  end" + main, "both a macro and a function"},
 		{"macro parameters", "defmodule Main do\n  defmacro m(a b) do\n    quote do\n      1\n    end\n  end" + main, "parameters of a macro are names"},
