@@ -1,0 +1,432 @@
+defmodule WebSocketTest do
+  @moduletag area: "websockets"
+
+  # A certificate for 127.0.0.1 and localhost, made for tests only.
+  def certificate(): string do
+    """
+    -----BEGIN CERTIFICATE-----
+    MIIBjzCCATagAwIBAgIBATAKBggqhkjOPQQDAjAWMRQwEgYDVQQDEwthbGNoZW0g
+    dGVzdDAgFw0yMDAxMDEwMDAwMDBaGA8yMTIwMDEwMTAwMDAwMFowFjEUMBIGA1UE
+    AxMLYWxjaGVtIHRlc3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARIC+lvIvgf
+    JOEBCt9+nIs8nA+OU1obxlvX2BZjYRMv6mmQa7ar7QhPapXW+pkSBEypVOAruQb4
+    AD13p1N4EFmoo3MwcTAOBgNVHQ8BAf8EBAMCAoQwEwYDVR0lBAwwCgYIKwYBBQUH
+    AwEwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQUu+JsepWLR5RdMkGpRguBTpgu
+    Pz4wGgYDVR0RBBMwEYIJbG9jYWxob3N0hwR/AAABMAoGCCqGSM49BAMCA0cAMEQC
+    IGNSAk/SP4P/5c9+VR/KHBIkbg9gavZ8hoSR4w/5XnJ1AiAZjZB2g88YxNem16mU
+    ZJS2sK5pvKLZPR2A1pja2zVssw==
+    -----END CERTIFICATE-----
+    """
+  end
+
+  def key(): string do
+    """
+    -----BEGIN EC PRIVATE KEY-----
+    MHcCAQEEIDW22l9S9inTAIWGK/lRXXkIaxitAj6Z2nyb3v2zKPyDoAoGCCqGSM49
+    AwEHoUQDQgAESAvpbyL4HyThAQrffpyLPJwPjlNaG8Zb19gWY2ETL+ppkGu2q+0I
+    T2qV1vqZEgRMqVTgK7kG+AA9d6dTeBBZqA==
+    -----END EC PRIVATE KEY-----
+    """
+  end
+
+  # relay sends every event of a socket to a process until the socket ends.
+  def relay(ws: websocket, to: pid[WebSocket.Event]): integer do
+    case WebSocket.recv(ws, 3000) do
+      ok(WebSocket.Event.closed(code, reason)) ->
+        Process.send(to, WebSocket.Event.closed(code, reason), 1000)
+        0
+      ok(WebSocket.Event.error(reason)) ->
+        Process.send(to, WebSocket.Event.error(reason), 1000)
+        0
+      ok(event) ->
+        Process.send(to, event, 1000)
+        relay(ws, to)
+      error(_) -> 0
+    end
+  end
+
+  # A server whose handler upgrades with a 100-byte limit and relays what
+  # the socket gives to the test.
+  def relaying(to: pid[WebSocket.Event]): http_server do
+    ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+      case WebSocket.upgrade(request, [max_message_bytes: 100]) do
+        ok(ws) ->
+          relay(ws, to)
+          HTTP.text(200, "")
+        error(reason) -> HTTP.text(400, reason)
+      end
+    end)
+    server
+  end
+
+  def hex(n: integer, digits: integer): string do
+    String.pad_leading(Integer.to_string(n, 16), digits, "0")
+  end
+
+  # A client frame with a zero mask, so that the payload is sent as it is.
+  def masked(first: string, payload: string): string do
+    size = byte_size(payload)
+    header = cond do
+      size < 126 -> hex(128 + size, 2)
+      size < 65536 -> "FE" <> hex(size, 4)
+      true -> "FF" <> hex(size, 16)
+    end
+    Base.decode16!(first <> header <> "00000000") <> payload
+  end
+
+  # Opens a raw TCP connection and makes the WebSocket handshake by hand.
+  def raw(server: http_server): socket do
+    ok(conn) = TCP.connect(HTTP.address(server), 1000)
+    TCP.send(conn, "GET /raw HTTP/1.1\r\nHost: test\r\nUpgrade: websocket\r\nConnection: keep-alive, Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")
+    ok(status) = TCP.recv_line(conn, 1000)
+    assert(status == "HTTP/1.1 101 Switching Protocols")
+    headers = read_headers(conn, [])
+    assert(Enum.member?(headers, "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo="))
+    conn
+  end
+
+  def read_headers(conn: socket, seen: list[string]): list[string] do
+    case TCP.recv_line(conn, 1000) do
+      ok("") -> seen
+      ok(line) -> read_headers(conn, [line | seen])
+      error(reason) -> raise(reason)
+    end
+  end
+
+  # Reads one unmasked frame from the server: {first byte, payload}.
+  def server_frame(conn: socket): tuple[string, string] do
+    ok(head) = TCP.recv(conn, 2, 1000)
+    first = Base.encode16(binary_part(head, 0, 1))
+    ok(size) = Integer.parse(Base.encode16(binary_part(head, 1, 1)), 16)
+    count = cond do
+      size == 126 ->
+        ok(extended) = TCP.recv(conn, 2, 1000)
+        ok(n) = Integer.parse(Base.encode16(extended), 16)
+        n
+      true -> size
+    end
+    if count == 0 do
+      {first, ""}
+    else
+      ok(payload) = TCP.recv(conn, count, 1000)
+      {first, payload}
+    end
+  end
+
+  def next(me: pid[WebSocket.Event]): WebSocket.Event do
+    {true, event} = Process.receive(me, 3000)
+    event
+  end
+
+  test "text and binary messages in both directions, actively" do
+    me: pid[WebSocket.Event] = Process.self(64)
+    server = relaying(me)
+    ok(ws) = WebSocket.connect("ws://" <> HTTP.address(server) <> "/chat?room=1", 1000, [origin: "http://example.test"])
+    assert(String.starts_with?(WebSocket.peer(ws), "127.0.0.1:"))
+    assert(WebSocket.send(ws, "hello") == ok({}))
+    assert(next(me) == WebSocket.Event.text("hello"))
+    assert(WebSocket.send_binary(ws, "\x01\x02\xff") == ok({}))
+    assert(next(me) == WebSocket.Event.binary("\x01\x02\xff"))
+    long = String.duplicate("é", 60)
+    assert(WebSocket.send(ws, long) == ok({}))
+    assert(next(me) == WebSocket.Event.error("message too large"))
+    assert(WebSocket.recv(ws, 1000) == ok(WebSocket.Event.closed(1009, "message too large")))
+    assert(WebSocket.recv(ws, 100) == error("closed"))
+    assert(WebSocket.send(ws, "late") == error("closed"))
+    WebSocket.close(ws)
+    HTTP.stop(server)
+  end
+
+  test "an active socket delivers to its controlling process" do
+    events: pid[WebSocket.Event] = Process.self(64)
+    ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+      ok(ws) = WebSocket.upgrade(request)
+      WebSocket.send(ws, "one")
+      WebSocket.send(ws, "two")
+      WebSocket.send(ws, "three")
+      WebSocket.close(ws, 4001, "done here")
+      HTTP.text(200, "")
+    end)
+    ok(ws) = WebSocket.connect("ws://" <> HTTP.address(server), 1000)
+    assert(WebSocket.setopts(ws, [active: :once]) == ok({}))
+    assert(next(events) == WebSocket.Event.text("one"))
+    assert(WebSocket.recv(ws, 1000) == ok(WebSocket.Event.text("two")))
+    assert(WebSocket.setopts(ws, [active: :true]) == ok({}))
+    assert(next(events) == WebSocket.Event.text("three"))
+    assert(next(events) == WebSocket.Event.closed(4001, "done here"))
+    assert(WebSocket.setopts(ws, [active: :false]) == ok({}))
+    numbers: pid[integer] = Process.spawn(fn(self: pid[integer]): integer do
+      Process.receive(self, 60000)
+      0
+    end, 1)
+    ok(other) = WebSocket.connect("ws://" <> HTTP.address(server), 1000)
+    assert(WebSocket.controlling_process(other, numbers))
+    assert(WebSocket.setopts(other, [active: :true]) == error("the controlling process does not take WebSocket.Event messages"))
+    assert_raise("the option is active:", fn -> WebSocket.setopts(other, [mode: :true]) end)
+    ok(quiet) = HTTP.serve("127.0.0.1:0", fn request ->
+      ok(silent) = WebSocket.upgrade(request)
+      WebSocket.recv(silent, 3000)
+      HTTP.text(200, "")
+    end)
+    ok(waiting) = WebSocket.connect("ws://" <> HTTP.address(quiet), 1000)
+    assert(WebSocket.setopts(waiting, [active: :true]) == ok({}))
+    assert(WebSocket.recv(waiting, 10) == error("the socket is active"))
+    WebSocket.close(waiting)
+    HTTP.stop(quiet)
+    HTTP.stop(server)
+  end
+
+  test "a socket closes when its owner ends" do
+    ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+      ok(_) = WebSocket.upgrade(request)
+      HTTP.text(200, "ignored")
+    end)
+    ok(ws) = WebSocket.connect("ws://" <> HTTP.address(server), 1000)
+    assert(WebSocket.recv(ws, 2000) == ok(WebSocket.Event.closed(1001, "")))
+    keeper: pid[WebSocket.Event] = Process.spawn(fn(self: pid[WebSocket.Event]): integer do
+      Process.receive(self, 60000)
+      0
+    end, 4)
+    ok(handed) = WebSocket.connect("ws://" <> HTTP.address(server), 1000)
+    assert(WebSocket.controlling_process(handed, keeper))
+    HTTP.stop(server)
+  end
+
+  test "requests that are not WebSocket handshakes" do
+    ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+      case WebSocket.upgrade(request) do
+        ok(ws) ->
+          second = case WebSocket.upgrade(request) do
+            ok(_) -> "upgraded twice"
+            error(reason) -> reason
+          end
+          WebSocket.send(ws, second)
+          WebSocket.recv(ws, 2000)
+          HTTP.text(200, "")
+        error(reason) -> HTTP.text(400, reason)
+      end
+    end)
+    base = "http://" <> HTTP.address(server)
+    common = [{"connection", "Upgrade"}, {"upgrade", "websocket"}]
+    key = {"sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ=="}
+    upgrade = common ++ [{"sec-websocket-version", "13"}, key]
+    ok(posted) = HTTP.request("POST", base, upgrade, "")
+    assert(posted.body == "not a WebSocket request: the method is POST")
+    ok(old) = HTTP.request("GET", base, common ++ [{"sec-websocket-version", "8"}, key], "")
+    assert(old.body == "not a WebSocket request: the version must be 13")
+    ok(keyless) = HTTP.request("GET", base, common ++ [{"sec-websocket-version", "13"}], "")
+    assert(keyless.body == "not a WebSocket request: the key is missing or malformed")
+    ok(ws) = WebSocket.connect("ws://" <> HTTP.address(server), 1000)
+    assert(WebSocket.recv(ws, 1000) == ok(WebSocket.Event.text("the request has already been upgraded")))
+    WebSocket.close(ws)
+    ok(elsewhere) = HTTP.serve("127.0.0.1:0", fn request ->
+      task = Task.async(fn ->
+        case WebSocket.upgrade(request) do
+          ok(_) -> "upgraded"
+          error(reason) -> reason
+        end
+      end)
+      HTTP.text(400, Task.await(task, 1000))
+    end)
+    ok(answer) = HTTP.request("GET", "http://" <> HTTP.address(elsewhere), upgrade, "")
+    assert(answer.body == "WebSocket.upgrade must be called by the process handling the request")
+    HTTP.stop(server)
+    HTTP.stop(elsewhere)
+  end
+
+  test "option and argument failures" do
+    ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+      text = try do
+        WebSocket.upgrade(request, [max_message_bytes: 0])
+        "accepted"
+      rescue
+        message -> message
+      end
+      other = try do
+        WebSocket.upgrade(request, [other: 1])
+        "accepted"
+      rescue
+        message -> message
+      end
+      HTTP.text(200, text <> "|" <> other)
+    end)
+    ok(response) = HTTP.get("http://" <> HTTP.address(server))
+    assert(String.contains?(response.body, "max_message_bytes: must be positive"))
+    assert(String.contains?(response.body, "unknown option :other"))
+    assert_raise("unknown option :other", fn -> WebSocket.connect("ws://127.0.0.1:1", 100, [other: "x"]) end)
+    assert(WebSocket.connect("ftp://host", 100) |> is_error())
+    assert(WebSocket.connect("ws://127.0.0.1:1", 500) |> is_error())
+    assert(WebSocket.connect("ws://%zz", 500) |> is_error())
+    ok(plain) = HTTP.serve("127.0.0.1:0", fn _ -> HTTP.text(200, "no") end)
+    case WebSocket.connect("ws://" <> HTTP.address(plain), 1000) do
+      error(reason) -> assert(reason == "the server did not accept the WebSocket: 200 OK")
+      ok(_) -> flunk("connected")
+    end
+    ok(echo) = HTTP.serve("127.0.0.1:0", fn request ->
+      ok(ws) = WebSocket.upgrade(request)
+      WebSocket.recv(ws, 2000)
+      HTTP.text(200, "")
+    end)
+    ok(ws) = WebSocket.connect("ws://" <> HTTP.address(echo), 1000)
+    assert_raise("the code must be 1000 or 3000 to 4999", fn -> WebSocket.close(ws, 1001, "") end)
+    assert_raise("at most 123 bytes", fn -> WebSocket.close(ws, 4000, String.duplicate("x", 124)) end)
+    assert(WebSocket.close(ws, 4000, "bye"))
+    assert(not WebSocket.close(ws, 4000, "bye"))
+    HTTP.stop(server)
+    HTTP.stop(plain)
+    HTTP.stop(echo)
+  end
+
+  def is_error(result: result[websocket, string]): boolean do
+    case result do
+      ok(_) -> false
+      error(_) -> true
+    end
+  end
+
+  test "frames: pings, fragments, lengths and the closing handshake" do
+    me: pid[WebSocket.Event] = Process.self(64)
+    server = relaying(me)
+    conn = raw(server)
+    TCP.send(conn, masked("89", "are you there"))
+    assert(server_frame(conn) == {"8A", "are you there"})
+    TCP.send(conn, masked("01", "frag") <> masked("8A", "ignored pong") <> masked("80", "mented"))
+    assert(next(me) == WebSocket.Event.text("fragmented"))
+    ninety = String.duplicate("n", 90)
+    TCP.send(conn, masked("82", ninety))
+    assert(next(me) == WebSocket.Event.binary(ninety))
+    TCP.send(conn, masked("88", Base.decode16!("0FA1") <> "bye"))
+    assert(next(me) == WebSocket.Event.closed(4001, "bye"))
+    assert(server_frame(conn) == {"88", Base.decode16!("0FA1")})
+    empty = raw(server)
+    TCP.send(empty, masked("88", ""))
+    assert(next(me) == WebSocket.Event.closed(1005, ""))
+    assert(server_frame(empty) == {"88", ""})
+    HTTP.stop(server)
+  end
+
+  test "frames that break the protocol" do
+    me: pid[WebSocket.Event] = Process.self(64)
+    server = relaying(me)
+    cases = [
+      {Base.decode16!("8102") <> "hi", "protocol error: the client sent an unmasked frame", "03EA"},
+      {masked("C1", "x"), "protocol error: reserved bits are set", "03EA"},
+      {masked("83", "x"), "protocol error: unknown opcode 3", "03EA"},
+      {masked("09", "x"), "protocol error: a control frame is fragmented or too long", "03EA"},
+      {masked("80", "x"), "protocol error: a continuation frame without a message", "03EA"},
+      {masked("01", "a") <> masked("81", "b"), "protocol error: a message began before the last one ended", "03EA"},
+      {masked("81", "\xff\xfe"), "a text message is not valid UTF-8", "03EF"},
+      {masked("82", String.duplicate("x", 200)), "message too large", "03F1"},
+      {masked("01", String.duplicate("x", 60)) <> masked("80", String.duplicate("x", 60)), "message too large", "03F1"},
+      {masked("88", "x"), "protocol error: a close frame with a one-byte body", "03EA"},
+      {masked("88", Base.decode16!("03ED")), "protocol error: an invalid close code or reason", "03EA"}
+    ]
+    Enum.each(cases, fn {frame, reason, code} ->
+      conn = raw(server)
+      TCP.send(conn, frame)
+      assert(next(me) == WebSocket.Event.error(reason))
+      {first, payload} = server_frame(conn)
+      assert(first == "88")
+      assert(Base.encode16(binary_part(payload, 0, 2)) == code)
+      TCP.close(conn)
+    end)
+    dropped = raw(server)
+    TCP.close(dropped)
+    assert(next(me) == WebSocket.Event.closed(1006, ""))
+    HTTP.stop(server)
+  end
+
+  test "long messages use the longer length forms" do
+    ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+      ok(ws) = WebSocket.upgrade(request)
+      sent: result[tuple[], string] = case WebSocket.recv(ws, 2000) do
+        ok(WebSocket.Event.text(text)) -> WebSocket.send(ws, text <> text)
+        _ -> error("no text")
+      end
+      if sent == ok({}) do
+        WebSocket.recv(ws, 2000)
+      end
+      HTTP.text(200, "")
+    end)
+    ok(ws) = WebSocket.connect("ws://" <> HTTP.address(server), 1000)
+    big = String.duplicate("abcdefgh", 5000)
+    assert(WebSocket.send(ws, big) == ok({}))
+    assert(WebSocket.recv(ws, 2000) == ok(WebSocket.Event.text(big <> big)))
+    medium = raw(server)
+    TCP.send(medium, masked("81", String.duplicate("m", 200)))
+    assert(server_frame(medium) == {"81", String.duplicate("m", 400)})
+    WebSocket.close(ws)
+    HTTP.stop(server)
+  end
+
+  test "secure WebSockets" do
+    dir = System.tmp_dir!()
+    certfile = Path.join(dir, "alchem_ws_cert_" <> Integer.to_string(System.os_time()) <> ".pem")
+    keyfile = certfile <> ".key"
+    File.write(certfile, certificate())
+    File.write(keyfile, key())
+    ok(server) = HTTP.serve_tls("127.0.0.1:0", fn request ->
+      ok(ws) = WebSocket.upgrade(request)
+      WebSocket.send(ws, "secure")
+      WebSocket.recv(ws, 2000)
+      HTTP.text(200, "")
+    end, [certfile: certfile, keyfile: keyfile])
+    address = "wss://" <> HTTP.address(server)
+    ok(trusted) = WebSocket.connect(address, 2000, [ca_file: certfile])
+    assert(WebSocket.recv(trusted, 2000) == ok(WebSocket.Event.text("secure")))
+    ok(insecure) = WebSocket.connect(address, 2000, [insecure: "true"])
+    assert(WebSocket.recv(insecure, 2000) == ok(WebSocket.Event.text("secure")))
+    assert(WebSocket.connect(address, 2000) |> is_error())
+    assert(WebSocket.connect(address, 2000, [ca_file: "/alchem-no-such-file"]) |> is_error())
+    assert(WebSocket.connect(address, 2000, [ca_file: keyfile]) |> is_error())
+    WebSocket.close(trusted)
+    WebSocket.close(insecure)
+    HTTP.stop(server)
+    File.rm(certfile)
+    File.rm(keyfile)
+  end
+
+  # Accepts one connection on a raw listener, answers the WebSocket
+  # handshake by hand, then sends the given bytes and closes.
+  def raw_server(listener: socket, then: string): integer do
+    ok(conn) = TCP.accept(listener, 2000)
+    lines = read_headers(conn, [])
+    key = Enum.reduce(lines, "", fn line, found ->
+      case String.split(line, ": ") do
+        ["Sec-WebSocket-Key", value] -> value
+        _ -> found
+      end
+    end)
+    accept = Base.encode64(Crypto.hash(:sha1, key <> "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+    TCP.send(conn, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " <> accept <> "\r\n\r\n" <> then)
+    TCP.close(conn)
+    0
+  end
+
+  test "servers that break the protocol" do
+    ok(listener) = TCP.listen("127.0.0.1:0")
+    address = "ws://" <> TCP.address(listener) <> "/"
+    first = Task.async(fn -> raw_server(listener, masked("81", "x")) end)
+    ok(ws) = WebSocket.connect(address, 2000)
+    assert(WebSocket.recv(ws, 2000) == ok(WebSocket.Event.error("protocol error: the server masked a frame")))
+    Task.await(first, 2000)
+    second = Task.async(fn -> raw_server(listener, Base.decode16!("81")) end)
+    ok(cut) = WebSocket.connect(address, 2000)
+    assert(WebSocket.recv(cut, 2000) == ok(WebSocket.Event.closed(1006, "")))
+    Task.await(second, 2000)
+    TCP.close(listener)
+    assert(WebSocket.connect("ws://127.0.0.1", 500) |> is_error())
+  end
+
+  test "crypto" do
+    assert(byte_size(Crypto.strong_rand_bytes(0)) == 0)
+    assert(byte_size(Crypto.strong_rand_bytes(32)) == 32)
+    assert_raise("from 0 to 1048576", fn -> Crypto.strong_rand_bytes(-1) end)
+    sizes = Enum.map([:md5, :sha1, :sha224, :sha256, :sha384, :sha512], fn algorithm -> byte_size(Crypto.hash(algorithm, "x")) end)
+    assert(sizes == [16, 20, 28, 32, 48, 64])
+    assert(Base.encode16(Crypto.hash(:md5, ""), [case: :lower]) == "d41d8cd98f00b204e9800998ecf8427e")
+    assert(byte_size(Crypto.hmac(:sha512, "key", "data")) == 64)
+    assert_raise("the algorithms are", fn -> Crypto.hash(:sha3, "x") end)
+    assert_raise("Crypto.hmac: the algorithms are", fn -> Crypto.hmac(:crc32, "k", "x") end)
+    assert(not Crypto.secure_compare("a", "ab"))
+  end
+end

@@ -37,6 +37,14 @@ func BuiltinTypes() []ast.TypeDecl {
 			{Name: "closed"},
 			{Name: "error", Fields: []ast.Parameter{{Name: "reason", Type: "string"}}},
 		}},
+		// What a WebSocket gives: a text or binary message, the closing
+		// handshake with its code and reason, or a failure that ended it.
+		{Kind: "sum", Name: "WebSocket.Event", Local: "WebSocket.Event", Variants: []ast.Variant{
+			{Name: "text", Fields: []ast.Parameter{{Name: "text", Type: "string"}}},
+			{Name: "binary", Fields: []ast.Parameter{{Name: "data", Type: "string"}}},
+			{Name: "closed", Fields: []ast.Parameter{{Name: "code", Type: "integer"}, {Name: "reason", Type: "string"}}},
+			{Name: "error", Fields: []ast.Parameter{{Name: "reason", Type: "string"}}},
+		}},
 		// What an active UDP socket sends: a datagram with the address it
 		// came from, or a failure.
 		{Kind: "sum", Name: "UDP.Event", Local: "UDP.Event", Variants: []ast.Variant{
@@ -254,7 +262,7 @@ func (c checker) unwired(t string) string {
 	found := ""
 	c.contains(t, func(part string) bool {
 		head, _ := ast.Split(part)
-		blocked := isFunction(part) || ast.TypeVariable(part) || c.opaque(part) || head == "stream" || head == "regex" || head == "port" || head == "task" || head == "agent" || head == "server" || head == "supervisor" || head == "registry" || head == "dynamic_supervisor" || head == "socket" || head == "http_server" || head == "generator" || head == "file"
+		blocked := isFunction(part) || ast.TypeVariable(part) || c.opaque(part) || head == "stream" || head == "regex" || head == "port" || head == "task" || head == "agent" || head == "server" || head == "supervisor" || head == "registry" || head == "dynamic_supervisor" || head == "socket" || head == "http_server" || head == "websocket" || head == "generator" || head == "file"
 		if blocked && found == "" {
 			found = part
 		}
@@ -267,7 +275,7 @@ func (c checker) unwired(t string) string {
 func (c checker) equatable(t string) bool {
 	return ast.Equatable(t) && !c.contains(t, func(t string) bool {
 		head, _ := ast.Split(t)
-		return isFunction(t) || ast.TypeVariable(t) || c.opaque(t) || head == "pid" || head == "supervisor" || head == "server" || head == "stream" || head == "regex" || head == "task" || head == "agent" || head == "registry" || head == "dynamic_supervisor" || head == "socket" || head == "http_server" || head == "generator" || head == "file"
+		return isFunction(t) || ast.TypeVariable(t) || c.opaque(t) || head == "pid" || head == "supervisor" || head == "server" || head == "stream" || head == "regex" || head == "task" || head == "agent" || head == "registry" || head == "dynamic_supervisor" || head == "socket" || head == "http_server" || head == "websocket" || head == "generator" || head == "file"
 	}, map[string]bool{})
 }
 

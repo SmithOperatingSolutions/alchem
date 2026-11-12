@@ -212,6 +212,34 @@ def main() do
 end
 ```
 
+## WebSockets and cryptography
+
+A handler of `HTTP.serve` turns its request into a WebSocket with `WebSocket.upgrade(request)`; a request that is not a handshake gives `error(reason)`, and the handler answers it as usual. The response a handler returns after upgrading is not sent. `WebSocket.connect("ws://host:port/path", ms)` opens one from the client side, and `wss://` uses TLS with the same `ca_file:` and `insecure:` options as `HTTP.request`.
+
+Messages are text or binary. `WebSocket.recv(ws, ms)` gives the next `WebSocket.Event`: `text(text)`, `binary(data)`, `closed(code, reason)` when the other end closes, or `error(reason)` when the connection fails or breaks the protocol, which closes it with the matching code. Pings are answered and the closing handshake completed without the program's help. Like a TCP socket, a WebSocket belongs to the process that made it and closes, with code 1001, when that process ends; `WebSocket.controlling_process` hands it on, and `WebSocket.setopts(ws, [active: :true])` sends its events to that process as messages. Incoming messages are limited to 16 MB unless `WebSocket.upgrade(request, [max_message_bytes: n])` says otherwise.
+
+```elixir
+def handle(request: HTTP.Request): HTTP.Response do
+  case WebSocket.upgrade(request) do
+    ok(ws) ->
+      echo(ws)
+      HTTP.text(200, "")
+    error(reason) -> HTTP.text(400, reason)
+  end
+end
+
+def echo(ws: websocket): integer do
+  case WebSocket.recv(ws, -1) do
+    ok(WebSocket.Event.text(text)) ->
+      WebSocket.send(ws, text)
+      echo(ws)
+    _ -> 0
+  end
+end
+```
+
+`Crypto.strong_rand_bytes(n)` reads the operating system's secure random source, `Crypto.hash(:sha256, data)` and `Crypto.hmac(:sha256, key, data)` give raw digests (`Base.encode16` or `Base.encode64` make them printable), and `Crypto.secure_compare(a, b)` compares signatures and tokens in time that does not depend on where they differ.
+
 ## Atoms, keyword lists and ports
 
 `Atom.to_string` and `String.to_atom` convert between an atom and its name. The `Keyword` module works on keyword lists, `[name: value]`: `get`, `fetch`, `put`, `delete`, `merge`, `keys`, `values`, `update`, `pop`, `take`, `drop`, `get_values` and `to_map`.
