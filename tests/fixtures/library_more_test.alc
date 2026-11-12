@@ -212,4 +212,16 @@ defmodule LibraryMoreTest do
     assert_raise("Logger.configure takes", fn -> Logger.configure([color: "red"]) end)
     assert_raise("the log level is", fn -> Logger.log(:loud, "x") end)
   end
+
+  test "a handler sees the host header" do
+    ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+      case HTTP.header(request.headers, "host") do
+        some(host) -> HTTP.text(200, host)
+        none -> HTTP.text(500, "no host")
+      end
+    end)
+    ok(response) = HTTP.get("http://" <> HTTP.address(server) <> "/")
+    assert(response.body == HTTP.address(server))
+    HTTP.stop(server)
+  end
 end
