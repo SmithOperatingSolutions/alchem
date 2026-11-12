@@ -1,0 +1,85 @@
+defmodule Collections do
+ def total(xs: list[integer]): integer do
+  case xs do
+   [] -> return 0
+   [head | tail] -> return head + total(tail)
+  end
+ end
+ def pair(n: integer, text: string): tuple[integer,string] do
+  return {n,text}
+ end
+ def wrapped(xs: list[integer]): tuple[list[integer],boolean] do return {xs,true} end
+ def unit(): tuple[] do return {} end
+ def make_pair(): tuple[integer,integer] do IO.puts("tuple-once") return {1,2} end
+ def observed(): list[integer] do IO.puts("subject-once") return [1,2] end
+ def empty(): list[integer] do return [] end
+ def note(text: string, n: integer): integer do IO.puts(text) return n end
+ def add(a: integer, b: integer): integer do return a+b end
+ def main() do
+  empty: list[integer] = []
+  nested: list[list[integer]] = [[],[1,2]]
+  items = [1,2,3]
+  assert(items == [1,2,3])
+  assert(items != [1,2])
+  assert(empty == [])
+  assert([] == empty())
+  assert(nested[0] == [])
+  assert(nested[1][1] == 2)
+  assert(length(nested) == 2)
+  data = {items,{true,"ok"}}
+  assert(data == {[1,2,3],{true,"ok"}})
+  assert(length(data) == 2)
+  assert(data[1][1] == "ok")
+  assert({} == {})
+  assert(length({}) == 0)
+  {count, label} = 3 |> pair("three")
+  assert(count == 3 and label == "three")
+  [a,b,c] = items
+  assert(a+b+c == 6)
+  [first | rest] = items
+  assert(first == 1 and rest == [2,3])
+  {_,{flag,message}} = data
+  assert(flag)
+  true = flag
+  "ok" = message
+  [1,2,3] = items
+  assert(items |> total() == 6)
+  assert([] |> total() == 0)
+  assert(wrapped([]) == {[],true})
+  assert(unit() == {})
+  assert(length(make_pair()) == 2)
+  case observed() do
+   [1,2] -> assert(true)
+   _ -> assert(false)
+  end
+  case -1 do -1 -> assert(true) _ -> assert(false) end
+  case "ok" do "bad" -> assert(false) "ok" -> assert(true) _ -> assert(false) end
+  {} = unit()
+  _ = items
+  [last | endlist] = [1]
+  assert(last == 1 and endlist == empty)
+  [x | [y,z]] = items
+  assert(x+y+z == 6)
+  true |> assert()
+  "piped" |> IO.puts()
+  assert(1 |> add(2) |> add(3) == 6)
+  assert(note("left",1) |> add(note("right",2)) == 3)
+  case items do
+   [] -> assert(false)
+   [9] -> assert(false)
+   [head | tail] -> assert(head == 1 and length(tail) == 2)
+  end
+  case {count,label} do
+   {0,_} -> assert(false)
+   {value,text} -> assert(value == 3 and text == "three")
+  end
+  case true do
+   false -> assert(false)
+   true -> IO.puts("matched")
+  end
+  case nested do
+   [[],[nx,ny]] -> assert(nx == 1 and ny == 2)
+   _ -> assert(false)
+  end
+ end
+end

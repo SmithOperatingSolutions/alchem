@@ -1,0 +1,65 @@
+defmodule Web do
+  @moduledoc """
+  The HTTP side of the server, for monitoring and quick looks:
+
+      GET /health          200 ok
+      GET /stats           counters as JSON
+      GET /keys?pattern=*  matching keys as a JSON list
+      GET /key/NAME        a string value as JSON, or 404
+  """
+  import "protocol.alc"
+  import "glob.alc"
+  import "store.alc"
+  import "log.alc"
+  import "database.alc"
+  import "connection.alc"
+
+  def handle(shared: Connection.Shared, connections: fn[integer], request: HTTP.Request): HTTP.Response do
+    case {request.method, String.split(String.trim_leading(request.path, "/"), "/")} do
+      {"GET", ["health"]} -> HTTP.text(200, "ok")
+      {"GET", ["stats"]} -> HTTP.json(200, stats(shared, connections()))
+      {"GET", ["keys"]} ->
+        pattern = Map.get(URI.decode_query(request.query), "pattern", "*")
+        case Database.run(shared.database, Protocol.Command.keys(pattern)) do
+          Protocol.Reply.many(items) -> HTTP.json(200, JSON.list(Enum.map(items, &to_json/1)))
+          other -> failure(other)
+        end
+      {"GET", ["key", encoded]} ->
+        name = case URI.decode(encoded) do
+          ok(text) -> text
+          error(_) -> encoded
+        end
+        case Database.run(shared.database, Protocol.Command.get(name)) do
+          Protocol.Reply.text(value) ->
+            HTTP.json(200, JSON.object(%{"key" => JSON.string(name), "value" => JSON.string(value)}))
+          Protocol.Reply.nothing ->
+            HTTP.json(404, JSON.object(%{"error" => JSON.string("no such key")}))
+          other -> failure(other)
+        end
+      {"GET", _} -> HTTP.json(404, JSON.object(%{"error" => JSON.string("not found")}))
+      _ -> HTTP.json(405, JSON.object(%{"error" => JSON.string("only GET is served")}))
+    end
+  end
+
+  defp stats(shared: Connection.Shared, connections: integer): JSON do
+    numbers = Database.stats(shared.database)
+    JSON.object(%{"keys" => JSON.integer(numbers.keys), "hits" => JSON.integer(numbers.hits), "misses" => JSON.integer(numbers.misses), "commands" => JSON.integer(numbers.commands), "connections" => JSON.integer(connections), "subscriptions" => JSON.integer(Registry.count(shared.channels)), "uptime_ms" => JSON.integer(Time.now() - shared.started)})
+  end
+
+  defp to_json(reply: Protocol.Reply): JSON do
+    case reply do
+      Protocol.Reply.text(value) -> JSON.string(value)
+      Protocol.Reply.number(n) -> JSON.integer(n)
+      Protocol.Reply.many(items) -> JSON.list(Enum.map(items, &to_json/1))
+      _ -> JSON.null
+    end
+  end
+
+  defp failure(reply: Protocol.Reply): HTTP.Response do
+    case reply do
+      Protocol.Reply.failure(message) ->
+        HTTP.json(500, JSON.object(%{"error" => JSON.string(message)}))
+      _ -> HTTP.json(500, JSON.object(%{"error" => JSON.string("unexpected reply")}))
+    end
+  end
+end

@@ -1,0 +1,28 @@
+defmodule Geometry do
+  struct Size do
+    width: float
+    height: float
+  end
+
+  type Shape do
+    circle(radius: float)
+    rect(size: Size)
+    empty
+  end
+
+  def area(Shape.circle(radius): Shape): float do
+    ((3.0 * radius) * radius)
+  end
+
+  def area(Shape.rect(%Size{width: width, height: height})) do
+    (width * height)
+  end
+
+  def area(Shape.empty) do
+    0.0
+  end
+
+  def scale(size: Size, factor: float): Size do
+    %Size{width: (size.width * factor), height: (size.height * factor)}
+  end
+end

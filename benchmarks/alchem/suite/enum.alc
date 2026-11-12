@@ -1,0 +1,64 @@
+defmodule EnumBench do
+  import "bench.alc"
+
+  def flag(value: boolean): integer do
+    if value do
+      1
+    else
+      0
+    end
+  end
+
+  def main() do
+    n = 1000000
+    numbers = Enum.map(1..n, fn i -> rem(i * 7919 + 13, 1000003) end)
+    others = Enum.map(1..n, fn i -> rem(i * 104729 + 7, 1000003) end)
+    small = Enum.take(numbers, 200000)
+    words = Enum.map(1..200000, fn i -> "w#{rem(i * 7919, 100003)}" end)
+    pairs = Enum.zip(numbers, others)
+    table = Map.new(1..100000, fn i -> {i, rem(i * 7919, 1009)} end)
+
+    Bench.run("enum.map list 1M", fn -> numbers |> Enum.map(fn x -> x * 2 + 1 end) |> hd() end)
+    Bench.run("enum.filter list 1M", fn -> numbers |> Enum.filter(fn x -> rem(x, 3) == 0 end) |> hd() end)
+    Bench.run("enum.reduce list 1M", fn -> Enum.reduce(numbers, 0, fn x, acc -> rem(acc + x * 3, 1000000007) end) end)
+    Bench.run("enum.sum list 1M", fn -> Enum.sum(numbers) end)
+    Bench.run("enum.count predicate list 1M", fn -> Enum.count(numbers, fn x -> rem(x, 7) == 0 end) end)
+    Bench.run("enum.map range 1M", fn -> 1..n |> Enum.map(fn x -> x * 2 + 1 end) |> hd() end)
+    Bench.run("enum.filter range 1M", fn -> 1..n |> Enum.filter(fn x -> rem(x, 3) == 0 end) |> hd() end)
+    Bench.run("enum.reduce range 1M", fn -> Enum.reduce(1..n, 0, fn x, acc -> rem(acc + x * 3, 1000000007) end) end)
+    Bench.run("enum.map map 100k", fn -> table |> Enum.map(fn {key, value} -> key + value end) |> Enum.sum() end)
+    Bench.run("enum.filter map 100k", fn -> table |> Enum.filter(fn {_, value} -> value < 500 end) |> length() end)
+    Bench.run("enum.reduce map 100k", fn -> Enum.reduce(table, 0, fn {key, value}, acc -> acc + key * value end) end)
+    Bench.run("enum.sort integers 1M", fn -> numbers |> Enum.sort() |> hd() end)
+    Bench.run("enum.sort strings 200k", fn -> words |> Enum.sort() |> hd() |> byte_size() end)
+    Bench.run("enum.sort_by 200k", fn -> small |> Enum.sort_by(fn x -> rem(x, 1000) end) |> hd() end)
+    Bench.run("enum.group_by 1M into 1000", fn -> numbers |> Enum.group_by(fn x -> rem(x, 1000) end) |> map_size() end)
+    Bench.run("enum.frequencies strings 200k", fn -> words |> Enum.frequencies() |> map_size() end)
+    Bench.run("enum.chunk_every 1M by 100", fn -> numbers |> Enum.chunk_every(100) |> length() end)
+    Bench.run("enum.uniq 1M", fn -> numbers |> Enum.uniq() |> length() end)
+    Bench.run("enum.zip 1M", fn ->
+      {left, right} = Enum.zip(numbers, others) |> hd()
+      left + right
+    end)
+    Bench.run("enum.unzip 1M", fn ->
+      {left, right} = Enum.unzip(pairs)
+      hd(left) + hd(right)
+    end)
+    Bench.run("enum.with_index 1M", fn ->
+      {value, index} = Enum.with_index(numbers) |> hd()
+      value + index
+    end)
+    Bench.run("enum.flat_map 200k", fn -> small |> Enum.flat_map(fn x -> [x, x + 1] end) |> length() end)
+    Bench.run("enum.member? miss 1M", fn -> flag(Enum.member?(numbers, -1)) end)
+    Bench.run("enum.join strings 200k", fn -> words |> Enum.join(",") |> byte_size() end)
+    Bench.run("enum.map_join integers 200k", fn -> small |> Enum.map_join(",", fn x -> x + 1 end) |> byte_size() end)
+    Bench.run("enum.min_max 1M", fn ->
+      {low, high} = Enum.min_max(numbers)
+      low + high
+    end)
+    Bench.run("enum.reverse 1M", fn -> numbers |> Enum.reverse() |> hd() end)
+    Bench.run("enum.slice middle 500k of 1M", fn -> numbers |> Enum.slice(250000, 500000) |> hd() end)
+    Bench.run("enum.at last of 1M", fn -> Enum.at(numbers, n - 1, 0) end)
+    Bench.run("enum.concat 1M + 1M", fn -> Enum.concat(numbers, others) |> hd() end)
+  end
+end

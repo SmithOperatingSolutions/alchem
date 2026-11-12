@@ -1,0 +1,96 @@
+defmodule LibraryPathsTest do
+  @moduletag area: "library paths"
+
+  test "list subtraction counts each element" do
+    many = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    assert([1, 1, 2, 3, 11] -- many == [1, 11])
+    words = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
+    assert(["a", "a", "z"] -- words == ["a", "z"])
+    assert(Enum.sort([["b"], ["a", "z"], ["b"]]) == [["a", "z"], ["b"], ["b"]])
+  end
+
+  test "lazy uniq, concat, zip and chunks stop early" do
+    assert(Stream.uniq_by([1, 2, 3, 4, 5], fn x -> rem(x, 2) end) |> Enum.to_list() == [1, 2])
+    assert(Stream.uniq_by(Stream.cycle([1, 2]), fn x -> x end) |> Enum.take(2) == [1, 2])
+    streams = Stream.map([1, 2, 3], fn n -> List.duplicate(n, n) end)
+    assert(Stream.concat(streams) |> Enum.to_list() == [1, 2, 2, 3, 3, 3])
+    assert(Stream.concat(streams) |> Enum.take(2) == [1, 2])
+    start: list[integer] = []
+    chunks = Stream.chunk_while(Stream.cycle([1, 2, 3]), start, fn x, acc ->
+      if x == 3 do
+        {some(Enum.reverse([x | acc])), start}
+      else
+        {none, [x | acc]}
+      end
+    end, fn _ -> none end)
+    assert(Enum.take(chunks, 1) == [[1, 2, 3]])
+  end
+
+  test "slices and sort orders" do
+    assert(Enum.slice([1, 2, 3], -10, 2) == [])
+    assert_raise("nonnegative", fn -> Enum.slice([1, 2, 3], 0, -1) end)
+    assert(Enum.sort_by(["b", "a", "c"], fn s -> s end, :asc) == ["a", "b", "c"])
+    assert(Enum.sort_by([3, 1, 2], fn x -> x end, :asc) == [1, 2, 3])
+    assert(Enum.sort_by([{1, "b"}, {1, "a"}, {0, "c"}], fn t -> elem(t, 0) end) == [{0, "c"}, {1, "b"}, {1, "a"}])
+    assert(Enum.sort([2, 1, 2], :asc) == [1, 2, 2])
+    assert(Enum.sort_by([[2], [1], [2]], fn x -> x end, :desc) == [[2], [2], [1]])
+  end
+
+  test "set difference with a small right side" do
+    big = MapSet.new(Enum.to_list(1..40))
+    assert(MapSet.size(MapSet.difference(big, MapSet.new([1, 2]))) == 38)
+  end
+
+  test "string edges" do
+    assert(String.jaro_distance("", "abc") == 0.0)
+    assert(String.jaro_distance("abc", "xyz") == 0.0)
+    assert_raise("base must be", fn -> String.to_integer("10", 1) end)
+    assert_raise("is not an integer", fn -> String.to_integer("zz", 10) end)
+    assert(not String.printable?("a\u0001"))
+    assert(String.printable?("a\tb\n"))
+  end
+
+  test "integer and float edges" do
+    assert(Integer.digits(0) == [0])
+    assert_raise("base must be at least 2", fn -> Integer.digits(5, 1) end)
+    assert_raise("base must be at least 2", fn -> Integer.undigits([1], 1) end)
+    assert_raise("out of range", fn -> Integer.undigits([1, 5], 2) end)
+    assert(Float.floor(-0.1234567890123, 12) == -0.123456789013)
+    assert(Float.ceil(0.1234567890123, 12) == 0.123456789013)
+    assert(Float.round(1.5, 0) == 2.0)
+    assert(Float.round(0.125, 2) == 0.13)
+    assert(Bitwise.bsr(8, -1) == 16)
+    assert(Bitwise.bsr(-8, 100) == -1)
+    assert_raise("Float.ratio", fn -> Float.ratio(1.0e300) end)
+  end
+
+  test "path edges" do
+    assert(Path.safe_relative("/abs") == none)
+    assert(Path.safe_relative("a/..") == some(""))
+    assert(not String.starts_with?(Path.expand("~/x"), "~") and String.ends_with?(Path.expand("~/x"), "x"))
+  end
+
+  test "durations, versions and URIs" do
+    assert(Duration.from_iso8601("P1W") == ok(Duration.new!([week: 1])))
+    assert(Duration.from_iso8601("PT1W") != ok(Duration.new!([])))
+    assert(Duration.from_iso8601("P") != ok(Duration.new!([])))
+    assert(Duration.from_iso8601("P1") != ok(Duration.new!([])))
+    assert(Duration.from_iso8601("PT") != ok(Duration.new!([])))
+    assert(Duration.from_iso8601("P1.5.5D") != ok(Duration.new!([])))
+    assert(Version.compare("1.0.0", "1.0.0-rc1") == :gt)
+    assert(Version.compare("1.0.0-rc.2", "1.0.0-rc.1") == :gt)
+    assert(Version.compare("1.0.0-rc.a", "1.0.0-rc.1") == :gt)
+    assert(Version.compare("1.0.0-rc.1.1", "1.0.0-rc.1") == :gt)
+    assert_raise("", fn -> Version.match?("1.0.0", "~> x") end)
+    assert_raise("", fn -> Version.match?("1.0.0", ">= 1.0.0 and") end)
+    assert_raise("", fn -> Version.match?("1.0.0", "== 1.x") end)
+    ok(secure) = URI.new("https://host/")
+    assert(secure.port == some(443))
+    ok(files) = URI.new("ftp://host/")
+    assert(files.port == some(21))
+    ok(opaque) = URI.new("mailto:a@b")
+    assert(opaque.path == "a@b")
+    full = URI.parse("http://user@[::1]:8080/p?q=1#frag")
+    assert(URI.to_string(full) == "http://user@[::1]:8080/p?q=1#frag")
+  end
+end

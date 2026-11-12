@@ -1,0 +1,80 @@
+defmodule MapSharing do
+  def record(counts: map[integer,integer], n: integer): map[integer,integer] do
+    return put(counts, n, n * 2)
+  end
+
+  def drop_even(counts: map[integer,integer], n: integer): map[integer,integer] do
+    if n % 2 == 0 do
+      return Map.delete(counts, n)
+    end
+    return counts
+  end
+
+  def worker(self: pid[tuple[pid[map[string,integer]],map[string,integer],string]]): integer do
+    {ok, {reply, base, name}} = Process.receive(self, 5000)
+    assert(ok)
+    assert(Process.send(reply, put(base, name, 1), 5000))
+    return 0
+  end
+
+  def main() do
+    base = %{"a" => 1, "b" => 2}
+    left = put(base, "c", 3)
+    right = put(base, "c", 30)
+    changed = put(base, "a", 10)
+    removed = Map.delete(base, "a")
+    assert(base == %{"a" => 1, "b" => 2})
+    assert(length(base) == 2)
+    assert(left["c"] == 3 and right["c"] == 30)
+    assert(changed["a"] == 10 and base["a"] == 1)
+    assert(not has_key(removed, "a") and has_key(base, "a"))
+    assert(Map.delete(base, "missing") == base)
+    assert(left != right)
+    assert(put(removed, "a", 1) == base)
+
+    numbers = List.range(1, 5000)
+    big = numbers |> reduce(%{}, &record)
+    assert(length(big) == 5000)
+    assert(big[1] == 2 and big[5000] == 10000)
+    assert(get(big, 5001, -1) == -1)
+    odd = numbers |> reduce(big, &drop_even)
+    assert(length(odd) == 2500)
+    assert(has_key(odd, 4999) and not has_key(odd, 5000))
+    assert(length(big) == 5000 and has_key(big, 5000))
+    assert(Map.keys(odd)[0] == 1 and Map.keys(odd)[2499] == 4999)
+    assert(Map.values(%{3 => "c", 1 => "a", 2 => "b"}) == ["a", "b", "c"])
+    assert(Map.entries(%{true => 1, false => 0}) == [{false, 0}, {true, 1}])
+
+    merged = Map.merge(%{"a" => 1, "b" => 2}, %{"b" => 20, "c" => 30})
+    assert(merged == %{"c" => 30, "b" => 20, "a" => 1})
+    key = "k"
+    assert(%{key => 1, "k" => 2} == %{"k" => 2})
+    nested = %{"xs" => [1, 2], "ys" => []}
+    assert(nested == %{"ys" => [], "xs" => [1, 2]})
+    assert(nested != %{"ys" => [], "xs" => [2, 1]})
+    assert(put(nested, "ys", [3])["ys"] == [3] and nested["ys"] == [])
+    assert(List.contains([%{"a" => 1}], %{"a" => 1}))
+    empty: map[string,integer] = %{}
+    assert(length(empty) == 0 and empty == Map.delete(%{"a" => 1}, "a"))
+    case merged do
+      %{"a" => 1, "b" => second} ->
+        assert(second == 20)
+      _ ->
+        assert(false)
+    end
+    %{"c" => third} = merged
+    assert(third == 30)
+
+    me: pid[map[string,integer]] = Process.self(4)
+    first = Process.spawn(&worker, 1)
+    second_worker = Process.spawn(&worker, 1)
+    assert(Process.send(first, {me, merged, "first"}, 5000))
+    assert(Process.send(second_worker, {me, merged, "second"}, 5000))
+    {got_a, a} = Process.receive(me, 5000)
+    {got_b, b} = Process.receive(me, 5000)
+    assert(got_a and got_b)
+    assert(length(a) == 4 and length(b) == 4 and a != b)
+    assert(length(merged) == 3)
+    IO.puts("maps shared safely")
+  end
+end

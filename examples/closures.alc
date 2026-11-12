@@ -1,0 +1,17 @@
+defmodule Closures do
+  def adder(offset: integer): fn[integer, integer] do
+    return fn(value: integer): integer do
+      return value + offset
+    end
+  end
+
+  def main() do
+    factor = 3
+    values = [1, 2] |> map(fn(n: integer): integer do
+      return n * factor
+    end)
+    assert(values == [3, 6])
+    assert(adder(2)(3) == 5)
+    IO.puts("closures ready")
+  end
+end

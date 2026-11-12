@@ -1,0 +1,38 @@
+defmodule ParityMore do
+  def sigil_p(text: string, modifiers: string): list[string] do
+    parts = String.split(text, "/")
+    if (modifiers == "r") do
+      Enum.reverse(parts)
+    else
+      parts
+    end
+  end
+
+  def main() do
+    count = 0
+    unless (count > 0) do
+      IO.puts("empty")
+    end
+    label = unless (count == 0) do
+      "some"
+    else
+      "none"
+    end
+    IO.puts(label)
+    IO.puts(inspect(~c(hé!)))
+    name = "usr"
+    IO.puts(inspect(~p(#{name}/local/bin)r))
+    # Durations, shifting and time zones.
+    IO.puts("#{Date.to_string(Date.shift(~D[2026-01-31], Duration.months(1)))} #{Duration.to_iso8601(Duration.add(Duration.years(1), Duration.minutes(90)))}")
+    paris = DateTime.shift_zone!(~U[2026-03-28T11:00:00Z], "Europe/Paris")
+    IO.puts("#{DateTime.to_string(paris)} | #{DateTime.to_iso8601(DateTime.shift(paris, Duration.days(1)))} | #{DateTime.compare(paris, ~U[2026-03-28T11:00:00Z])}")
+    # Addresses, versions and command-line switches.
+    uri = URI.parse("https://example.com:8443/a?b=1")
+    IO.puts("#{inspect(uri.host)} #{inspect(uri.port)} #{URI.to_string(uri)} #{Version.match?("2.3.1", "~> 2.1")}")
+    {options, rest, invalid} = OptionParser.parse(["--jobs=4", "-v", "file", "--nope"], %{"jobs" => "integer", "verbose" => "boolean"}, %{"v" => "verbose"})
+    IO.puts("#{inspect(options)} #{inspect(rest)} #{inspect(invalid)}")
+    Logger.configure("error")
+    Logger.info("not written")
+    IO.puts(Logger.level())
+  end
+end

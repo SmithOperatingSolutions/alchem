@@ -1,0 +1,26 @@
+defmodule Main do
+  def main() do
+    IO.inspect(Version.parse("1.0.0-rc.1+build5"))
+    v = Version.parse!("2.3.1")
+    IO.inspect({v.major, Version.to_string(v), Version.compare(v, Version.parse!("2.10.0"))})
+    IO.inspect(Version.match?(v, "~> 2.1"))
+    ok(req) = Version.parse_requirement("~> 2.0")
+    IO.inspect(Version.match?("2.5.0", req))
+    IO.inspect(Version.parse_requirement("nonsense"))
+    IO.inspect(Version.match?("2.1.0-rc.1", "~> 2.0", [allow_pre: false]))
+    IO.inspect(Version.match?("2.1.0-rc.1", "~> 2.0", [allow_pre: true]))
+    IO.inspect(URI.to_string(URI.merge("http://a.com/x/y", "../z?q=1")))
+    u = URI.parse("http://a.com/api?x=1")
+    IO.inspect(URI.to_string(URI.append_query(URI.append_path(u, "/v1"), "y=2")))
+    IO.inspect(%Version{major: 1, minor: 2, patch: 3})
+    IO.inspect(Date.range(~D[2026-01-30], ~D[2026-02-02]) |> Enum.to_list())
+    IO.inspect(Enum.count(Date.range(~D[2026-01-01], ~D[2026-01-31], 7)))
+    IO.inspect(Date.day_of_week(~D[2026-11-15], :sunday))
+    IO.inspect(Date.beginning_of_week(~D[2026-11-12], :sunday))
+    IO.inspect(Date.week_of_year(~D[2026-01-01]))
+    IO.inspect(NaiveDateTime.add(~N[2026-01-01 00:00:00], 90, :minute))
+    IO.inspect(DateTime.diff(~U[2026-01-02T00:00:00Z], ~U[2026-01-01T00:00:00Z], :hour))
+    IO.inspect(Time.truncate(~T[10:00:00.123456], :millisecond))
+    IO.inspect(Duration.new!([hour: 2, minute: 30]))
+  end
+end

@@ -1,0 +1,7 @@
+{200, "hello GET"}
+{201, "payload", some("yes")}
+"{\"ok\":true}"
+500
+404
+true
+down

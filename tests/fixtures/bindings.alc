@@ -1,0 +1,13 @@
+defmodule Bindings do
+ def main() do
+  count = -2
+  copied = count
+  text = "first"
+  ready = true
+  unused = 4
+  IO.puts(text)
+  assert(copied < 0)
+  assert(ready)
+  IO.puts("second")
+ end
+end

@@ -1,0 +1,44 @@
+defmodule NumbersBench do
+  import "bench.alc"
+
+  def parsed(text: string): integer do
+    case Integer.parse(text) do
+      ok(value) -> value
+      error(_) -> 0
+    end
+  end
+
+  def parsed_float(text: string): float do
+    case Float.parse(text) do
+      ok(value) -> value
+      error(_) -> 0.0
+    end
+  end
+
+  def main() do
+    n = 200000
+    integers = Enum.map(1..n, fn i -> i * 7919 end)
+    decimal = Enum.map(integers, &Integer.to_string(&1))
+    hex = Enum.map(integers, &Integer.to_string(&1, 16))
+    floats = Enum.map(1..n, fn i -> Float.from_integer(i) * 0.37 end)
+    float_text = Enum.map(floats, &Float.to_string(&1))
+
+    Bench.run("integer.to_string 200k", fn -> Enum.reduce(integers, 0, fn x, acc -> acc + byte_size(Integer.to_string(x)) end) end)
+    Bench.run("integer.to_string base 16 200k", fn -> Enum.reduce(integers, 0, fn x, acc -> acc + byte_size(Integer.to_string(x, 16)) end) end)
+    Bench.run("integer.parse 200k", fn -> Enum.reduce(decimal, 0, fn text, acc -> acc + parsed(text) end) end)
+    Bench.run("string.to_integer 200k", fn -> Enum.reduce(decimal, 0, fn text, acc -> acc + String.to_integer(text) end) end)
+    Bench.run("string.to_integer base 16 200k", fn -> Enum.reduce(hex, 0, fn text, acc -> acc + String.to_integer(text, 16) end) end)
+    Bench.run("float.to_string 200k", fn -> Enum.reduce(floats, 0, fn x, acc -> acc + byte_size(Float.to_string(x)) end) end)
+    Bench.run("float.parse 200k", fn -> round(Enum.reduce(float_text, 0.0, fn text, acc -> acc + parsed_float(text) end)) end)
+    Bench.run("string.to_float 200k", fn -> round(Enum.reduce(float_text, 0.0, fn text, acc -> acc + String.to_float(text) end)) end)
+    Bench.run("float.round 2 places 200k", fn -> round(Enum.reduce(floats, 0.0, fn x, acc -> acc + Float.round(x, 2) end)) end)
+    Bench.run("float.floor and ceil 200k", fn -> round(Enum.reduce(floats, 0.0, fn x, acc -> acc + Float.floor(x, 1) + Float.ceil(x, 1) end)) end)
+    Bench.run("round and trunc 1M", fn -> Enum.reduce(1..1000000, 0, fn i, acc -> acc + round(Float.from_integer(i) * 0.37) + trunc(Float.from_integer(i) * 0.73) end) end)
+    Bench.run("float arithmetic 1M", fn -> round(Enum.reduce(1..1000000, 0.0, fn i, acc -> acc + Float.from_integer(i) * 0.5 / (Float.from_integer(i) + 1.0) end)) end)
+    Bench.run("integer arithmetic 5M", fn -> Enum.reduce(1..5000000, 7, fn i, acc -> rem(acc * 31 + i, 1000000007) end) end)
+    Bench.run("integer.digits and undigits 200k", fn -> Enum.reduce(integers, 0, fn x, acc -> acc + Integer.undigits(Integer.digits(x)) end) end)
+    Bench.run("integer.gcd 1M", fn -> Enum.reduce(1..1000000, 0, fn i, acc -> acc + Integer.gcd(i * 7919, 1000003 - i) end) end)
+    Bench.run("integer.pow 1M", fn -> Enum.reduce(1..1000000, 0, fn i, acc -> acc + Integer.pow(rem(i, 10) + 2, 10) end) end)
+    Bench.run("bitwise mix 1M", fn -> Enum.reduce(1..1000000, 0, fn i, acc -> Bitwise.band(Bitwise.bxor(acc, Bitwise.bsl(i, 3)) + Bitwise.bsr(i, 2), 1073741823) end) end)
+  end
+end

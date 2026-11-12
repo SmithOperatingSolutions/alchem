@@ -1,0 +1,5 @@
+defmodule HelloTest do
+  def main() do
+    assert(true)
+  end
+end

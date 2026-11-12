@@ -1,0 +1,25 @@
+defmodule ClusterServer do
+  def victim(self: pid[string]): integer do
+    case Process.receive(self, 30000) do
+      {true, "crash"} -> raise("victim crashed")
+      _ -> 0
+    end
+  end
+
+  def main() do
+    ok(_) = Node.start("server", "127.0.0.1:0", "cluster secret")
+    Node.serve(:square, fn(n: integer): integer do n * n end)
+    Node.serve(:fail, fn(n: integer): integer do div(n, 0) end)
+    target: pid[string] = Process.spawn(fn(self: pid[string]): integer do victim(self) end, 4)
+    Process.register(target, :victim)
+    Node.serve(:crash, fn(_: integer): boolean do Process.send(target, "crash", 1000) end)
+    worker: pid[string] = Process.spawn(fn(self: pid[string]): integer do
+      Process.receive(self, 30000)
+      0
+    end, 4)
+    IO.inspect(Node.register_global(worker, :worker))
+    IO.puts(Node.address())
+    # The server runs until its input closes.
+    IO.read(:eof)
+  end
+end

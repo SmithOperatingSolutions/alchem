@@ -1,0 +1,40 @@
+defmodule Spawn do
+  def worker(self: pid[integer]): integer do
+    {ok, _} = Process.receive(self, -1)
+    assert(ok)
+    return 0
+  end
+
+  def start(index: integer): pid[integer] do
+    return Process.spawn(&worker, 1)
+  end
+
+  def release(target: pid[integer]): boolean do
+    return Process.send(target, 1, -1)
+  end
+
+  def join(target: pid[integer]): boolean do
+    {done, reason} = Process.await(target, -1)
+    return (done and (reason == "normal"))
+  end
+
+  def both(all: boolean, one: boolean): boolean do
+    return (all and one)
+  end
+
+  def phase(name: string, since: integer): integer do
+    now = System.monotonic_time(:microsecond)
+    IO.puts(:stderr, "phase " <> name <> " " <> to_string(now - since))
+    return now
+  end
+
+  def main() do
+    started = System.monotonic_time(:microsecond)
+    pids = (List.range(1, 100000) |> map(&start))
+    spawned = phase("spawn", started)
+    assert(((pids |> map(&release)) |> reduce(true, &both)))
+    assert(((pids |> map(&join)) |> reduce(true, &both)))
+    phase("release and join", spawned)
+    IO.puts("spawned 100000")
+  end
+end

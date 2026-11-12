@@ -1,0 +1,18 @@
+defmodule Collections do
+  def total(xs: list[integer]): integer do
+    case xs do
+      [] ->
+        return 0
+      [head | tail] ->
+        return head + total(tail)
+    end
+  end
+
+  def main() do
+    {label, items} = {"collections ready", [1, 2, 3]}
+    assert(items |> total() == 6)
+    assert(items[0] == 1)
+    assert(items == [1, 2, 3])
+    IO.puts(label)
+  end
+end

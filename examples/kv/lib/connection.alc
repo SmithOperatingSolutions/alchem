@@ -1,0 +1,163 @@
+defmodule Connection do
+  @moduledoc """
+  One client connection, served by a process of its own: it reads request
+  lines, runs them and writes the replies. After SUBSCRIBE it also forwards
+  the messages published to its channels, which arrive in its mailbox.
+  """
+  import "protocol.alc"
+  import "glob.alc"
+  import "store.alc"
+  import "log.alc"
+  import "database.alc"
+
+  type Notice do
+    published(channel: string, text: string)
+  end
+
+  # What every connection shares.
+  struct Shared do
+    database: server[Database.Request, Protocol.Reply]
+    channels: registry[string, pid[Notice]]
+    started: integer
+  end
+
+  struct Session do
+    subscribed: list[string]
+    open: boolean
+    commands: integer
+  end
+
+  @doc """
+  Serves a connection until the client quits or goes away.
+  """
+  def serve(shared: Shared, client: socket, self: pid[Notice]): integer do
+    start = %Session{subscribed: [], open: true, commands: 0}
+    Process.loop(start, fn(session: Session): tuple[boolean, Session] do
+      next = step(shared, client, self, session)
+      {next.open, next}
+    end)
+    TCP.close(client)
+    0
+  end
+
+  defp step(shared: Shared, client: socket, self: pid[Notice], session: Session): Session do
+    # A subscriber waits for a line only briefly, so that it gets back to
+    # its mailbox; any other connection waits as long as the client takes.
+    wait = if session.subscribed == [] do
+      -1
+    else
+      forward(client, self)
+      100
+    end
+    case TCP.recv_line(client, wait) do
+      ok(line) when String.trim(line) == "" -> session
+      ok(line) ->
+        answer(shared, client, self, %Session{session | commands: session.commands + 1}, line)
+      error("timeout") -> session
+      error(_) -> %Session{session | open: false}
+    end
+  end
+
+  # forward writes out the messages waiting in the mailbox.
+  defp forward(client: socket, self: pid[Notice]): boolean do
+    case Process.receive(self, 0) do
+      {true, Notice.published(channel, text)} ->
+        message = Protocol.Reply.many([Protocol.Reply.text("message"), Protocol.Reply.text(channel), Protocol.Reply.text(text)])
+        TCP.send(client, Protocol.render(message))
+        forward(client, self)
+      {false, _} -> true
+    end
+  end
+
+  defp answer(shared: Shared, client: socket, self: pid[Notice], session: Session, line: string): Session do
+    {reply, next} = case Protocol.parse(line) do
+      error(message) -> {Protocol.Reply.failure(message), session}
+      ok(command) -> run(shared, self, session, command)
+    end
+    case TCP.send(client, Protocol.render(reply)) do
+      ok(_) -> next
+      error(_) -> %Session{next | open: false}
+    end
+  end
+
+  defp run(shared: Shared, self: pid[Notice], session: Session, command: Protocol.Command): tuple[Protocol.Reply, Session] do
+    case command do
+      Protocol.Command.quit -> {Protocol.Reply.ok, %Session{session | open: false}}
+      Protocol.Command.subscribe(channels) -> subscribe(shared, self, session, channels)
+      Protocol.Command.unsubscribe(channels) -> unsubscribe(shared, session, channels)
+      Protocol.Command.publish(channel, text) -> {publish(shared, channel, text), session}
+      Protocol.Command.rewrite -> {Database.rewrite(shared.database), session}
+      Protocol.Command.info -> {Protocol.Reply.text(info(shared)), session}
+      _ when session.subscribed != [] ->
+        {Protocol.Reply.failure("only SUBSCRIBE, UNSUBSCRIBE, PUBLISH, PING and QUIT are allowed while subscribed"), session}
+      _ -> {Database.run(shared.database, command), session}
+    end
+  end
+
+  defp subscribe(shared: Shared, self: pid[Notice], session: Session, channels: list[string]): tuple[Protocol.Reply, Session] do
+    added = Enum.reject(Enum.uniq(channels), fn channel -> Enum.member?(session.subscribed, channel) end)
+    for channel <- added do
+      Registry.register(shared.channels, channel, self)
+    end
+    subscribed = session.subscribed ++ added
+    replies = channels
+    |> Enum.with_index(1)
+    |> Enum.map(fn {channel, i} ->
+      counted = min(length(session.subscribed) + i, length(subscribed))
+      Protocol.Reply.many([
+        Protocol.Reply.text("subscribe"),
+        Protocol.Reply.text(channel),
+        Protocol.Reply.number(counted)
+      ])
+    end)
+    {Protocol.Reply.many(replies), %Session{session | subscribed: subscribed}}
+  end
+
+  defp unsubscribe(shared: Shared, session: Session, channels: list[string]): tuple[Protocol.Reply, Session] do
+    leaving = if channels == [] do
+      session.subscribed
+    else
+      channels
+    end
+    for channel <- leaving do
+      Registry.unregister(shared.channels, channel)
+    end
+    remaining = Enum.reject(session.subscribed, fn channel -> Enum.member?(leaving, channel) end)
+    replies = Enum.map(leaving, fn channel ->
+      Protocol.Reply.many([
+        Protocol.Reply.text("unsubscribe"),
+        Protocol.Reply.text(channel),
+        Protocol.Reply.number(length(remaining))
+      ])
+    end)
+    {Protocol.Reply.many(replies), %Session{session | subscribed: remaining}}
+  end
+
+  @doc """
+  Sends a message to every subscriber of a channel and replies with how
+  many there were.
+  """
+  def publish(shared: Shared, channel: string, text: string): Protocol.Reply do
+    subscribers = Registry.lookup(shared.channels, channel)
+    delivered = Enum.count(subscribers, fn subscriber ->
+      Process.send(subscriber, Notice.published(channel, text), 100)
+    end)
+    Protocol.Reply.number(delivered)
+  end
+
+  @doc """
+  A short report of the server's state, one name: value per line.
+  """
+  def info(shared: Shared): string do
+    stats = Database.stats(shared.database)
+    lines = [
+      "keys: " <> to_string(stats.keys),
+      "hits: " <> to_string(stats.hits),
+      "misses: " <> to_string(stats.misses),
+      "commands: " <> to_string(stats.commands),
+      "subscriptions: " <> to_string(Registry.count(shared.channels)),
+      "uptime_ms: " <> to_string(Time.now() - shared.started)
+    ]
+    Enum.join(lines, "\n")
+  end
+end

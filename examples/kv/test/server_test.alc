@@ -1,0 +1,112 @@
+defmodule ServerTest do
+  import "../lib/protocol.alc"
+  import "../lib/glob.alc"
+  import "../lib/store.alc"
+  import "../lib/log.alc"
+  import "../lib/database.alc"
+  import "../lib/connection.alc"
+  import "../lib/web.alc"
+  import "../lib/kv.alc"
+
+  setup do
+    path = System.tmp_dir!() <> "/kv-server-test-" <> System.pid() <> "-" <> to_string(Time.monotonic()) <> ".log"
+    on_exit(fn -> File.rm(path) end)
+    ok(running) = KV.start("127.0.0.1:0", "127.0.0.1:0", path)
+    on_exit(fn -> KV.stop(running) end)
+    {running, path}
+  end
+
+  def connect(running: KV.Running): socket do
+    ok(connection) = TCP.connect(running.address, 1000)
+    connection
+  end
+
+  def ask(connection: socket, line: string): Protocol.Reply do
+    TCP.send(connection, line <> "\n")
+    ok(reply) = Protocol.read_reply(fn -> TCP.recv_line(connection, 2000) end)
+    reply
+  end
+
+  def text(value: string): Protocol.Reply do
+    Protocol.Reply.text(value)
+  end
+
+  test "commands over a connection", {running, _} do
+    c = connect(running)
+    assert(ask(c, "PING") == text("PONG"))
+    assert(ask(c, "SET name \"Ada Lovelace\"") == Protocol.Reply.ok)
+    assert(ask(c, "GET name") == text("Ada Lovelace"))
+    assert(ask(c, "RPUSH jobs build test ship") == Protocol.Reply.number(3))
+    assert(ask(c, "LRANGE jobs 1 -1") == Protocol.Reply.many([text("test"), text("ship")]))
+    assert(ask(c, "BOGUS") == Protocol.Reply.failure("unknown command BOGUS"))
+    assert(ask(c, "QUIT") == Protocol.Reply.ok)
+    assert(TCP.recv_line(c, 1000) == error("closed"))
+  end
+
+  test "many clients at once see one store", {running, _} do
+    tasks = Enum.map(1..20, fn n ->
+      Task.async(fn ->
+        c = connect(running)
+        for _ <- 1..10 do
+          ask(c, "INCR counter")
+        end
+        ask(c, "SET client:" <> to_string(n) <> " done")
+      end)
+    end)
+    Task.await_many(tasks, 10000)
+    c = connect(running)
+    assert(ask(c, "GET counter") == text("200"))
+    assert(ask(c, "DBSIZE") == Protocol.Reply.number(21))
+  end
+
+  test "published messages reach subscribers", {running, _} do
+    listener = connect(running)
+    subscribed = Protocol.Reply.many([Protocol.Reply.many([text("subscribe"), text("news"), Protocol.Reply.number(1)])])
+    assert(ask(listener, "SUBSCRIBE news") == subscribed)
+    assert(ask(listener, "GET x") == Protocol.Reply.failure("only SUBSCRIBE, UNSUBSCRIBE, PUBLISH, PING and QUIT are allowed while subscribed"))
+    publisher = connect(running)
+    assert(ask(publisher, "PUBLISH news hello") == Protocol.Reply.number(1))
+    assert(ask(publisher, "PUBLISH elsewhere hello") == Protocol.Reply.number(0))
+    ok(message) = Protocol.read_reply(fn -> TCP.recv_line(listener, 2000) end)
+    assert(message == Protocol.Reply.many([text("message"), text("news"), text("hello")]))
+    # A subscriber that goes away stops being counted.
+    TCP.close(listener)
+    Process.sleep(300)
+    assert(ask(publisher, "PUBLISH news again") == Protocol.Reply.number(0))
+  end
+
+  test "the HTTP side reports and serves keys", {running, _} do
+    c = connect(running)
+    ask(c, "SET colour blue")
+    base = "http://" <> running.web_address
+    ok(health) = HTTP.get(base <> "/health")
+    assert(health.body == "ok")
+    ok(value) = HTTP.get(base <> "/key/colour")
+    assert(JSON.decode(value.body) == ok(JSON.object(%{"key" => JSON.string("colour"), "value" => JSON.string("blue")})))
+    ok(missing) = HTTP.get(base <> "/key/nothing")
+    assert(missing.status == 404)
+    ok(stats) = HTTP.get(base <> "/stats")
+    case JSON.decode(stats.body) do
+      ok(JSON.object(fields)) ->
+        assert(Map.get(fields, "keys") == some(JSON.integer(1)))
+        assert(Map.get(fields, "connections") == some(JSON.integer(1)))
+      _ -> flunk("stats are not a JSON object")
+    end
+  end
+
+  test "data survives a restart", {running, path} do
+    c = connect(running)
+    ask(c, "SET kept yes")
+    ask(c, "SET brief no EX 600")
+    KV.stop(running)
+    ok(again) = KV.start("127.0.0.1:0", "127.0.0.1:0", path)
+    d = connect(again)
+    assert(ask(d, "GET kept") == text("yes"))
+    case ask(d, "TTL brief") do
+      Protocol.Reply.number(left) ->
+        assert(left > 590 and left <= 600)
+      other -> flunk("TTL replied " <> Protocol.show(other))
+    end
+    KV.stop(again)
+  end
+end

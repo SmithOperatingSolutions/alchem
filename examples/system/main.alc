@@ -1,0 +1,16 @@
+defmodule SystemExample do
+  import "workers.alc"
+
+  def main() do
+    parent: pid[string] = Process.self(8)
+    specs = [{"echo", "permanent", &Workers.run}]
+    supervisor = Supervisor.start("one_for_one", 3, 1000, specs, 8)
+    worker = Supervisor.child(supervisor, "echo")
+    assert(Process.send(worker, {parent, "hello"}, 1000))
+    {received, text} = Process.receive(parent, 2000)
+    assert(received and text == "hello")
+    assert(Supervisor.stop(supervisor, 2000))
+    assert(not Process.alive(worker))
+    IO.puts("system ready")
+  end
+end

@@ -1,0 +1,65 @@
+defmodule Language do
+ def factorial(n: integer): integer do
+  if n <= 1 do
+   return 1
+  else
+   return n * factorial(n-1)
+  end
+ end
+ def label(ready: boolean): string do
+  if ready do
+   return "ready"
+  else
+   return "waiting"
+  end
+ end
+ def mark(text: string, value: integer): integer do
+  IO.puts(text)
+  return value
+ end
+ def sum(a: integer, b: integer): integer do return a+b end
+ def positive(n: integer): boolean do return n>0 end
+ def main() do
+  count = 2+3*4
+  ready = count > 0 and not false
+  assert(count == 14)
+  assert((2+3)*4 == 20)
+  assert(20/3 == 6)
+  assert(-20/3 == -6)
+  assert(-20%3 == -2)
+  assert(factorial(5) == 120)
+  assert(forward(3) == 6)
+  assert(false and 1/0 == 1 or true)
+  assert(true or 1/0 == 1)
+  if ready do
+   local = label(ready)
+   IO.puts(local)
+   if count == 14 do IO.puts("nested") else IO.puts("bad") end
+  else
+   IO.puts("bad")
+  end
+  if false do IO.puts("bad") end
+  assert(label(false) == "waiting")
+  assert(positive(4))
+  assert(not positive(-1))
+  assert(sum(mark("left",1),mark("right",2)) == 3)
+  assert(10-3-2 == 5)
+  assert(20/2/2 == 5)
+  assert(-9223372036854775808 % -1 == 0)
+  assert(-9223372036854775808 * 1 == -9223372036854775808)
+  assert(9223372036854775807 * 0 == 0)
+  assert(-2 * -3 == 6)
+  assert(not (1 == 2) and true)
+  if false do
+   local = "bad"
+   IO.puts(local)
+  else
+   local = "else"
+   IO.puts(local)
+  end
+  IO.puts("done")
+ end
+ def forward(x: integer): integer do
+  return x*2
+ end
+end

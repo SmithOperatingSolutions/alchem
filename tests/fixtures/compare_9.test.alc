@@ -1,0 +1,1 @@
+defmodule Check do def main() do assert(9223372036854775807 > -9223372036854775808) end end

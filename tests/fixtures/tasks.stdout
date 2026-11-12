@@ -1,0 +1,17 @@
+{true, "linked: task broke"}
+yield: task broke
+{true, "normal"}
+some(error("task broke"))
+42
+1
+true
+[]
+error("max_children")
+5
+8
+11
+11
+22
+20
+none
+{true, "no agent named :nobody with this state type is running"}

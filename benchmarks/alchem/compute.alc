@@ -1,0 +1,32 @@
+defmodule Compute do
+  def fib(n: integer): integer do
+    if (n < 2) do
+      return n
+    end
+    return (fib((n - 1)) + fib((n - 2)))
+  end
+
+  def add(total: integer, n: integer): integer do
+    return (total + n)
+  end
+
+  def square(n: integer): integer do
+    return (n * n)
+  end
+
+  def phase(name: string, since: integer): integer do
+    now = System.monotonic_time(:microsecond)
+    IO.puts(:stderr, "phase " <> name <> " " <> to_string(now - since))
+    return now
+  end
+
+  def main() do
+    started = System.monotonic_time(:microsecond)
+    assert((fib(32) == 2178309))
+    recursed = phase("fib", started)
+    total = ((List.range(1, 1000000) |> map(&square)) |> reduce(0, &add))
+    assert((total == 333333833333500000))
+    phase("squares", recursed)
+    IO.puts("computed")
+  end
+end

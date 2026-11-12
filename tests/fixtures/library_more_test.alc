@@ -1,0 +1,215 @@
+defmodule LibraryMoreTest do
+  @moduletag area: "library edges"
+
+  test "ports in each mode" do
+    me: pid[PortEvent] = Process.self(64)
+    ok(lines) = Port.open("cat", [], me, [mode: :line, stderr: :merge])
+    Port.command(lines, "a\nb\n")
+    Port.close(lines)
+    assert_receive(me, PortEvent.data("a"), 5000)
+    assert_receive(me, PortEvent.data("b"), 5000)
+    assert_receive(me, PortEvent.exit(0), 5000)
+    assert(not Port.command(lines, "late"))
+    assert(not Port.close(lines))
+    assert(Port.info(lines) == none)
+    ok(quiet) = Port.open("cat", [], me, [stderr: :discard])
+    Port.close(quiet)
+    assert_receive(me, PortEvent.exit(_), 5000)
+    ok(inherited) = Port.open("cat", [], me, [stderr: :inherit])
+    Port.close(inherited)
+    assert_receive(me, PortEvent.exit(_), 5000)
+    ok(framed) = Port.open("cat", [], me, [packet: 1])
+    assert(not Port.command(framed, String.duplicate("x", 300)))
+    assert(Port.command(framed, "ok"))
+    Port.close(framed)
+    assert_receive(me, PortEvent.data("ok"), 5000)
+    assert_receive(me, PortEvent.exit(_), 5000)
+    assert_raise("Port.open takes packet", fn -> Port.open("cat", [], me, [packet: 3]) end)
+    assert_raise("Port.open takes mode", fn -> Port.open("cat", [], me, [mode: :chunks]) end)
+    case Port.open("alchem-no-such-program", [], me, [mode: :binary]) do
+      ok(_) -> flunk("a missing program started")
+      error(_) -> assert(true)
+    end
+    case Port.open("alchem-no-such-program", [], me, [packet: 2]) do
+      ok(_) -> flunk("a missing program started")
+      error(_) -> assert(true)
+    end
+  end
+
+  test "strftime widths and padding" do
+    moment = ~N[2026-03-04 05:06:07.123456]
+    assert(Calendar.strftime(moment, "%-d %-m %_H %0M") == "4 3  5 06")
+    assert(Calendar.strftime(moment, "%10Y") == "0000002026")
+    assert_raise("ends in the middle", fn -> Calendar.strftime(moment, "%") end)
+    assert_raise("ends in the middle", fn -> Calendar.strftime(moment, "%-") end)
+    assert(Calendar.strftime(~T[13:00:00], "%I %p %P") == "01 PM pm")
+    assert(Calendar.strftime(~U[2026-01-01T00:00:00Z], "%z %Z %c %x %X %u %q") != "")
+  end
+
+  test "rounding to a precision" do
+    assert(Float.round(2.675, 2) == 2.67)
+    assert(Float.round(-2.5, 0) == -3.0)
+    assert(Float.round(123456789012345.6789, 3) == 123456789012345.67)
+    assert(Float.round(1.0e300, 2) == 1.0e300)
+    assert(Float.round(0.0001, 2) == 0.0)
+    assert_raise("precision", fn -> Float.round(1.0, 20) end)
+  end
+
+  test "list functions over other enumerables" do
+    numbers = Stream.map(1..4, fn n -> n end)
+    assert(List.delete(numbers, 3) == [1, 2, 4])
+    assert(List.delete(numbers, 9) == [1, 2, 3, 4])
+    assert(List.delete_at(numbers, 0) == [2, 3, 4])
+    assert(List.delete_at(numbers, 10) == [1, 2, 3, 4])
+    assert(List.insert_at(numbers, -1, 5) == [1, 2, 3, 4, 5])
+    assert(List.insert_at(numbers, -10, 0) == [0, 1, 2, 3, 4])
+    assert(List.replace_at(numbers, 1, 0) == [1, 0, 3, 4])
+    assert(List.update_at(numbers, 3, fn n -> n * 2 end) == [1, 2, 3, 8])
+    assert(List.replace_at(numbers, -9, 0) == [1, 2, 3, 4])
+    assert(["a", "b", "a"] -- ["a"] == ["b", "a"])
+    assert([1.5, 2.5] -- [2.5] == [1.5])
+    assert([1, 2] -- [] == [1, 2])
+    assert(Enum.sort([["b"], ["a", "c"], ["a"]]) == [["a"], ["a", "c"], ["b"]])
+    assert(Enum.sort([true, false]) == [false, true])
+    assert(Enum.sort(["b", "a"]) == ["a", "b"])
+    assert(Stream.uniq_by(Stream.map(1..6, fn n -> n end), fn n -> rem(n, 3) end) |> Enum.take(2) == [1, 2])
+    assert(Stream.concat(Stream.map([[1], [2]], fn l -> l end)) |> Enum.take(1) == [1])
+  end
+
+  test "socket options at their edges" do
+    ok(listener) = TCP.listen("127.0.0.1:0")
+    assert(TCP.recv(listener, 1, 10) == error("not a connected socket"))
+    assert(TCP.recv_line(listener, 10) == error("not a connected socket"))
+    assert(TCP.shutdown(listener, :write) == error("not a connected socket"))
+    assert(TCP.setopts(listener, [active: :once]) == error("not a connected socket"))
+    assert(UDP.setopts(listener, [active: :once]) == error("not a UDP socket"))
+    assert(UDP.setopts(listener, [active: 1]) == error("not a UDP socket"))
+    assert(UDP.recv(listener, 10) == error("not a UDP socket"))
+    assert(UDP.send(listener, "127.0.0.1:1", "x") == error("not a UDP socket"))
+    ok(conn) = TCP.connect(TCP.address(listener), 1000)
+    ok(server_side) = TCP.accept(listener, 1000)
+    assert_raise("nonnegative length", fn -> TCP.recv(conn, -1, 10) end)
+    TCP.setopts(conn, [packet: :line])
+    assert(TCP.recv(conn, 2, 10) == error("a length is only given in raw packet mode"))
+    TCP.send(server_side, "partial")
+    assert(TCP.recv_line(conn, 50) == error("timeout"))
+    TCP.send(server_side, " line\n")
+    assert(TCP.recv_line(conn, 1000) == ok("partial line"))
+    TCP.setopts(conn, [packet: :raw])
+    TCP.send(server_side, "abc")
+    assert(TCP.recv(conn, 5, 50) == error("timeout"))
+    TCP.send(server_side, "de")
+    assert(TCP.recv(conn, 5, 1000) == ok("abcde"))
+    me: pid[TCP.Event] = Process.self(8)
+    TCP.setopts(conn, [active: :true])
+    assert(TCP.recv(conn, 0, 10) == error("the socket is active"))
+    assert(TCP.recv_line(conn, 10) == error("the socket is active"))
+    TCP.setopts(conn, [active: :false])
+    assert(TCP.shutdown(conn, :read) == ok({}))
+    assert_raise("TCP.shutdown takes", fn -> TCP.shutdown(conn, :sideways) end)
+    assert(TCP.shutdown(conn, :read_write) == ok({}))
+    assert(TCP.setopts(conn, [active: :once]) == error("closed"))
+    assert_raise("cannot be :sometimes", fn -> TCP.setopts(server_side, [active: :sometimes]) end)
+    assert_raise("cannot be 3", fn -> TCP.setopts(server_side, [packet: 3]) end)
+    assert_raise("unknown option", fn -> TCP.setopts(server_side, [delay: :none]) end)
+    assert_raise("unknown option", fn -> TCP.setopts(server_side, [delay: 1]) end)
+    assert_raise("TCP.listen: the options", fn -> TCP.listen("127.0.0.1:0", [mode: :list]) end)
+    case TCP.connect(TCP.address(listener), 1000, [active: :once]) do
+      ok(connected) -> TCP.close(connected)
+      error(_) -> flunk("no connection")
+    end
+    ok(datagrams) = UDP.open("127.0.0.1:0")
+    assert_raise("UDP.setopts takes active", fn -> UDP.setopts(datagrams, [mode: :once]) end)
+    assert_raise("UDP.setopts takes active", fn -> UDP.setopts(datagrams, [active: -1]) end)
+    assert(UDP.setopts(datagrams, [active: 0]) == ok({}))
+    assert(UDP.send(datagrams, "not an address", "x") != ok({}))
+    UDP.close(datagrams)
+    assert(UDP.setopts(datagrams, [active: :once]) == error("closed"))
+    me2: pid[integer] = Process.spawn(fn(self: pid[integer]): integer do
+      Process.receive(self, 2000)
+      0
+    end, 1)
+    ok(other) = UDP.open("127.0.0.1:0")
+    UDP.controlling_process(other, me2)
+    assert(UDP.setopts(other, [active: :once]) == error("the controlling process does not take UDP.Event messages"))
+    Process.send(me2, 1, 100)
+    assert(Process.receive(me, 10) == {false, TCP.Event.closed} or true)
+  end
+
+  def failed(r: result[HTTP.Response, string]): boolean do
+    case r do
+      ok(_) -> false
+      error(_) -> true
+    end
+  end
+
+  test "HTTP options and failures" do
+    handler = fn(_: HTTP.Request): HTTP.Response do HTTP.text(200, "ok") end
+    assert_raise("cannot be negative", fn -> HTTP.serve("127.0.0.1:0", handler, [read_timeout: -1]) end)
+    assert_raise("unknown option", fn -> HTTP.serve("127.0.0.1:0", handler, [speed: 1]) end)
+    ok(server) = HTTP.serve("127.0.0.1:0", handler, [read_timeout: 1000, write_timeout: 1000, header_timeout: 1000, max_header_bytes: 4096, keep_alive: 0])
+    address = "http://" <> HTTP.address(server)
+    assert(not failed(HTTP.get(address)))
+    assert_raise("timeout: is a number", fn -> HTTP.request("GET", address, [], "", [timeout: "soon"]) end)
+    assert_raise("unknown option", fn -> HTTP.request("GET", address, [], "", [proxy: "x"]) end)
+    assert(failed(HTTP.request("GET", address, [], "", [ca_file: "/no/such/ca.pem"])))
+    assert(failed(HTTP.request("BAD METHOD", address, [], "", 1000)))
+    assert(failed(HTTP.request("GET", "http://127.0.0.1:1/", [], "", 500)))
+    assert_raise("HTTP.serve_tls: unknown option", fn -> HTTP.serve_tls("127.0.0.1:0", handler, [cert: "x"]) end)
+    case HTTP.serve("not an address", handler) do
+      ok(_) -> flunk("served at no address")
+      error(_) -> assert(true)
+    end
+    HTTP.stop(server)
+  end
+
+  test "option parsing by map and requirements" do
+    {values, rest, invalid} = OptionParser.parse(["--n=3", "--b=maybe", "--s", "--x", "-q", "--f", "nan?", "--n"], %{"n" => "integer", "b" => "boolean", "s" => "string", "f" => "float"})
+    assert(Map.get(values, "n") == some("3"))
+    assert(rest == [])
+    assert(length(invalid) == 4)
+    {counted, _, _} = OptionParser.parse(["-v", "-v", "--no-quiet"], %{"verbose" => "count", "quiet" => "boolean"}, %{"v" => "verbose"})
+    assert(Map.get(counted, "verbose") == some("2"))
+    assert(Map.get(counted, "quiet") == some("false"))
+    assert_raise("invalid requirement", fn -> Version.match?("1.0.0", "") end)
+    assert_raise("invalid requirement", fn -> Version.match?("1.0.0", ">=") end)
+    assert_raise("invalid requirement", fn -> Version.match?("1.0.0", "~> 1.x") end)
+    assert_raise("invalid requirement", fn -> Version.match?("1.0.0", "=< 1.0.0") end)
+    assert_raise("invalid requirement", fn -> Version.match?("1.0.0", "== 1.0") end)
+    assert_raise("invalid version", fn -> Version.compare("1.0.0", "x") end)
+    assert(Version.compare("1.0.1", "1.0.0") == :gt)
+    assert(Version.compare("1.0.0-a.2", "1.0.0-a.10") == :lt)
+    assert(Version.compare("1.0.0-b", "1.0.0-a.1") == :gt)
+    assert(Version.match?("1.4.0", "~> 1.2.3") == false)
+  end
+
+  test "durations from text" do
+    assert(Duration.from_iso8601("P") != ok(Duration.new!([])))
+    assert(Duration.from_iso8601("PT") != ok(Duration.new!([])))
+    assert(Duration.from_iso8601("P1H") != ok(Duration.new!([])))
+    assert(Duration.from_iso8601("PT1.5.5S") != ok(Duration.new!([])))
+    assert(Duration.from_iso8601("P-1D") == ok(Duration.new!([day: -1])))
+    assert(Duration.from_iso8601("PT-0.5S") == ok(Duration.new!([microsecond: -500000])))
+    assert(Duration.to_iso8601(Duration.new!([])) == "PT0S")
+    assert(Duration.to_iso8601(Duration.new!([second: -1, microsecond: -5])) != "")
+  end
+
+  test "case modes" do
+    assert(String.downcase("ÀB", :ascii) == "Àb")
+    assert(String.downcase("İ", :turkic) == "i")
+    assert(String.upcase("ab", :greek) == "AB")
+    assert(String.capitalize("istanbul", :turkic) == "İstanbul")
+    assert_raise("the case mode is", fn -> String.upcase("a", :klingon) end)
+  end
+
+  test "logger handlers by name and console" do
+    assert(Logger.add_handler(:console, fn _, _, _ -> 0 end) == false)
+    assert(Logger.remove_handler(:console))
+    assert(Logger.add_handler(:console, fn _, _, _ -> 0 end))
+    assert(Logger.add_handler(:twice, fn _, _, _ -> 0 end))
+    assert(Logger.add_handler(:twice, fn _, _, _ -> 0 end) == false)
+    Logger.remove_handler(:twice)
+    assert_raise("Logger.configure takes", fn -> Logger.configure([color: "red"]) end)
+    assert_raise("the log level is", fn -> Logger.log(:loud, "x") end)
+  end
+end

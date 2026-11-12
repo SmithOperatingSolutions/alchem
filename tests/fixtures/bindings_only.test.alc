@@ -1,0 +1,1 @@
+defmodule Only do def main() do value = 42 end end

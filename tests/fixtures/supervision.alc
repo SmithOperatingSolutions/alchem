@@ -1,0 +1,32 @@
+defmodule Supervised do
+ def serve(self: pid[integer]): integer do
+  {ok,value} = Process.receive(self,-1)
+  assert(ok)
+  if value == 0 do return Process.crash("worker failed") else return serve(self) end
+ end
+ def fresh(s: supervisor[integer],old: integer,remaining: integer): pid[integer] do
+  candidate = Supervisor.child(s,"worker")
+  if Process.id(candidate) != old do return candidate else
+   assert(remaining>0)
+   Process.sleep(1)
+   return fresh(s,old,remaining-1)
+  end
+ end
+ def main() do
+  specs = [{"worker","permanent",&serve}]
+  group = Supervisor.start("one_for_one",3,1000,specs,4)
+  first = Supervisor.child(group,"worker")
+  assert(Process.send(first,0,1000))
+  replacement = fresh(group,Process.id(first),1000)
+  assert(Process.alive(replacement) and Supervisor.restarts(group) == 1)
+  assert(length(Supervisor.children(group)) == 1)
+  assert(Supervisor.stop(group,1000))
+  {closed,reason} = Supervisor.await(group,0)
+  assert(closed and reason == "shutdown" and not Process.alive(replacement))
+  crash = fn(self: pid[integer]): integer do return Process.crash("bad") end
+  limited = Supervisor.start("one_for_one",1,1000,[{"bad","permanent",crash}],1)
+  {ended,status} = Supervisor.await(limited,2000)
+  assert(ended and status == "restart_intensity")
+  IO.puts("supervision ready")
+ end
+end

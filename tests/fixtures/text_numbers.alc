@@ -1,0 +1,56 @@
+defmodule TextNumbers do
+  extern sqrt(value: float): float = "math.Sqrt"
+
+  def area(radius: float): float do
+    ((3.5 * radius) * radius)
+  end
+
+  def classify(value: float): string do
+    case value do
+      0.0 ->
+        "zero"
+      v when (v < 0.0) ->
+        "negative"
+      _ ->
+        "positive"
+    end
+  end
+
+  def greet(name: string, count: integer): string do
+    "hello #{name}, you have #{(count + 1)} items (#{(count > 0)})"
+  end
+
+  def main() do
+    assert(((1.5 + 2.25) == 3.75))
+    assert(((((10.0 / 4.0) == 2.5) and ((2.0 * -1.5) == -3.0)) and ((5.0 - 0.5) == 4.5)))
+    assert((((1.5 < 2.0) and (2.0 >= 2.0)) and (1.0 != 1.5)))
+    assert((area(2.0) == 14.0))
+    assert((((classify(0.0) == "zero") and (classify(-2.5) == "negative")) and (classify(1000.0) == "positive")))
+    assert((sqrt(16.0) == 4.0))
+    assert((Float.from_integer(3) == 3.0))
+    assert(((trunc(3.99) == 3) and (trunc(-3.99) == -3)))
+    assert((((round(2.5) == 3) and (round(-2.5) == -3)) and (round(2.4) == 2)))
+    assert(((Float.floor(2.7) == 2.0) and (Float.ceil(2.1) == 3.0)))
+    assert((((Float.to_string(1.0) == "1.0") and (Float.to_string(0.1) == "0.1")) and (Float.to_string(-12.5) == "-12.5")))
+    assert(((Float.to_string(1.0e21) == "1.0e21") and (Float.to_string(1.5e-7) == "1.5e-7")))
+    assert((List.sort([2.5, 1.5]) == [1.5, 2.5]))
+    assert((Integer.to_string(-42) == "-42"))
+    assert((("al" <> "chem") == "alchem"))
+    assert((("a" < "b") and ("abc" >= "abc")))
+    assert((greet("Ada", 2) == "hello Ada, you have 3 items (true)"))
+    assert(("#{1.5}|#{"nested #{"deep"}"}|\#{literal}" == "1.5|nested deep|\#{literal}"))
+    assert((String.length("héllo") == 5))
+    assert(((String.upcase("abc") == "ABC") and (String.downcase("ABC") == "abc")))
+    assert(((String.trim("  x  ") == "x") and (String.reverse("héllo") == "olléh")))
+    assert(((String.contains("alchem", "che") and String.starts_with("alchem", "al")) and String.ends_with("alchem", "em")))
+    assert((String.split("a,b,,c", ",") == ["a", "b", "", "c"]))
+    assert((String.join(["a", "b"], "-") == "a-b"))
+    assert((String.replace("a.b.c", ".", "/") == "a/b/c"))
+    assert((((String.slice("héllo", 1, 3) == "éll") and (String.slice("abc", 2, 10) == "c")) and (String.slice("abc", 5, 1) == "")))
+    words = (((("the quick brown fox" |> String.split(" ")) |> map(&String.reverse)) |> map(&String.reverse)) |> map(fn(word: string): string do
+      String.upcase(word)
+    end))
+    assert((words == ["THE", "QUICK", "BROWN", "FOX"]))
+    IO.puts("text #{String.join(words, " ")} #{Float.to_string(area(1.0))}")
+  end
+end

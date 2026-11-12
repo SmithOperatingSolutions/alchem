@@ -1,0 +1,90 @@
+defmodule OtpBench do
+  import "bench.alc"
+
+  def add(total: integer, amount: integer): tuple[integer, integer] do
+    {total + amount, total + amount}
+  end
+
+  def reply(answer: result[integer, string]): integer do
+    case answer do
+      ok(value) -> value
+      error(_) -> 0
+    end
+  end
+
+  def fib(n: integer): integer do
+    if n < 2 do
+      n
+    else
+      fib(n - 1) + fib(n - 2)
+    end
+  end
+
+  # Casts until count requests have been accepted; a cast is refused while the
+  # server's queue is full.
+  def cast_all(counter: server[integer, integer], count: integer): integer do
+    Process.loop(0, fn(sent: integer): tuple[boolean, integer] do
+      if Server.cast(counter, 1) do
+        {sent + 1 < count, sent + 1}
+      else
+        Process.sleep(0)
+        {true, sent}
+      end
+    end)
+  end
+
+  def heavy(limit: integer): integer do
+    Task.async_stream(1..1000, fn i -> fib(22) + i end, limit) |> Enum.sum()
+  end
+
+  def main() do
+    Bench.run("server.call 200k", fn ->
+      counter = Server.start(0, &add)
+      total = Enum.reduce(1..200000, 0, fn _, acc -> acc + reply(Server.call(counter, 1, 5000)) end)
+      Server.stop(counter)
+      total
+    end)
+    Bench.run("server.call 8 clients, 25k calls each", fn ->
+      counter = Server.start(0, &add)
+      clients = Enum.map(1..8, fn _ -> Task.async(fn -> Enum.reduce(1..25000, 0, fn _, acc -> max(acc, reply(Server.call(counter, 1, 5000))) end) end) end)
+      total = Enum.max(Task.await_many(clients, 60000))
+      Server.stop(counter)
+      total
+    end)
+    Bench.run("server.cast 200k then one call", fn ->
+      counter = Server.start(0, &add)
+      sent = cast_all(counter, 200000)
+      total = reply(Server.call(counter, 0, 5000))
+      Server.stop(counter)
+      total + sent
+    end)
+    Bench.run("agent.get 200k", fn ->
+      agent = Agent.start(fn -> 7 end)
+      total = Enum.reduce(1..200000, 0, fn _, acc -> acc + Agent.get(agent, fn state -> state end) end)
+      Agent.stop(agent)
+      total
+    end)
+    Bench.run("agent.update 200k then get", fn ->
+      agent = Agent.start(fn -> 0 end)
+      Enum.each(1..200000, fn _ -> Agent.update(agent, fn state -> state + 1 end) end)
+      total = Agent.get(agent, fn state -> state end)
+      Agent.stop(agent)
+      total
+    end)
+    Bench.run("agent.get_and_update 200k", fn ->
+      agent = Agent.start(fn -> 0 end)
+      total = Enum.reduce(1..200000, 0, fn _, acc -> acc + Agent.get_and_update(agent, fn state -> {state, state + 1} end) end)
+      Agent.stop(agent)
+      total
+    end)
+    Bench.run("task.async and await 100k, one at a time", fn -> Enum.reduce(1..100000, 0, fn i, acc -> acc + Task.await(Task.async(fn -> i * 2 end)) end) end)
+    Bench.run("task.async 10k at once, await_many", fn -> Enum.map(1..10000, fn i -> Task.async(fn -> fib(15) + i end) end) |> Task.await_many(60000) |> Enum.sum() end)
+    Bench.run("task.async_stream 100k trivial items", fn -> Task.async_stream(1..100000, fn i -> i * 2 end) |> Enum.sum() end)
+    Bench.run("serial 1,000 x fib(22)", fn -> Enum.reduce(1..1000, 0, fn i, acc -> acc + fib(22) + i end) end)
+    Bench.run("task.async_stream 1,000 x fib(22), limit 1", fn -> heavy(1) end)
+    Bench.run("task.async_stream 1,000 x fib(22), limit 2", fn -> heavy(2) end)
+    Bench.run("task.async_stream 1,000 x fib(22), limit 4", fn -> heavy(4) end)
+    Bench.run("task.async_stream 1,000 x fib(22), limit 8", fn -> heavy(8) end)
+    Bench.run("task.async_stream 1,000 x fib(22), limit 14", fn -> heavy(14) end)
+  end
+end

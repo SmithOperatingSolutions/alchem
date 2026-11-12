@@ -1,0 +1,17 @@
+{true, TCP.Event.data("echo one\n")}
+{false, nil}
+ok("echo two")
+{true, TCP.Event.data("echo again\n")}
+{true, TCP.Event.data("echo three\n")}
+{true, TCP.Event.data("echo four\n")}
+{true, TCP.Event.closed}
+0
+ok({})
+"hello, frames"
+error("packet too large for its length header")
+error("the controlling process does not take TCP.Event messages")
+error("timeout")
+{true, "ping"}
+error("timeout")
+"pong"
+true

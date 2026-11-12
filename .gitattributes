@@ -1,0 +1,2 @@
+# Fixture comparisons use literal LF bytes on every runner, including Windows.
+* text=auto eol=lf

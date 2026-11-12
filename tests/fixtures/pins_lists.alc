@@ -1,0 +1,50 @@
+defmodule PinsLists do
+  def classify(expected: integer, pair: tuple[integer,string]): string do
+    case pair do
+      {^expected, label} ->
+        return label
+      {_, _} ->
+        return "other"
+    end
+  end
+
+  def double(n: integer): integer do
+    return n * 2
+  end
+
+  def main() do
+    assert(classify(1, {1, "match"}) == "match")
+    assert(classify(1, {2, "miss"}) == "other")
+    first = 3
+    [^first | rest] = [3, 1, 2]
+    assert(rest == [1, 2])
+    name = "a"
+    %{"k" => ^name} = %{"k" => "a"}
+    numbers = List.range(1, 5)
+    assert(numbers == [1, 2, 3, 4, 5])
+    assert(List.range(3, 2) == [])
+    assert(List.range(-1, 1) == [-1, 0, 1])
+    assert(List.reverse(numbers) == [5, 4, 3, 2, 1])
+    assert(numbers == [1, 2, 3, 4, 5])
+    assert(List.take(numbers, 2) == [1, 2])
+    assert(List.take(numbers, 9) == numbers)
+    assert(List.drop(numbers, 2) == [3, 4, 5])
+    assert(List.drop(numbers, 9) == [])
+    assert(List.contains(numbers, 4))
+    assert(not List.contains(numbers, 6))
+    assert(List.contains([[1], [2]], [2]))
+    assert(List.sort([3, 1, 2]) == [1, 2, 3])
+    assert(List.sort(["b", "a", "c"]) == ["a", "b", "c"])
+    empty: list[integer] = List.sort([])
+    assert(empty == [])
+    pairs = List.zip(["x", "y", "z"], numbers)
+    assert(pairs == [{"x", 1}, {"y", 2}, {"z", 3}])
+    merged = Map.merge(%{"a" => 1, "b" => 2}, %{"b" => 20, "c" => 30})
+    assert(Map.entries(merged) == [{"a", 1}, {"b", 20}, {"c", 30}])
+    total = numbers |> List.reverse() |> List.take(3) |> map(&double) |> reduce(0, fn(acc: integer, n: integer): integer do
+      return acc + n
+    end)
+    assert(total == 24)
+    IO.puts("pins and lists ready")
+  end
+end

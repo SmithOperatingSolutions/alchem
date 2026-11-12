@@ -1,0 +1,19 @@
+ok(%Version{major: 1, minor: 0, patch: 0, pre: ["rc", "1"], build: some("build5")})
+{2, "2.3.1", :lt}
+true
+true
+error("invalid requirement \"nonsense\"")
+false
+true
+"http://a.com/z?q=1"
+"http://a.com/api/v1?x=1&y=2"
+%Version{major: 1, minor: 2, patch: 3, pre: [], build: none}
+[~D[2026-01-30], ~D[2026-01-31], ~D[2026-02-01], ~D[2026-02-02]]
+5
+1
+~D[2026-11-08]
+1
+~N[2026-01-01 01:30:00]
+24
+~T[10:00:00.123000]
+%Duration{year: 0, month: 0, week: 0, day: 0, hour: 2, minute: 30, second: 0, microsecond: 0}

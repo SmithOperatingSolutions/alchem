@@ -1,0 +1,48 @@
+defmodule Closures do
+ def adder(offset: integer): fn[integer,integer] do
+  return fn(value: integer): integer do return offset+value end
+ end
+ def observed(): fn[integer,integer] do
+  IO.puts("callee-once")
+  return fn(value: integer): integer do return value end
+ end
+ def argument(): integer do IO.puts("argument-once") return 7 end
+ def main() do
+  factor = 3
+  assert(map([1,2],fn(n: integer): integer do return n*factor end) == [3,6])
+  assert(filter([-1,0,1],fn(n: integer): boolean do return n>0 end) == [1])
+  assert(reduce([1,2,3],0,fn(acc: integer,n: integer): integer do return acc*10+n end) == 123)
+  assert(adder(2)(3) == 5)
+  assert(adder(10)(3) == 13)
+  assert((fn(): integer do return 9 end)() == 9)
+  funcs = map([1,2],fn(n: integer): fn[integer,integer] do
+   return fn(value: integer): integer do return value+n end
+  end)
+  assert(funcs[0](10) == 11 and funcs[1](10) == 12)
+  data = %{"n" => 4}
+  capture = fn(): integer do return data["n"] end
+  changed = put(data,"n",99)
+  assert(capture() == 4 and changed["n"] == 99)
+  callbacks = %{"run" => adder(4)}
+  assert(callbacks["run"](2) == 6)
+  assert(observed()(argument()) == 7)
+  zero = fn(): list[integer] do return [] end
+  assert(zero() == [])
+  classify = fn(n: integer): string do
+   case n do
+    value when value>0 -> return "positive"
+    _ -> return "other"
+   end
+  end
+  assert(classify(1) == "positive" and classify(-1) == "other")
+  closures = map([1],fn(n: integer): fn[integer] do return fn(): integer do return n end end)
+  assert(closures[0]() == 1)
+  case {3,true} do
+   {captured,flag} when (fn(): boolean do return flag end)() ->
+    kept = fn(): integer do return captured end
+    assert(kept() == 3)
+   _ -> assert(false)
+  end
+  IO.puts("closures ready")
+ end
+end

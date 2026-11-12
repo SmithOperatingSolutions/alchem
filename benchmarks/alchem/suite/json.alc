@@ -1,0 +1,29 @@
+defmodule JsonBench do
+  import "bench.alc"
+
+  # The number of elements or fields at the top of a document.
+  def width(document: JSON): integer do
+    case document do
+      JSON.list(items) -> length(items)
+      JSON.object(fields) -> map_size(fields)
+      _ -> 0
+    end
+  end
+
+  def main() do
+    inputs = hd(System.argv())
+    small = File.read!(Path.join(inputs, "small.json"))
+    medium = File.read!(Path.join(inputs, "medium.json"))
+    large = File.read!(Path.join(inputs, "large.json"))
+    small_value = JSON.decode!(small)
+    medium_value = JSON.decode!(medium)
+    large_value = JSON.decode!(large)
+
+    Bench.run("json.decode 159 B, 10,000 times", fn -> Enum.reduce(1..10000, 0, fn _, acc -> acc + width(JSON.decode!(small)) end) end)
+    Bench.run("json.decode 10 KB, 200 times", fn -> Enum.reduce(1..200, 0, fn _, acc -> acc + width(JSON.decode!(medium)) end) end)
+    Bench.run("json.decode 5 MB", fn -> width(JSON.decode!(large)) end)
+    Bench.run("json.encode 159 B, 10,000 times", fn -> Enum.reduce(1..10000, 0, fn _, acc -> acc + byte_size(JSON.encode!(small_value)) end) end)
+    Bench.run("json.encode 10 KB, 200 times", fn -> Enum.reduce(1..200, 0, fn _, acc -> acc + byte_size(JSON.encode!(medium_value)) end) end)
+    Bench.run("json.encode 5 MB", fn -> byte_size(JSON.encode!(large_value)) end)
+  end
+end

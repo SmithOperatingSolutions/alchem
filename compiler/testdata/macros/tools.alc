@@ -1,0 +1,47 @@
+defmodule Tools do
+  defmacro square(value) do
+    quote do
+      unquote(value) * unquote(value)
+    end
+  end
+
+  defmacro log_value(label, value) do
+    quote do
+      result = unquote(value)
+      IO.puts(stamp(unquote(label), result))
+    end
+  end
+
+  defmacro timed(label, do: body) do
+    quote do
+      started = Time.monotonic()
+      unquote(body)
+      elapsed = Time.monotonic() - started
+      IO.puts("#{unquote(label)} took under a second: #{elapsed < 1000}")
+    end
+  end
+
+  defmacro unless_empty(items, do: body) do
+    quote do
+      if unquote(items) != [] do
+        unquote(body)
+      end
+    end
+  end
+
+  defmacro __using__(prefix) do
+    quote do
+      def greet(name: string): string do
+        "#{unquote(prefix)}, #{name}"
+      end
+
+      def shout(name: string): string do
+        String.upcase(greet(name)) <> stamp("!", 1)
+      end
+    end
+  end
+
+  def stamp(label: string, value: integer): string do
+    "[#{label}] #{value}"
+  end
+end

@@ -1,0 +1,92 @@
+defmodule Operations do
+ def double(n: integer): integer do return n*2 end
+ def positive(n: integer): boolean do return n>0 end
+ def step(acc: integer,n: integer): integer do return acc*10+n end
+ def text(n: integer): string do if n>0 do return "yes" else return "no" end end
+ def explode(n: integer): integer do return n/0 end
+ def visit(n: integer): integer do IO.puts("visit") return n end
+ def note(label: string,n: integer): integer do IO.puts(label) return n end
+ def key(label: string): string do IO.puts(label) return "same" end
+ def guard(n: integer): boolean do IO.puts("guard") return n>0 end
+ def apply(f: fn[integer,integer],n: integer): integer do return f(n) end
+ def pipeline(xs: list[integer],f: fn[integer,integer]): list[integer] do return map(xs,f) end
+ def collect(acc: list[integer],n: integer): list[integer] do return concat(acc,[n]) end
+ def make_record(n: integer): map[string,integer] do return %{"n" => n} end
+ def choose(): fn[integer,integer] do return &double end
+ def main() do
+  base = [1,2]
+  xs = base |> prepend(0) |> concat([3])
+  assert(xs == [0,1,2,3] and base == [1,2])
+  [_ | tail] = base
+  assert(concat(tail,[3]) == [2,3] and base == [1,2])
+  assert(prepend([],1) == [1])
+  ys = xs |> map(&double) |> filter(&positive)
+  assert(ys == [2,4,6])
+  assert(reduce([1,2,3],0,&step) == 123)
+  empty: list[integer] = []
+  assert(map(empty,&explode) == [])
+  assert(map([],&explode) == [])
+  assert(reduce([1,2],[],&collect) == [1,2])
+  records = map([1,2],&make_record)
+  assert(records[1]["n"] == 2)
+  assert(records == [%{"n" => 1},%{"n" => 2}])
+  picked = choose()
+  assert(picked(4) == 8)
+  functions = %{"double" => &double}
+  %{"double" => captured} = functions
+  assert(captured(5) == 10)
+  assert(filter(empty,&positive) == [])
+  assert(reduce(empty,7,&step) == 7)
+  assert(concat(empty,empty) == [])
+  assert(map([-1,1],&text) == ["no","yes"])
+  callback = &double
+  assert(callback(3) == 6 and apply(callback,4) == 8)
+  assert(pipeline([1,2],callback) == [2,4])
+  assert(map([1,2],&visit) == [1,2])
+  data: map[string,integer] = %{"count" => 3,"zero" => 0}
+  changed = data |> put("count",4) |> put("extra",9)
+  assert(data["count"] == 3 and changed["count"] == 4)
+  assert(length(data) == 2 and length(changed) == 3)
+  assert(has_key(data,"zero") and not has_key(data,"absent"))
+  assert(get(data,"absent",7) == 7)
+  assert(get(data,"count",note("default-eager",9)) == 3)
+  assert(data == %{"zero" => 0,"count" => 3})
+  none: map[string,integer] = %{}
+  assert(none == %{} and %{} == none)
+  assert(put(none,"a",1) == %{"a" => 1} and length(none) == 0)
+  nested: map[string,list[integer]] = %{"xs" => []}
+  assert(nested["xs"] == [])
+  assert(put(nested,"xs",[1,2])["xs"] == [1,2])
+  assert(nested == %{"xs" => []})
+  bools = %{true => "yes",false => "no"}
+  assert(bools[true] == "yes")
+  ints = %{1 => true,2 => false}
+  assert(ints[1])
+  ordered = %{key("key-one") => note("value-one",1),key("key-two") => note("value-two",2)}
+  assert(length(ordered) == 1 and ordered["same"] == 2)
+  %{"count" => count} = changed
+  assert(count == 4)
+  case changed do
+   %{"absent" => never} when guard(never) -> assert(false)
+   %{"count" => n} when n<0 -> assert(false)
+   %{"count" => n} when guard(n) -> assert(n == 4)
+   _ -> assert(false)
+  end
+  case [1,2] do
+   [h | t] when h<0 -> assert(false)
+   [h | t] when length(t)==1 -> assert(h == 1)
+   _ -> assert(false)
+  end
+  case -1 do
+   n when n>0 -> assert(false)
+   n when n<0 -> assert(n == -1)
+   _ -> assert(false)
+  end
+  case nested do
+   %{"xs" => [h | t]} -> assert(false)
+   %{"xs" => []} -> assert(true)
+   %{} -> assert(false)
+  end
+  IO.puts("operations ready")
+ end
+end

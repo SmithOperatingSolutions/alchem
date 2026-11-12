@@ -1,0 +1,13 @@
+item 3
+missing 42
+invalid: negative
+other: zero
+7
+0
+number 12
+bad: "x" is not an integer
+gone
+caught deep
+outer from else 1
+still missing 99
+50

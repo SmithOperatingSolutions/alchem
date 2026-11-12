@@ -1,0 +1,145 @@
+defmodule CoreLibrary do
+  struct Point do
+    x: integer
+    y: integer
+  end
+
+  type Shape do
+    circle(radius: float)
+    square(side: float)
+    blank
+  end
+
+  def main() do
+    assert((((((abs(-5) == 5) and (abs(2.5) == 2.5)) and (abs(-2.5) == 2.5)) and (min(3, 7) == 3)) and (max("a", "b") == "b")))
+    assert(((((((div(7, 2) == 3) and (rem(-7, 2) == -1)) and (round(2.5) == 3)) and (trunc(-2.9) == -2)) and (ceil(2.1) == 3)) and (floor(-2.1) == -3)))
+    assert((((((hd([1, 2, 3]) == 1) and (tl([1, 2, 3]) == [2, 3])) and (to_string(42) == "42")) and (to_string(1.5) == "1.5")) and (to_string(true) == "true")))
+    assert((((then(5, &((&1 * 2))) == 10) and (tap(5, &((&1 * 2))) == 5)) and (Function.identity("x") == "x")))
+    assert(((map_size(%{"a" => 1}) == 1) and (byte_size("héllo") == 6)))
+    assert((((List.first([1, 2]) == some(1)) and (List.last([1, 2]) == some(2))) and (List.first([9], 0) == 9)))
+    empty: list[integer] = []
+    assert(((((List.first(empty) == none) and (List.last(empty, 7) == 7)) and (List.first!([4]) == 4)) and (List.last!([4, 5]) == 5)))
+    assert(((List.flatten([[1], [2, 3]]) == [1, 2, 3]) and (List.foldl([1, 2, 3], "", fn n, acc ->
+      (acc <> to_string(n))
+    end) == "123")))
+    assert((List.foldr([1, 2, 3], "", fn n, acc ->
+      (acc <> to_string(n))
+    end) == "321"))
+    assert((((List.delete([1, 2, 1], 1) == [2, 1]) and (List.delete_at([1, 2, 3], -1) == [1, 2])) and (List.delete_at([1], 5) == [1])))
+    assert((((List.duplicate("a", 3) == ["a", "a", "a"]) and (List.insert_at([1, 2], 1, 9) == [1, 9, 2])) and (List.insert_at([1, 2], -1, 9) == [1, 2, 9])))
+    assert(((List.replace_at([1, 2, 3], 1, 0) == [1, 0, 3]) and (List.update_at([1, 2, 3], -1, &((&1 * 10))) == [1, 2, 30])))
+    assert(((List.pop_at([1, 2, 3], 1) == {some(2), [1, 3]}) and (List.pop_at([1], 4) == {none, [1]})))
+    assert(((List.starts_with?([1, 2, 3], [1, 2]) and List.ends_with?([1, 2, 3], [2, 3])) and (not List.starts_with?([1], [1, 2]))))
+    scores = %{"ada" => 3, "bo" => 7}
+    assert((((Map.get(scores, "ada") == some(3)) and (Map.get(scores, "cy") == none)) and (Map.get(scores, "cy", 0) == 0)))
+    assert((((Map.fetch(scores, "bo") == some(7)) and (Map.fetch!(scores, "bo") == 7)) and Map.has_key?(scores, "ada")))
+    assert(((Map.get_lazy(scores, "cy", fn ->
+      99
+    end) == 99) and (Map.put(scores, "cy", 1) == %{"ada" => 3, "bo" => 7, "cy" => 1})))
+    assert(((Map.put_new(scores, "ada", 100) == scores) and (Map.put_new_lazy(scores, "dee", fn ->
+      4
+    end) == Map.put(scores, "dee", 4))))
+    assert(((Map.drop(scores, ["ada", "zz"]) == %{"bo" => 7}) and (Map.take(scores, ["ada", "zz"]) == %{"ada" => 3})))
+    assert(((Map.new([{"a", 1}, {"b", 2}]) == %{"a" => 1, "b" => 2}) and (Map.new([1, 2], fn n ->
+      {n, (n * n)}
+    end) == %{1 => 1, 2 => 4})))
+    assert(((Map.from_keys(["x", "y"], 0) == %{"x" => 0, "y" => 0}) and (Map.to_list(scores) == [{"ada", 3}, {"bo", 7}])))
+    assert(((Map.filter(scores, fn {_, score} ->
+      (score > 5)
+    end) == %{"bo" => 7}) and (Map.reject(scores, fn {_, score} ->
+      (score > 5)
+    end) == %{"ada" => 3})))
+    assert((Map.split(scores, ["ada"]) == {%{"ada" => 3}, %{"bo" => 7}}))
+    assert((Map.split_with(scores, fn {name, _} ->
+      (name == "bo")
+    end) == {%{"bo" => 7}, %{"ada" => 3}}))
+    assert(((Map.update(scores, "ada", 0, &((&1 + 1))) == %{"ada" => 4, "bo" => 7}) and (Map.update(scores, "cy", 0, &((&1 + 1))) == Map.put(scores, "cy", 0))))
+    assert(((Map.update!(scores, "bo", &((&1 * 2))) == %{"ada" => 3, "bo" => 14}) and (Map.replace(scores, "zz", 1) == scores)))
+    assert(((Map.replace(scores, "ada", 9) == %{"ada" => 9, "bo" => 7}) and (Map.replace!(scores, "ada", 9) == %{"ada" => 9, "bo" => 7})))
+    assert(((Map.pop(scores, "ada") == {some(3), %{"bo" => 7}}) and (Map.pop(scores, "zz", 0) == {0, scores})))
+    assert((Map.merge(scores, %{"bo" => 1, "cy" => 2}, fn _, left, right ->
+      (left + right)
+    end) == %{"ada" => 3, "bo" => 8, "cy" => 2}))
+    assert(((Map.intersect(scores, %{"bo" => 0, "cy" => 0}) == %{"bo" => 0}) and Map.equal?(scores, %{"bo" => 7, "ada" => 3})))
+    odds = MapSet.new([1, 3, 5, 3])
+    small = MapSet.new((1..3))
+    assert(((((MapSet.size(odds) == 3) and MapSet.member?(odds, 3)) and (not MapSet.member?(odds, 2))) and (5 in odds)))
+    assert(((MapSet.to_list(MapSet.union(odds, small)) == [1, 2, 3, 5]) and (MapSet.to_list(MapSet.intersection(odds, small)) == [1, 3])))
+    assert(((MapSet.to_list(MapSet.difference(odds, small)) == [5]) and (MapSet.to_list(MapSet.symmetric_difference(odds, small)) == [2, 5])))
+    assert(((MapSet.subset?(MapSet.new([1, 3]), odds) and (not MapSet.subset?(small, odds))) and MapSet.disjoint?(odds, MapSet.new([2, 4]))))
+    assert(((MapSet.equal?(odds, MapSet.new([5, 3, 1])) and (odds == MapSet.new([5, 1, 3]))) and (odds != small)))
+    assert((((MapSet.put(odds, 7) |> MapSet.delete(1)) |> MapSet.to_list()) == [3, 5, 7]))
+    assert(((MapSet.filter(small, &((&1 > 1))) == MapSet.new([2, 3])) and (MapSet.reject(small, &((&1 > 1))) == MapSet.new([1]))))
+    assert((MapSet.split_with(small, &((&1 == 2))) == {MapSet.new([2]), MapSet.new([1, 3])}))
+    assert((((MapSet.new(["a", "bb"], &(String.length(&1))) == MapSet.new([1, 2])) and (Enum.sum(odds) == 9)) and (Enum.map(small, &((&1 * 2))) == [2, 4, 6])))
+    nothing: set[string] = MapSet.new()
+    assert(((MapSet.size(nothing) == 0) and (MapSet.put(nothing, "x") == MapSet.new(["x"]))))
+    assert((((String.at("héllo", 1) == some("é")) and (String.at("abc", -1) == some("c"))) and (String.at("abc", 9) == none)))
+    assert((((String.first("abc") == some("a")) and (String.last("abc") == some("c"))) and (String.first("") == none)))
+    assert((((String.capitalize("hELLO wORLD") == "Hello world") and (String.codepoints("hé") == ["h", "é"])) and (String.graphemes("ab") == ["a", "b"])))
+    assert(((String.contains?("alchem", "che") and String.starts_with?("alchem", "al")) and String.ends_with?("alchem", "em")))
+    assert((((String.duplicate("ab", 3) == "ababab") and (String.pad_leading("7", 3, "0") == "007")) and (String.pad_trailing("ab", 5) == "ab   ")))
+    assert(((String.pad_leading("abc", 2) == "abc") and (String.pad_leading("x", 4, "ab") == "abax")))
+    assert((((String.split("  a  b\tc ") == ["a", "b", "c"]) and (String.split_at("héllo", 2) == {"hé", "llo"})) and (String.split_at("abc", -1) == {"ab", "c"})))
+    assert((((String.to_integer("-42") == -42) and (String.to_integer("ff", 16) == 255)) and (String.to_float("2.5") == 2.5)))
+    assert((((String.trim_leading("  x ") == "x ") and (String.trim_trailing("  x ") == "  x")) and (String.trim("xxhixx", "x") == "hi")))
+    assert(((String.trim_leading("xxhix", "x") == "hix") and (String.trim_trailing("xhixx", "x") == "xhi")))
+    assert(((String.replace_prefix("unhappy", "un", "") == "happy") and (String.replace_suffix("file.txt", ".txt", ".md") == "file.md")))
+    assert(((String.replace_leading("aabc", "a", "x") == "xxbc") and (String.replace_trailing("abcc", "c", "z") == "abzz")))
+    assert(((String.valid?("ok") and String.printable?("ok\n")) and (String.count("banana", "an") == 2)))
+    assert(((String.next_codepoint("éa") == some({"é", "a"})) and (String.next_codepoint("") == none)))
+    assert((((Integer.to_string(255, 16) == "FF") and (Integer.parse("ff", 16) == ok(255))) and (Integer.digits(123) == [1, 2, 3])))
+    assert((((Integer.digits(5, 2) == [1, 0, 1]) and (Integer.undigits([1, 2, 3]) == 123)) and (Integer.undigits([1, 0, 1], 2) == 5)))
+    assert(((((Integer.pow(2, 10) == 1024) and (Integer.gcd(12, 18) == 6)) and (Integer.gcd(-4, 6) == 2)) and (Integer.extended_gcd(240, 46) == {2, -9, 47})))
+    assert(((((Integer.mod(-7, 3) == 2) and (Integer.floor_div(-7, 2) == -4)) and (Integer.ceil_div(7, 2) == 4)) and (div(-7, 2) == -3)))
+    assert(((Integer.is_even(4) and Integer.is_odd(7)) and (not Integer.is_odd(0))))
+    assert((((((Float.round(2.5) == 3.0) and (Float.round(3.14159, 2) == 3.14)) and (Float.floor(3.19, 1) == 3.1)) and (Float.ceil(3.11, 1) == 3.2)) and (Float.pow(2.0, 3.0) == 8.0)))
+    assert(((((Bitwise.band(12, 10) == 8) and (Bitwise.bor(12, 10) == 14)) and (Bitwise.bxor(12, 10) == 6)) and (Bitwise.bnot(0) == -1)))
+    assert(((((Bitwise.bsl(1, 4) == 16) and (Bitwise.bsr(-16, 2) == -4)) and (Bitwise.bsl(1, 70) == 0)) and (Bitwise.bsl(16, -2) == 4)))
+    assert(((((Base.encode16("hi") == "6869") and (Base.decode16("6869") == some("hi"))) and (Base.decode16("zz") == none)) and (Base.decode16!("6869") == "hi")))
+    assert((((Base.encode64("hello") == "aGVsbG8=") and (Base.decode64("aGVsbG8=") == some("hello"))) and (Base.decode64("!!") == none)))
+    assert(((((Base.url_encode64("a?b>") == "YT9iPg==") and (Base.url_decode64!("YT9iPg==") == "a?b>")) and (Base.encode32("hi") == "NBUQ====")) and (Base.decode32("NBUQ====") == some("hi"))))
+    assert((((Path.join("a", "b/c.txt") == "a/b/c.txt") and (Path.join(["a", "b", "c"]) == "a/b/c")) and (Path.basename("a/b/c.txt") == "c.txt")))
+    assert((((Path.basename("a/b/c.txt", ".txt") == "c") and (Path.dirname("a/b/c.txt") == "a/b")) and (Path.extname("a/b/c.tar.gz") == ".gz")))
+    assert((((Path.rootname("a/c.txt") == "a/c") and (Path.rootname("a/c.txt", ".txt") == "a/c")) and (Path.split("a/b/c") == ["a", "b", "c"])))
+    assert(((Path.relative_to("/usr/local/bin", "/usr") == "local/bin") and String.ends_with?(Path.expand("x/../y"), "/y")))
+    assert((((File.mkdir_p("core_fixture/nested") == ok({})) and File.dir?("core_fixture/nested")) and (not File.regular?("core_fixture"))))
+    File.write!("core_fixture/a.txt", "alpha")
+    assert((((File.read!("core_fixture/a.txt") == "alpha") and File.exists?("core_fixture/a.txt")) and File.regular?("core_fixture/a.txt")))
+    assert(((File.cp("core_fixture/a.txt", "core_fixture/b.txt") == ok({})) and (File.rename("core_fixture/b.txt", "core_fixture/c.txt") == ok({}))))
+    assert(((File.touch("core_fixture/d.txt") == ok({})) and (File.ls!("core_fixture") == ["a.txt", "c.txt", "d.txt", "nested"])))
+    assert((Path.wildcard("core_fixture/*.txt") == ["core_fixture/a.txt", "core_fixture/c.txt", "core_fixture/d.txt"]))
+    assert(((File.ls("core_fixture/nested") == ok([])) and (File.rm("core_fixture/d.txt") == ok({}))))
+    File.rm!("core_fixture/c.txt")
+    case File.rm("core_fixture/absent.txt") do
+      ok(_) ->
+        assert(false)
+      error(reason) ->
+        assert((String.length(reason) > 0))
+    end
+    assert(((File.rm_rf("core_fixture") == ok({})) and (not File.exists?("core_fixture"))))
+    case File.cwd() do
+      ok(directory) ->
+        assert(((directory == File.cwd!()) and (directory == System.cwd!())))
+      error(_) ->
+        assert(false)
+    end
+    System.put_env("ALCHEM_CORE_FIXTURE", "yes")
+    assert(((System.get_env("ALCHEM_CORE_FIXTURE") == some("yes")) and (System.get_env("ALCHEM_CORE_ABSENT", "no") == "no")))
+    assert((((System.user_home() != none) and (System.tmp_dir() != none)) and (String.to_integer(System.pid()) > 0)))
+    assert((System.find_executable("alchem-no-such-program") == none))
+    point = %Point{x: 1, y: -2}
+    assert((((inspect(point) == "%Point{x: 1, y: -2}") and (inspect([1, 2]) == "[1, 2]")) and (inspect({1, "a", 2.5, true}) == "{1, \"a\", 2.5, true}")))
+    assert((((inspect(scores) == "%{\"ada\" => 3, \"bo\" => 7}") and (inspect(odds) == "MapSet.new([1, 3, 5])")) and (inspect(some(1)) == "some(1)")))
+    assert((((inspect(Shape.circle(1.5)) == "Shape.circle(1.5)") and (inspect(Shape.blank) == "Shape.blank")) and (inspect([some(point)]) == "[some(%Point{x: 1, y: -2})]")))
+    missing: option[integer] = none
+    failed: result[integer,string] = error("no")
+    assert((((inspect(missing) == "none") and (inspect(failed) == "error(\"no\")")) and (inspect("q\"t") == "\"q\\\"t\"")))
+    shown = IO.inspect(%{1 => [point]})
+    assert((map_size(shown) == 1))
+    IO.warn("core warning")
+    IO.puts("core ready")
+    System.halt(0)
+    IO.puts("never printed")
+  end
+end

@@ -1,0 +1,117 @@
+defmodule Stdlib do
+  struct Counter do
+    count: integer
+    history: list[string]
+  end
+
+  type Request do
+    increment(by: integer)
+    label(text: string)
+    read
+  end
+
+  extern atoi(text: string): result[integer,string] = "strconv.Atoi"
+
+  extern lookup_env(name: string): option[string] = "os.LookupEnv"
+
+  extern setenv(name: string, value: string): result[tuple[],string] = "os.Setenv"
+
+  extern unquote(text: string): result[string,string] = "strconv.Unquote"
+
+  def handle(state: Counter, request: Request): tuple[Counter,integer] do
+    case request do
+      Request.increment(by) ->
+        {%Counter{state | count: (state.count + by)}, (state.count + by)}
+      Request.label(text) ->
+        {%Counter{state | history: prepend(state.history, text)}, (length(state.history) + 1)}
+      Request.read ->
+        {state, state.count}
+    end
+  end
+
+  def fragile(state: integer, divisor: integer): tuple[integer,integer] do
+    {state, (100 / divisor)}
+  end
+
+  def main() do
+    assert((atoi("42") == ok(42)))
+    case atoi("4x2") do
+      ok(_) ->
+        assert(false)
+      error(reason) ->
+        assert(String.contains(reason, "invalid syntax"))
+    end
+    assert((unquote("\"hi\"") == ok("hi")))
+    assert((setenv("ALCHEM_FIXTURE", "set") == ok({})))
+    assert(((lookup_env("ALCHEM_FIXTURE") == some("set")) and (System.env("ALCHEM_FIXTURE") == some("set"))))
+    assert(((lookup_env("ALCHEM_FIXTURE_ABSENT") == none) and (System.env("ALCHEM_FIXTURE_ABSENT") == none)))
+    assert(((Integer.parse("-17") == ok(-17)) and (Float.parse("2.5") == ok(2.5))))
+    case Float.parse("") do
+      ok(_) ->
+        assert(false)
+      error(reason) ->
+        assert((reason == "\"\" is not a float"))
+    end
+    path = "alchem_stdlib_fixture.txt"
+    assert((not File.exists(path)))
+    assert((File.write(path, "first\n") == ok({})))
+    assert((File.append(path, "second\n") == ok({})))
+    assert((File.exists(path) and (File.read(path) == ok("first\nsecond\n"))))
+    case File.list(".") do
+      ok(names) ->
+        assert(List.contains(names, path))
+      error(_) ->
+        assert(false)
+    end
+    assert(((File.remove(path) == ok({})) and (not File.exists(path))))
+    case File.read(path) do
+      ok(_) ->
+        assert(false)
+      error(reason) ->
+        assert(String.contains(reason, path))
+    end
+    started = Time.monotonic()
+    assert(((Time.now() > 1700000000000) and (Time.monotonic() >= started)))
+    assert((length(System.argv()) == 0))
+    IO.write("no newline, ")
+    counter = Server.start(%Counter{count: 0, history: []}, &handle)
+    assert(Server.alive(counter))
+    assert((Server.call(counter, Request.increment(5), 1000) == ok(5)))
+    assert(Server.cast(counter, Request.increment(2)))
+    assert((Server.call(counter, Request.label("a"), 1000) == ok(1)))
+    assert((Server.call(counter, Request.read, 1000) == ok(7)))
+    assert(Server.stop(counter))
+    {stopped, reason} = Server.await(counter, 1000)
+    assert((stopped and (reason == "shutdown")))
+    assert((Server.call(counter, Request.read, 1000) == error("server is not running")))
+    assert((not Server.cast(counter, Request.read)))
+    divider = Server.start(1, &fragile)
+    assert((Server.call(divider, 4, 1000) == ok(25)))
+    case Server.call(divider, 0, 1000) do
+      ok(_) ->
+        assert(false)
+      error(failure) ->
+        assert(String.contains(failure, "division by zero"))
+    end
+    assert((not Server.alive(divider)))
+    steady = Server.start_supervised(1, &fragile, 3, 1000)
+    assert((Server.call(steady, 4, 1000) == ok(25)))
+    case Server.call(steady, 0, 1000) do
+      ok(_) ->
+        assert(false)
+      error(failure) ->
+        assert(String.contains(failure, "division by zero"))
+    end
+    assert((Server.call(steady, 5, 1000) == ok(20)))
+    assert((Server.alive(steady) and (Server.restarts(steady) == 1)))
+    assert(Server.stop(steady))
+    slow = Server.start(0, fn(state: integer, wait: integer): tuple[integer,integer] do
+      Process.sleep(wait)
+      {(state + 1), (state + 1)}
+    end)
+    assert((Server.call(slow, 300, 20) == error("timeout")))
+    assert((Server.call(slow, 0, 2000) == ok(2)))
+    assert(Server.stop(slow))
+    IO.puts("stdlib ready")
+  end
+end

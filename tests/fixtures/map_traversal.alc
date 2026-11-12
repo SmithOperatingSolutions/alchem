@@ -1,0 +1,45 @@
+defmodule Traversal do
+ def observed(): map[integer,string] do
+  IO.puts("map-once")
+  return %{2 => "two",1 => "one"}
+ end
+ def key(): integer do IO.puts("key-once") return 1 end
+ def main() do
+  data = %{3 => "three",-1 => "negative",2 => "two"}
+  assert(Map.keys(data) == [-1,2,3])
+  assert(Map.values(data) == ["negative","two","three"])
+  snapshot = Map.entries(data)
+  assert(snapshot == [{-1,"negative"},{2,"two"},{3,"three"}])
+  assert(Map.keys(data) == Map.keys(%{2 => "two",3 => "three",-1 => "negative"}))
+  positive = data |> Map.entries() |> filter(fn(entry: tuple[integer,string]): boolean do return entry[0]>0 end) |> map(fn(entry: tuple[integer,string]): string do return entry[1] end)
+  assert(positive == ["two","three"])
+  removed = data |> Map.delete(2)
+  assert(Map.keys(removed) == [-1,3] and length(data) == 3)
+  assert(data[2] == "two" and not has_key(removed,2))
+  assert(Map.delete(data,99) == data)
+  assert(Map.entries(put(data,4,"four")) != snapshot)
+  assert(snapshot == [{-1,"negative"},{2,"two"},{3,"three"}])
+  empty: map[string,boolean] = %{}
+  assert(Map.keys(empty) == [] and Map.values(empty) == [] and Map.entries(empty) == [])
+  assert(Map.delete(empty,"absent") == empty)
+  single = %{"a" => true}
+  assert(Map.delete(single,"a") == empty and single["a"])
+  words = %{"β" => 4,"é" => 3,"aa" => 2,"a" => 1}
+  assert(Map.keys(words) == ["a","aa","é","β"])
+  assert(Map.values(words) == [1,2,3,4])
+  truth = %{true => "yes",false => "no"}
+  assert(Map.keys(truth) == [false,true])
+  assert(Map.entries(truth) == [{false,"no"},{true,"yes"}])
+  extremes = %{9223372036854775807 => 1,-9223372036854775808 => 2,0 => 3}
+  assert(Map.keys(extremes) == [-9223372036854775808,0,9223372036854775807])
+  callbacks = %{true => fn(): integer do return 2 end,false => fn(): integer do return 1 end}
+  assert(Map.keys(callbacks) == [false,true])
+  assert(Map.values(callbacks)[0]() == 1 and Map.entries(callbacks)[1][1]() == 2)
+  assert(Map.delete(callbacks,false)[true]() == 2 and callbacks[false]() == 1)
+  assert(Map.keys(observed()) == [1,2])
+  assert(Map.values(observed()) == ["one","two"])
+  assert(Map.entries(observed()) == [{1,"one"},{2,"two"}])
+  assert(Map.delete(observed(),key()) == %{2 => "two"})
+  IO.puts("traversal ready")
+ end
+end

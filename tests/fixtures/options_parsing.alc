@@ -1,0 +1,10 @@
+defmodule Main do
+  def main() do
+    argv = ["--name", "ada", "-v", "--tag", "a", "--tag", "b", "-v", "file.txt", "--bogus"]
+    IO.inspect(OptionParser.parse(argv, [strict: [name: :string, verbose: :count, tag: :keep], aliases: [v: :verbose]]))
+    IO.inspect(OptionParser.parse(["--x", "1", "--flag", "rest"], [switches: [x: :integer]]))
+    IO.inspect(OptionParser.parse_head(["--x", "1", "cmd", "--y"], [strict: [x: :integer]]))
+    IO.inspect(OptionParser.to_argv([name: "ada", debug: "true", color: "false"]))
+    IO.inspect(OptionParser.split("a 'b c' \"d e\" f\\ g"))
+  end
+end

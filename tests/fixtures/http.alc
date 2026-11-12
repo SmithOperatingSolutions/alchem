@@ -1,0 +1,31 @@
+defmodule Main do
+  def handle(request: HTTP.Request): HTTP.Response do
+    case request.path do
+      "/hello" -> HTTP.text(200, "hello " <> request.method)
+      "/echo" -> %HTTP.Response{status: 201, headers: [{"x-echo", "yes"}], body: request.body}
+      "/json" -> HTTP.json(200, JSON.object(%{"ok" => JSON.boolean(true)}))
+      "/crash" -> raise("boom")
+      _ -> HTTP.text(404, "not found")
+    end
+  end
+
+  def main() do
+    ok(server) = HTTP.serve("127.0.0.1:0", &handle)
+    base = "http://" <> HTTP.address(server)
+    ok(r) = HTTP.get(base <> "/hello")
+    IO.inspect({r.status, r.body})
+    ok(r2) = HTTP.post(base <> "/echo", "payload", [{"content-type", "text/plain"}])
+    IO.inspect({r2.status, r2.body, HTTP.header(r2.headers, "X-Echo")})
+    ok(r3) = HTTP.get(base <> "/json")
+    IO.inspect(r3.body)
+    ok(r4) = HTTP.get(base <> "/crash")
+    IO.inspect(r4.status)
+    ok(r5) = HTTP.get(base <> "/missing")
+    IO.inspect(r5.status)
+    IO.inspect(HTTP.stop(server))
+    case HTTP.get(base <> "/hello") do
+      ok(_) -> IO.puts("still up")
+      error(_) -> IO.puts("down")
+    end
+  end
+end

@@ -1,0 +1,9 @@
+ok({some("first\n"), some("sec"), some("on"), some("d\n"), none})
+ok("first\nsecond\nthird\n")
+error("eexist")
+{19, :regular, :read_write, true}
+ok({})
+:symlink
+3
+ok("b")
+error("enoent")

@@ -1,0 +1,8 @@
+defmodule Stop do
+ def main() do
+  message = "before"
+  IO.puts(message)
+  assert(false)
+  IO.puts("unreachable")
+ end
+end

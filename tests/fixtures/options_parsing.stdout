@@ -1,0 +1,5 @@
+{[name: "ada", tag: "a", tag: "b", verbose: "2"], ["file.txt"], [{"--bogus", none}]}
+{[x: "1", flag: "rest"], [], []}
+{[x: "1"], ["cmd", "--y"], []}
+["--name", "ada", "--debug", "--no-color"]
+["a", "b c", "d e", "f g"]

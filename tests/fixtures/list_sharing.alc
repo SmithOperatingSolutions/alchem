@@ -1,0 +1,87 @@
+defmodule ListSharing do
+  def push(items: list[integer], n: integer): list[integer] do
+    return prepend(items, n)
+  end
+
+  def say(n: integer): integer do
+    case n do
+      1 -> IO.puts("one")
+      2 -> IO.puts("two")
+      _ -> IO.puts("three")
+    end
+    return n * 10
+  end
+
+  def keep(n: integer): boolean do
+    return n != 2
+  end
+
+  def worker(self: pid[tuple[pid[list[integer]],list[integer],integer]]): integer do
+    {ok, {reply, base, mark}} = Process.receive(self, 5000)
+    assert(ok)
+    assert(Process.send(reply, prepend(base, mark), 5000))
+    return 0
+  end
+
+  def main() do
+    base = [3, 2, 1]
+    left = prepend(base, 10)
+    right = prepend(base, 20)
+    again = prepend(base, 30)
+    assert(base == [3, 2, 1])
+    assert(left == [10, 3, 2, 1])
+    assert(right == [20, 3, 2, 1])
+    assert(again == [30, 3, 2, 1])
+    deep = prepend(prepend(left, 11), 12)
+    fork = prepend(left, 99)
+    assert(deep == [12, 11, 10, 3, 2, 1])
+    assert(fork == [99, 10, 3, 2, 1])
+    assert(left == [10, 3, 2, 1])
+
+    built = List.range(1, 1000) |> reduce([], &push)
+    assert(length(built) == 1000)
+    assert(built[0] == 1000)
+    assert(built[999] == 1)
+    [head | tail] = built
+    assert(head == 1000)
+    regrown = prepend(tail, 7)
+    assert(regrown[0] == 7)
+    assert(built[0] == 1000)
+    assert(length(tail) == 999)
+
+    front = List.take(built, 2)
+    assert(front == [1000, 999])
+    assert(prepend(front, 5) == [5, 1000, 999])
+    assert(front == [1000, 999])
+    rest = List.drop(built, 998)
+    assert(rest == [2, 1])
+    assert(prepend(rest, 4) == [4, 2, 1])
+    assert(built[997] == 3)
+
+    assert(concat([1, 2], [3]) == [1, 2, 3])
+    assert(List.reverse([1, 2, 3]) == [3, 2, 1])
+    assert(List.zip([1, 2, 3], ["a", "b"]) == [{1, "a"}, {2, "b"}])
+    assert([[1, 2], [3]] == [[1, 2], [3]])
+    assert([[1, 2], [3]] != [[1, 2], [4]])
+    assert(map([1, 2, 3], &say) == [10, 20, 30])
+    assert(filter([1, 2, 3], &keep) == [1, 3])
+    empty: list[integer] = []
+    assert(prepend(empty, 1) == [1])
+    assert(prepend(empty, 2) == [2])
+
+    me: pid[list[integer]] = Process.self(4)
+    first = Process.spawn(&worker, 1)
+    second = Process.spawn(&worker, 1)
+    shared = prepend(built, 0)
+    assert(Process.send(first, {me, shared, 111}, 5000))
+    assert(Process.send(second, {me, shared, 222}, 5000))
+    {got_a, a} = Process.receive(me, 5000)
+    {got_b, b} = Process.receive(me, 5000)
+    assert(got_a and got_b)
+    assert(a[0] + b[0] == 333)
+    assert(a[1] == 0 and b[1] == 0)
+    assert(length(a) == 1002 and length(b) == 1002)
+    assert(shared[0] == 0 and length(shared) == 1001)
+    IO.puts("lists shared safely")
+  end
+end

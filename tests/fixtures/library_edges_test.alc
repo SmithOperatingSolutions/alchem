@@ -1,0 +1,247 @@
+defmodule LibraryEdgesTest do
+  @moduletag area: "library edges"
+
+  test "Base options in every combination" do
+    assert(Base.decode16("6869", [case: :lower]) == some("hi"))
+    assert(Base.decode16("6869", [case: :upper]) == some("hi"))
+    assert(Base.decode16("ab", [case: :upper]) == none)
+    assert(Base.encode32("hi", [case: :lower]) == "nbuq====")
+    assert(Base.encode32("hi", [padding: false]) == "NBUQ")
+    assert(Base.decode32("nbuq====", [case: :lower]) == some("hi"))
+    assert(Base.decode32("NBUQ", [padding: false]) == some("hi"))
+    assert(Base.hex_encode32("hi", [case: :lower]) == "d1kg====")
+    assert(Base.hex_decode32("d1kg====", [case: :lower]) == some("hi"))
+    assert(Base.hex_decode32("D1KG", [padding: false]) == some("hi"))
+    assert(Base.encode64("a", [padding: true]) == "YQ==")
+    assert(Base.decode64("YQ==", [padding: true]) == some("a"))
+    assert(Base.url_encode64("??>", [padding: false]) == "Pz8-")
+    assert(Base.url_encode64("a", [padding: true]) == "YQ==")
+    assert_raise("Base takes", fn -> Base.encode32("x", [case: :sideways]) end)
+  end
+
+  test "calendar units, truncation and weeks" do
+    assert(DateTime.add(~U[2026-01-01T00:00:00Z], 2, :day) == ~U[2026-01-03T00:00:00Z])
+    assert(NaiveDateTime.diff(~N[2026-01-01 01:00:00], ~N[2026-01-01 00:00:00], :minute) == 60)
+    assert(Time.add(~T[23:00:00], 2, :hour) == ~T[01:00:00])
+    assert(Time.diff(~T[10:00:01], ~T[10:00:00], :millisecond) == 1000)
+    assert(Date.end_of_week(~D[2026-11-12], :sunday) == ~D[2026-11-14])
+    assert(DateTime.truncate(~U[2026-01-01T00:00:00.123456Z], :microsecond) == ~U[2026-01-01T00:00:00.123456Z])
+    assert_raise("invalid", fn -> NaiveDateTime.new!(2026, 13, 1, 0, 0, 0) end)
+    assert_raise("the unit is", fn -> Time.add(~T[00:00:00], 1, :fortnight) end)
+    assert_raise("truncate takes", fn -> Time.truncate(~T[00:00:00], :hour) end)
+    assert_raise("a week starts on", fn -> Date.day_of_week(~D[2026-01-01], :someday) end)
+    assert_raise("step other than 0", fn -> Date.range(~D[2026-01-01], ~D[2026-01-02], 0) end)
+    assert(Date.range(~D[2026-01-03], ~D[2026-01-01]) |> Enum.to_list() == [~D[2026-01-03], ~D[2026-01-02], ~D[2026-01-01]])
+    d = Duration.new!([year: 1, month: 2, week: 3, day: 4, hour: 5, minute: 6, second: 7, microsecond: 8])
+    assert({d.year, d.month, d.week, d.day, d.hour, d.minute, d.second, d.microsecond} == {1, 2, 3, 4, 5, 6, 7, 8})
+    assert_raise("Duration.new! takes", fn -> Duration.new!([fortnight: 1]) end)
+    assert(Duration.to_iso8601(d) == "P1Y2M3W4DT5H6M7.000008S")
+    assert(Duration.from_iso8601("PT0.5S") == ok(Duration.new!([microsecond: 500000])))
+    assert(Duration.from_iso8601("P1Q") != ok(Duration.new!([])))
+  end
+
+  test "strftime directives" do
+    moment = ~N[2026-03-04 05:06:07.123456]
+    assert(Calendar.strftime(moment, "%Y-%m-%d %H:%M:%S") == "2026-03-04 05:06:07")
+    assert(Calendar.strftime(moment, "%y %j %A %a %B %b %p %I %f %%") != "")
+    assert(Calendar.strftime(~D[2026-12-25], "%A %d") == "Friday 25")
+    assert_raise("unknown directive", fn -> Calendar.strftime(~D[2026-12-25], "%Q") end)
+  end
+
+  test "Enum and Stream forms not used elsewhere" do
+    assert(Enum.max([1, 3, 2], fn a, b -> a >= b end, fn -> 0 end) == 3)
+    empty: list[integer] = []
+    assert(Enum.max(empty, fn a, b -> a >= b end, fn -> -1 end) == -1)
+    assert(Enum.max([4, 2], fn -> 0 end) == 4)
+    assert(Enum.uniq_by([1, 2, 3, 4], fn n -> rem(n, 2) end) == [1, 2])
+    assert(Enum.zip(Stream.map(1..2, fn n -> n end), Stream.map(3..4, fn n -> n end)) == [{1, 3}, {2, 4}])
+    assert(Enum.zip_with(Stream.map(1..2, fn n -> n end), [10, 20], fn a, b -> a + b end) == [11, 22])
+    assert(Enum.zip_reduce(Stream.map(1..2, fn n -> n end), [10, 20], 0, fn a, b, acc -> acc + a * b end) == 50)
+    assert(Stream.uniq_by([1, 2, 3, 4], fn n -> rem(n, 2) end) |> Enum.to_list() == [1, 2])
+    assert(Stream.concat([[1], [2, 3]]) |> Enum.to_list() == [1, 2, 3])
+    assert(Enum.slide([1, 2, 3], 5, 0) == [1, 2, 3])
+    assert_raise("insertion index", fn -> Enum.slide([1, 2, 3], 0, 9) end)
+    assert(Enum.sort([[1, 2], [1], [0, 5]]) == [[0, 5], [1], [1, 2]])
+    stepped: stream[integer] = 10..1//-3
+    assert(Enum.to_list(stepped) == [10, 7, 4, 1])
+    assert_raise("step cannot be zero", fn ->
+      zero: stream[integer] = 1..2//0
+      Enum.to_list(zero)
+    end)
+    assert([1, 2, 2, 3] -- [2] == [1, 2, 3])
+    assert(Enum.chunk_every([1, 2, 3], 2, 2, []) == [[1, 2], [3]])
+    assert_raise("Enum.chunk_every takes", fn -> Enum.chunk_every([1], 2, 2, :keep) end)
+  end
+
+  test "list position functions" do
+    assert(List.delete([1, 2, 1], 1) == [2, 1])
+    assert(List.delete_at([1, 2, 3], -1) == [1, 2])
+    assert(List.insert_at([1, 3], 1, 2) == [1, 2, 3])
+    assert(List.insert_at([1, 2], -1, 3) == [1, 2, 3])
+    assert(List.replace_at([1, 2], 0, 9) == [9, 2])
+    assert(List.update_at([1, 2], 1, fn n -> n * 10 end) == [1, 20])
+    assert(List.replace_at([1], 5, 9) == [1])
+  end
+
+  test "ranges at their edges" do
+    assert(Range.disjoint?(1..1000000, 2000000..3000000))
+    assert(not Range.disjoint?(1..1000000, 5..6))
+    assert(Range.disjoint?(1..1000000//2, 2..10//2))
+    assert(Range.size(5..1//1) == 0)
+    assert(Range.split(1..5, -2) == {1..3, 4..5})
+    assert_raise("step cannot be 0", fn -> Range.new(1, 2, 0) end)
+    assert(Enum.slice([1, 2, 3], 5..6) == [])
+    assert(Enum.slice([1, 2, 3, 4], 0..3//2) == [1, 3])
+  end
+
+  test "Path.safe_relative with a directory" do
+    base = Path.expand("work")
+    assert(Path.safe_relative(Path.join(base, "a/b"), base) == some("a/b"))
+    assert(Path.safe_relative(Path.expand("elsewhere"), base) == none)
+    assert(URI.to_string(URI.merge(URI.parse("http://a.com/x/"), "y")) == "http://a.com/x/y")
+    ok(req) = Version.parse_requirement(">= 1.0.0")
+    assert(Version.match?(Version.parse!("1.2.0"), req))
+    assert_raise("invalid requirement", fn -> Version.match?("1.0.0", "~> x") end)
+    assert_raise("invalid requirement", fn -> Version.match?("1.0.0", ">= 1.0.0 maybe") end)
+    assert_raise("invalid requirement", fn -> Version.match?("1.0.0", "~> 1") end)
+    assert_raise("invalid version", fn -> Version.compare("1", "2.0.0") end)
+    assert_raise("invalid version", fn -> Version.parse!("v1") end)
+    assert(Version.match?("1.0.0", "!= 2.0.0 and <= 1.0.0 and > 0.1.0"))
+    assert(Version.compare("1.0.0-alpha", "1.0.0-alpha.1") == :lt)
+    assert(Version.compare("1.0.0-beta", "1.0.0-alpha") == :gt)
+    assert(Version.compare("1.0.0-1", "1.0.0-a") == :lt)
+  end
+
+  test "OptionParser edge cases" do
+    switches = [strict: [count: :integer, ratio: :float, verbose: :boolean, name: :string], aliases: [c: :count]]
+    {parsed, rest, invalid} = OptionParser.parse(["--count", "x", "--ratio=0.5", "--no-verbose", "-c", "3", "-z", "--name", "--", "tail"], switches)
+    assert(parsed == [ratio: "0.5", verbose: "false", count: "3", name: "--"])
+    assert(rest == ["tail"])
+    assert(invalid == [{"--count", some("x")}, {"-z", none}])
+    {_, _, missing} = OptionParser.parse(["--name"], switches)
+    assert(missing == [{"--name", none}])
+    {_, _, wrong} = OptionParser.parse(["--verbose=maybe", "--ratio", "x"], switches)
+    assert(wrong == [{"--verbose", some("maybe")}, {"--ratio", some("x")}])
+    {loose, _, _} = OptionParser.parse(["--free=1", "--flag"], [switches: []])
+    assert(loose == [free: "1", flag: "true"])
+    assert_raise("not both", fn -> OptionParser.parse([], [strict: [], switches: []]) end)
+    assert_raise("the type of", fn -> OptionParser.parse([], [strict: [a: :list]]) end)
+    assert_raise("OptionParser.parse takes", fn -> OptionParser.parse([], [other: []]) end)
+    {values, others, bad} = OptionParser.parse(["--x=1", "-y", "--no-flag", "--flag=yes", "--n", "z", "--", "-p"], %{"x" => "integer", "flag" => "boolean", "n" => "integer"}, %{"y" => "x"})
+    assert(Map.get(values, "x") == some("1"))
+    assert(others == ["-p"])
+    assert(length(bad) == 3)
+    assert_raise("the type of switch", fn -> OptionParser.parse([], %{"a" => "list"}) end)
+  end
+
+  test "JSON of awkward values" do
+    assert(JSON.encode(MapSet.new([2, 1])) == ok("[1,2]"))
+    outcomes: list[result[integer, string]] = [ok(1), error("no")]
+    assert(JSON.encode(outcomes) == ok("[{\"ok\":[1]},{\"error\":[\"no\"]}]"))
+    assert(JSON.encode({true, 1.5, :atom}) == ok("[true,1.5,\"atom\"]"))
+    nothing: map[atom, option[integer]] = %{:a => none}
+    assert(JSON.encode(nothing) == ok("{\"a\":null}"))
+    me: pid[integer] = Process.self(1)
+    assert(JSON.encode(me) != ok(""))
+    assert_raise("cannot be written", fn -> JSON.encode!(me) end)
+    assert_raise("JSON.encode! takes", fn -> JSON.encode!(1, [compact: true]) end)
+  end
+
+  test "Graphemes of every kind" do
+    assert(String.length("؀a") == 1)
+    assert(String.length("कि") == 1)
+    assert(String.length("각") == 1)
+    assert(String.length("각") == 1)
+    assert(String.length("a\u0007b") == 3)
+    assert(String.length("👍🏽") == 1)
+    assert(String.length("🏳️‍🌈") == 1)
+    assert(String.length("©️") == 1)
+    assert(String.length("\r\n\r") == 2)
+    assert(String.normalize("각", :nfc) == "각")
+    assert(String.normalize("ậ", :nfc) == String.normalize("ậ", :nfc))
+    assert(String.normalize("́a", :nfc) == "́a")
+    assert_raise("String.normalize takes", fn -> String.normalize("x", :nfx) end)
+  end
+
+  test "System and IO edges" do
+    assert_raise("could not run", fn -> System.cmd("alchem-no-such-program", []) end)
+    assert_raise("env: is", fn -> System.cmd("echo", [], [env: "NOEQUALS"]) end)
+    assert_raise("unknown option", fn -> System.cmd("echo", [], [shell: "true"]) end)
+    assert_raise("between 0 and 255", fn -> System.stop(300) end)
+    assert_raise("the time unit is", fn -> System.monotonic_time(:fortnight) end)
+    assert_raise("the time units are", fn -> System.convert_time_unit(1, :second, :fortnight) end)
+    assert(System.convert_time_unit(1, :millisecond, :microsecond) == 1000)
+    assert(System.system_time(:millisecond) > 0 and System.os_time() > 0 and System.monotonic_time() >= 0)
+    assert(IO.read(:line) == none or true)
+    assert(IO.read(3) == none or true)
+    assert(IO.binread(2) == none or true)
+    assert(IO.read(:stdio, :eof) == none or true)
+    assert_raise("IO.read takes", fn -> IO.read(:sideways) end)
+    assert_raise("nonnegative count", fn -> IO.read(-1) end)
+    assert_raise("nonnegative count", fn -> IO.binread(-1) end)
+    assert_raise("IO.read reads", fn -> IO.read(:stderr, :line) end)
+  end
+
+  test "files at their edges" do
+    path = Path.join(System.tmp_dir!(), "library_edges.txt")
+    File.rm(path)
+    ok(both) = File.open(path, [:read, :write])
+    IO.write(both, "one")
+    File.close(both)
+    assert(IO.write(both, "x") == error("closed"))
+    assert_raise("the file is closed", fn -> IO.read(both, :line) end)
+    assert_raise("the file is closed", fn -> IO.binread(both, 1) end)
+    case File.open(path, [:write, :exclusive]) do
+      ok(_) -> flunk("an existing file opened exclusively")
+      error(reason) -> assert(reason == "eexist")
+    end
+    assert_raise("File.open takes", fn -> File.open(path, [:sideways]) end)
+    assert_raise("File.write takes", fn -> File.write(path, "x", [:sideways]) end)
+    ok(appending) = File.open(path, [:append, :utf8])
+    IO.puts(appending, "!")
+    File.close(appending)
+    assert(File.read(path) == ok("one!\n"))
+    assert(File.open(path, [:read], fn f -> {IO.read(f, :eof), IO.read(f, :eof), IO.read(f, 2)} end) == ok({some("one!\n"), none, none}))
+    assert_raise("IO.read takes", fn -> File.open(path, [:read], fn f -> IO.read(f, :word) end) end)
+    assert_raise("must not be negative", fn -> File.open(path, [:read], fn f -> IO.read(f, -1) end) end)
+    assert(File.stat("/no/such/file/here") == error("enoent"))
+    assert(File.lstat("/no/such/file/here") == error("enoent"))
+    assert(File.chmod("/no/such/file/here", 0o644) == error("enoent"))
+    assert(File.ln(path, path) == error("eexist"))
+    assert(File.cp_r("/no/such/dir/here", path <> ".copy") == error("enoent"))
+    File.rm(path)
+  end
+
+  test "registry and supervisor options" do
+    assert_raise("partitions: is from 1 to 1024", fn ->
+      bad: registry[string, integer] = Registry.start_link([keys: :unique], [partitions: 0])
+      Registry.count(bad)
+    end)
+    assert_raise("the numbers Registry.start_link takes", fn ->
+      bad: registry[string, integer] = Registry.start_link([keys: :unique], [width: 2])
+      Registry.count(bad)
+    end)
+    assert_raise("max_children: cannot be negative", fn -> DynamicSupervisor.start_link([max_children: -1]) end)
+  end
+
+  test "generators of floats and filtered tuples shrink" do
+    assert_raise("smallest failing value", fn ->
+      check all f <- Gen.float() do
+        assert(f < 3.0)
+      end
+    end)
+    assert_raise("smallest failing value", fn ->
+      check all {a, b} <- Gen.filter(Gen.tuple(Gen.integer(), Gen.integer()), fn {x, _} -> x != 7 end) do
+        assert(a + b < 20)
+      end
+    end)
+    assert_raise("Gen.filter rejected", fn -> Gen.sample(Gen.filter(Gen.integer(), fn _ -> false end), 1) end)
+    assert_raise("low bound", fn -> Gen.integer(5, 1) end)
+    assert_raise("min <= max", fn -> Gen.list_of(Gen.integer(), 3, 1) end)
+    assert_raise("Gen.string takes", fn -> Gen.string(:emoji) end)
+    assert_raise("at least one value", fn ->
+      none_at_all: list[integer] = []
+      Gen.member_of(none_at_all)
+    end)
+  end
+end

@@ -1,0 +1,435 @@
+defmodule Protocol do
+  @moduledoc ~S"""
+  The text protocol between the server and its clients.
+
+  A request is one line of words separated by spaces. A word with spaces,
+  quotes or backslashes in it is written in double quotes, with \" for a
+  quote, \\ for a backslash and \n for a newline. The first word names the
+  command, in any case.
+
+  A reply is one or more lines; its first character says what it is:
+
+      +OK                 success
+      -ERR message        a failure
+      :42                 an integer
+      $text               a string, escaped as in requests but without quotes
+      _                   nothing
+      *2                  a list, followed by its items, each a reply
+
+  A client that subscribes to channels receives each published message as a
+  list reply of three items: message, the channel and the text.
+  """
+
+  type Command do
+    ping
+    echo(text: string)
+    get(key: string)
+    set(key: string, value: string, ttl: option[integer], only: atom)
+    delete(keys: list[string])
+    exists(keys: list[string])
+    increment(key: string, by: integer)
+    append(key: string, value: string)
+    strlen(key: string)
+    keys(pattern: string)
+    expire(key: string, seconds: integer)
+    expire_at(key: string, at: integer)
+    ttl(key: string)
+    persist(key: string)
+    push(key: string, values: list[string], left: boolean)
+    pop(key: string, left: boolean)
+    range(key: string, first: integer, last: integer)
+    length(key: string)
+    dbsize
+    flush
+    rewrite
+    info
+    publish(channel: string, text: string)
+    subscribe(channels: list[string])
+    unsubscribe(channels: list[string])
+    quit
+  end
+
+  type Reply do
+    ok
+    failure(message: string)
+    number(value: integer)
+    text(value: string)
+    nothing
+    many(items: list[Reply])
+  end
+
+  @doc ~S"""
+  Splits a request line into its words.
+
+      alx> Protocol.words("SET name \"Ada Lovelace\"")
+      ok(["SET", "name", "Ada Lovelace"])
+      alx> Protocol.words("say \"unclosed")
+      error("unterminated quote")
+  """
+  def words(line: string): result[list[string], string] do
+    scan(String.codepoints(line), "", [], false, false)
+  end
+
+  # scan walks the characters: current is the word being read, started says a
+  # word is open (an empty quoted word is still a word) and quoted that it is
+  # inside quotes.
+  defp scan([]: list[string], current: string, done: list[string], started: boolean, quoted: boolean): result[list[string], string] do
+    cond do
+      quoted -> error("unterminated quote")
+      started -> ok(Enum.reverse([current | done]))
+      true -> ok(Enum.reverse(done))
+    end
+  end
+
+  defp scan(["\\", next | rest], current, done, started, true) do
+    escaped = case next do
+      "n" -> "\n"
+      other -> other
+    end
+    scan(rest, current <> escaped, done, true, true)
+  end
+
+  defp scan(["\"" | rest], current, done, _, quoted) do
+    scan(rest, current, done, true, not quoted)
+  end
+
+  defp scan([char | rest], current, done, started, false) when char == " " or char == "\t" do
+    if started do
+      scan(rest, "", [current | done], false, false)
+    else
+      scan(rest, current, done, false, false)
+    end
+  end
+
+  defp scan([char | rest], current, done, _, quoted) do
+    scan(rest, current <> char, done, true, quoted)
+  end
+
+  @doc ~S"""
+  Quotes a word for a request line when it needs it.
+
+      alx> Protocol.quote_word("plain")
+      "plain"
+      alx> Protocol.quote_word("two words")
+      "\"two words\""
+  """
+  def quote_word(word: string): string do
+    plain = word != "" and not Enum.any?([" ", "\t", "\"", "\\", "\n"], fn special -> String.contains?(word, special) end)
+    if plain do
+      word
+    else
+      "\"" <> escape(word) <> "\""
+    end
+  end
+
+  @doc ~S"""
+  Escapes backslashes, quotes and newlines.
+
+      alx> Protocol.escape("a\nb")
+      "a\\nb"
+  """
+  def escape(text: string): string do
+    text
+    |> String.replace("\\", "\\\\")
+    |> String.replace("\"", "\\\"")
+    |> String.replace("\n", "\\n")
+  end
+
+  @doc ~S"""
+  Reverses escape.
+
+      alx> Protocol.unescape("a\\nb \\\"c\\\"")
+      "a\nb \"c\""
+  """
+  def unescape(text: string): string do
+    unescape_chars(String.codepoints(text), [])
+  end
+
+  defp unescape_chars([]: list[string], done: list[string]): string do
+    Enum.join(Enum.reverse(done), "")
+  end
+
+  defp unescape_chars(["\\", "n" | rest], done) do
+    unescape_chars(rest, ["\n" | done])
+  end
+
+  defp unescape_chars(["\\", other | rest], done) do
+    unescape_chars(rest, [other | done])
+  end
+
+  defp unescape_chars([char | rest], done) do
+    unescape_chars(rest, [char | done])
+  end
+
+  @doc """
+  Parses a request line into a command.
+
+      alx> Protocol.parse("set greeting hello EX 10")
+      ok(Protocol.Command.set("greeting", "hello", some(10000), :always))
+      alx> Protocol.parse("INCRBY counter 5")
+      ok(Protocol.Command.increment("counter", 5))
+      alx> Protocol.parse("GET")
+      error("wrong number of arguments for GET")
+  """
+  def parse(line: string): result[Command, string] do
+    with ok(words) <- words(line) do
+      case words do
+        [] -> error("empty command")
+        [name | args] -> command(String.upcase(name), args)
+      end
+    end
+  end
+
+  defp command(name: string, args: list[string]): result[Command, string] do
+    case {name, args} do
+      {"PING", []} -> ok(Command.ping)
+      {"ECHO", [text]} -> ok(Command.echo(text))
+      {"GET", [key]} -> ok(Command.get(key))
+      {"SET", [key, value | options]} -> set_options(key, value, options, none, :always)
+      {"DEL", [_ | _]} -> ok(Command.delete(args))
+      {"EXISTS", [_ | _]} -> ok(Command.exists(args))
+      {"INCR", [key]} -> ok(Command.increment(key, 1))
+      {"DECR", [key]} -> ok(Command.increment(key, -1))
+      {"INCRBY", [key, by]} -> with_integer(by, fn n -> Command.increment(key, n) end)
+      {"DECRBY", [key, by]} -> with_integer(by, fn n -> Command.increment(key, -n) end)
+      {"APPEND", [key, value]} -> ok(Command.append(key, value))
+      {"STRLEN", [key]} -> ok(Command.strlen(key))
+      {"KEYS", [pattern]} -> ok(Command.keys(pattern))
+      {"EXPIRE", [key, seconds]} -> with_integer(seconds, fn n -> Command.expire(key, n) end)
+      {"PEXPIREAT", [key, at]} -> with_integer(at, fn n -> Command.expire_at(key, n) end)
+      {"TTL", [key]} -> ok(Command.ttl(key))
+      {"PERSIST", [key]} -> ok(Command.persist(key))
+      {"LPUSH", [key, _ | _]} -> ok(Command.push(key, Enum.drop(args, 1), true))
+      {"RPUSH", [key, _ | _]} -> ok(Command.push(key, Enum.drop(args, 1), false))
+      {"LPOP", [key]} -> ok(Command.pop(key, true))
+      {"RPOP", [key]} -> ok(Command.pop(key, false))
+      {"LRANGE", [key, first, last]} -> range(key, first, last)
+      {"LLEN", [key]} -> ok(Command.length(key))
+      {"DBSIZE", []} -> ok(Command.dbsize)
+      {"FLUSHDB", []} -> ok(Command.flush)
+      {"REWRITE", []} -> ok(Command.rewrite)
+      {"INFO", []} -> ok(Command.info)
+      {"PUBLISH", [channel, text]} -> ok(Command.publish(channel, text))
+      {"SUBSCRIBE", [_ | _]} -> ok(Command.subscribe(args))
+      {"UNSUBSCRIBE", _} -> ok(Command.unsubscribe(args))
+      {"QUIT", []} -> ok(Command.quit)
+      _ ->
+        if Enum.member?(known(), name) do
+          error("wrong number of arguments for " <> name)
+        else
+          error("unknown command " <> quote_word(name))
+        end
+    end
+  end
+
+  @doc """
+  The commands the server understands.
+  """
+  def known(): list[string] do
+    [
+      "PING",
+      "ECHO",
+      "GET",
+      "SET",
+      "DEL",
+      "EXISTS",
+      "INCR",
+      "DECR",
+      "INCRBY",
+      "DECRBY",
+      "APPEND",
+      "STRLEN",
+      "KEYS",
+      "EXPIRE",
+      "PEXPIREAT",
+      "TTL",
+      "PERSIST",
+      "LPUSH",
+      "RPUSH",
+      "LPOP",
+      "RPOP",
+      "LRANGE",
+      "LLEN",
+      "DBSIZE",
+      "FLUSHDB",
+      "REWRITE",
+      "INFO",
+      "PUBLISH",
+      "SUBSCRIBE",
+      "UNSUBSCRIBE",
+      "QUIT"
+    ]
+  end
+
+  defp with_integer(text: string, make: fn[integer, Command]): result[Command, string] do
+    case Integer.parse(text) do
+      ok(n) -> ok(make(n))
+      error(_) -> error("value is not an integer: " <> quote_word(text))
+    end
+  end
+
+  defp range(key: string, first: string, last: string): result[Command, string] do
+    case {Integer.parse(first), Integer.parse(last)} do
+      {ok(a), ok(b)} -> ok(Command.range(key, a, b))
+      _ -> error("LRANGE takes integer positions")
+    end
+  end
+
+  # SET key value [EX seconds | PX milliseconds] [NX | XX]
+  defp set_options(key: string, value: string, options: list[string], ttl: option[integer], only: atom): result[Command, string] do
+    case options do
+      [] -> ok(Command.set(key, value, ttl, only))
+      [flag, amount | rest] when String.upcase(flag) == "EX" or String.upcase(flag) == "PX" ->
+        case Integer.parse(amount) do
+          ok(n) when n > 0 ->
+            ms = if String.upcase(flag) == "EX" do
+              n * 1000
+            else
+              n
+            end
+            set_options(key, value, rest, some(ms), only)
+          _ -> error("invalid expire time in SET")
+        end
+      [flag | rest] when String.upcase(flag) == "NX" ->
+        set_options(key, value, rest, ttl, :absent)
+      [flag | rest] when String.upcase(flag) == "XX" ->
+        set_options(key, value, rest, ttl, :present)
+      [flag | _] -> error("syntax error near " <> quote_word(flag))
+    end
+  end
+
+  @doc ~S"""
+  Writes a command as a request line, which parse reads back.
+
+      alx> Protocol.line(Protocol.Command.set("k", "two words", some(1500), :absent))
+      "SET k \"two words\" PX 1500 NX"
+  """
+  def line(command: Command): string do
+    words = case command do
+      Command.ping -> ["PING"]
+      Command.echo(text) -> ["ECHO", text]
+      Command.get(key) -> ["GET", key]
+      Command.set(key, value, ttl, only) ->
+        expiry = case ttl do
+          some(ms) -> ["PX", to_string(ms)]
+          none -> []
+        end
+        condition = case only do
+          :absent -> ["NX"]
+          :present -> ["XX"]
+          _ -> []
+        end
+        ["SET", key, value] ++ expiry ++ condition
+      Command.delete(keys) -> ["DEL" | keys]
+      Command.exists(keys) -> ["EXISTS" | keys]
+      Command.increment(key, by) -> ["INCRBY", key, to_string(by)]
+      Command.append(key, value) -> ["APPEND", key, value]
+      Command.strlen(key) -> ["STRLEN", key]
+      Command.keys(pattern) -> ["KEYS", pattern]
+      Command.expire(key, seconds) -> ["EXPIRE", key, to_string(seconds)]
+      Command.expire_at(key, at) -> ["PEXPIREAT", key, to_string(at)]
+      Command.ttl(key) -> ["TTL", key]
+      Command.persist(key) -> ["PERSIST", key]
+      Command.push(key, values, true) -> ["LPUSH", key | values]
+      Command.push(key, values, false) -> ["RPUSH", key | values]
+      Command.pop(key, true) -> ["LPOP", key]
+      Command.pop(key, false) -> ["RPOP", key]
+      Command.range(key, first, last) -> ["LRANGE", key, to_string(first), to_string(last)]
+      Command.length(key) -> ["LLEN", key]
+      Command.dbsize -> ["DBSIZE"]
+      Command.flush -> ["FLUSHDB"]
+      Command.rewrite -> ["REWRITE"]
+      Command.info -> ["INFO"]
+      Command.publish(channel, text) -> ["PUBLISH", channel, text]
+      Command.subscribe(channels) -> ["SUBSCRIBE" | channels]
+      Command.unsubscribe(channels) -> ["UNSUBSCRIBE" | channels]
+      Command.quit -> ["QUIT"]
+    end
+    Enum.join(Enum.map(words, fn word -> quote_word(word) end), " ")
+  end
+
+  @doc ~S"""
+  Writes a reply as the lines sent to a client.
+
+      alx> Protocol.render(Protocol.Reply.many([Protocol.Reply.number(1), Protocol.Reply.text("a b")]))
+      "*2\n:1\n$a b\n"
+      alx> Protocol.render(Protocol.Reply.failure("no"))
+      "-ERR no\n"
+  """
+  def render(reply: Reply): string do
+    case reply do
+      Reply.ok -> "+OK\n"
+      Reply.failure(message) -> "-ERR " <> escape(message) <> "\n"
+      Reply.number(n) -> ":" <> to_string(n) <> "\n"
+      Reply.text(value) -> "$" <> escape(value) <> "\n"
+      Reply.nothing -> "_\n"
+      Reply.many(items) ->
+        "*" <> to_string(length(items)) <> "\n" <> Enum.join(Enum.map(items, fn item -> render(item) end), "")
+    end
+  end
+
+  @doc ~S"""
+  Shows a reply the way the command-line client prints it.
+
+      alx> Protocol.show(Protocol.Reply.many([Protocol.Reply.text("x"), Protocol.Reply.nothing]))
+      "1) \"x\"\n2) (nil)"
+  """
+  def show(reply: Reply): string do
+    case reply do
+      Reply.ok -> "OK"
+      Reply.failure(message) -> "(error) " <> message
+      Reply.number(n) -> "(integer) " <> to_string(n)
+      Reply.text(value) -> inspect(value)
+      Reply.nothing -> "(nil)"
+      Reply.many([]) -> "(empty list)"
+      Reply.many(items) ->
+        items
+        |> Enum.with_index(1)
+        |> Enum.map(fn {item, i} -> to_string(i) <> ") " <> show(item) end)
+        |> Enum.join("\n")
+    end
+  end
+
+  @doc """
+  Reads one reply from lines arriving from a connection, given a function
+  that returns the next line.
+  """
+  def read_reply(next: fn[result[string, string]]): result[Reply, string] do
+    with ok(line) <- next() do
+      case String.next_codepoint(line) do
+        none -> error("empty reply line")
+        some({kind, rest}) -> reply_of(kind, rest, next)
+      end
+    end
+  end
+
+  defp reply_of(kind: string, rest: string, next: fn[result[string, string]]): result[Reply, string] do
+    case kind do
+      "+" -> ok(Reply.ok)
+      "-" -> ok(Reply.failure(unescape(String.replace_prefix(rest, "ERR ", ""))))
+      ":" ->
+        case Integer.parse(rest) do
+          ok(n) -> ok(Reply.number(n))
+          error(_) -> error("bad integer reply " <> rest)
+        end
+      "$" -> ok(Reply.text(unescape(rest)))
+      "_" -> ok(Reply.nothing)
+      "*" ->
+        case Integer.parse(rest) do
+          ok(count) -> read_items(count, next, [])
+          error(_) -> error("bad list reply " <> rest)
+        end
+      _ -> error("unknown reply " <> kind <> rest)
+    end
+  end
+
+  defp read_items(0, _: fn[result[string, string]], done: list[Reply]): result[Reply, string] do
+    ok(Reply.many(Enum.reverse(done)))
+  end
+
+  defp read_items(count: integer, next, done) do
+    with ok(item) <- read_reply(next) do
+      read_items(count - 1, next, [item | done])
+    end
+  end
+end

@@ -1,0 +1,111 @@
+defmodule Main do
+  defexception NotFound do
+    message: string
+    id: integer
+  end
+
+  defexception Invalid do
+    message: string
+  end
+
+  def find(id: integer): string do
+    if id > 10 do
+      raise(%NotFound{message: "no item " <> to_string(id), id: id})
+    end
+    if id < 0 do
+      raise(%Invalid{message: "negative"})
+    end
+    if id == 0 do
+      raise("zero")
+    end
+    return "item " <> to_string(id)
+  end
+
+  def lookup(id: integer): string do
+    try do
+      find(id)
+    rescue
+      e in NotFound -> "missing " <> to_string(e.id)
+      %Invalid{message: m} -> "invalid: " <> m
+      message -> "other: " <> message
+    end
+  end
+
+  def first_big(xs: list[integer]): integer do
+    try do
+      Enum.each(xs, fn x -> if x > 5 do throw(x) end end)
+      0
+    catch
+      n -> n
+    end
+  end
+
+  def parse(text: string): string do
+    try do
+      Integer.parse(text)
+    rescue
+      _ -> "failed"
+    else
+      ok(n) -> "number " <> to_string(n)
+      error(reason) -> "bad: " <> reason
+    end
+  end
+
+  def main() do
+    IO.puts(lookup(3))
+    IO.puts(lookup(42))
+    IO.puts(lookup(-1))
+    IO.puts(lookup(0))
+    IO.inspect(first_big([1, 2, 7, 9]))
+    IO.inspect(first_big([1, 2]))
+    IO.puts(parse("12"))
+    IO.puts(parse("x"))
+    v = try do
+      raise(%NotFound{message: "gone", id: 1})
+    rescue
+      message -> message
+    end
+    IO.puts(v)
+    w = try do
+      throw("deep")
+    catch
+      value: string -> "caught " <> value
+    end
+    IO.puts(w)
+    # A failure in an else arm is not rescued by the same try.
+    nested = try do
+      try do
+        1
+      rescue
+        _ -> "rescued too early"
+      else
+        n -> raise("from else " <> to_string(n))
+      end
+    rescue
+      message -> "outer " <> message
+    end
+    IO.puts(nested)
+    # Re-raising keeps the exception for an outer try.
+    again = try do
+      try do
+        find(99)
+      rescue
+        e in NotFound -> raise(e)
+      end
+    rescue
+      e in NotFound -> "still missing " <> to_string(e.id)
+    end
+    IO.puts(again)
+    # A throw passes through rescue arms to the catch that takes it.
+    through = try do
+      try do
+        throw(5)
+      rescue
+        _ -> -1
+      end
+    catch
+      n -> n * 10
+    end
+    IO.inspect(through)
+  end
+end

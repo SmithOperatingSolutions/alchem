@@ -1,0 +1,67 @@
+defmodule PropertiesTest do
+  @moduletag area: "properties"
+
+  test "reversing twice gives the list back" do
+    check all list <- Gen.list_of(Gen.integer()) do
+      assert(Enum.reverse(Enum.reverse(list)) == list)
+    end
+  end
+
+  test "later generators see earlier values, and filters drop values" do
+    check all low <- Gen.integer(0, 100),
+              high <- Gen.integer(low, 200),
+              {flag, word} <- Gen.tuple(Gen.boolean(), Gen.string(:alpha)),
+              low < high,
+              max_runs: 50 do
+      assert(low < high and high <= 200)
+      assert(flag or not flag)
+      assert(String.match?(word, ~r/^[a-zA-Z]*$/))
+    end
+  end
+
+  test "every generator" do
+    check all n <- Gen.positive_integer(),
+              f <- Gen.float(),
+              word <- Gen.string(:digit),
+              pick <- Gen.member_of([:a, :b]),
+              either <- Gen.one_of([Gen.constant(1), Gen.integer(2, 3)]),
+              doubled <- Gen.map(Gen.integer(), fn x -> x * 2 end),
+              even <- Gen.filter(Gen.integer(), fn x -> rem(x, 2) == 0 end),
+              counts <- Gen.map_of(Gen.string(:lower), Gen.integer()),
+              short <- Gen.list_of(Gen.boolean(), 1, 3),
+              {a, b, c} <- Gen.tuple(Gen.integer(), Gen.boolean(), Gen.string(:ascii)),
+              chosen <- Gen.bind(Gen.integer(1, 5), fn size -> Gen.list_of(Gen.constant(size), size, size) end),
+              small <- Gen.resize(Gen.integer(), 3) do
+      assert(n >= 1)
+      assert(f == f)
+      assert(String.match?(word, ~r/^[0-9]*$/))
+      assert(pick in [:a, :b])
+      assert(either in [1, 2, 3])
+      assert(rem(doubled, 2) == 0 and rem(even, 2) == 0)
+      assert(Enum.all?(Map.keys(counts), fn key -> String.match?(key, ~r/^[a-z]*$/) end))
+      assert(length(short) >= 1 and length(short) <= 3)
+      assert(a == a and (b or not b) and String.length(c) >= 0)
+      assert(Enum.all?(chosen, fn size -> size == length(chosen) end))
+      assert(small >= -3 and small <= 3)
+    end
+  end
+
+  test "a failing property shrinks to its smallest failure" do
+    assert_raise("{[0, 0, 0], 5}", fn ->
+      check all list <- Gen.list_of(Gen.integer()), n <- Gen.integer() do
+        assert(length(list) < 3 or n < 5)
+      end
+    end)
+  end
+
+  test "samples" do
+    assert(length(Gen.sample(Gen.integer(), 10)) == 10)
+    assert(Gen.sample(Gen.constant("x"), 2) == ["x", "x"])
+  end
+
+  @tag timeout: 5000, kind: :slow
+  test "tags may carry values" do
+    Process.sleep(10)
+    assert(true)
+  end
+end

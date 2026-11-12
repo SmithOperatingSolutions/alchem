@@ -1,0 +1,52 @@
+defmodule Restart do
+  def worker(self: pid[tuple[pid[integer],integer]]): integer do
+    Process.loop(0, fn(count: integer): tuple[boolean,integer] do
+      {ok, {client, value}} = Process.receive(self, -1)
+      assert(ok)
+      if (value < 0) do
+        Process.crash("requested")
+      end
+      assert(Process.send(client, value, -1))
+      return {true, (count + 1)}
+    end)
+    return 0
+  end
+
+  def latency(name: string, durations: list[integer]): integer do
+    sorted = Enum.sort(durations)
+    count = length(sorted)
+    IO.puts(:stderr, "latency " <> name <> " " <> to_string(Enum.at(sorted, 0, 0)) <> " " <> to_string(Enum.at(sorted, div(count, 2), 0)) <> " " <> to_string(Enum.at(sorted, div(count * 99, 100), 0)))
+    return count
+  end
+
+  def main() do
+    me: pid[integer] = Process.self(1)
+    specs = [{"worker", "permanent", &Restart.worker}]
+    tree = Supervisor.start("one_for_one", 1000000, 1, specs, 1)
+    started = System.monotonic_time(:microsecond)
+    {total, durations} = Process.loop({0, []}, fn(state: tuple[integer, list[integer]]): tuple[boolean, tuple[integer, list[integer]]] do
+      {done, times} = state
+      since = System.monotonic_time(:microsecond)
+      doomed = Supervisor.child(tree, "worker")
+      old = Process.id(doomed)
+      assert(Process.send(doomed, {me, -1}, -1))
+      {ended, reason} = Process.await(doomed, -1)
+      assert((ended and (reason == "requested")))
+      Process.loop(old, fn(seen: integer): tuple[boolean,integer] do
+        Process.sleep(0)
+        now = Process.id(Supervisor.child(tree, "worker"))
+        return {(now == old), now}
+      end)
+      assert(Process.send(Supervisor.child(tree, "worker"), {me, done}, -1))
+      {ok, reply} = Process.receive(me, -1)
+      assert((ok and (reply == done)))
+      took = System.monotonic_time(:microsecond) - since
+      return {((done + 1) < 20000), {done + 1, [took | times]}}
+    end)
+    IO.puts(:stderr, "phase cycles " <> to_string(System.monotonic_time(:microsecond) - started))
+    latency("restart (us)", durations)
+    assert((total == 20000))
+    assert(Supervisor.stop(tree, 5000))
+    IO.puts("restarted 20000")
+  end
+end

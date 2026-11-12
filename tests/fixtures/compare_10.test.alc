@@ -1,0 +1,1 @@
+defmodule Check do def main() do assert(0009 == 9) end end

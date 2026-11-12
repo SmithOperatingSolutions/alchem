@@ -1,0 +1,9 @@
+# Toolchain versions for local development. Run `mise install` to fetch them.
+#
+# Go builds the compiler and every Alchem program. Erlang and Elixir are only
+# needed for the Elixir baselines under benchmarks/.
+
+[tools]
+go = "1.27.3"
+erlang = "29.1.2"
+elixir = "1.20.5-otp-29"

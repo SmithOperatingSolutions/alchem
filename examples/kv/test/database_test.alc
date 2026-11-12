@@ -1,0 +1,39 @@
+defmodule DatabaseTest do
+  import "../lib/protocol.alc"
+  import "../lib/glob.alc"
+  import "../lib/store.alc"
+  import "../lib/log.alc"
+  import "../lib/database.alc"
+
+  setup do
+    path = System.tmp_dir!() <> "/kv-database-test-" <> to_string(System.pid()) <> "-" <> to_string(Time.monotonic()) <> ".log"
+    on_exit(fn -> File.rm(path) end)
+    path
+  end
+
+  def command(line: string): Protocol.Command do
+    ok(command) = Protocol.parse(line)
+    command
+  end
+
+  test "changes survive a restart through the log", path do
+    first = Database.start(path)
+    assert(Database.run(first, command("SET a 1")) == Protocol.Reply.ok)
+    assert(Database.run(first, command("INCRBY a 9")) == Protocol.Reply.number(10))
+    assert(Database.run(first, command("RPUSH l x y")) == Protocol.Reply.number(2))
+    Server.stop(first)
+    again = Database.start(path)
+    assert(Database.run(again, command("GET a")) == Protocol.Reply.text("10"))
+    assert(Database.run(again, command("LLEN l")) == Protocol.Reply.number(2))
+    assert(Database.rewrite(again) == Protocol.Reply.ok)
+    assert(Log.load(path) == ["SET a 10", "RPUSH l x y"])
+  end
+
+  test "keys expire on time without being read", path do
+    database = Database.start(path)
+    assert(Database.run(database, command("SET short v PX 30")) == Protocol.Reply.ok)
+    assert(Database.stats(database).keys == 1)
+    Process.sleep(120)
+    assert(Database.stats(database).keys == 0)
+  end
+end

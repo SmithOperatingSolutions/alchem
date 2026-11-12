@@ -1,0 +1,15 @@
+defmodule Workers do
+  def run(self: pid[tuple[pid[string], string]]): integer do
+    Process.loop(0, fn(count: integer): tuple[boolean, integer] do
+      {ok, {client, text}} = Process.receive(self, -1)
+      assert(ok)
+      if text == "crash" do
+        Process.crash("requested crash")
+      else
+        assert(Process.send(client, text, 1000))
+      end
+      return {true, count + 1}
+    end)
+    return 0
+  end
+end

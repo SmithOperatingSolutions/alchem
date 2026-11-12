@@ -1,0 +1,73 @@
+defmodule KV do
+  @moduledoc """
+  Starts the whole server: the database, the TCP listener with a process
+  per connection under a dynamic supervisor, and the HTTP endpoints.
+  """
+  import "protocol.alc"
+  import "glob.alc"
+  import "store.alc"
+  import "log.alc"
+  import "database.alc"
+  import "connection.alc"
+  import "web.alc"
+
+  struct Running do
+    address: string
+    web_address: string
+    web: http_server
+    listener: socket
+    connections: dynamic_supervisor
+    database: server[Database.Request, Protocol.Reply]
+  end
+
+  @doc """
+  Starts serving the protocol on address and HTTP on web_address, keeping
+  the data in the log at data. Port 0 picks a free port; the addresses in
+  the result say which.
+  """
+  def start(address: string, web_address: string, data: string): result[Running, string] do
+    database = Database.start(data)
+    channels: registry[string, pid[Connection.Notice]] = Registry.start_link([keys: :duplicate])
+    shared = %Connection.Shared{database: database, channels: channels, started: Time.now()}
+    # Connections are temporary children: one that fails is not restarted,
+    # and a burst of failing clients must not stop the supervisor.
+    connections = DynamicSupervisor.start_link([max_restarts: 1000, max_seconds: 1])
+    count: fn[integer] = fn -> DynamicSupervisor.count_children(connections) end
+    with ok(listener) <- TCP.listen(address),
+         ok(web) <- HTTP.serve(web_address, fn request -> Web.handle(shared, count, request) end) do
+      acceptor: pid[integer] = Process.spawn(fn(_: pid[integer]): integer do
+        accept(shared, listener, connections)
+      end, 1)
+      TCP.controlling_process(listener, acceptor)
+      ok(%Running{address: TCP.address(listener), web_address: HTTP.address(web), web: web, listener: listener, connections: connections, database: database})
+    end
+  end
+
+  @doc """
+  Stops accepting, closes every connection and stops the HTTP server.
+  """
+  def stop(running: Running): boolean do
+    TCP.close(running.listener)
+    DynamicSupervisor.stop(running.connections)
+    HTTP.stop(running.web)
+    Server.stop(running.database)
+  end
+
+  defp accept(shared: Connection.Shared, listener: socket, connections: dynamic_supervisor): integer do
+    Process.loop(true, fn(_: boolean): tuple[boolean, boolean] do
+      case TCP.accept(listener, -1) do
+        ok(client) ->
+          started = DynamicSupervisor.start_child(connections, fn(self: pid[Connection.Notice]): integer do
+            Connection.serve(shared, client, self)
+          end, :temporary)
+          case started do
+            ok(connection) -> TCP.controlling_process(client, connection)
+            error(_) -> TCP.close(client)
+          end
+          {true, true}
+        error(_) -> {false, false}
+      end
+    end)
+    0
+  end
+end

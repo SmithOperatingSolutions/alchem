@@ -1,0 +1,116 @@
+defmodule ProcessesBench do
+  import "bench.alc"
+
+  def flag(value: boolean): integer do
+    if value do
+      1
+    else
+      0
+    end
+  end
+
+  def idle(self: pid[integer]): integer do
+    0
+  end
+
+  def wait(self: pid[integer]): integer do
+    Process.receive(self, -1)
+    0
+  end
+
+  def joined(target: pid[integer]): integer do
+    {done, _} = Process.await(target, -1)
+    flag(done)
+  end
+
+  def echo(self: pid[tuple[pid[integer], integer]]): integer do
+    Process.loop(0, fn(count: integer): tuple[boolean, integer] do
+      {_, {client, value}} = Process.receive(self, -1)
+      Process.send(client, value, -1)
+      {value >= 0, count + 1}
+    end)
+    0
+  end
+
+  def head_of(self: pid[tuple[pid[integer], list[integer]]]): integer do
+    Process.loop(0, fn(count: integer): tuple[boolean, integer] do
+      {_, {client, items}} = Process.receive(self, -1)
+      Process.send(client, hd(items), -1)
+      {hd(items) >= 0, count + 1}
+    end)
+    0
+  end
+
+  def relay(self: pid[integer], next: pid[integer]): integer do
+    Process.loop(0, fn(count: integer): tuple[boolean, integer] do
+      {_, token} = Process.receive(self, -1)
+      Process.send(next, token, -1)
+      {token >= 0, count + 1}
+    end)
+    0
+  end
+
+  def produce(target: pid[integer], count: integer): integer do
+    Enum.each(1..count, fn i -> Process.send(target, i, -1) end)
+    0
+  end
+
+  def take(me: pid[integer]): integer do
+    {_, value} = Process.receive(me, -1)
+    value
+  end
+
+  def main() do
+    me: pid[integer] = Process.self(1000000)
+    payload = Enum.to_list(1..10000)
+
+    Bench.run("process spawn and await 100k, one at a time", fn -> Enum.reduce(1..100000, 0, fn _, acc -> acc + joined(Process.spawn(&idle, 1)) end) end)
+    Bench.run("process spawn 100k alive at once, release, await", fn ->
+      workers = Enum.map(1..100000, fn _ -> Process.spawn(&wait, 1) end)
+      Enum.each(workers, fn worker -> Process.send(worker, 1, -1) end)
+      Enum.reduce(workers, 0, fn worker, acc -> acc + joined(worker) end)
+    end)
+    Bench.run("process ping-pong 500k round trips", fn ->
+      server = Process.spawn(&echo, 1)
+      total = Enum.reduce(1..500000, 0, fn i, acc ->
+        Process.send(server, {me, i}, -1)
+        acc + take(me)
+      end)
+      Process.send(server, {me, -1}, -1)
+      total + take(me) + joined_echo(server)
+    end)
+    Bench.run("process fan-in 8 senders, 1M messages", fn ->
+      senders = Enum.map(1..8, fn _ -> Process.spawn(fn(self: pid[integer]): integer do produce(me, 125000) end, 1) end)
+      total = Enum.reduce(1..1000000, 0, fn _, acc -> acc + take(me) end)
+      total + Enum.reduce(senders, 0, fn sender, acc -> acc + joined(sender) end)
+    end)
+    Bench.run("process ring 1,000 processes, 1,000 laps", fn ->
+      first = Enum.reduce(1..1000, me, fn _, next -> Process.spawn(fn(self: pid[integer]): integer do relay(self, next) end, 1) end)
+      laps = Enum.reduce(1..1000, 0, fn lap, acc ->
+        Process.send(first, lap, -1)
+        acc + take(me)
+      end)
+      Process.send(first, -1, -1)
+      laps + take(me)
+    end)
+    Bench.run("process send a 10k-element list, 10k round trips", fn ->
+      server = Process.spawn(&head_of, 1)
+      total = Enum.reduce(1..10000, 0, fn _, acc ->
+        Process.send(server, {me, payload}, -1)
+        acc + take(me)
+      end)
+      Process.send(server, {me, [-1]}, -1)
+      total + take(me)
+    end)
+    Bench.run("process mailbox fill 500k then drain", fn ->
+      sender = Process.spawn(fn(self: pid[integer]): integer do produce(me, 500000) end, 1)
+      done = joined(sender)
+      done + Enum.reduce(1..500000, 0, fn _, acc -> acc + take(me) end)
+    end)
+  end
+
+  def joined_echo(target: pid[tuple[pid[integer], integer]]): integer do
+    {done, _} = Process.await(target, -1)
+    flag(done)
+  end
+end

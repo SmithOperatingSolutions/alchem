@@ -1,0 +1,108 @@
+defmodule Main do
+  # Echoes each line back until the client closes, in passive mode.
+  def echo(listener: socket): integer do
+    case TCP.accept(listener, 2000) do
+      ok(client) ->
+        Process.loop(true, fn(_: boolean): tuple[boolean, boolean] do
+          case TCP.recv_line(client, 2000) do
+            ok(line) ->
+              TCP.send(client, "echo " <> line <> "\n")
+              {true, true}
+            error(_) -> {false, false}
+          end
+        end)
+        0
+      error(_) -> 1
+    end
+  end
+
+  def main() do
+    me: pid[TCP.Event] = Process.self(64)
+    ok(listener) = TCP.listen("127.0.0.1:0")
+    server = Task.async(fn -> echo(listener) end)
+
+    # Active once: one packet arrives as a message, then the socket is
+    # passive until asked again.
+    ok(conn) = TCP.connect(TCP.address(listener), 1000, [packet: :line])
+    TCP.controlling_process(conn, me)
+    TCP.setopts(conn, [active: :once])
+    TCP.send(conn, "one\n")
+    TCP.send(conn, "two\n")
+    IO.inspect(Process.receive(me, 1000))
+    IO.inspect(Process.receive(me, 100))
+    IO.inspect(TCP.recv_line(conn, 2000))
+    TCP.send(conn, "again\n")
+    TCP.setopts(conn, [active: :once])
+    IO.inspect(Process.receive(me, 1000))
+
+    # Active counts, and the end of the connection arrives as a message.
+    TCP.send(conn, "three\n")
+    TCP.send(conn, "four\n")
+    TCP.setopts(conn, [active: 2])
+    IO.inspect(Process.receive(me, 1000))
+    IO.inspect(Process.receive(me, 1000))
+    TCP.setopts(conn, [active: :true])
+    TCP.shutdown(conn, :write)
+    IO.inspect(Process.receive(me, 1000))
+    IO.inspect(Task.await(server))
+    IO.inspect(TCP.setopts(conn, [active: :once]))
+
+    # Length-prefixed packets: the header is added on send and taken off on
+    # receive, and accepted sockets inherit the listener's options.
+    ok(framed) = TCP.listen("127.0.0.1:0", [active: :once])
+    receiver = Task.async(fn ->
+      inbox: pid[TCP.Event] = Process.self(8)
+      ok(client) = TCP.accept(framed, 2000)
+      TCP.setopts(client, [packet: 2])
+      case Process.receive(inbox, 2000) do
+        {true, TCP.Event.data(text)} -> text
+        _ -> "nothing"
+      end
+    end)
+    ok(sender) = TCP.connect(TCP.address(framed), 1000)
+    TCP.setopts(sender, [packet: 2])
+    TCP.send(sender, "hello, frames")
+    IO.inspect(Task.await(receiver))
+    ok(raw) = TCP.connect(TCP.address(framed), 1000)
+    TCP.setopts(raw, [packet: 1])
+    IO.inspect(TCP.send(raw, String.duplicate("x", 300)))
+    TCP.close(raw)
+
+    # A process whose messages are not events cannot make a socket active.
+    plain: pid[integer] = Process.spawn(fn(self: pid[integer]): integer do
+      Process.receive(self, 2000)
+      0
+    end, 1)
+    ok(lonely) = TCP.connect(TCP.address(framed), 1000)
+    TCP.controlling_process(lonely, plain)
+    IO.inspect(TCP.setopts(lonely, [active: :true]))
+    IO.inspect(TCP.recv(lonely, 3, 50))
+
+    # UDP: passive and active datagrams.
+    ok(a) = UDP.open("127.0.0.1:0")
+    ok(b) = UDP.open("127.0.0.1:0")
+    UDP.send(a, UDP.address(b), "ping")
+    case UDP.recv(b, 1000) do
+      ok({from, text}) -> IO.inspect({from == UDP.address(a), text})
+      error(reason) -> IO.puts(reason)
+    end
+    IO.inspect(UDP.recv(b, 50))
+    listener_task = Task.async(fn ->
+      inbox: pid[UDP.Event] = Process.self(8)
+      ok(c) = UDP.open("127.0.0.1:0")
+      UDP.setopts(c, [active: :once])
+      UDP.send(a, UDP.address(a), UDP.address(c))
+      case Process.receive(inbox, 2000) do
+        {true, UDP.Event.datagram(_, text)} -> text
+        _ -> "nothing"
+      end
+    end)
+    case UDP.recv(a, 2000) do
+      ok({_, address}) -> UDP.send(a, address, "pong")
+      error(reason) -> IO.puts(reason)
+    end
+    IO.inspect(Task.await(listener_task))
+    UDP.close(a)
+    IO.inspect(UDP.close(b))
+  end
+end

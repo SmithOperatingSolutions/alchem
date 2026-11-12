@@ -1,0 +1,90 @@
+defmodule Client do
+  @moduledoc """
+  The command-line client.
+
+      alchem run client.alc -- SET greeting "hello there"
+      alchem run client.alc -- --address 127.0.0.1:6380 GET greeting
+      alchem run client.alc                      # interactive
+
+  A command on the command line is sent once and its reply printed; without
+  one the client reads commands from standard input, a line at a time.
+  After SUBSCRIBE it prints messages as they arrive.
+  """
+  import "lib/protocol.alc"
+
+  def main() do
+    # Only switches before the command are the client's: in LRANGE l 0 -1
+    # the -1 is a word of the command.
+    {address, words} = case System.argv() do
+      [flag, value | rest] when flag == "--address" or flag == "-a" -> {value, rest}
+      ["--" | rest] -> {"127.0.0.1:6380", rest}
+      [flag | _] when flag == "--help" or flag == "-h" ->
+        IO.puts("usage: client [--address host:port] [command words]")
+        System.halt(0)
+        {"", []}
+      rest -> {"127.0.0.1:6380", rest}
+    end
+    case TCP.connect(address, 3000) do
+      ok(connection) ->
+        if words == [] do
+          interactive(connection, address)
+        else
+          send_line(connection, Enum.join(Enum.map(words, &Protocol.quote_word/1), " "))
+        end
+      error(reason) ->
+        IO.puts(:stderr, "cannot connect to " <> address <> ": " <> reason)
+        System.halt(1)
+    end
+  end
+
+  defp next_line(connection: socket): fn[result[string, string]] do
+    fn -> TCP.recv_line(connection, 10000) end
+  end
+
+  # send_line sends one request and prints its reply, and after SUBSCRIBE
+  # every message that follows.
+  defp send_line(connection: socket, line: string): boolean do
+    TCP.send(connection, line <> "\n")
+    case Protocol.read_reply(next_line(connection)) do
+      ok(reply) ->
+        IO.puts(Protocol.show(reply))
+        if String.starts_with?(String.upcase(String.trim(line)), "SUBSCRIBE") do
+          listen(connection)
+        end
+        true
+      error(reason) ->
+        IO.puts(:stderr, "connection lost: " <> reason)
+        false
+    end
+  end
+
+  defp listen(connection: socket): boolean do
+    Process.loop(true, fn(_: boolean): tuple[boolean, boolean] do
+      case Protocol.read_reply(fn -> TCP.recv_line(connection, -1) end) do
+        ok(reply) ->
+          IO.puts(Protocol.show(reply))
+          {true, true}
+        error(_) -> {false, false}
+      end
+    end)
+  end
+
+  defp interactive(connection: socket, address: string): boolean do
+    Process.loop(true, fn(_: boolean): tuple[boolean, boolean] do
+      case IO.gets(address <> "> ") do
+        none -> {false, false}
+        some(line) ->
+          trimmed = String.trim(line)
+          cond do
+            trimmed == "" -> {true, true}
+            String.upcase(trimmed) == "QUIT" ->
+              send_line(connection, trimmed)
+              {false, false}
+            true ->
+              open = send_line(connection, trimmed)
+              {open, open}
+          end
+      end
+    end)
+  end
+end

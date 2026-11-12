@@ -1,0 +1,77 @@
+defmodule ParityNext do
+  def greet(name: string, greeting: string \\ "hello", marks: integer \\ 1): string do
+    ("#{greeting}, #{name}" <> String.duplicate("!", marks))
+  end
+
+  def total([]: list[integer], start: integer \\ 0): integer do
+    start
+  end
+
+  def total([head | tail], start) do
+    total(tail, (start + head))
+  end
+
+  def pick(xs: list[integer], fallback: option[integer] \\ none): option[integer] do
+    case xs do
+      [] ->
+        fallback
+      [x | _] ->
+        some(x)
+    end
+  end
+
+  def main() do
+    # Default arguments.
+    IO.puts(greet("ada"))
+    IO.puts(greet("ada", "hi"))
+    IO.puts(("bo" |> greet("yo", 3)))
+    IO.puts("#{total([1, 2, 3])} #{total([1, 2, 3], 10)} #{inspect(pick(Enum.take([1], 0)))}")
+    # Anonymous functions with clauses.
+    describe: fn[integer,string] = fn
+      0 ->
+        "zero"
+      n when (n < 0) ->
+        "negative"
+      _ ->
+        "positive"
+    end
+    IO.puts(Enum.join(Enum.map([0, -3, 7], describe), ","))
+    products = Enum.map([{1, 2}, {3, 0}], fn
+      {a, 0} ->
+        a
+      {a, b} ->
+        (a * b)
+    end)
+    IO.puts(inspect(products))
+    # Comprehension options.
+    squares = for(n <- (1..4), into: %{}, do: {n, (n * n)})
+    letters = for(word <- ["bee", "ant", "bat"], uniq: true, do: String.slice(word, 0, 1))
+    sum = for x <- [1, 2, 3], y <- [10, 20], (x != 2), reduce: 0 do
+      acc ->
+        (acc + (x * y))
+    end
+    counts: map[string,integer] = for word <- ["a", "b", "a"], reduce: %{} do
+      seen ->
+        Map.update(seen, word, 1, &(&1 + 1))
+    end
+    text = for(part <- ["a", "b"], into: "x", do: part)
+    IO.puts("#{inspect(squares)} #{inspect(letters)} #{sum} #{inspect(counts)} #{text}")
+    # Interpolating sigils and regular expressions given to String.
+    name = "ada"
+    IO.puts(~s(say "hi" to #{name} \d #{sum + 1} times))
+    IO.puts(inspect(~w(a#{sum} #{name} z)))
+    IO.puts(inspect(Regex.run(~r/#{name}-(\d+)/i, "ADA-42")))
+    IO.puts(~S(raw #{name}))
+    IO.puts((inspect(String.split("a1b22c", ~r/\d+/)) <> String.replace("a1b22c", ~r/\d+/, "#")))
+    # Floats print and round as in Elixir.
+    IO.puts("#{1000.0} #{1250.0} #{inspect(1000.0)} #{Float.ceil(3.7, 1)} #{Float.round(1.15, 1)} #{Float.floor(0.3, 1)}")
+    # Negative zero keeps its sign, and a function inside an interpolation stays on its line.
+    IO.puts("#{-0.0} #{inspect(-0.0)} #{(-0.0 == 0.0)} #{Enum.min(Enum.take([1], 0), fn -> 7 end)}")
+    # Library additions.
+    IO.puts(Calendar.strftime(~N[2026-03-05 09:04:05], "%a %-d %b %Y %I:%M %p"))
+    fallback = Enum.max(Enum.take([1], 0), fn ->
+      -1
+    end)
+    IO.puts("#{fallback} #{Version.compare("1.9.0", "1.10.0")} #{URI.encode_query(%{"q" => "a b"})}")
+  end
+end

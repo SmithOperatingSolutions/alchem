@@ -1,0 +1,7 @@
+ok(["start", "step 1", "step 2", "ping", "checked"])
+ok(["mail: one", "ping"])
+error("server stopped: boom")
+ok(["mail: two", "ping"])
+1
+ok(["start", "step 1", "step 2", "ping", "checked", "named", "ping"])
+false

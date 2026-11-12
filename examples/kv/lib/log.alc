@@ -1,0 +1,50 @@
+defmodule Log do
+  @moduledoc """
+  The append-only log that keeps the data across restarts: every change is
+  written as the request line that redoes it, and the log is replayed when
+  the server starts. REWRITE replaces it with the shortest list of lines that
+  rebuilds the data.
+
+  The log is a server, so changes are written in the order they were made
+  and a slow disk holds up no client.
+  """
+
+  type Request do
+    append(lines: list[string])
+    replace(lines: list[string])
+  end
+
+  @doc """
+  The lines of a log, or none when there is no log yet.
+  """
+  def load(path: string): list[string] do
+    case File.read(path) do
+      ok(text) -> Enum.reject(String.split(text, "\n"), fn line -> line == "" end)
+      error(_) -> []
+    end
+  end
+
+  def start(path: string): server[Request, result[tuple[], string]] do
+    Server.start(path, &handle/2)
+  end
+
+  defp handle(path: string, request: Request): tuple[string, result[tuple[], string]] do
+    case request do
+      Request.append([]) -> {path, ok({})}
+      Request.append(lines) -> {path, File.append(path, text(lines))}
+      Request.replace(lines) ->
+        # The new log is written beside the old one and then takes its place,
+        # so a crash in between leaves one or the other whole.
+        temporary = path <> ".rewrite"
+        result: result[tuple[], string] = with ok(_) <- File.write(temporary, text(lines)),
+             ok(_) <- File.rename(temporary, path) do
+          ok({})
+        end
+        {path, result}
+    end
+  end
+
+  defp text(lines: list[string]): string do
+    Enum.join(Enum.map(lines, fn line -> line <> "\n" end), "")
+  end
+end

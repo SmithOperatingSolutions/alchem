@@ -1,0 +1,167 @@
+defmodule LibraryErrorsTest do
+  @moduletag area: "library errors"
+
+  test "enumerable failures" do
+    empty: list[integer] = []
+    assert_raise("nonnegative exponent", fn -> Integer.pow(2, -1) end)
+    assert_raise("out of bounds", fn -> Enum.fetch!([1], 5) end)
+    assert_raise("positive limit", fn -> Enum.count_until([1], 0) end)
+    assert_raise("positive limit", fn -> Enum.count_until([1], fn x -> x > 0 end, 0) end)
+    assert_raise("empty error", fn -> Enum.max(empty) end)
+    assert_raise("empty error", fn -> Enum.random(empty) end)
+    assert_raise("nonnegative count", fn -> Enum.take_random([1], -1) end)
+    assert_raise("empty error", fn -> Enum.reduce(empty, fn x, acc -> x + acc end) end)
+    assert_raise("reverse_slice", fn -> Enum.reverse_slice([1], -1, 1) end)
+    assert_raise("nth must be", fn -> Stream.take_every([1], -1) |> Enum.to_list() end)
+    assert_raise("positive count and step", fn -> Stream.chunk_every([1], 0, 1) |> Enum.to_list() end)
+    assert_raise("cannot cycle", fn -> Stream.cycle(empty) |> Enum.take(1) end)
+    assert_raise("the list is empty", fn -> hd(empty) end)
+    assert_raise("the list is empty", fn -> tl(empty) end)
+    assert_raise("the list is empty", fn -> List.last!(empty) end)
+    assert_raise("duplicate needs", fn -> List.duplicate(1, -1) end)
+  end
+
+  test "enumerable edges" do
+    empty: list[integer] = []
+    assert(Enum.to_list(5..1) == [5, 4, 3, 2, 1])
+    assert(Enum.slice([1, 2, 3], -2..-1) == [2, 3])
+    assert(Enum.at([1], 0, 9) == 1)
+    assert(Enum.drop([1, 2], -5) == [])
+    assert(Enum.find([1, 2], 0, fn x -> x == 2 end) == 2)
+    assert(Enum.find_index([1, 2], fn x -> x == 9 end) == none)
+    assert(Enum.into([1], [2]) == [2, 1])
+    assert(Enum.product([2, 3]) == 6)
+    assert(Enum.uniq_by([1, 3, 2], fn x -> rem(x, 2) end) == [1, 2])
+    assert(Enum.slide([1, 2, 3], -1, 0) == [3, 1, 2])
+    assert(Enum.zip(Stream.map(empty, fn x -> [x] end)) == [])
+    assert(Enum.chunk_every([1, 2, 3], 2, 2, [9, 9]) == [[1, 2], [3, 9]])
+    assert(Enum.sort([2, 1, 2], fn a, b -> a <= b end) == [1, 2, 2])
+    assert(Stream.take_every([1, 2], 0) |> Enum.to_list() == [])
+    assert(Stream.chunk_by(Stream.cycle([1, 1, 2]), fn x -> x end) |> Enum.take(1) == [[1, 1]])
+    assert(Stream.duplicate(1, 5) |> Enum.take(2) == [1, 1])
+    assert(Stream.intersperse(Stream.cycle([1]), 0) |> Enum.take(2) == [1, 0])
+    assert(Enum.take(Stream.map(%{"a" => 1, "b" => 2}, fn {k, _} -> k end), 1) |> length() == 1)
+    assert(Enum.take(Stream.map(1..10//3, fn x -> x end), 2) == [1, 4])
+    assert(min(2, 1) == 1)
+    assert(max(1, 2) == 2)
+    assert(List.last(empty) == none)
+    assert(List.delete([1], 9) == [1])
+    assert(List.update_at([1], 5, fn x -> x end) == [1])
+    assert(not List.starts_with?([1, 2], [2]))
+    assert(not List.ends_with?([1], [1, 2]))
+    assert(MapSet.size(MapSet.union(MapSet.new([1]), MapSet.new([1, 2, 3]))) == 3)
+    assert(MapSet.size(MapSet.intersection(MapSet.new([1, 2, 3]), MapSet.new([1]))) == 1)
+    assert(List.myers_difference([1, 2], [1, 3]) == [eq: [1], del: [2], ins: [3]])
+  end
+
+  test "string edges" do
+    assert(String.graphemes("a\u0001b") == ["a", "\u0001", "b"])
+    assert(String.length("↔️☀️") == 2)
+    assert(String.length("각ᆨ") == 1)
+    assert(String.next_grapheme("") == none)
+    assert(String.normalize("각", :nfd) == "각")
+    assert(String.normalize("", :nfc) == "")
+    assert(String.normalize("ȩ́", :nfc) == String.normalize("ȩ́", :nfc))
+    assert(String.normalize("ﬁ", :nfkd) == "fi")
+    assert(String.normalize("abc", :nfkc) == "abc")
+    assert_raise("not empty", fn -> String.splitter("a", [""]) |> Enum.to_list() end)
+    assert(String.capitalize("", :ascii) == "")
+    assert(String.capitalize("") == "")
+    assert_raise("duplicate needs", fn -> String.duplicate("a", -1) end)
+    assert_raise("is not a float", fn -> String.to_float("x") end)
+    assert(String.replace_prefix("abc", "x", "y") == "abc")
+    assert(String.replace_suffix("abc", "x", "y") == "abc")
+    assert(String.replace_leading("abc", "", "y") == "abc")
+    assert(String.replace_trailing("abc", "", "y") == "abc")
+    assert(String.count("abc", "") == 0)
+    assert_raise("not valid", fn -> Base.decode64!("***") end)
+    assert(Base.decode64("YQ", [padding: false]) == some("a"))
+    assert_raise("outside the string", fn -> binary_part("abc", 2, 5) end)
+  end
+
+  test "path and keyword edges" do
+    empty: list[string] = []
+    assert_raise("empty list of paths", fn -> Path.join(empty) end)
+    assert(Path.basename("") == "")
+    assert(Path.split("/a/b") == ["/", "a", "b"])
+    assert(Path.relative_to("/a/b", "/c") == "/a/b")
+    assert_raise("malformed wildcard", fn -> Path.wildcard("[") end)
+    assert(Keyword.get([a: 1], :a, 0) == 1)
+    assert_raise("not found", fn -> Keyword.fetch!([a: 1], :b) end)
+    assert(Keyword.put_new_lazy([a: 1], :a, fn -> 2 end) == [a: 1])
+    assert(Keyword.merge([a: 1], [b: 2], fn _, x, _ -> x end) == [a: 1, b: 2])
+    assert(Keyword.validate([a: 1, b: 2, b: 3], [:a]) == error([:b]))
+    assert(Keyword.validate([a: 1], [:a]) == ok([a: 1]))
+  end
+
+  test "calendar failures" do
+    assert_raise("out of range", fn -> DateTime.add(~U[2026-01-01 00:00:00Z], 1 <<< 50, :second) end)
+    assert_raise("out of range", fn -> Date.add(~D[2026-01-01], 100000000) end)
+    assert_raise("out of range", fn -> NaiveDateTime.add(~N[2026-01-01 00:00:00], 1 <<< 61, :day) end)
+    assert(NaiveDateTime.add(~N[2026-01-01 00:00:00], 1, :second) == ~N[2026-01-01 00:00:01])
+    assert(NaiveDateTime.add(~N[2026-01-01 00:00:00], 1, :microsecond) == ~N[2026-01-01 00:00:00.000001])
+    assert(Enum.take(Date.range(~D[2026-01-01], ~D[2026-12-31]), 1) == [~D[2026-01-01]])
+    case Time.from_iso8601("x") do
+      error(_) -> assert(true)
+      _ -> flunk("expected an error")
+    end
+    case NaiveDateTime.from_iso8601("x") do
+      error(_) -> assert(true)
+      _ -> flunk("expected an error")
+    end
+    case DateTime.from_unix(999999999999999) do
+      error(_) -> assert(true)
+      _ -> flunk("expected an error")
+    end
+    assert_raise("shifted by years", fn -> Date.shift(~D[2026-01-01], Duration.new!([hour: 1])) end)
+    assert_raise("shifted by hours", fn -> Time.shift(~T[00:00:00], Duration.new!([day: 1])) end)
+    assert_raise("out of range", fn -> NaiveDateTime.shift(~N[2026-01-01 00:00:00], Duration.new!([second: 1 <<< 50])) end)
+  end
+
+  test "process option failures" do
+    assert_raise("concurrency", fn -> Task.async_stream([1], fn x -> x end, 0) |> Enum.to_list() end)
+    assert_raise("Agent.start_link takes name", fn -> Agent.start_link(fn -> 1 end, [other: :x]) end)
+    assert_raise("keys:", fn ->
+      r: registry[string, integer] = Registry.start_link([keys: :other], [partitions: 2])
+      r
+    end)
+    assert_raise("Registry.start_link takes keys", fn ->
+      r: registry[string, integer] = Registry.start_link([keys: :unique, other: :x], [partitions: 2])
+      r
+    end)
+    assert_raise("needs keys", fn ->
+      r: registry[string, integer] = Registry.start_link([], [partitions: 2])
+      r
+    end)
+    assert_raise("DynamicSupervisor.start_link takes", fn -> DynamicSupervisor.start_link([other: 1]) end)
+    assert_raise("one generator", fn ->
+      none_yet: list[generator[integer]] = []
+      Gen.one_of(none_yet)
+    end)
+    assert_raise("log level", fn -> Logger.configure("loud") end)
+    assert_raise("IO.puts writes", fn -> IO.puts(:other, "x") end)
+    assert_raise("exit status", fn -> System.halt(300) end)
+    assert_raise("expected a failure containing", fn -> assert_raise("zzz", fn -> Integer.pow(2, -1) end) end)
+    assert_raise("refute failed", fn -> refute(true) end)
+    assert_raise("delta", fn -> assert_in_delta(1.0, 2.0, 0.1) end)
+  end
+
+  test "system and files" do
+    {out, 0} = System.cmd("sh", ["-c", "echo $X; pwd; echo e >&2"], [cd: "/", env: "X=y", stderr_to_stdout: "true"])
+    assert(String.starts_with?(out, "y\n") and String.ends_with?(out, "e\n"))
+    {_, 3} = System.cmd("sh", ["-c", "exit 3"])
+    assert(System.monotonic_time(:microsecond) > 0)
+    assert(System.monotonic_time(:nanosecond) > 0)
+    assert(System.find_executable("alchem-no-such-program") == none)
+    assert_raise("could not read", fn -> File.read!("/alchem-no-such-file") end)
+    assert_raise("could not list", fn -> File.ls!("/alchem-no-such-dir") end)
+    case File.cp("/alchem-no-such-file", "/tmp/x") do
+      error(_) -> assert(true)
+      _ -> flunk("expected an error")
+    end
+    assert_raise("could not stream", fn -> File.stream!("/alchem-no-such-file") |> Enum.to_list() end)
+    assert_raise("chunk size", fn -> File.stream!("/alchem-no-such-file", 0) |> Enum.to_list() end)
+    assert_raise("could not stream", fn -> File.stream!("/alchem-no-such-file", 4) |> Enum.to_list() end)
+    assert(not File.exists?("/alchem-no-such-file"))
+  end
+end

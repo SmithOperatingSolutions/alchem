@@ -1,0 +1,125 @@
+defmodule Main do
+  # A certificate for 127.0.0.1 and localhost, made for this test only.
+  def certificate(): string do
+    """
+    -----BEGIN CERTIFICATE-----
+    MIIBjzCCATagAwIBAgIBATAKBggqhkjOPQQDAjAWMRQwEgYDVQQDEwthbGNoZW0g
+    dGVzdDAgFw0yMDAxMDEwMDAwMDBaGA8yMTIwMDEwMTAwMDAwMFowFjEUMBIGA1UE
+    AxMLYWxjaGVtIHRlc3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARIC+lvIvgf
+    JOEBCt9+nIs8nA+OU1obxlvX2BZjYRMv6mmQa7ar7QhPapXW+pkSBEypVOAruQb4
+    AD13p1N4EFmoo3MwcTAOBgNVHQ8BAf8EBAMCAoQwEwYDVR0lBAwwCgYIKwYBBQUH
+    AwEwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQUu+JsepWLR5RdMkGpRguBTpgu
+    Pz4wGgYDVR0RBBMwEYIJbG9jYWxob3N0hwR/AAABMAoGCCqGSM49BAMCA0cAMEQC
+    IGNSAk/SP4P/5c9+VR/KHBIkbg9gavZ8hoSR4w/5XnJ1AiAZjZB2g88YxNem16mU
+    ZJS2sK5pvKLZPR2A1pja2zVssw==
+    -----END CERTIFICATE-----
+    """
+  end
+
+  def key(): string do
+    """
+    -----BEGIN EC PRIVATE KEY-----
+    MHcCAQEEIDW22l9S9inTAIWGK/lRXXkIaxitAj6Z2nyb3v2zKPyDoAoGCCqGSM49
+    AwEHoUQDQgAESAvpbyL4HyThAQrffpyLPJwPjlNaG8Zb19gWY2ETL+ppkGu2q+0I
+    T2qV1vqZEgRMqVTgK7kG+AA9d6dTeBBZqA==
+    -----END EC PRIVATE KEY-----
+    """
+  end
+
+  def user(request: HTTP.Request, params: map[string, string]): HTTP.Response do
+    HTTP.text(200, "user " <> Map.get(params, "id", "?") <> " via " <> request.method)
+  end
+
+  def files(_: HTTP.Request, params: map[string, string]): HTTP.Response do
+    HTTP.text(200, "file " <> Map.get(params, "path", ""))
+  end
+
+  def numbers(_: HTTP.Request, _: map[string, string]): HTTP.Response do
+    HTTP.chunked(200, [{"content-type", "text/plain"}], Stream.map(1..5, fn n -> to_string(n) <> "\n" end))
+  end
+
+  def slow(_: HTTP.Request, _: map[string, string]): HTTP.Response do
+    HTTP.chunked(200, [], Stream.map(1..3, fn n ->
+      Process.sleep(300)
+      to_string(n)
+    end))
+  end
+
+  def handle(request: HTTP.Request): HTTP.Response do
+    HTTP.route(request, [
+      {"GET", "/users/:id", &user/2},
+      {"DELETE", "/users/:id", &user/2},
+      {"*", "/files/*path", &files/2},
+      {"GET", "/numbers", &numbers/2},
+      {"GET", "/slow", &slow/2}
+    ])
+  end
+
+  def main() do
+    ok(server) = HTTP.serve("127.0.0.1:0", &handle/1, [idle_timeout: 1000, max_body_bytes: 16])
+    base = "http://" <> HTTP.address(server)
+    for {method, path} <- [{"GET", "/users/7"}, {"DELETE", "/users/a%20b"}, {"POST", "/users/7"}, {"PUT", "/files/a/b/c"}, {"GET", "/nowhere"}] do
+      case HTTP.request(method, base <> path, [], "", 2000) do
+        ok(response) -> IO.inspect({response.status, response.body, HTTP.header(response.headers, "allow")})
+        error(reason) -> IO.puts(reason)
+      end
+    end
+
+    # A body larger than max_body_bytes is refused.
+    ok(big) = HTTP.request("PUT", base <> "/files/x", [], String.duplicate("x", 17), 2000)
+    IO.inspect(big.status)
+
+    # A chunked response, read whole or as it comes.
+    ok(whole) = HTTP.get(base <> "/numbers")
+    IO.inspect(whole.body)
+    ok(streamed) = HTTP.stream("GET", base <> "/numbers", [], "")
+    IO.inspect({streamed.status, streamed.body})
+    IO.inspect(String.split(String.trim(HTTP.read(streamed)), "\n"))
+    ok(options) = HTTP.request("GET", base <> "/numbers", [], "", [timeout: "2000", stream: "true"])
+    case options.chunks do
+      some(chunks) -> IO.inspect(Enum.join(chunks) |> String.length())
+      none -> IO.puts("not streamed")
+    end
+    IO.inspect(HTTP.read(HTTP.text(200, "plain")))
+
+    # The timeout is for the head of a streamed response; its body may take
+    # longer.
+    ok(slowly) = HTTP.request("GET", base <> "/slow", [], "", [timeout: "500", stream: "true"])
+    IO.inspect(HTTP.read(slowly))
+
+    # Matching one route by hand.
+    request = %HTTP.Request{method: "GET", path: "/users/42", query: "", headers: [], body: ""}
+    IO.inspect(HTTP.match(request, "GET", "/users/:id"))
+    IO.inspect(HTTP.match(request, "POST", "/users/:id"))
+    IO.inspect(HTTP.match(request, "*", "/users"))
+    HTTP.stop(server)
+
+    # HTTPS, trusting the test certificate.
+    dir = System.tmp_dir!()
+    certfile = Path.join(dir, "alchem_test_cert.pem")
+    keyfile = Path.join(dir, "alchem_test_key.pem")
+    File.write(certfile, certificate())
+    File.write(keyfile, key())
+    ok(secure) = HTTP.serve_tls("127.0.0.1:0", &handle/1, [certfile: certfile, keyfile: keyfile])
+    address = "https://" <> HTTP.address(secure) <> "/users/9"
+    case HTTP.request("GET", address, [], "", [ca_file: certfile]) do
+      ok(response) -> IO.inspect(response.body)
+      error(reason) -> IO.puts(reason)
+    end
+    case HTTP.get(address) do
+      ok(_) -> IO.puts("trusted an unknown certificate")
+      error(_) -> IO.puts("refused an unknown certificate")
+    end
+    case HTTP.request("GET", address, [], "", [insecure: "true"]) do
+      ok(response) -> IO.inspect(response.status)
+      error(reason) -> IO.puts(reason)
+    end
+    HTTP.stop(secure)
+    case HTTP.serve_tls("127.0.0.1:0", &handle/1, [certfile: "/nonexistent", keyfile: keyfile]) do
+      ok(_) -> IO.puts("served without a certificate")
+      error(_) -> IO.puts("no certificate, no server")
+    end
+    File.rm(certfile)
+    File.rm(keyfile)
+  end
+end

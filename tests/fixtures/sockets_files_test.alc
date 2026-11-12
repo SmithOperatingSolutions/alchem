@@ -1,0 +1,74 @@
+defmodule SocketsFilesTest do
+  @moduletag area: "sockets and files"
+
+  test "sockets used the wrong way and framing limits" do
+    ok(listener) = TCP.listen("127.0.0.1:0")
+    assert(TCP.send(listener, "x") == error("not a connected socket"))
+    assert(TCP.peer(listener) == none)
+    ok(conn) = TCP.connect(TCP.address(listener), 1000)
+    ok(server_side) = TCP.accept(listener, 1000)
+    case TCP.accept(conn, 10) do
+      error(problem) -> assert(problem == "not a listening socket")
+      ok(_) -> flunk("a connection accepted")
+    end
+    assert(TCP.address(conn) != "")
+    assert(TCP.peer(conn) != none)
+    TCP.send(server_side, "abc")
+    assert(TCP.recv(conn, 5, 50) == error("timeout"))
+    assert(TCP.recv(conn, 2, 1000) == ok("ab"))
+    assert(TCP.recv(conn, 1, 1000) == ok("c"))
+    TCP.setopts(conn, [packet: :line])
+    long = String.duplicate("x", 10000)
+    TCP.send(server_side, long <> "\n")
+    assert(TCP.recv_line(conn, 1000) == ok(long))
+    TCP.setopts(conn, [packet: 4])
+    TCP.send(server_side, "\x7f\xff\xff\xff")
+    assert(TCP.recv(conn, 0, 1000) == error("packet too large"))
+    TCP.close(conn)
+    TCP.close(server_side)
+    TCP.close(listener)
+    ok(datagrams) = UDP.open("127.0.0.1:0")
+    me: pid[UDP.Event] = Process.self(8)
+    UDP.setopts(datagrams, [active: :true])
+    assert(UDP.recv(datagrams, 10) == error("the socket is active"))
+    UDP.close(datagrams)
+  end
+
+  test "file access, links and streams into files" do
+    dir = Path.join(System.tmp_dir!(), "alchem_sockets_files_" <> Integer.to_string(System.os_time()))
+    File.mkdir_p(Path.join(dir, "tree"))
+    readable = Path.join(dir, "readable.txt")
+    File.write(readable, "r")
+    File.chmod(readable, 0o444)
+    ok(stat) = File.stat(readable)
+    assert(stat.access == :read)
+    writable = Path.join(dir, "writable.txt")
+    File.write(writable, "w")
+    File.chmod(writable, 0o222)
+    ok(wstat) = File.stat(writable)
+    assert(wstat.access == :write or wstat.access == :read_write)
+    File.write(Path.join(dir, "tree/a.txt"), "a")
+    linked = File.ln_s("a.txt", Path.join(dir, "tree/link.txt")) == ok({})
+    ok(copied) = File.cp_r(Path.join(dir, "tree"), Path.join(dir, "copy"))
+    assert(length(copied) >= 1)
+    if linked do
+      assert(File.read(Path.join(dir, "copy/link.txt")) == ok("a"))
+    end
+    ok(out) = File.open(Path.join(dir, "out.txt"), [:write])
+    assert(Stream.into(Stream.cycle(["a"]), out) |> Enum.take(2) == ["a", "a"])
+    assert(Stream.into(Stream.cycle([1]), out, fn n -> Integer.to_string(n) end) |> Enum.take(1) == [1])
+    File.close(out)
+    assert(File.read(Path.join(dir, "out.txt")) == ok("aa1"))
+    File.chmod(writable, 0o644)
+    File.chmod(readable, 0o644)
+    File.rm_rf(dir)
+  end
+
+  test "node options" do
+    assert_raise("Node.connect takes reconnect", fn -> Node.connect("127.0.0.1:1", [other: true]) end)
+    case System.get_env("ALCHEM_COOKIE") do
+      none -> assert(Node.start("lonely", "127.0.0.1:0") == error("set the ALCHEM_COOKIE environment variable, or pass the cookie to Node.start"))
+      some(_) -> assert(true)
+    end
+  end
+end

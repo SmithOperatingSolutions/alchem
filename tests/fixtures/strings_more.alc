@@ -1,0 +1,26 @@
+defmodule Main do
+  def main() do
+    IO.inspect(String.jaro_distance("Dwayne", "Duane"))
+    IO.inspect(String.jaro_distance("Martha", "Marhta"))
+    IO.inspect(String.jaro_distance("", ""))
+    IO.inspect(String.myers_difference("abc", "adc"))
+    IO.inspect(Enum.to_list(String.splitter("1,2 3", [",", " "])))
+    IO.inspect(Enum.take(String.splitter("a-b-c-d", "-"), 2))
+    IO.inspect(String.upcase("istanbul", :turkic))
+    IO.inspect(String.downcase("ΣΑΣ", :greek))
+    IO.inspect(String.upcase("ab é", :ascii))
+    IO.inspect(String.capitalize("élan vital", :default))
+    IO.inspect(List.myers_difference([1, 2, 3, 4], [1, 4, 5]))
+    IO.inspect(Keyword.validate([a: 1], [a: 0, b: 2]))
+    IO.inspect(Keyword.validate([c: 1], [:a, :b]))
+    IO.inspect(Keyword.split([a: 1, b: 2, c: 3], [:a, :c]))
+    IO.inspect(Keyword.merge([a: 1, b: 2], [b: 3], fn _, x, y -> x + y end))
+    IO.inspect(Map.get_and_update(%{"a" => 1}, "a", fn current -> {current, some(5)} end))
+    IO.inspect(Map.get_and_update(%{"a" => 1}, "a", fn(current: option[integer]): tuple[option[integer], option[integer]] do {current, none} end))
+    empty: map[string, integer] = %{}
+    IO.inspect(Map.pop_lazy(empty, "x", fn -> 7 end))
+    IO.inspect(Map.replace_lazy(%{"a" => 1}, "a", fn v -> v + 1 end))
+    IO.inspect(List.zip([[1, 2], [3, 4]]))
+    IO.inspect(Enum.to_list(Stream.zip([[1, 2, 3], [4, 5]])))
+  end
+end

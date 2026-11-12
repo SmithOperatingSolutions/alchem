@@ -1,0 +1,39 @@
+defmodule Echo do
+  def serve(self: pid[tuple[pid[integer],integer]]): integer do
+    Process.loop(0, fn(count: integer): tuple[boolean,integer] do
+      {ok, {client, value}} = Process.receive(self, -1)
+      assert(ok)
+      assert(Process.send(client, value, -1))
+      return {true, (count + 1)}
+    end)
+    return 0
+  end
+
+  # latency writes the fastest, median and 99th percentile of durations in
+  # microseconds, to standard error.
+  def latency(name: string, durations: list[integer]): integer do
+    sorted = Enum.sort(durations)
+    count = length(sorted)
+    IO.puts(:stderr, "latency " <> name <> " " <> to_string(Enum.at(sorted, 0, 0)) <> " " <> to_string(Enum.at(sorted, div(count, 2), 0)) <> " " <> to_string(Enum.at(sorted, div(count * 99, 100), 0)))
+    return count
+  end
+
+  def main() do
+    me: pid[integer] = Process.self(1)
+    server = Process.spawn(&serve, 1)
+    started = System.monotonic_time(:nanosecond)
+    {total, durations, _} = Process.loop({0, [], started}, fn(state: tuple[integer, list[integer], integer]): tuple[boolean, tuple[integer, list[integer], integer]] do
+      {sent, times, since} = state
+      assert(Process.send(server, {me, sent}, -1))
+      {ok, reply} = Process.receive(me, -1)
+      assert((ok and (reply == sent)))
+      now = System.monotonic_time(:nanosecond)
+      return {((sent + 1) < 200000), {sent + 1, [now - since | times], now}}
+    end)
+    IO.puts(:stderr, "phase round trips " <> to_string(div(System.monotonic_time(:nanosecond) - started, 1000)))
+    latency("round trip (ns)", durations)
+    assert((total == 200000))
+    assert(Process.stop(server))
+    IO.puts("round trips 200000")
+  end
+end

@@ -1,0 +1,14 @@
+defmodule Wire do
+  struct Order do
+    item: string
+    count: integer
+    tags: list[atom]
+    extra: map[string,float]
+    reply: pid[Answer]
+  end
+
+  type Answer do
+    shipped(item: string, total: integer)
+    refused(reason: string)
+  end
+end

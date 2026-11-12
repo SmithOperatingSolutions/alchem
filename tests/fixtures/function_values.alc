@@ -1,0 +1,21 @@
+defmodule Main do
+  def show(items: list[string]): list[tuple[]] do
+    for item <- items do
+      IO.puts("item " <> item)
+    end
+  end
+
+  def main() do
+    IO.inspect(show(["a", "b"]))
+    each = fn(items: list[integer]): list[tuple[]] do
+      for i <- items do
+        IO.puts(to_string(i))
+      end
+    end
+    IO.inspect(length(each.([1, 2, 3])))
+    add = fn(a: integer, b: integer): integer do a + b end
+    IO.inspect(add.(1, 2))
+    IO.inspect((fn(x: integer): integer do x * 2 end).(21))
+    IO.inspect(add.(add.(1, 1), 1))
+  end
+end

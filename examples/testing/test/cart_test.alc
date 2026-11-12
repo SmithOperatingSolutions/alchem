@@ -1,0 +1,58 @@
+defmodule CartTest do
+  import "../lib/cart.alc"
+
+  def basket(): list[Cart.Item] do
+    [
+      %Cart.Item{name: "tea", price: 300, quantity: 2},
+      %Cart.Item{name: "cup", price: 950, quantity: 1}
+    ]
+  end
+
+  test "totals price times quantity" do
+    assert(Cart.total(basket()) == 1550)
+  end
+
+  test "an empty cart totals zero" do
+    assert(Cart.total([]) == 0)
+    assert(Cart.summary([]) == "empty cart")
+  end
+
+  describe "discount" do
+    setup do
+      System.put_env("CART_TEST_SETUP", "ran")
+    end
+
+    test "takes a percentage off" do
+      assert(Cart.discount(1000, 25) == 750)
+      assert(System.get_env("CART_TEST_SETUP") == some("ran"))
+    end
+
+    test "leaves the amount alone at zero" do
+      assert(Cart.discount(1000, 0) == 1000)
+    end
+
+    describe "at the limits" do
+      test "takes everything off at one hundred" do
+        assert(Cart.discount(1000, 100) == 0)
+      end
+    end
+
+    test "rejects a percentage out of range" do
+      assert_raise("percent must be between 0 and 100", fn -> Cart.discount(1000, 150) end)
+    end
+  end
+
+  test "finds the cheapest item" do
+    case Cart.cheapest(basket()) do
+      some(item) ->
+        assert(item.name == "tea")
+      none -> flunk("expected an item")
+    end
+    refute(Cart.cheapest([]) != none)
+  end
+
+  test "a shuffled basket has the same total" do
+    assert(Cart.total(Enum.shuffle(basket())) == Cart.total(basket()))
+    assert_in_delta(Float.from_integer(Cart.total(basket())) / 100.0, 15.5, 0.001)
+  end
+end

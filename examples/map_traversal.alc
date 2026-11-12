@@ -1,0 +1,16 @@
+defmodule Traversal do
+  def main() do
+    data = %{"pear" => 3, "apple" => 2, "banana" => 4}
+    assert(Map.keys(data) == ["apple", "banana", "pear"])
+    total = data
+    |> Map.values()
+    |> reduce(0, fn(acc: integer, n: integer): integer do
+      return acc + n
+    end)
+    assert(total == 9)
+    changed = data |> Map.delete("banana")
+    assert(length(data) == 3 and length(changed) == 2)
+    assert(Map.entries(changed) == [{"apple", 2}, {"pear", 3}])
+    IO.puts("traversal ready")
+  end
+end

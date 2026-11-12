@@ -1,0 +1,3785 @@
+{
+  "environment": [
+    "- Date: 2026-11-11",
+    "- OS/architecture: darwin/arm64",
+    "- Logical CPUs: 14",
+    "- CPU: Apple M3 Max",
+    "- Memory: 36 GiB",
+    "- macOS: 26.5.2",
+    "- Go: go version go1.27.3 darwin/arm64",
+    "- Elixir: Elixir 1.20.5 (compiled with Erlang/OTP 29)",
+    "- Benchmarks at commit: cd9dd1a with uncommitted changes",
+    "- Alchem compiler: built from this working tree",
+    "- Runs per whole-program workload: 7 (median reported)"
+  ],
+  "cases": [
+    {
+      "program": "enum",
+      "name": "enum.map list 1M",
+      "alchem": {
+        "median_us": 4378,
+        "fastest_us": 3745,
+        "check": "15865"
+      },
+      "elixir": {
+        "median_us": 8602,
+        "fastest_us": 8311,
+        "check": "15865"
+      },
+      "go": {
+        "median_us": 412,
+        "fastest_us": 405,
+        "check": "15865"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.filter list 1M",
+      "alchem": {
+        "median_us": 3005,
+        "fastest_us": 2965,
+        "check": "7932"
+      },
+      "elixir": {
+        "median_us": 5400,
+        "fastest_us": 5244,
+        "check": "7932"
+      },
+      "go": {
+        "median_us": 1096,
+        "fastest_us": 1078,
+        "check": "7932"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.reduce list 1M",
+      "alchem": {
+        "median_us": 3014,
+        "fastest_us": 3004,
+        "check": "1560645"
+      },
+      "elixir": {
+        "median_us": 4972,
+        "fastest_us": 4922,
+        "check": "1560645"
+      },
+      "go": {
+        "median_us": 2988,
+        "fastest_us": 2987,
+        "check": "1560645"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.sum list 1M",
+      "alchem": {
+        "median_us": 1446,
+        "fastest_us": 1427,
+        "check": "500000523715"
+      },
+      "elixir": {
+        "median_us": 2386,
+        "fastest_us": 2256,
+        "check": "500000523715"
+      },
+      "go": {
+        "median_us": 288,
+        "fastest_us": 287,
+        "check": "500000523715"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.count predicate list 1M",
+      "alchem": {
+        "median_us": 902,
+        "fastest_us": 899,
+        "check": "142858"
+      },
+      "elixir": {
+        "median_us": 4908,
+        "fastest_us": 4884,
+        "check": "142858"
+      },
+      "go": {
+        "median_us": 585,
+        "fastest_us": 581,
+        "check": "142858"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.map range 1M",
+      "alchem": {
+        "median_us": 4277,
+        "fastest_us": 3855,
+        "check": "3"
+      },
+      "elixir": {
+        "median_us": 5210,
+        "fastest_us": 5196,
+        "check": "3"
+      },
+      "go": {
+        "median_us": 411,
+        "fastest_us": 380,
+        "check": "3"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.filter range 1M",
+      "alchem": {
+        "median_us": 3205,
+        "fastest_us": 3181,
+        "check": "3"
+      },
+      "elixir": {
+        "median_us": 5522,
+        "fastest_us": 5275,
+        "check": "3"
+      },
+      "go": {
+        "median_us": 977,
+        "fastest_us": 947,
+        "check": "3"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.reduce range 1M",
+      "alchem": {
+        "median_us": 3026,
+        "fastest_us": 3012,
+        "check": "1489500"
+      },
+      "elixir": {
+        "median_us": 4148,
+        "fastest_us": 4135,
+        "check": "1489500"
+      },
+      "go": {
+        "median_us": 2994,
+        "fastest_us": 2985,
+        "check": "1489500"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.map map 100k",
+      "alchem": {
+        "median_us": 3062,
+        "fastest_us": 2916,
+        "check": "5050451514"
+      },
+      "elixir": {
+        "median_us": 1533,
+        "fastest_us": 1474,
+        "check": "5050451514"
+      },
+      "go": {
+        "median_us": 517,
+        "fastest_us": 515,
+        "check": "5050451514"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.filter map 100k",
+      "alchem": {
+        "median_us": 2938,
+        "fastest_us": 2563,
+        "check": "49552"
+      },
+      "elixir": {
+        "median_us": 1728,
+        "fastest_us": 1682,
+        "check": "49552"
+      },
+      "go": {
+        "median_us": 1149,
+        "fastest_us": 1100,
+        "check": "49552"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.reduce map 100k",
+      "alchem": {
+        "median_us": 2317,
+        "fastest_us": 2193,
+        "check": "2520093314123"
+      },
+      "elixir": {
+        "median_us": 1075,
+        "fastest_us": 1066,
+        "check": "2520093314123"
+      },
+      "go": {
+        "median_us": 484,
+        "fastest_us": 479,
+        "check": "2520093314123"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.sort integers 1M",
+      "alchem": {
+        "median_us": 52335,
+        "fastest_us": 52157,
+        "check": "0"
+      },
+      "elixir": {
+        "median_us": 57359,
+        "fastest_us": 36620,
+        "check": "0"
+      },
+      "go": {
+        "median_us": 49402,
+        "fastest_us": 49367,
+        "check": "0"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.sort strings 200k",
+      "alchem": {
+        "median_us": 24853,
+        "fastest_us": 24800,
+        "check": "2"
+      },
+      "elixir": {
+        "median_us": 54064,
+        "fastest_us": 53099,
+        "check": "2"
+      },
+      "go": {
+        "median_us": 24076,
+        "fastest_us": 24015,
+        "check": "2"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.sort_by 200k",
+      "alchem": {
+        "median_us": 28172,
+        "fastest_us": 28110,
+        "check": "663000"
+      },
+      "elixir": {
+        "median_us": 15233,
+        "fastest_us": 13863,
+        "check": "663000"
+      },
+      "go": {
+        "median_us": 27582,
+        "fastest_us": 27492,
+        "check": "663000"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.group_by 1M into 1000",
+      "alchem": {
+        "median_us": 14893,
+        "fastest_us": 14668,
+        "check": "1000"
+      },
+      "elixir": {
+        "median_us": 116940,
+        "fastest_us": 100447,
+        "check": "1000"
+      },
+      "go": {
+        "median_us": 7767,
+        "fastest_us": 7273,
+        "check": "1000"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.frequencies strings 200k",
+      "alchem": {
+        "median_us": 17906,
+        "fastest_us": 17731,
+        "check": "100003"
+      },
+      "elixir": {
+        "median_us": 55945,
+        "fastest_us": 55603,
+        "check": "100003"
+      },
+      "go": {
+        "median_us": 5270,
+        "fastest_us": 4531,
+        "check": "100003"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.chunk_every 1M by 100",
+      "alchem": {
+        "median_us": 5323,
+        "fastest_us": 4932,
+        "check": "10000"
+      },
+      "elixir": {
+        "median_us": 16824,
+        "fastest_us": 13777,
+        "check": "10000"
+      },
+      "go": {
+        "median_us": 584,
+        "fastest_us": 368,
+        "check": "10000"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.uniq 1M",
+      "alchem": {
+        "median_us": 60462,
+        "fastest_us": 58294,
+        "check": "1000000"
+      },
+      "elixir": {
+        "median_us": 401424,
+        "fastest_us": 380137,
+        "check": "1000000"
+      },
+      "go": {
+        "median_us": 53731,
+        "fastest_us": 52677,
+        "check": "1000000"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.zip 1M",
+      "alchem": {
+        "median_us": 545,
+        "fastest_us": 510,
+        "check": "112668"
+      },
+      "elixir": {
+        "median_us": 13696,
+        "fastest_us": 11630,
+        "check": "112668"
+      },
+      "go": {
+        "median_us": 399,
+        "fastest_us": 380,
+        "check": "112668"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.unzip 1M",
+      "alchem": {
+        "median_us": 6199,
+        "fastest_us": 5810,
+        "check": "112668"
+      },
+      "elixir": {
+        "median_us": 8098,
+        "fastest_us": 4825,
+        "check": "112668"
+      },
+      "go": {
+        "median_us": 1695,
+        "fastest_us": 1397,
+        "check": "112668"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.with_index 1M",
+      "alchem": {
+        "median_us": 4934,
+        "fastest_us": 4422,
+        "check": "7932"
+      },
+      "elixir": {
+        "median_us": 9623,
+        "fastest_us": 9494,
+        "check": "7932"
+      },
+      "go": {
+        "median_us": 445,
+        "fastest_us": 347,
+        "check": "7932"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.flat_map 200k",
+      "alchem": {
+        "median_us": 2301,
+        "fastest_us": 1844,
+        "check": "400000"
+      },
+      "elixir": {
+        "median_us": 5104,
+        "fastest_us": 4964,
+        "check": "400000"
+      },
+      "go": {
+        "median_us": 97,
+        "fastest_us": 94,
+        "check": "400000"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.member? miss 1M",
+      "alchem": {
+        "median_us": 275,
+        "fastest_us": 270,
+        "check": "0"
+      },
+      "elixir": {
+        "median_us": 2382,
+        "fastest_us": 2221,
+        "check": "0"
+      },
+      "go": {
+        "median_us": 271,
+        "fastest_us": 271,
+        "check": "0"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.join strings 200k",
+      "alchem": {
+        "median_us": 1196,
+        "fastest_us": 1177,
+        "check": "1377789"
+      },
+      "elixir": {
+        "median_us": 8800,
+        "fastest_us": 7150,
+        "check": "1377789"
+      },
+      "go": {
+        "median_us": 1498,
+        "fastest_us": 1450,
+        "check": "1377789"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.map_join integers 200k",
+      "alchem": {
+        "median_us": 4459,
+        "fastest_us": 4273,
+        "check": "1377775"
+      },
+      "elixir": {
+        "median_us": 20304,
+        "fastest_us": 18344,
+        "check": "1377775"
+      },
+      "go": {
+        "median_us": 3029,
+        "fastest_us": 2983,
+        "check": "1377775"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.min_max 1M",
+      "alchem": {
+        "median_us": 7479,
+        "fastest_us": 7231,
+        "check": "1000002"
+      },
+      "elixir": {
+        "median_us": 11369,
+        "fastest_us": 11328,
+        "check": "1000002"
+      },
+      "go": {
+        "median_us": 1107,
+        "fastest_us": 1097,
+        "check": "1000002"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.reverse 1M",
+      "alchem": {
+        "median_us": 3505,
+        "fastest_us": 3372,
+        "check": "976259"
+      },
+      "elixir": {
+        "median_us": 5424,
+        "fastest_us": 3929,
+        "check": "976259"
+      },
+      "go": {
+        "median_us": 389,
+        "fastest_us": 381,
+        "check": "976259"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.slice middle 500k of 1M",
+      "alchem": {
+        "median_us": 2446,
+        "fastest_us": 2088,
+        "check": "751995"
+      },
+      "elixir": {
+        "median_us": 5034,
+        "fastest_us": 4626,
+        "check": "751995"
+      },
+      "go": {
+        "median_us": 70,
+        "fastest_us": 68,
+        "check": "751995"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.at last of 1M",
+      "alchem": {
+        "median_us": 1089,
+        "fastest_us": 1079,
+        "check": "976259"
+      },
+      "elixir": {
+        "median_us": 2515,
+        "fastest_us": 2395,
+        "check": "976259"
+      },
+      "go": {
+        "median_us": 0,
+        "fastest_us": 0,
+        "check": "976259"
+      }
+    },
+    {
+      "program": "enum",
+      "name": "enum.concat 1M + 1M",
+      "alchem": {
+        "median_us": 539,
+        "fastest_us": 352,
+        "check": "7932"
+      },
+      "elixir": {
+        "median_us": 4116,
+        "fastest_us": 3992,
+        "check": "7932"
+      },
+      "go": {
+        "median_us": 461,
+        "fastest_us": 425,
+        "check": "7932"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "stream map filter sum 1M",
+      "alchem": {
+        "median_us": 1681,
+        "fastest_us": 1665,
+        "check": "750001547472"
+      },
+      "elixir": {
+        "median_us": 9595,
+        "fastest_us": 9414,
+        "check": "750001547472"
+      },
+      "go": {
+        "median_us": 579,
+        "fastest_us": 578,
+        "check": "750001547472"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "eager map filter sum 1M",
+      "alchem": {
+        "median_us": 8099,
+        "fastest_us": 7725,
+        "check": "750001547472"
+      },
+      "elixir": {
+        "median_us": 28029,
+        "fastest_us": 14529,
+        "check": "750001547472"
+      },
+      "go": {
+        "median_us": 578,
+        "fastest_us": 576,
+        "check": "750001547472"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "stream map filter take 1,000 of 1M",
+      "alchem": {
+        "median_us": 13,
+        "fastest_us": 12,
+        "check": "1487731872"
+      },
+      "elixir": {
+        "median_us": 23,
+        "fastest_us": 22,
+        "check": "1487731872"
+      },
+      "go": {
+        "median_us": 1,
+        "fastest_us": 1,
+        "check": "1487731872"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "eager map filter take 1,000 of 1M",
+      "alchem": {
+        "median_us": 7179,
+        "fastest_us": 7030,
+        "check": "1487731872"
+      },
+      "elixir": {
+        "median_us": 23399,
+        "fastest_us": 13116,
+        "check": "1487731872"
+      },
+      "go": {
+        "median_us": 1,
+        "fastest_us": 1,
+        "check": "1487731872"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "stream chunk_every 100 then sum 1M",
+      "alchem": {
+        "median_us": 6601,
+        "fastest_us": 6480,
+        "check": "60795450"
+      },
+      "elixir": {
+        "median_us": 10753,
+        "fastest_us": 10671,
+        "check": "60795450"
+      },
+      "go": {
+        "median_us": 293,
+        "fastest_us": 293,
+        "check": "60795450"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "eager chunk_every 100 then sum 1M",
+      "alchem": {
+        "median_us": 7173,
+        "fastest_us": 6902,
+        "check": "60795450"
+      },
+      "elixir": {
+        "median_us": 19920,
+        "fastest_us": 18875,
+        "check": "60795450"
+      },
+      "go": {
+        "median_us": 294,
+        "fastest_us": 293,
+        "check": "60795450"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "stream range map filter sum 1M",
+      "alchem": {
+        "median_us": 2048,
+        "fastest_us": 2032,
+        "check": "750001500000"
+      },
+      "elixir": {
+        "median_us": 10529,
+        "fastest_us": 10373,
+        "check": "750001500000"
+      },
+      "go": {
+        "median_us": 572,
+        "fastest_us": 570,
+        "check": "750001500000"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "stream.iterate take 1M",
+      "alchem": {
+        "median_us": 6142,
+        "fastest_us": 6125,
+        "check": "500001000901"
+      },
+      "elixir": {
+        "median_us": 14576,
+        "fastest_us": 14226,
+        "check": "500001000901"
+      },
+      "go": {
+        "median_us": 4154,
+        "fastest_us": 4139,
+        "check": "500001000901"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "stream.unfold 1M",
+      "alchem": {
+        "median_us": 2716,
+        "fastest_us": 2712,
+        "check": "1000001000000"
+      },
+      "elixir": {
+        "median_us": 6059,
+        "fastest_us": 5984,
+        "check": "1000001000000"
+      },
+      "go": {
+        "median_us": 555,
+        "fastest_us": 552,
+        "check": "1000001000000"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "stream.with_index 1M",
+      "alchem": {
+        "median_us": 1754,
+        "fastest_us": 1740,
+        "check": "1000000023715"
+      },
+      "elixir": {
+        "median_us": 10502,
+        "fastest_us": 10407,
+        "check": "1000000023715"
+      },
+      "go": {
+        "median_us": 307,
+        "fastest_us": 307,
+        "check": "1000000023715"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "stream.flat_map 200k",
+      "alchem": {
+        "median_us": 933,
+        "fastest_us": 918,
+        "check": "40000400000"
+      },
+      "elixir": {
+        "median_us": 5945,
+        "fastest_us": 5932,
+        "check": "40000400000"
+      },
+      "go": {
+        "median_us": 165,
+        "fastest_us": 165,
+        "check": "40000400000"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "stream.scan 1M",
+      "alchem": {
+        "median_us": 5070,
+        "fastest_us": 4241,
+        "check": "1000000"
+      },
+      "elixir": {
+        "median_us": 15868,
+        "fastest_us": 15846,
+        "check": "1000000"
+      },
+      "go": {
+        "median_us": 3052,
+        "fastest_us": 3047,
+        "check": "1000000"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "stream.zip 1M",
+      "alchem": {
+        "median_us": 47604,
+        "fastest_us": 47456,
+        "check": "998760316279"
+      },
+      "elixir": {
+        "median_us": 47555,
+        "fastest_us": 46777,
+        "check": "998760316279"
+      },
+      "go": {
+        "median_us": 560,
+        "fastest_us": 558,
+        "check": "998760316279"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "file.stream! count lines 1M (64 MiB)",
+      "alchem": {
+        "median_us": 28328,
+        "fastest_us": 28151,
+        "check": "1000000"
+      },
+      "elixir": {
+        "median_us": 29773,
+        "fastest_us": 29694,
+        "check": "1000000"
+      },
+      "go": {
+        "median_us": 25732,
+        "fastest_us": 25542,
+        "check": "1000000"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "file.stream! parse and sum a column 1M",
+      "alchem": {
+        "median_us": 117724,
+        "fastest_us": 117341,
+        "check": "497996913"
+      },
+      "elixir": {
+        "median_us": 526220,
+        "fastest_us": 517165,
+        "check": "497996913"
+      },
+      "go": {
+        "median_us": 46522,
+        "fastest_us": 45958,
+        "check": "497996913"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "file.stream! word frequencies 1M",
+      "alchem": {
+        "median_us": 303489,
+        "fastest_us": 300484,
+        "check": "100003"
+      },
+      "elixir": {
+        "median_us": 1629638,
+        "fastest_us": 1623791,
+        "check": "100003"
+      },
+      "go": {
+        "median_us": 85737,
+        "fastest_us": 79205,
+        "check": "100003"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "file.stream! filter then chunk_every 1,000",
+      "alchem": {
+        "median_us": 51534,
+        "fastest_us": 51314,
+        "check": "9999"
+      },
+      "elixir": {
+        "median_us": 554926,
+        "fastest_us": 553199,
+        "check": "9999"
+      },
+      "go": {
+        "median_us": 47228,
+        "fastest_us": 46328,
+        "check": "9999"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "file.stream! 64 KiB chunks (64 MiB)",
+      "alchem": {
+        "median_us": 6830,
+        "fastest_us": 6592,
+        "check": "64889697"
+      },
+      "elixir": {
+        "median_us": 5259,
+        "fastest_us": 5084,
+        "check": "64889697"
+      },
+      "go": {
+        "median_us": 3396,
+        "fastest_us": 3310,
+        "check": "64889697"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "file.stream! sum a column 120k (8 MiB)",
+      "alchem": {
+        "median_us": 14015,
+        "fastest_us": 13930,
+        "check": "59757629"
+      },
+      "elixir": {
+        "median_us": 62505,
+        "fastest_us": 61995,
+        "check": "59757629"
+      },
+      "go": {
+        "median_us": 5258,
+        "fastest_us": 5230,
+        "check": "59757629"
+      }
+    },
+    {
+      "program": "stream",
+      "name": "file.read! split sum a column 120k (8 MiB)",
+      "alchem": {
+        "median_us": 17167,
+        "fastest_us": 16913,
+        "check": "59757629"
+      },
+      "elixir": {
+        "median_us": 39132,
+        "fastest_us": 38848,
+        "check": "59757629"
+      },
+      "go": {
+        "median_us": 4948,
+        "fastest_us": 4807,
+        "check": "59757629"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "map.put build integer keys 1k",
+      "alchem": {
+        "median_us": 242,
+        "fastest_us": 228,
+        "check": "1000"
+      },
+      "elixir": {
+        "median_us": 61,
+        "fastest_us": 58,
+        "check": "1000"
+      },
+      "go": {
+        "median_us": 36,
+        "fastest_us": 33,
+        "check": "1000"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "map.put build integer keys 100k",
+      "alchem": {
+        "median_us": 54705,
+        "fastest_us": 51361,
+        "check": "100000"
+      },
+      "elixir": {
+        "median_us": 16893,
+        "fastest_us": 15717,
+        "check": "100000"
+      },
+      "go": {
+        "median_us": 2908,
+        "fastest_us": 2585,
+        "check": "100000"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "map.put build integer keys 1M",
+      "alchem": {
+        "median_us": 923527,
+        "fastest_us": 912765,
+        "check": "1000000"
+      },
+      "elixir": {
+        "median_us": 404912,
+        "fastest_us": 358532,
+        "check": "1000000"
+      },
+      "go": {
+        "median_us": 43262,
+        "fastest_us": 41625,
+        "check": "1000000"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "map.put build string keys 100k",
+      "alchem": {
+        "median_us": 77266,
+        "fastest_us": 74028,
+        "check": "100000"
+      },
+      "elixir": {
+        "median_us": 26957,
+        "fastest_us": 23027,
+        "check": "100000"
+      },
+      "go": {
+        "median_us": 6130,
+        "fastest_us": 5931,
+        "check": "100000"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "map.new from 100k pairs",
+      "alchem": {
+        "median_us": 8023,
+        "fastest_us": 7883,
+        "check": "100000"
+      },
+      "elixir": {
+        "median_us": 10388,
+        "fastest_us": 10323,
+        "check": "100000"
+      },
+      "go": {
+        "median_us": 918,
+        "fastest_us": 912,
+        "check": "100000"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "map.get hit integer keys 100k",
+      "alchem": {
+        "median_us": 2979,
+        "fastest_us": 2973,
+        "check": "5000050000"
+      },
+      "elixir": {
+        "median_us": 5100,
+        "fastest_us": 5094,
+        "check": "5000050000"
+      },
+      "go": {
+        "median_us": 864,
+        "fastest_us": 823,
+        "check": "5000050000"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "map.get miss integer keys 100k",
+      "alchem": {
+        "median_us": 2215,
+        "fastest_us": 2197,
+        "check": "100000"
+      },
+      "elixir": {
+        "median_us": 2377,
+        "fastest_us": 2363,
+        "check": "100000"
+      },
+      "go": {
+        "median_us": 1636,
+        "fastest_us": 1617,
+        "check": "100000"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "map.fetch! string keys 100k",
+      "alchem": {
+        "median_us": 8929,
+        "fastest_us": 8904,
+        "check": "5000050000"
+      },
+      "elixir": {
+        "median_us": 11722,
+        "fastest_us": 11694,
+        "check": "5000050000"
+      },
+      "go": {
+        "median_us": 3679,
+        "fastest_us": 3597,
+        "check": "5000050000"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "map.has_key? 100k",
+      "alchem": {
+        "median_us": 2395,
+        "fastest_us": 2393,
+        "check": "10003"
+      },
+      "elixir": {
+        "median_us": 2885,
+        "fastest_us": 2878,
+        "check": "10003"
+      },
+      "go": {
+        "median_us": 1600,
+        "fastest_us": 1586,
+        "check": "10003"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "map.update 1M counters over 1000 keys",
+      "alchem": {
+        "median_us": 385172,
+        "fastest_us": 380136,
+        "check": "1000"
+      },
+      "elixir": {
+        "median_us": 91672,
+        "fastest_us": 90747,
+        "check": "1000"
+      },
+      "go": {
+        "median_us": 5027,
+        "fastest_us": 4909,
+        "check": "1000"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "map.update existing 100k keys",
+      "alchem": {
+        "median_us": 85457,
+        "fastest_us": 83512,
+        "check": "100000"
+      },
+      "elixir": {
+        "median_us": 24994,
+        "fastest_us": 22119,
+        "check": "100000"
+      },
+      "go": {
+        "median_us": 1040,
+        "fastest_us": 930,
+        "check": "100000"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "map.merge 100k with 100k",
+      "alchem": {
+        "median_us": 9640,
+        "fastest_us": 8165,
+        "check": "150000"
+      },
+      "elixir": {
+        "median_us": 1843,
+        "fastest_us": 1822,
+        "check": "150000"
+      },
+      "go": {
+        "median_us": 3462,
+        "fastest_us": 3385,
+        "check": "150000"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "map.delete 100k keys",
+      "alchem": {
+        "median_us": 71508,
+        "fastest_us": 69081,
+        "check": "0"
+      },
+      "elixir": {
+        "median_us": 15824,
+        "fastest_us": 13629,
+        "check": "0"
+      },
+      "go": {
+        "median_us": 2325,
+        "fastest_us": 2300,
+        "check": "0"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "map.to_list 100k",
+      "alchem": {
+        "median_us": 3353,
+        "fastest_us": 2692,
+        "check": "100000"
+      },
+      "elixir": {
+        "median_us": 1025,
+        "fastest_us": 1007,
+        "check": "100000"
+      },
+      "go": {
+        "median_us": 487,
+        "fastest_us": 479,
+        "check": "100000"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "map.keys 100k",
+      "alchem": {
+        "median_us": 2274,
+        "fastest_us": 1875,
+        "check": "49993614145"
+      },
+      "elixir": {
+        "median_us": 1366,
+        "fastest_us": 1303,
+        "check": "49993614145"
+      },
+      "go": {
+        "median_us": 474,
+        "fastest_us": 463,
+        "check": "49993614145"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "map.values 100k",
+      "alchem": {
+        "median_us": 2183,
+        "fastest_us": 1820,
+        "check": "5000050000"
+      },
+      "elixir": {
+        "median_us": 1400,
+        "fastest_us": 1375,
+        "check": "5000050000"
+      },
+      "go": {
+        "median_us": 472,
+        "fastest_us": 470,
+        "check": "5000050000"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "map.filter 100k",
+      "alchem": {
+        "median_us": 12996,
+        "fastest_us": 11517,
+        "check": "50000"
+      },
+      "elixir": {
+        "median_us": 5683,
+        "fastest_us": 5519,
+        "check": "50000"
+      },
+      "go": {
+        "median_us": 2244,
+        "fastest_us": 2186,
+        "check": "50000"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "mapset.new from 1M integers",
+      "alchem": {
+        "median_us": 50370,
+        "fastest_us": 48467,
+        "check": "250007"
+      },
+      "elixir": {
+        "median_us": 133117,
+        "fastest_us": 129531,
+        "check": "250007"
+      },
+      "go": {
+        "median_us": 14653,
+        "fastest_us": 14351,
+        "check": "250007"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "mapset.put 100k",
+      "alchem": {
+        "median_us": 59393,
+        "fastest_us": 56283,
+        "check": "100000"
+      },
+      "elixir": {
+        "median_us": 20744,
+        "fastest_us": 18669,
+        "check": "100000"
+      },
+      "go": {
+        "median_us": 2747,
+        "fastest_us": 2708,
+        "check": "100000"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "mapset.member? 200k",
+      "alchem": {
+        "median_us": 4253,
+        "fastest_us": 4222,
+        "check": "100000"
+      },
+      "elixir": {
+        "median_us": 5469,
+        "fastest_us": 5462,
+        "check": "100000"
+      },
+      "go": {
+        "median_us": 2280,
+        "fastest_us": 2247,
+        "check": "100000"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "mapset.union 100k with 100k",
+      "alchem": {
+        "median_us": 11100,
+        "fastest_us": 9293,
+        "check": "166667"
+      },
+      "elixir": {
+        "median_us": 2010,
+        "fastest_us": 1991,
+        "check": "166667"
+      },
+      "go": {
+        "median_us": 4062,
+        "fastest_us": 4003,
+        "check": "166667"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "mapset.intersection 100k with 100k",
+      "alchem": {
+        "median_us": 6060,
+        "fastest_us": 5775,
+        "check": "33333"
+      },
+      "elixir": {
+        "median_us": 5339,
+        "fastest_us": 4907,
+        "check": "33333"
+      },
+      "go": {
+        "median_us": 3809,
+        "fastest_us": 3736,
+        "check": "33333"
+      }
+    },
+    {
+      "program": "map_set",
+      "name": "mapset.difference 100k with 100k",
+      "alchem": {
+        "median_us": 8044,
+        "fastest_us": 6118,
+        "check": "66667"
+      },
+      "elixir": {
+        "median_us": 7803,
+        "fastest_us": 7567,
+        "check": "66667"
+      },
+      "go": {
+        "median_us": 5175,
+        "fastest_us": 5089,
+        "check": "66667"
+      }
+    },
+    {
+      "program": "list",
+      "name": "list.at 2,000 reads of 10k",
+      "alchem": {
+        "median_us": 10585,
+        "fastest_us": 10555,
+        "check": "996800047"
+      },
+      "elixir": {
+        "median_us": 12178,
+        "fastest_us": 12140,
+        "check": "996800047"
+      },
+      "go": {
+        "median_us": 3,
+        "fastest_us": 3,
+        "check": "996800047"
+      }
+    },
+    {
+      "program": "list",
+      "name": "list.replace_at 1,000 of 10k",
+      "alchem": {
+        "median_us": 4049,
+        "fastest_us": 3882,
+        "check": "4492429631"
+      },
+      "elixir": {
+        "median_us": 32741,
+        "fastest_us": 32552,
+        "check": "4492429631"
+      },
+      "go": {
+        "median_us": 18,
+        "fastest_us": 18,
+        "check": "4492429631"
+      }
+    },
+    {
+      "program": "list",
+      "name": "list.update_at 1,000 of 10k",
+      "alchem": {
+        "median_us": 3993,
+        "fastest_us": 3851,
+        "check": "4990553006"
+      },
+      "elixir": {
+        "median_us": 32602,
+        "fastest_us": 32499,
+        "check": "4990553006"
+      },
+      "go": {
+        "median_us": 25,
+        "fastest_us": 18,
+        "check": "4990553006"
+      }
+    },
+    {
+      "program": "list",
+      "name": "list.insert_at 1,000 into 10k",
+      "alchem": {
+        "median_us": 4892,
+        "fastest_us": 4870,
+        "check": "4991052506"
+      },
+      "elixir": {
+        "median_us": 35190,
+        "fastest_us": 35023,
+        "check": "4991052506"
+      },
+      "go": {
+        "median_us": 553,
+        "fastest_us": 544,
+        "check": "4991052506"
+      }
+    },
+    {
+      "program": "list",
+      "name": "list.delete_at 1,000 of 10k",
+      "alchem": {
+        "median_us": 4436,
+        "fastest_us": 4338,
+        "check": "4498121244"
+      },
+      "elixir": {
+        "median_us": 14502,
+        "fastest_us": 14480,
+        "check": "4498121244"
+      },
+      "go": {
+        "median_us": 503,
+        "fastest_us": 476,
+        "check": "4498121244"
+      }
+    },
+    {
+      "program": "list",
+      "name": "list.delete value 1,000 of 10k",
+      "alchem": {
+        "median_us": 5814,
+        "fastest_us": 5605,
+        "check": "9000"
+      },
+      "elixir": {
+        "median_us": 30679,
+        "fastest_us": 30616,
+        "check": "9000"
+      },
+      "go": {
+        "median_us": 1702,
+        "fastest_us": 1683,
+        "check": "9000"
+      }
+    },
+    {
+      "program": "list",
+      "name": "list.last 1,000 times of 100k",
+      "alchem": {
+        "median_us": 1,
+        "fastest_us": 1,
+        "check": "897640000"
+      },
+      "elixir": {
+        "median_us": 156250,
+        "fastest_us": 155744,
+        "check": "897640000"
+      },
+      "go": {
+        "median_us": 0,
+        "fastest_us": 0,
+        "check": "897640000"
+      }
+    },
+    {
+      "program": "list",
+      "name": "list.length 1,000 times of 100k",
+      "alchem": {
+        "median_us": 1,
+        "fastest_us": 0,
+        "check": "100000000"
+      },
+      "elixir": {
+        "median_us": 84422,
+        "fastest_us": 83248,
+        "check": "100000000"
+      },
+      "go": {
+        "median_us": 0,
+        "fastest_us": 0,
+        "check": "100000000"
+      }
+    },
+    {
+      "program": "list",
+      "name": "list ++ append 1k to growing list 200 times",
+      "alchem": {
+        "median_us": 8975,
+        "fastest_us": 8752,
+        "check": "200000"
+      },
+      "elixir": {
+        "median_us": 81291,
+        "fastest_us": 80966,
+        "check": "200000"
+      },
+      "go": {
+        "median_us": 581,
+        "fastest_us": 434,
+        "check": "200000"
+      }
+    },
+    {
+      "program": "list",
+      "name": "list ++ prepend 1k to growing list 200 times",
+      "alchem": {
+        "median_us": 8717,
+        "fastest_us": 8323,
+        "check": "200000"
+      },
+      "elixir": {
+        "median_us": 734,
+        "fastest_us": 673,
+        "check": "200000"
+      },
+      "go": {
+        "median_us": 9496,
+        "fastest_us": 8996,
+        "check": "200000"
+      }
+    },
+    {
+      "program": "list",
+      "name": "list -- 1,000 from 10k",
+      "alchem": {
+        "median_us": 108,
+        "fastest_us": 101,
+        "check": "9000"
+      },
+      "elixir": {
+        "median_us": 296,
+        "fastest_us": 255,
+        "check": "9000"
+      },
+      "go": {
+        "median_us": 1703,
+        "fastest_us": 1683,
+        "check": "9000"
+      }
+    },
+    {
+      "program": "list",
+      "name": "list.flatten 1,000 lists of 100",
+      "alchem": {
+        "median_us": 297,
+        "fastest_us": 280,
+        "check": "100000"
+      },
+      "elixir": {
+        "median_us": 1005,
+        "fastest_us": 986,
+        "check": "100000"
+      },
+      "go": {
+        "median_us": 57,
+        "fastest_us": 22,
+        "check": "100000"
+      }
+    },
+    {
+      "program": "list",
+      "name": "list prepend build 1M",
+      "alchem": {
+        "median_us": 2565,
+        "fastest_us": 2526,
+        "check": "1000000"
+      },
+      "elixir": {
+        "median_us": 4199,
+        "fastest_us": 4095,
+        "check": "1000000"
+      },
+      "go": {
+        "median_us": 2426,
+        "fastest_us": 2199,
+        "check": "1000000"
+      }
+    },
+    {
+      "program": "list",
+      "name": "list head/tail recursive walk 5k, 20 times",
+      "alchem": {
+        "median_us": 600,
+        "fastest_us": 590,
+        "check": "49701458680"
+      },
+      "elixir": {
+        "median_us": 197,
+        "fastest_us": 192,
+        "check": "49701458680"
+      },
+      "go": {
+        "median_us": 26,
+        "fastest_us": 26,
+        "check": "49701458680"
+      }
+    },
+    {
+      "program": "list",
+      "name": "list.foldr 100k",
+      "alchem": {
+        "median_us": 803,
+        "fastest_us": 637,
+        "check": "470243805"
+      },
+      "elixir": {
+        "median_us": 728,
+        "fastest_us": 721,
+        "check": "470243805"
+      },
+      "go": {
+        "median_us": 347,
+        "fastest_us": 343,
+        "check": "470243805"
+      }
+    },
+    {
+      "program": "list",
+      "name": "list.duplicate 1M",
+      "alchem": {
+        "median_us": 401,
+        "fastest_us": 300,
+        "check": "7"
+      },
+      "elixir": {
+        "median_us": 2936,
+        "fastest_us": 2930,
+        "check": "7"
+      },
+      "go": {
+        "median_us": 265,
+        "fastest_us": 175,
+        "check": "7"
+      }
+    },
+    {
+      "program": "list",
+      "name": "list in (membership) 1,000 misses of 10k",
+      "alchem": {
+        "median_us": 2732,
+        "fastest_us": 2722,
+        "check": "0"
+      },
+      "elixir": {
+        "median_us": 11819,
+        "fastest_us": 11766,
+        "check": "0"
+      },
+      "go": {
+        "median_us": 2729,
+        "fastest_us": 2720,
+        "check": "0"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string \u003c\u003e append 1 byte 20k times",
+      "alchem": {
+        "median_us": 111,
+        "fastest_us": 89,
+        "check": "20000"
+      },
+      "elixir": {
+        "median_us": 148,
+        "fastest_us": 145,
+        "check": "20000"
+      },
+      "go": {
+        "median_us": 46,
+        "fastest_us": 41,
+        "check": "20000"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string interpolation 200k",
+      "alchem": {
+        "median_us": 8536,
+        "fastest_us": 8130,
+        "check": "4231642"
+      },
+      "elixir": {
+        "median_us": 38356,
+        "fastest_us": 34562,
+        "check": "4231642"
+      },
+      "go": {
+        "median_us": 8355,
+        "fastest_us": 8143,
+        "check": "4231642"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string.split on space 1.4 MB",
+      "alchem": {
+        "median_us": 2054,
+        "fastest_us": 1987,
+        "check": "200000"
+      },
+      "elixir": {
+        "median_us": 4702,
+        "fastest_us": 3905,
+        "check": "200000"
+      },
+      "go": {
+        "median_us": 2073,
+        "fastest_us": 1895,
+        "check": "200000"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string.split whitespace 1.4 MB",
+      "alchem": {
+        "median_us": 1582,
+        "fastest_us": 1533,
+        "check": "200000"
+      },
+      "elixir": {
+        "median_us": 4426,
+        "fastest_us": 4054,
+        "check": "200000"
+      },
+      "go": {
+        "median_us": 1524,
+        "fastest_us": 1480,
+        "check": "200000"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string.replace 1.4 MB",
+      "alchem": {
+        "median_us": 3226,
+        "fastest_us": 3209,
+        "check": "1377789"
+      },
+      "elixir": {
+        "median_us": 4279,
+        "fastest_us": 3905,
+        "check": "1377789"
+      },
+      "go": {
+        "median_us": 3224,
+        "fastest_us": 3209,
+        "check": "1377789"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string.contains? 200k words",
+      "alchem": {
+        "median_us": 1070,
+        "fastest_us": 1061,
+        "check": "7382"
+      },
+      "elixir": {
+        "median_us": 42363,
+        "fastest_us": 41968,
+        "check": "7382"
+      },
+      "go": {
+        "median_us": 1270,
+        "fastest_us": 1236,
+        "check": "7382"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string.starts_with? 200k words",
+      "alchem": {
+        "median_us": 148,
+        "fastest_us": 146,
+        "check": "2222"
+      },
+      "elixir": {
+        "median_us": 4861,
+        "fastest_us": 4810,
+        "check": "2222"
+      },
+      "go": {
+        "median_us": 187,
+        "fastest_us": 174,
+        "check": "2222"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string.upcase ASCII 1.4 MB",
+      "alchem": {
+        "median_us": 1950,
+        "fastest_us": 1927,
+        "check": "1377789"
+      },
+      "elixir": {
+        "median_us": 24978,
+        "fastest_us": 13420,
+        "check": "1377789"
+      },
+      "go": {
+        "median_us": 2049,
+        "fastest_us": 1990,
+        "check": "1377789"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string.downcase ASCII 1.4 MB",
+      "alchem": {
+        "median_us": 1246,
+        "fastest_us": 1243,
+        "check": "1377789"
+      },
+      "elixir": {
+        "median_us": 27477,
+        "fastest_us": 19270,
+        "check": "1377789"
+      },
+      "go": {
+        "median_us": 1265,
+        "fastest_us": 1242,
+        "check": "1377789"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string.upcase non-ASCII 310 KB",
+      "alchem": {
+        "median_us": 1205,
+        "fastest_us": 1195,
+        "check": "310000"
+      },
+      "elixir": {
+        "median_us": 2528,
+        "fastest_us": 1658,
+        "check": "310000"
+      },
+      "go": {
+        "median_us": 1202,
+        "fastest_us": 1186,
+        "check": "310000"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string.trim 200k words",
+      "alchem": {
+        "median_us": 921,
+        "fastest_us": 918,
+        "check": "1177790"
+      },
+      "elixir": {
+        "median_us": 22612,
+        "fastest_us": 21931,
+        "check": "1177790"
+      },
+      "go": {
+        "median_us": 825,
+        "fastest_us": 813,
+        "check": "1177790"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string.length ASCII 1.4 MB",
+      "alchem": {
+        "median_us": 372,
+        "fastest_us": 371,
+        "check": "1377789"
+      },
+      "elixir": {
+        "median_us": 285,
+        "fastest_us": 284,
+        "check": "1377789"
+      },
+      "go": {
+        "median_us": 374,
+        "fastest_us": 371,
+        "check": "1377789"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string.length non-ASCII 310 KB",
+      "alchem": {
+        "median_us": 184,
+        "fastest_us": 183,
+        "check": "220000"
+      },
+      "elixir": {
+        "median_us": 4907,
+        "fastest_us": 4889,
+        "check": "220000"
+      },
+      "go": {
+        "median_us": 186,
+        "fastest_us": 186,
+        "check": "220000"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string.slice 100k from the middle of 1,000 characters",
+      "alchem": {
+        "median_us": 26657,
+        "fastest_us": 26577,
+        "check": "2000000"
+      },
+      "elixir": {
+        "median_us": 42201,
+        "fastest_us": 42151,
+        "check": "2000000"
+      },
+      "go": {
+        "median_us": 26381,
+        "fastest_us": 26356,
+        "check": "2000000"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string.graphemes non-ASCII 310 KB",
+      "alchem": {
+        "median_us": 3403,
+        "fastest_us": 2276,
+        "check": "220000"
+      },
+      "elixir": {
+        "median_us": 9755,
+        "fastest_us": 9212,
+        "check": "220000"
+      },
+      "go": {
+        "median_us": 1905,
+        "fastest_us": 1835,
+        "check": "220000"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string.codepoints non-ASCII 310 KB",
+      "alchem": {
+        "median_us": 3348,
+        "fastest_us": 2326,
+        "check": "220000"
+      },
+      "elixir": {
+        "median_us": 2574,
+        "fastest_us": 2063,
+        "check": "220000"
+      },
+      "go": {
+        "median_us": 1861,
+        "fastest_us": 1846,
+        "check": "220000"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string.reverse ASCII 1.4 MB",
+      "alchem": {
+        "median_us": 4993,
+        "fastest_us": 4969,
+        "check": "1377789"
+      },
+      "elixir": {
+        "median_us": 35956,
+        "fastest_us": 27922,
+        "check": "1377789"
+      },
+      "go": {
+        "median_us": 4901,
+        "fastest_us": 4827,
+        "check": "1377789"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string.pad_leading 200k words",
+      "alchem": {
+        "median_us": 11264,
+        "fastest_us": 11074,
+        "check": "2400000"
+      },
+      "elixir": {
+        "median_us": 39578,
+        "fastest_us": 39414,
+        "check": "2400000"
+      },
+      "go": {
+        "median_us": 4856,
+        "fastest_us": 4808,
+        "check": "2400000"
+      }
+    },
+    {
+      "program": "string",
+      "name": "string == and \u003c compare 200k words",
+      "alchem": {
+        "median_us": 997,
+        "fastest_us": 985,
+        "check": "168192"
+      },
+      "elixir": {
+        "median_us": 5257,
+        "fastest_us": 5249,
+        "check": "168192"
+      },
+      "go": {
+        "median_us": 822,
+        "fastest_us": 818,
+        "check": "168192"
+      }
+    },
+    {
+      "program": "string",
+      "name": "regex.match? 100k lines",
+      "alchem": {
+        "median_us": 8076,
+        "fastest_us": 8059,
+        "check": "14285"
+      },
+      "elixir": {
+        "median_us": 48306,
+        "fastest_us": 48005,
+        "check": "14285"
+      },
+      "go": {
+        "median_us": 7983,
+        "fastest_us": 7956,
+        "check": "14285"
+      }
+    },
+    {
+      "program": "string",
+      "name": "regex.run with captures 100k lines",
+      "alchem": {
+        "median_us": 30258,
+        "fastest_us": 29757,
+        "check": "35000000"
+      },
+      "elixir": {
+        "median_us": 49936,
+        "fastest_us": 48950,
+        "check": "35000000"
+      },
+      "go": {
+        "median_us": 27301,
+        "fastest_us": 27106,
+        "check": "35000000"
+      }
+    },
+    {
+      "program": "string",
+      "name": "regex.named_captures 100k lines",
+      "alchem": {
+        "median_us": 35672,
+        "fastest_us": 35418,
+        "check": "1588895"
+      },
+      "elixir": {
+        "median_us": 71170,
+        "fastest_us": 70810,
+        "check": "1588895"
+      },
+      "go": {
+        "median_us": 27023,
+        "fastest_us": 26980,
+        "check": "1588895"
+      }
+    },
+    {
+      "program": "string",
+      "name": "regex.scan 10k lines",
+      "alchem": {
+        "median_us": 15813,
+        "fastest_us": 15619,
+        "check": "100000"
+      },
+      "elixir": {
+        "median_us": 39170,
+        "fastest_us": 39089,
+        "check": "100000"
+      },
+      "go": {
+        "median_us": 11235,
+        "fastest_us": 10834,
+        "check": "100000"
+      }
+    },
+    {
+      "program": "string",
+      "name": "regex.replace 10k lines",
+      "alchem": {
+        "median_us": 12220,
+        "fastest_us": 12080,
+        "check": "400000"
+      },
+      "elixir": {
+        "median_us": 43350,
+        "fastest_us": 43020,
+        "check": "400000"
+      },
+      "go": {
+        "median_us": 11835,
+        "fastest_us": 11732,
+        "check": "400000"
+      }
+    },
+    {
+      "program": "string",
+      "name": "regex.split 10k lines",
+      "alchem": {
+        "median_us": 13980,
+        "fastest_us": 13720,
+        "check": "110000"
+      },
+      "elixir": {
+        "median_us": 41909,
+        "fastest_us": 41552,
+        "check": "110000"
+      },
+      "go": {
+        "median_us": 13528,
+        "fastest_us": 13239,
+        "check": "110000"
+      }
+    },
+    {
+      "program": "numbers",
+      "name": "integer.to_string 200k",
+      "alchem": {
+        "median_us": 2850,
+        "fastest_us": 2768,
+        "check": "1859694"
+      },
+      "elixir": {
+        "median_us": 3967,
+        "fastest_us": 3835,
+        "check": "1859694"
+      },
+      "go": {
+        "median_us": 2870,
+        "fastest_us": 2586,
+        "check": "1859694"
+      }
+    },
+    {
+      "program": "numbers",
+      "name": "integer.to_string base 16 200k",
+      "alchem": {
+        "median_us": 5962,
+        "fastest_us": 5898,
+        "check": "1563845"
+      },
+      "elixir": {
+        "median_us": 3785,
+        "fastest_us": 3559,
+        "check": "1563845"
+      },
+      "go": {
+        "median_us": 10402,
+        "fastest_us": 10346,
+        "check": "1563845"
+      }
+    },
+    {
+      "program": "numbers",
+      "name": "integer.parse 200k",
+      "alchem": {
+        "median_us": 4575,
+        "fastest_us": 4537,
+        "check": "158380791900000"
+      },
+      "elixir": {
+        "median_us": 19646,
+        "fastest_us": 19508,
+        "check": "158380791900000"
+      },
+      "go": {
+        "median_us": 1174,
+        "fastest_us": 1164,
+        "check": "158380791900000"
+      }
+    },
+    {
+      "program": "numbers",
+      "name": "string.to_integer 200k",
+      "alchem": {
+        "median_us": 3195,
+        "fastest_us": 3033,
+        "check": "158380791900000"
+      },
+      "elixir": {
+        "median_us": 2593,
+        "fastest_us": 2568,
+        "check": "158380791900000"
+      },
+      "go": {
+        "median_us": 1164,
+        "fastest_us": 1161,
+        "check": "158380791900000"
+      }
+    },
+    {
+      "program": "numbers",
+      "name": "string.to_integer base 16 200k",
+      "alchem": {
+        "median_us": 4174,
+        "fastest_us": 4158,
+        "check": "158380791900000"
+      },
+      "elixir": {
+        "median_us": 4683,
+        "fastest_us": 4640,
+        "check": "158380791900000"
+      },
+      "go": {
+        "median_us": 3746,
+        "fastest_us": 3731,
+        "check": "158380791900000"
+      }
+    },
+    {
+      "program": "numbers",
+      "name": "float.to_string 200k",
+      "alchem": {
+        "median_us": 9968,
+        "fastest_us": 9823,
+        "check": "1706418"
+      },
+      "elixir": {
+        "median_us": 7367,
+        "fastest_us": 7314,
+        "check": "1706418"
+      },
+      "go": {
+        "median_us": 22147,
+        "fastest_us": 21674,
+        "check": "1706418"
+      }
+    },
+    {
+      "program": "numbers",
+      "name": "float.parse 200k",
+      "alchem": {
+        "median_us": 6505,
+        "fastest_us": 6462,
+        "check": "7400037000"
+      },
+      "elixir": {
+        "median_us": 19639,
+        "fastest_us": 19500,
+        "check": "7400037000"
+      },
+      "go": {
+        "median_us": 4890,
+        "fastest_us": 4862,
+        "check": "7400037000"
+      }
+    },
+    {
+      "program": "numbers",
+      "name": "string.to_float 200k",
+      "alchem": {
+        "median_us": 5290,
+        "fastest_us": 5186,
+        "check": "7400037000"
+      },
+      "elixir": {
+        "median_us": 10874,
+        "fastest_us": 10782,
+        "check": "7400037000"
+      },
+      "go": {
+        "median_us": 4868,
+        "fastest_us": 4838,
+        "check": "7400037000"
+      }
+    },
+    {
+      "program": "numbers",
+      "name": "float.round 2 places 200k",
+      "alchem": {
+        "median_us": 645,
+        "fastest_us": 641,
+        "check": "7400037000"
+      },
+      "elixir": {
+        "median_us": 9500,
+        "fastest_us": 9419,
+        "check": "7400037000"
+      },
+      "go": {
+        "median_us": 134,
+        "fastest_us": 132,
+        "check": "7400037000"
+      }
+    },
+    {
+      "program": "numbers",
+      "name": "float.floor and ceil 200k",
+      "alchem": {
+        "median_us": 1261,
+        "fastest_us": 1252,
+        "check": "14800073895"
+      },
+      "elixir": {
+        "median_us": 9101,
+        "fastest_us": 9082,
+        "check": "14800073895"
+      },
+      "go": {
+        "median_us": 179,
+        "fastest_us": 177,
+        "check": "14800073895"
+      }
+    },
+    {
+      "program": "numbers",
+      "name": "round and trunc 1M",
+      "alchem": {
+        "median_us": 3644,
+        "fastest_us": 3607,
+        "check": "550000060000"
+      },
+      "elixir": {
+        "median_us": 11816,
+        "fastest_us": 11552,
+        "check": "550000060000"
+      },
+      "go": {
+        "median_us": 569,
+        "fastest_us": 569,
+        "check": "550000060000"
+      }
+    },
+    {
+      "program": "numbers",
+      "name": "float arithmetic 1M",
+      "alchem": {
+        "median_us": 1394,
+        "fastest_us": 1380,
+        "check": "499993"
+      },
+      "elixir": {
+        "median_us": 7722,
+        "fastest_us": 7714,
+        "check": "499993"
+      },
+      "go": {
+        "median_us": 592,
+        "fastest_us": 592,
+        "check": "499993"
+      }
+    },
+    {
+      "program": "numbers",
+      "name": "integer arithmetic 5M",
+      "alchem": {
+        "median_us": 18139,
+        "fastest_us": 17790,
+        "check": "575079475"
+      },
+      "elixir": {
+        "median_us": 30037,
+        "fastest_us": 29998,
+        "check": "575079475"
+      },
+      "go": {
+        "median_us": 17687,
+        "fastest_us": 17663,
+        "check": "575079475"
+      }
+    },
+    {
+      "program": "numbers",
+      "name": "integer.digits and undigits 200k",
+      "alchem": {
+        "median_us": 14460,
+        "fastest_us": 14377,
+        "check": "158380791900000"
+      },
+      "elixir": {
+        "median_us": 13482,
+        "fastest_us": 13463,
+        "check": "158380791900000"
+      },
+      "go": {
+        "median_us": 2213,
+        "fastest_us": 2183,
+        "check": "158380791900000"
+      }
+    },
+    {
+      "program": "numbers",
+      "name": "integer.gcd 1M",
+      "alchem": {
+        "median_us": 40318,
+        "fastest_us": 40259,
+        "check": "1997668"
+      },
+      "elixir": {
+        "median_us": 63134,
+        "fastest_us": 63109,
+        "check": "1997668"
+      },
+      "go": {
+        "median_us": 37461,
+        "fastest_us": 37431,
+        "check": "1997668"
+      }
+    },
+    {
+      "program": "numbers",
+      "name": "integer.pow 1M",
+      "alchem": {
+        "median_us": 6609,
+        "fastest_us": 6244,
+        "check": "4085176652500000"
+      },
+      "elixir": {
+        "median_us": 15267,
+        "fastest_us": 15234,
+        "check": "4085176652500000"
+      },
+      "go": {
+        "median_us": 4348,
+        "fastest_us": 4330,
+        "check": "4085176652500000"
+      }
+    },
+    {
+      "program": "numbers",
+      "name": "bitwise mix 1M",
+      "alchem": {
+        "median_us": 2273,
+        "fastest_us": 2253,
+        "check": "569929168"
+      },
+      "elixir": {
+        "median_us": 3884,
+        "fastest_us": 3872,
+        "check": "569929168"
+      },
+      "go": {
+        "median_us": 1355,
+        "fastest_us": 1349,
+        "check": "569929168"
+      }
+    },
+    {
+      "program": "json",
+      "name": "json.decode 159 B, 10,000 times",
+      "alchem": {
+        "median_us": 36893,
+        "fastest_us": 36390,
+        "check": "70000"
+      },
+      "elixir": {
+        "median_us": 23162,
+        "fastest_us": 18675,
+        "check": "70000"
+      },
+      "go": {
+        "median_us": 20679,
+        "fastest_us": 20351,
+        "check": "70000"
+      }
+    },
+    {
+      "program": "json",
+      "name": "json.decode 10 KB, 200 times",
+      "alchem": {
+        "median_us": 40973,
+        "fastest_us": 39825,
+        "check": "600"
+      },
+      "elixir": {
+        "median_us": 11634,
+        "fastest_us": 11565,
+        "check": "600"
+      },
+      "go": {
+        "median_us": 25956,
+        "fastest_us": 24603,
+        "check": "600"
+      }
+    },
+    {
+      "program": "json",
+      "name": "json.decode 5 MB",
+      "alchem": {
+        "median_us": 96544,
+        "fastest_us": 94636,
+        "check": "30000"
+      },
+      "elixir": {
+        "median_us": 38599,
+        "fastest_us": 34796,
+        "check": "30000"
+      },
+      "go": {
+        "median_us": 65956,
+        "fastest_us": 64481,
+        "check": "30000"
+      }
+    },
+    {
+      "program": "json",
+      "name": "json.encode 159 B, 10,000 times",
+      "alchem": {
+        "median_us": 6946,
+        "fastest_us": 6548,
+        "check": "1590000"
+      },
+      "elixir": {
+        "median_us": 8659,
+        "fastest_us": 8626,
+        "check": "1590000"
+      },
+      "go": {
+        "median_us": 12656,
+        "fastest_us": 12545,
+        "check": "1590000"
+      }
+    },
+    {
+      "program": "json",
+      "name": "json.encode 10 KB, 200 times",
+      "alchem": {
+        "median_us": 8656,
+        "fastest_us": 7262,
+        "check": "1965200"
+      },
+      "elixir": {
+        "median_us": 9815,
+        "fastest_us": 9563,
+        "check": "1965200"
+      },
+      "go": {
+        "median_us": 7456,
+        "fastest_us": 7398,
+        "check": "1965200"
+      }
+    },
+    {
+      "program": "json",
+      "name": "json.encode 5 MB",
+      "alchem": {
+        "median_us": 20850,
+        "fastest_us": 20486,
+        "check": "5224246"
+      },
+      "elixir": {
+        "median_us": 51217,
+        "fastest_us": 44311,
+        "check": "5224246"
+      },
+      "go": {
+        "median_us": 19556,
+        "fastest_us": 19333,
+        "check": "5224246"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "date.add 1M",
+      "alchem": {
+        "median_us": 41155,
+        "fastest_us": 41115,
+        "check": "15723564"
+      },
+      "elixir": {
+        "median_us": 37711,
+        "fastest_us": 35362,
+        "check": "15723564"
+      },
+      "go": {
+        "median_us": 21745,
+        "fastest_us": 21737,
+        "check": "15723564"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "date.new! 1M",
+      "alchem": {
+        "median_us": 23254,
+        "fastest_us": 22698,
+        "check": "2024500000"
+      },
+      "elixir": {
+        "median_us": 214583,
+        "fastest_us": 213592,
+        "check": "2024500000"
+      },
+      "go": {
+        "median_us": 11676,
+        "fastest_us": 11661,
+        "check": "2024500000"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "date.diff 100k",
+      "alchem": {
+        "median_us": 2184,
+        "fastest_us": 2166,
+        "check": "1000523236"
+      },
+      "elixir": {
+        "median_us": 5112,
+        "fastest_us": 4847,
+        "check": "1000523236"
+      },
+      "go": {
+        "median_us": 597,
+        "fastest_us": 594,
+        "check": "1000523236"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "date.day_of_week 100k",
+      "alchem": {
+        "median_us": 1174,
+        "fastest_us": 1165,
+        "check": "400002"
+      },
+      "elixir": {
+        "median_us": 4433,
+        "fastest_us": 4340,
+        "check": "400002"
+      },
+      "go": {
+        "median_us": 270,
+        "fastest_us": 270,
+        "check": "400002"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "date.end_of_month 100k",
+      "alchem": {
+        "median_us": 1299,
+        "fastest_us": 1284,
+        "check": "3045899"
+      },
+      "elixir": {
+        "median_us": 3322,
+        "fastest_us": 3289,
+        "check": "3045899"
+      },
+      "go": {
+        "median_us": 2344,
+        "fastest_us": 2333,
+        "check": "3045899"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "date.to_iso8601 100k",
+      "alchem": {
+        "median_us": 11524,
+        "fastest_us": 11477,
+        "check": "1000000"
+      },
+      "elixir": {
+        "median_us": 10409,
+        "fastest_us": 10375,
+        "check": "1000000"
+      },
+      "go": {
+        "median_us": 4786,
+        "fastest_us": 4685,
+        "check": "1000000"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "date.from_iso8601 100k",
+      "alchem": {
+        "median_us": 6970,
+        "fastest_us": 6922,
+        "check": "1572614"
+      },
+      "elixir": {
+        "median_us": 24011,
+        "fastest_us": 22511,
+        "check": "1572614"
+      },
+      "go": {
+        "median_us": 5232,
+        "fastest_us": 5214,
+        "check": "1572614"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "date sort 100k",
+      "alchem": {
+        "median_us": 81823,
+        "fastest_us": 80682,
+        "check": "0"
+      },
+      "elixir": {
+        "median_us": 72506,
+        "fastest_us": 71695,
+        "check": "0"
+      },
+      "go": {
+        "median_us": 10534,
+        "fastest_us": 10417,
+        "check": "0"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "naive_date_time.add 1M",
+      "alchem": {
+        "median_us": 35061,
+        "fastest_us": 35000,
+        "check": "29499640"
+      },
+      "elixir": {
+        "median_us": 143404,
+        "fastest_us": 143143,
+        "check": "29499640"
+      },
+      "go": {
+        "median_us": 5162,
+        "fastest_us": 5154,
+        "check": "29499640"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "naive_date_time.diff 100k",
+      "alchem": {
+        "median_us": 2409,
+        "fastest_us": 2397,
+        "check": "39595395950000"
+      },
+      "elixir": {
+        "median_us": 12085,
+        "fastest_us": 11564,
+        "check": "39595395950000"
+      },
+      "go": {
+        "median_us": 594,
+        "fastest_us": 593,
+        "check": "39595395950000"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "naive_date_time.to_iso8601 100k",
+      "alchem": {
+        "median_us": 24892,
+        "fastest_us": 24703,
+        "check": "1900000"
+      },
+      "elixir": {
+        "median_us": 18966,
+        "fastest_us": 18914,
+        "check": "1900000"
+      },
+      "go": {
+        "median_us": 7736,
+        "fastest_us": 7580,
+        "check": "1900000"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "naive_date_time.from_iso8601 100k",
+      "alchem": {
+        "median_us": 12011,
+        "fastest_us": 11854,
+        "check": "2950420"
+      },
+      "elixir": {
+        "median_us": 27406,
+        "fastest_us": 26973,
+        "check": "2950420"
+      },
+      "go": {
+        "median_us": 8062,
+        "fastest_us": 7933,
+        "check": "2950420"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "date_time.from_unix! 1M",
+      "alchem": {
+        "median_us": 51710,
+        "fastest_us": 51358,
+        "check": "29499906"
+      },
+      "elixir": {
+        "median_us": 75872,
+        "fastest_us": 75796,
+        "check": "29499906"
+      },
+      "go": {
+        "median_us": 2716,
+        "fastest_us": 2713,
+        "check": "29499906"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "date_time.to_unix 100k",
+      "alchem": {
+        "median_us": 1115,
+        "fastest_us": 1110,
+        "check": "134263875950000"
+      },
+      "elixir": {
+        "median_us": 6692,
+        "fastest_us": 6621,
+        "check": "134263875950000"
+      },
+      "go": {
+        "median_us": 54,
+        "fastest_us": 54,
+        "check": "134263875950000"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "date_time.add 100k",
+      "alchem": {
+        "median_us": 4352,
+        "fastest_us": 4334,
+        "check": "1572764"
+      },
+      "elixir": {
+        "median_us": 19299,
+        "fastest_us": 19225,
+        "check": "1572764"
+      },
+      "go": {
+        "median_us": 734,
+        "fastest_us": 733,
+        "check": "1572764"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "date_time.compare 100k",
+      "alchem": {
+        "median_us": 4841,
+        "fastest_us": 4553,
+        "check": "100000"
+      },
+      "elixir": {
+        "median_us": 14224,
+        "fastest_us": 13757,
+        "check": "100000"
+      },
+      "go": {
+        "median_us": 196,
+        "fastest_us": 196,
+        "check": "100000"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "date_time.to_iso8601 100k",
+      "alchem": {
+        "median_us": 26819,
+        "fastest_us": 26631,
+        "check": "2000000"
+      },
+      "elixir": {
+        "median_us": 22948,
+        "fastest_us": 22652,
+        "check": "2000000"
+      },
+      "go": {
+        "median_us": 2421,
+        "fastest_us": 2358,
+        "check": "2000000"
+      }
+    },
+    {
+      "program": "calendar",
+      "name": "date_time.from_iso8601 with offset 100k",
+      "alchem": {
+        "median_us": 10235,
+        "fastest_us": 9980,
+        "check": "722950420"
+      },
+      "elixir": {
+        "median_us": 33459,
+        "fastest_us": 33283,
+        "check": "722950420"
+      },
+      "go": {
+        "median_us": 4796,
+        "fastest_us": 4787,
+        "check": "722950420"
+      }
+    },
+    {
+      "program": "control",
+      "name": "for filter and map list 1M",
+      "alchem": {
+        "median_us": 1359,
+        "fastest_us": 1235,
+        "check": "15864"
+      },
+      "elixir": {
+        "median_us": 4869,
+        "fastest_us": 3763,
+        "check": "15864"
+      },
+      "go": {
+        "median_us": 1224,
+        "fastest_us": 1074,
+        "check": "15864"
+      }
+    },
+    {
+      "program": "control",
+      "name": "enum filter and map list 1M",
+      "alchem": {
+        "median_us": 4278,
+        "fastest_us": 4073,
+        "check": "15864"
+      },
+      "elixir": {
+        "median_us": 8256,
+        "fastest_us": 7689,
+        "check": "15864"
+      },
+      "go": {
+        "median_us": 1139,
+        "fastest_us": 1071,
+        "check": "15864"
+      }
+    },
+    {
+      "program": "control",
+      "name": "for range 1M",
+      "alchem": {
+        "median_us": 3270,
+        "fastest_us": 2236,
+        "check": "3"
+      },
+      "elixir": {
+        "median_us": 5529,
+        "fastest_us": 5527,
+        "check": "3"
+      },
+      "go": {
+        "median_us": 449,
+        "fastest_us": 374,
+        "check": "3"
+      }
+    },
+    {
+      "program": "control",
+      "name": "for two generators 1,000 x 1,000 with filter",
+      "alchem": {
+        "median_us": 3458,
+        "fastest_us": 3450,
+        "check": "142858"
+      },
+      "elixir": {
+        "median_us": 4306,
+        "fastest_us": 4078,
+        "check": "142858"
+      },
+      "go": {
+        "median_us": 1020,
+        "fastest_us": 1004,
+        "check": "142858"
+      }
+    },
+    {
+      "program": "control",
+      "name": "enum flat_map 1,000 x 1,000 with filter",
+      "alchem": {
+        "median_us": 5207,
+        "fastest_us": 5105,
+        "check": "142858"
+      },
+      "elixir": {
+        "median_us": 7232,
+        "fastest_us": 7068,
+        "check": "142858"
+      },
+      "go": {
+        "median_us": 1028,
+        "fastest_us": 1012,
+        "check": "142858"
+      }
+    },
+    {
+      "program": "control",
+      "name": "for pattern generator 1M",
+      "alchem": {
+        "median_us": 1827,
+        "fastest_us": 1727,
+        "check": "7933"
+      },
+      "elixir": {
+        "median_us": 4408,
+        "fastest_us": 4393,
+        "check": "7933"
+      },
+      "go": {
+        "median_us": 1345,
+        "fastest_us": 1192,
+        "check": "7933"
+      }
+    },
+    {
+      "program": "control",
+      "name": "for map entries 100k",
+      "alchem": {
+        "median_us": 2429,
+        "fastest_us": 2286,
+        "check": "50349"
+      },
+      "elixir": {
+        "median_us": 1535,
+        "fastest_us": 1476,
+        "check": "50349"
+      },
+      "go": {
+        "median_us": 1074,
+        "fastest_us": 1053,
+        "check": "50349"
+      }
+    },
+    {
+      "program": "control",
+      "name": "loop without try 1M",
+      "alchem": {
+        "median_us": 2445,
+        "fastest_us": 2435,
+        "check": "185204168367"
+      },
+      "elixir": {
+        "median_us": 4150,
+        "fastest_us": 4134,
+        "check": "185204168367"
+      },
+      "go": {
+        "median_us": 639,
+        "fastest_us": 634,
+        "check": "185204168367"
+      }
+    },
+    {
+      "program": "control",
+      "name": "try with no failure 1M",
+      "alchem": {
+        "median_us": 8419,
+        "fastest_us": 8411,
+        "check": "185204168367"
+      },
+      "elixir": {
+        "median_us": 4702,
+        "fastest_us": 4683,
+        "check": "185204168367"
+      },
+      "go": {
+        "median_us": 4292,
+        "fastest_us": 4282,
+        "check": "185204168367"
+      }
+    },
+    {
+      "program": "control",
+      "name": "try rescue raise 100k",
+      "alchem": {
+        "median_us": 19560,
+        "fastest_us": 18740,
+        "check": "400000"
+      },
+      "elixir": {
+        "median_us": 8668,
+        "fastest_us": 8378,
+        "check": "400000"
+      },
+      "go": {
+        "median_us": 13287,
+        "fastest_us": 13243,
+        "check": "400000"
+      }
+    },
+    {
+      "program": "control",
+      "name": "try rescue division by zero 100k",
+      "alchem": {
+        "median_us": 19282,
+        "fastest_us": 18771,
+        "check": "100000"
+      },
+      "elixir": {
+        "median_us": 5537,
+        "fastest_us": 5178,
+        "check": "100000"
+      },
+      "go": {
+        "median_us": 15030,
+        "fastest_us": 14959,
+        "check": "100000"
+      }
+    },
+    {
+      "program": "control",
+      "name": "with three clauses 1M",
+      "alchem": {
+        "median_us": 21926,
+        "fastest_us": 21344,
+        "check": "1050006600000"
+      },
+      "elixir": {
+        "median_us": 11841,
+        "fastest_us": 11803,
+        "check": "1050006600000"
+      },
+      "go": {
+        "median_us": 2472,
+        "fastest_us": 2461,
+        "check": "1050006600000"
+      }
+    },
+    {
+      "program": "control",
+      "name": "case over sum type 1M",
+      "alchem": {
+        "median_us": 3001,
+        "fastest_us": 2989,
+        "check": "36166729"
+      },
+      "elixir": {
+        "median_us": 5172,
+        "fastest_us": 5147,
+        "check": "36166729"
+      },
+      "go": {
+        "median_us": 903,
+        "fastest_us": 900,
+        "check": "36166729"
+      }
+    },
+    {
+      "program": "control",
+      "name": "cond 1M",
+      "alchem": {
+        "median_us": 1908,
+        "fastest_us": 1850,
+        "check": "3489903"
+      },
+      "elixir": {
+        "median_us": 5143,
+        "fastest_us": 5124,
+        "check": "3489903"
+      },
+      "go": {
+        "median_us": 1072,
+        "fastest_us": 1068,
+        "check": "3489903"
+      }
+    },
+    {
+      "program": "control",
+      "name": "recursive fib(27)",
+      "alchem": {
+        "median_us": 1360,
+        "fastest_us": 1314,
+        "check": "196418"
+      },
+      "elixir": {
+        "median_us": 1366,
+        "fastest_us": 1357,
+        "check": "196418"
+      },
+      "go": {
+        "median_us": 568,
+        "fastest_us": 561,
+        "check": "196418"
+      }
+    },
+    {
+      "program": "processes",
+      "name": "process spawn and await 100k, one at a time",
+      "alchem": {
+        "median_us": 51199,
+        "fastest_us": 50217,
+        "check": "100000"
+      },
+      "elixir": {
+        "median_us": 70382,
+        "fastest_us": 70279,
+        "check": "100000"
+      },
+      "go": {
+        "median_us": 23801,
+        "fastest_us": 23355,
+        "check": "100000"
+      }
+    },
+    {
+      "program": "processes",
+      "name": "process spawn 100k alive at once, release, await",
+      "alchem": {
+        "median_us": 80965,
+        "fastest_us": 78959,
+        "check": "100000"
+      },
+      "elixir": {
+        "median_us": 188757,
+        "fastest_us": 171214,
+        "check": "100000"
+      },
+      "go": {
+        "median_us": 45208,
+        "fastest_us": 37413,
+        "check": "100000"
+      }
+    },
+    {
+      "program": "processes",
+      "name": "process ping-pong 500k round trips",
+      "alchem": {
+        "median_us": 143179,
+        "fastest_us": 142226,
+        "check": "125000250000"
+      },
+      "elixir": {
+        "median_us": 211962,
+        "fastest_us": 208924,
+        "check": "125000250000"
+      },
+      "go": {
+        "median_us": 97985,
+        "fastest_us": 97281,
+        "check": "125000250000"
+      }
+    },
+    {
+      "program": "processes",
+      "name": "process fan-in 8 senders, 1M messages",
+      "alchem": {
+        "median_us": 136582,
+        "fastest_us": 132129,
+        "check": "62500500008"
+      },
+      "elixir": {
+        "median_us": 1261776,
+        "fastest_us": 494383,
+        "check": "62500500008"
+      },
+      "go": {
+        "median_us": 55570,
+        "fastest_us": 54483,
+        "check": "62500500008"
+      }
+    },
+    {
+      "program": "processes",
+      "name": "process ring 1,000 processes, 1,000 laps",
+      "alchem": {
+        "median_us": 162946,
+        "fastest_us": 161827,
+        "check": "500499"
+      },
+      "elixir": {
+        "median_us": 220873,
+        "fastest_us": 217724,
+        "check": "500499"
+      },
+      "go": {
+        "median_us": 114310,
+        "fastest_us": 113708,
+        "check": "500499"
+      }
+    },
+    {
+      "program": "processes",
+      "name": "process send a 10k-element list, 10k round trips",
+      "alchem": {
+        "median_us": 2957,
+        "fastest_us": 2940,
+        "check": "9999"
+      },
+      "elixir": {
+        "median_us": 364341,
+        "fastest_us": 355194,
+        "check": "9999"
+      },
+      "go": {
+        "median_us": 1981,
+        "fastest_us": 1950,
+        "check": "9999"
+      }
+    },
+    {
+      "program": "processes",
+      "name": "process mailbox fill 500k then drain",
+      "alchem": {
+        "median_us": 11607,
+        "fastest_us": 11488,
+        "check": "125000250001"
+      },
+      "elixir": {
+        "median_us": 74974,
+        "fastest_us": 73178,
+        "check": "125000250001"
+      },
+      "go": {
+        "median_us": 9693,
+        "fastest_us": 9662,
+        "check": "125000250001"
+      }
+    },
+    {
+      "program": "otp",
+      "name": "server.call 200k",
+      "alchem": {
+        "median_us": 149076,
+        "fastest_us": 148384,
+        "check": "20000100000"
+      },
+      "elixir": {
+        "median_us": 169040,
+        "fastest_us": 166197,
+        "check": "20000100000"
+      },
+      "go": {
+        "median_us": 39314,
+        "fastest_us": 39130,
+        "check": "20000100000"
+      }
+    },
+    {
+      "program": "otp",
+      "name": "server.call 8 clients, 25k calls each",
+      "alchem": {
+        "median_us": 313202,
+        "fastest_us": 300461,
+        "check": "200000"
+      },
+      "elixir": {
+        "median_us": 183610,
+        "fastest_us": 176941,
+        "check": "200000"
+      },
+      "go": {
+        "median_us": 74163,
+        "fastest_us": 66633,
+        "check": "200000"
+      }
+    },
+    {
+      "program": "otp",
+      "name": "server.cast 200k then one call",
+      "alchem": {
+        "median_us": 16955,
+        "fastest_us": 14434,
+        "check": "400000"
+      },
+      "elixir": {
+        "median_us": 18724,
+        "fastest_us": 18708,
+        "check": "400000"
+      },
+      "go": {
+        "median_us": 6027,
+        "fastest_us": 5923,
+        "check": "400000"
+      }
+    },
+    {
+      "program": "otp",
+      "name": "agent.get 200k",
+      "alchem": {
+        "median_us": 146175,
+        "fastest_us": 145224,
+        "check": "1400000"
+      },
+      "elixir": {
+        "median_us": 181231,
+        "fastest_us": 173253,
+        "check": "1400000"
+      },
+      "go": {
+        "median_us": 538,
+        "fastest_us": 537,
+        "check": "1400000"
+      }
+    },
+    {
+      "program": "otp",
+      "name": "agent.update 200k then get",
+      "alchem": {
+        "median_us": 142445,
+        "fastest_us": 142335,
+        "check": "200000"
+      },
+      "elixir": {
+        "median_us": 180189,
+        "fastest_us": 175033,
+        "check": "200000"
+      },
+      "go": {
+        "median_us": 490,
+        "fastest_us": 488,
+        "check": "200000"
+      }
+    },
+    {
+      "program": "otp",
+      "name": "agent.get_and_update 200k",
+      "alchem": {
+        "median_us": 145294,
+        "fastest_us": 144011,
+        "check": "19999900000"
+      },
+      "elixir": {
+        "median_us": 174973,
+        "fastest_us": 172908,
+        "check": "19999900000"
+      },
+      "go": {
+        "median_us": 498,
+        "fastest_us": 464,
+        "check": "19999900000"
+      }
+    },
+    {
+      "program": "otp",
+      "name": "task.async and await 100k, one at a time",
+      "alchem": {
+        "median_us": 85901,
+        "fastest_us": 85528,
+        "check": "10000100000"
+      },
+      "elixir": {
+        "median_us": 159930,
+        "fastest_us": 156993,
+        "check": "10000100000"
+      },
+      "go": {
+        "median_us": 24730,
+        "fastest_us": 24135,
+        "check": "10000100000"
+      }
+    },
+    {
+      "program": "otp",
+      "name": "task.async 10k at once, await_many",
+      "alchem": {
+        "median_us": 19562,
+        "fastest_us": 19068,
+        "check": "56105000"
+      },
+      "elixir": {
+        "median_us": 52618,
+        "fastest_us": 49655,
+        "check": "56105000"
+      },
+      "go": {
+        "median_us": 3574,
+        "fastest_us": 3183,
+        "check": "56105000"
+      }
+    },
+    {
+      "program": "otp",
+      "name": "task.async_stream 100k trivial items",
+      "alchem": {
+        "median_us": 70832,
+        "fastest_us": 70304,
+        "check": "10000100000"
+      },
+      "elixir": {
+        "median_us": 251145,
+        "fastest_us": 243971,
+        "check": "10000100000"
+      },
+      "go": {
+        "median_us": 45298,
+        "fastest_us": 33785,
+        "check": "10000100000"
+      }
+    },
+    {
+      "program": "otp",
+      "name": "serial 1,000 x fib(22)",
+      "alchem": {
+        "median_us": 153345,
+        "fastest_us": 150412,
+        "check": "18211500"
+      },
+      "elixir": {
+        "median_us": 118071,
+        "fastest_us": 117996,
+        "check": "18211500"
+      },
+      "go": {
+        "median_us": 51094,
+        "fastest_us": 51033,
+        "check": "18211500"
+      }
+    },
+    {
+      "program": "otp",
+      "name": "task.async_stream 1,000 x fib(22), limit 1",
+      "alchem": {
+        "median_us": 169203,
+        "fastest_us": 168499,
+        "check": "18211500"
+      },
+      "elixir": {
+        "median_us": 121419,
+        "fastest_us": 121267,
+        "check": "18211500"
+      },
+      "go": {
+        "median_us": 59663,
+        "fastest_us": 59312,
+        "check": "18211500"
+      }
+    },
+    {
+      "program": "otp",
+      "name": "task.async_stream 1,000 x fib(22), limit 2",
+      "alchem": {
+        "median_us": 81665,
+        "fastest_us": 81170,
+        "check": "18211500"
+      },
+      "elixir": {
+        "median_us": 63996,
+        "fastest_us": 63440,
+        "check": "18211500"
+      },
+      "go": {
+        "median_us": 26992,
+        "fastest_us": 26724,
+        "check": "18211500"
+      }
+    },
+    {
+      "program": "otp",
+      "name": "task.async_stream 1,000 x fib(22), limit 4",
+      "alchem": {
+        "median_us": 44650,
+        "fastest_us": 44486,
+        "check": "18211500"
+      },
+      "elixir": {
+        "median_us": 32625,
+        "fastest_us": 32217,
+        "check": "18211500"
+      },
+      "go": {
+        "median_us": 14658,
+        "fastest_us": 14486,
+        "check": "18211500"
+      }
+    },
+    {
+      "program": "otp",
+      "name": "task.async_stream 1,000 x fib(22), limit 8",
+      "alchem": {
+        "median_us": 22858,
+        "fastest_us": 22526,
+        "check": "18211500"
+      },
+      "elixir": {
+        "median_us": 22537,
+        "fastest_us": 21053,
+        "check": "18211500"
+      },
+      "go": {
+        "median_us": 7445,
+        "fastest_us": 7416,
+        "check": "18211500"
+      }
+    },
+    {
+      "program": "otp",
+      "name": "task.async_stream 1,000 x fib(22), limit 14",
+      "alchem": {
+        "median_us": 20236,
+        "fastest_us": 19263,
+        "check": "18211500"
+      },
+      "elixir": {
+        "median_us": 16263,
+        "fastest_us": 16058,
+        "check": "18211500"
+      },
+      "go": {
+        "median_us": 4775,
+        "fastest_us": 4707,
+        "check": "18211500"
+      }
+    }
+  ],
+  "builds": [
+    {
+      "program": "enum",
+      "alchem_check_ms": 6,
+      "alchem_build_ms": 316,
+      "alchem_binary_bytes": 2957346,
+      "go_build_ms": 194,
+      "go_binary_bytes": 2552754,
+      "elixir_compile_ms": 270
+    },
+    {
+      "program": "stream",
+      "alchem_check_ms": 20,
+      "alchem_build_ms": 297,
+      "alchem_binary_bytes": 2916834,
+      "go_build_ms": 197,
+      "go_binary_bytes": 2534498,
+      "elixir_compile_ms": 265
+    },
+    {
+      "program": "map_set",
+      "alchem_check_ms": 6,
+      "alchem_build_ms": 291,
+      "alchem_binary_bytes": 2882594,
+      "go_build_ms": 193,
+      "go_binary_bytes": 2482978,
+      "elixir_compile_ms": 267
+    },
+    {
+      "program": "list",
+      "alchem_check_ms": 5,
+      "alchem_build_ms": 268,
+      "alchem_binary_bytes": 2788498,
+      "go_build_ms": 194,
+      "go_binary_bytes": 2482338,
+      "elixir_compile_ms": 263
+    },
+    {
+      "program": "string",
+      "alchem_check_ms": 5,
+      "alchem_build_ms": 289,
+      "alchem_binary_bytes": 3243890,
+      "go_build_ms": 201,
+      "go_binary_bytes": 2938434,
+      "elixir_compile_ms": 270
+    },
+    {
+      "program": "numbers",
+      "alchem_check_ms": 6,
+      "alchem_build_ms": 280,
+      "alchem_binary_bytes": 2959426,
+      "go_build_ms": 197,
+      "go_binary_bytes": 2517346,
+      "elixir_compile_ms": 266
+    },
+    {
+      "program": "json",
+      "alchem_check_ms": 6,
+      "alchem_build_ms": 297,
+      "alchem_binary_bytes": 4160930,
+      "go_build_ms": 214,
+      "go_binary_bytes": 3836610,
+      "elixir_compile_ms": 259
+    },
+    {
+      "program": "calendar",
+      "alchem_check_ms": 6,
+      "alchem_build_ms": 293,
+      "alchem_binary_bytes": 2896962,
+      "go_build_ms": 191,
+      "go_binary_bytes": 2552402,
+      "elixir_compile_ms": 270
+    },
+    {
+      "program": "control",
+      "alchem_check_ms": 5,
+      "alchem_build_ms": 281,
+      "alchem_binary_bytes": 2862754,
+      "go_build_ms": 192,
+      "go_binary_bytes": 2465938,
+      "elixir_compile_ms": 268
+    },
+    {
+      "program": "processes",
+      "alchem_check_ms": 6,
+      "alchem_build_ms": 273,
+      "alchem_binary_bytes": 2842322,
+      "go_build_ms": 194,
+      "go_binary_bytes": 2482898,
+      "elixir_compile_ms": 259
+    },
+    {
+      "program": "otp",
+      "alchem_check_ms": 6,
+      "alchem_build_ms": 284,
+      "alchem_binary_bytes": 2900130,
+      "go_build_ms": 199,
+      "go_binary_bytes": 2483266,
+      "elixir_compile_ms": 270
+    }
+  ]
+}

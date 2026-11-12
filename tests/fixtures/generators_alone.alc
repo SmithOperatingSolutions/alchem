@@ -1,0 +1,8 @@
+defmodule Main do
+  # Generators used without check all still build: the library code that
+  # reports a failing value comes with them.
+  def main() do
+    IO.inspect(length(Gen.sample(Gen.integer(), 3)))
+    IO.inspect(Gen.sample(Gen.constant(:same), 2))
+  end
+end

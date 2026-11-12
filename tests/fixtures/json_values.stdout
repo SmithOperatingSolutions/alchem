@@ -1,0 +1,12 @@
+{"name":"ada","tags":["admin"],"age":null}
+{"a":[1,2],"b":[3]}
+{"1":true}
+["point",{"circle":[1.5]}]
+[1,"x"]
+{"k":null}
+{
+  "name": "b",
+  "tags": [],
+  "age": 3
+}
+ok("0.3333333333333333")

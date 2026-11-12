@@ -1,0 +1,27 @@
+defmodule Main do
+  import "tools.alc"
+  use Tools, prefix: "hello"
+
+  defmacro double(value) do
+    quote do
+      Tools.square(unquote(value)) + Tools.square(unquote(value))
+    end
+  end
+
+  def main() do
+    result = 5
+    IO.puts("#{Tools.square(result + 1)} #{double(2)}")
+    Tools.log_value("first", result * 2)
+    Tools.log_value("second", result * 3)
+    IO.puts("still #{result}")
+    Tools.timed("loop") do
+      total = Enum.sum(1..1000)
+      IO.puts("sum #{total}")
+    end
+    Tools.unless_empty([1, 2]) do
+      IO.puts("has items")
+    end
+    IO.puts(greet("ada"))
+    IO.puts(shout("bo"))
+  end
+end

@@ -1,0 +1,144 @@
+defmodule EnumFixture do
+  struct Person do
+    name: string
+    age: integer
+  end
+
+  def classify(n: integer): string do
+    cond do
+      (n < 0) ->
+        "negative"
+      (n == 0) ->
+        "zero"
+      (n < 10) ->
+        "small"
+      true ->
+        "large"
+    end
+  end
+
+  def checked(n: integer): integer do
+    if (n < 0) do
+      raise("negative input")
+    end
+    (n * 2)
+  end
+
+  def main() do
+    numbers = [3, 1, 4, 1, 5, 9, 2, 6]
+    assert((Enum.map(numbers, fn n ->
+      (n * 2)
+    end) == [6, 2, 8, 2, 10, 18, 4, 12]))
+    assert((Enum.map(numbers, &(&1 + 1)) == [4, 2, 5, 2, 6, 10, 3, 7]))
+    assert(((Enum.filter(numbers, &(&1 > 3)) == [4, 5, 9, 6]) and (Enum.reject(numbers, &(&1 > 3)) == [3, 1, 1, 2])))
+    assert(((Enum.reduce(numbers, 0, fn n, acc ->
+      (acc + n)
+    end) == 31) and (Enum.reduce(numbers, &(&1 + &2)) == 31)))
+    assert((((Enum.sum(numbers) == 31) and (Enum.product([1, 2, 3, 4]) == 24)) and (Enum.sum([1.5, 2.5]) == 4.0)))
+    assert(((Enum.sum_by(numbers, &(&1 * 2)) == 62) and (Enum.product_by([1, 2, 3], &(&1 + 1)) == 24)))
+    assert(((Enum.count(numbers) == 8) and (Enum.count(numbers, &(&1 == 1)) == 2)))
+    assert(((Enum.count_until(numbers, 3) == 3) and (Enum.count_until(numbers, &(&1 > 4), 2) == 2)))
+    assert((((Enum.min(numbers) == 1) and (Enum.max(numbers) == 9)) and (Enum.min_max(numbers) == {1, 9})))
+    assert((Enum.sort(numbers) == [1, 1, 2, 3, 4, 5, 6, 9]))
+    assert((Enum.sort(numbers, &(&1 >= &2)) == [9, 6, 5, 4, 3, 2, 1, 1]))
+    assert(((Enum.uniq(numbers) == [3, 1, 4, 5, 9, 2, 6]) and (Enum.dedup([1, 1, 2, 2, 1]) == [1, 2, 1])))
+    assert((Enum.uniq_by(["a", "bb", "c", "dd"], &(String.length(&1))) == ["a", "bb"]))
+    assert((Enum.dedup_by([1, 3, 2, 4, 5], &(&1 % 2)) == [1, 2, 5]))
+    assert(((Enum.reverse(numbers) == [6, 2, 9, 5, 1, 4, 1, 3]) and (Enum.reverse([1, 2], [9]) == [2, 1, 9])))
+    assert((Enum.reverse_slice([1, 2, 3, 4, 5], 1, 3) == [1, 4, 3, 2, 5]))
+    assert((((Enum.take(numbers, 3) == [3, 1, 4]) and (Enum.take(numbers, -2) == [2, 6])) and (Enum.take(numbers, 0) == [])))
+    assert((((Enum.drop(numbers, 6) == [2, 6]) and (Enum.drop(numbers, -6) == [3, 1])) and (Enum.drop(numbers, 99) == [])))
+    assert(((Enum.take_while(numbers, &(&1 != 5)) == [3, 1, 4, 1]) and (Enum.drop_while(numbers, &(&1 != 5)) == [5, 9, 2, 6])))
+    assert(((Enum.take_every(numbers, 3) == [3, 1, 2]) and (Enum.drop_every(numbers, 3) == [1, 4, 5, 9, 6])))
+    assert(((Enum.split(numbers, 2) == {[3, 1], [4, 1, 5, 9, 2, 6]}) and (Enum.split([1, 2, 3], -1) == {[1, 2], [3]})))
+    assert((Enum.split_while([1, 2, 3, 1], &(&1 < 3)) == {[1, 2], [3, 1]}))
+    assert((Enum.split_with([1, 2, 3, 4], &((&1 % 2) == 0)) == {[2, 4], [1, 3]}))
+    assert((((Enum.slice(numbers, 2, 3) == [4, 1, 5]) and (Enum.slice(numbers, -3, 2) == [9, 2])) and (Enum.slice(numbers, 20, 2) == [])))
+    assert((((Enum.at(numbers, 2) == some(4)) and (Enum.at(numbers, -1) == some(6))) and (Enum.at(numbers, 50) == none)))
+    assert((((Enum.at(numbers, 50, 0) == 0) and (Enum.fetch(numbers, 0) == some(3))) and (Enum.fetch!(numbers, 1) == 1)))
+    assert(((Enum.find(numbers, &(&1 > 4)) == some(5)) and (Enum.find(numbers, &(&1 > 40)) == none)))
+    assert(((Enum.find(numbers, -1, &(&1 > 40)) == -1) and (Enum.find_index(numbers, &(&1 == 4)) == some(2))))
+    assert((Enum.find_value(numbers, fn n ->
+      if (n > 4) do
+        some("big #{n}")
+      else
+        none
+      end
+    end) == some("big 5")))
+    assert(((Enum.all?(numbers, &(&1 > 0)) and (not Enum.all?(numbers, &(&1 > 1)))) and Enum.all?([true, true])))
+    assert(((Enum.any?(numbers, &(&1 == 9)) and (not Enum.any?([false, false]))) and Enum.member?(numbers, 9)))
+    nothing: list[integer] = []
+    assert(((Enum.empty?(nothing) and (not Enum.empty?(numbers))) and (Enum.take(numbers, 0) == nothing)))
+    assert(((((4 in numbers) and (not (7 in numbers))) and (3 in (1..5))) and (not (6 in (1..5)))))
+    assert((((Enum.join(numbers) == "31415926") and (Enum.join(["a", "b"], ", ") == "a, b")) and (Enum.join([1.5, 2.0], "|") == "1.5|2.0")))
+    assert(((Enum.map_join(numbers, "-", &(&1 * 2)) == "6-2-8-2-10-18-4-12") and (Enum.map_join([1, 2], &(&1 > 1)) == "falsetrue")))
+    assert(((Enum.intersperse([1, 2, 3], 0) == [1, 0, 2, 0, 3]) and (Enum.map_intersperse([1, 2], "x", &(Integer.to_string(&1))) == ["1", "x", "2"])))
+    assert(((Enum.concat([1, 2], [3]) == [1, 2, 3]) and (Enum.concat([[1], [2, 3], []]) == [1, 2, 3])))
+    assert(((((([1, 2] ++ [3]) == [1, 2, 3]) and (([1, 2, 3, 2] -- [2]) == [1, 3, 2])) and ((2 ** 10) == 1024)) and ((2.0 ** 3.0) == 8.0)))
+    assert((Enum.flat_map([1, 2], fn n ->
+      [n, (n * 10)]
+    end) == [1, 10, 2, 20]))
+    assert((Enum.flat_map_reduce([1, 2, 3], 0, fn n, acc ->
+      {[n, n], (acc + n)}
+    end) == {[1, 1, 2, 2, 3, 3], 6}))
+    assert((Enum.map_reduce([1, 2, 3], 0, fn n, acc ->
+      {(n * 2), (acc + n)}
+    end) == {[2, 4, 6], 6}))
+    assert((Enum.map_every([1, 2, 3, 4, 5], 2, &(&1 * 10)) == [10, 2, 30, 4, 50]))
+    assert(((Enum.scan([1, 2, 3, 4], &(&1 + &2)) == [1, 3, 6, 10]) and (Enum.scan([1, 2, 3], 10, &(&1 + &2)) == [11, 13, 16])))
+    assert((Enum.chunk_every([1, 2, 3, 4, 5], 2) == [[1, 2], [3, 4], [5]]))
+    assert((Enum.chunk_every([1, 2, 3, 4, 5], 3, 1) == [[1, 2, 3], [2, 3, 4], [3, 4, 5]]))
+    assert(((Enum.chunk_every([1, 2, 3, 4, 5, 6], 2, 3) == [[1, 2], [4, 5]]) and (Enum.chunk_every([1, 2, 3, 4], 3, 2) == [[1, 2, 3], [3, 4]])))
+    assert((Enum.chunk_by([1, 3, 2, 4, 5], &((&1 % 2) == 1)) == [[1, 3], [2, 4], [5]]))
+    assert(((Enum.with_index(["a", "b"]) == [{"a", 0}, {"b", 1}]) and (Enum.with_index(["a"], 5) == [{"a", 5}])))
+    assert(((Enum.zip([1, 2, 3], ["a", "b"]) == [{1, "a"}, {2, "b"}]) and (Enum.unzip([{1, "a"}, {2, "b"}]) == {[1, 2], ["a", "b"]})))
+    assert(((Enum.zip_with([1, 2], [10, 20], &(&1 + &2)) == [11, 22]) and (Enum.zip_reduce([1, 2], [3, 4], 0, fn a, b, acc ->
+      (acc + (a * b))
+    end) == 11)))
+    assert((Enum.frequencies(["a", "b", "a"]) == %{"a" => 2, "b" => 1}))
+    assert((Enum.frequencies_by(["aa", "b", "cc"], &(String.length(&1))) == %{1 => 1, 2 => 2}))
+    assert((Enum.group_by(numbers, &((&1 % 2) == 0)) == %{false => [3, 1, 1, 5, 9], true => [4, 2, 6]}))
+    assert((Enum.group_by(["ant", "bee", "asp"], &(String.slice(&1, 0, 1)), &(String.length(&1))) == %{"a" => [3, 3], "b" => [3]}))
+    assert((Enum.reduce_while(numbers, 0, fn n, acc ->
+      if ((acc + n) > 10) do
+        halt(acc)
+      else
+        cont((acc + n))
+      end
+    end) == 9))
+    assert((((Enum.to_list((1..5)) == [1, 2, 3, 4, 5]) and (Enum.to_list((5..1)) == [5, 4, 3, 2, 1])) and (Enum.to_list((1..10//3)) == [1, 4, 7, 10])))
+    assert((((Enum.to_list((10..1//-4)) == [10, 6, 2]) and (Enum.to_list((1..3//-1)) == [])) and (Enum.sum((1..100)) == 5050)))
+    people = [%Person{name: "Ada", age: 36}, %Person{name: "Bo", age: 19}, %Person{name: "Cy", age: 52}]
+    assert((Enum.map(people, &(&1.name)) == ["Ada", "Bo", "Cy"]))
+    assert(((Enum.sort_by(people, &(&1.age)) |> Enum.map(&(&1.name))) == ["Bo", "Ada", "Cy"]))
+    assert(((Enum.sort_by(people, &(&1.name), &(&1 >= &2)) |> Enum.map(&(&1.age))) == [52, 19, 36]))
+    oldest = Enum.max_by(people, &(&1.age))
+    youngest = Enum.min_by(people, &(&1.age))
+    assert((((oldest.name == "Cy") and (youngest.name == "Bo")) and (Enum.min_max_by(people, &(&1.age)) == {youngest, oldest})))
+    assert((Enum.member?(people, youngest) and (Enum.uniq((people ++ people)) == people)))
+    scores = %{"ada" => 3, "bo" => 7}
+    assert((Enum.map(scores, fn {name, score} ->
+      "#{name}=#{score}"
+    end) == ["ada=3", "bo=7"]))
+    assert(((Enum.filter(scores, fn {_, score} ->
+      (score > 5)
+    end) == [{"bo", 7}]) and (Enum.count(scores) == 2)))
+    assert((Enum.reduce(scores, 0, fn {_, score}, total ->
+      (total + score)
+    end) == 10))
+    seen = Enum.map([1, 2, 3], fn n ->
+      doubled = (n * 2)
+      (doubled + 1)
+    end)
+    assert((seen == [3, 5, 7]))
+    Enum.each(["enum", "ready"], fn word ->
+      IO.write((word <> " "))
+    end)
+    assert(((((classify(-5) == "negative") and (classify(0) == "zero")) and (classify(7) == "small")) and (classify(70) == "large")))
+    assert((((checked(4) == 8) and (not Enum.empty?([1]))) and ((true and (not false)) or false)))
+    shuffled = Enum.shuffle(numbers)
+    assert(((Enum.sort(shuffled) == Enum.sort(numbers)) and Enum.member?(numbers, Enum.random(numbers))))
+    assert((length(Enum.take_random(numbers, 3)) == 3))
+    IO.puts(classify(Enum.count(people)))
+  end
+end

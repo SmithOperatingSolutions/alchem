@@ -1,0 +1,17 @@
+"a"
+{1, "a", false}
+"ell"
+{3, 4}
+true
+"6869"
+"YQ"
+"CO======"
+:absolute
+some("b")
+none
+2000
+true
+true
+some(["a"])
+"\x1b[31mx\x1b[0m"
+"\x1b[31mhi\x1b[0m"

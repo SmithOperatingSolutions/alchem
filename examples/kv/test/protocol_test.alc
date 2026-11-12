@@ -1,0 +1,39 @@
+defmodule ProtocolTest do
+  import "../lib/protocol.alc"
+  doctest Protocol
+
+  test "a line of words round-trips through quoting" do
+    for word <- ["plain", "two words", "quote\"d", "back\\slash", "new\nline", ""] do
+      line = "ECHO " <> Protocol.quote_word(word)
+      assert(Protocol.parse(line) == ok(Protocol.Command.echo(word)))
+    end
+  end
+
+  test "replies read back what render writes" do
+    reply = Protocol.Reply.many([
+      Protocol.Reply.ok,
+      Protocol.Reply.number(-3),
+      Protocol.Reply.text("a\nb"),
+      Protocol.Reply.nothing,
+      Protocol.Reply.many([Protocol.Reply.failure("bad \"x\"")])
+    ])
+    lines = String.split(Protocol.render(reply), "\n")
+    feed = Agent.start(fn -> lines end)
+    next: fn[result[string, string]] = fn ->
+      Agent.get_and_update(feed, fn
+        [line | rest] -> {ok(line), rest}
+        [] -> {error("closed"), []}
+      end)
+    end
+    assert(Protocol.read_reply(next) == ok(reply))
+  end
+
+  test "commands check their arguments" do
+    assert(Protocol.parse("SET k v PX 0") == error("invalid expire time in SET"))
+    assert(Protocol.parse("SET k v NX EX 2") == ok(Protocol.Command.set("k", "v", some(2000), :absent)))
+    assert(Protocol.parse("SET k v BOGUS") == error("syntax error near BOGUS"))
+    assert(Protocol.parse("INCRBY k many") == error("value is not an integer: many"))
+    assert(Protocol.parse("FROB") == error("unknown command FROB"))
+    assert(Protocol.parse("lpush list a b c") == ok(Protocol.Command.push("list", ["a", "b", "c"], true)))
+  end
+end

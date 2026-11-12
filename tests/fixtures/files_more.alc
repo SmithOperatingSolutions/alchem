@@ -1,0 +1,41 @@
+defmodule Main do
+  def main() do
+    dir = System.tmp_dir!()
+    path = Path.join(dir, "alchem_files_test.txt")
+    ok(f) = File.open(path, [:write])
+    IO.write(f, "first\n")
+    IO.puts(f, "second")
+    File.close(f)
+    IO.inspect(File.open(path, [:read], fn file -> {IO.read(file, :line), IO.read(file, 3), IO.binread(file, 2), IO.read(file, :eof), IO.read(file, :line)} end))
+    File.write(path, "third\n", [:append])
+    IO.inspect(File.read(path))
+    IO.inspect(File.write(path, "x", [:exclusive]))
+    ok(stat) = File.stat(path)
+    IO.inspect({stat.size, stat.type, stat.access, stat.mtime > 0})
+    IO.inspect(File.chmod(path, 0o600))
+    link = Path.join(dir, "alchem_files_link.txt")
+    File.rm(link)
+    case File.ln_s(path, link) do
+      ok(_) ->
+        ok(lstat) = File.lstat(link)
+        IO.inspect(lstat.type)
+      error(_) -> IO.inspect(:symlink)
+    end
+    tree = Path.join(dir, "alchem_tree")
+    File.rm_rf(tree)
+    File.mkdir_p(Path.join(tree, "a"))
+    File.write(Path.join(tree, "a/b.txt"), "b")
+    copy = Path.join(dir, "alchem_tree_copy")
+    File.rm_rf(copy)
+    case File.cp_r(tree, copy) do
+      ok(written) -> IO.inspect(length(written))
+      error(reason) -> IO.puts(reason)
+    end
+    IO.inspect(File.read(Path.join(copy, "a/b.txt")))
+    IO.inspect(File.stat(Path.join(dir, "missing-file")))
+    File.rm(path)
+    File.rm(link)
+    File.rm_rf(tree)
+    File.rm_rf(copy)
+  end
+end

@@ -1,0 +1,15 @@
+defmodule Main do
+  def main() do
+    s = "é 👩‍👩‍👧 🇫🇷🇩🇪 한글 a\r\nb"
+    IO.inspect(String.length(s))
+    IO.inspect(String.graphemes(s))
+    IO.inspect(String.codepoints("é"))
+    IO.inspect(String.reverse("ab👩‍👩‍👧c"))
+    IO.inspect(String.slice("ab👩‍👩‍👧cd", 2, 2))
+    IO.inspect(String.slice("hello", 1, 3))
+    IO.inspect(String.at("🇫🇷🇩🇪", 1))
+    IO.inspect(String.next_grapheme("éx"))
+    IO.inspect(String.capitalize("élan"))
+    IO.inspect(String.length("hello"))
+  end
+end

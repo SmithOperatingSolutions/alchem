@@ -1,0 +1,340 @@
+defmodule Store do
+  @moduledoc """
+  The data: string and list values by key, some with a time to expire.
+
+  `run` applies one command to a state and says what to reply, what to
+  write to the log and which expiry timers to set. It is a plain function
+  of the state and the time, so it is tested without a server; `Store.Server`
+  runs it in a process.
+  """
+  import "protocol.alc"
+  import "glob.alc"
+
+  type Value do
+    text(value: string)
+    items(values: list[string])
+  end
+
+  struct State do
+    entries: map[string, Value]
+    deadlines: map[string, integer]
+    hits: integer
+    misses: integer
+    commands: integer
+  end
+
+  # When a key expires, in milliseconds since the Unix epoch.
+  struct Outcome do
+    state: State
+    reply: Protocol.Reply
+    log: list[string]
+    timers: list[tuple[string, integer]]
+  end
+
+  # Request lines that redo the change when the log is replayed.
+  # Keys to expire, with when.
+  @doc """
+  An empty store.
+
+      alx> Store.size(Store.new())
+      0
+  """
+  def new(): State do
+    %State{entries: %{}, deadlines: %{}, hits: 0, misses: 0, commands: 0}
+  end
+
+  @doc """
+  The number of keys that have not expired at a moment.
+  """
+  def size(state: State): integer do
+    map_size(state.entries)
+  end
+
+  def size(state: State, now: integer): integer do
+    size(purge(state, now))
+  end
+
+  @doc """
+  Removes the keys whose time has come.
+
+      alx> state = Store.run(Store.new(), Protocol.Command.set("k", "v", some(10), :always), 1000).state
+      alx> Store.size(Store.purge(state, 1009))
+      1
+      alx> Store.size(Store.purge(state, 1010))
+      0
+  """
+  def purge(state: State, now: integer): State do
+    expired = for({key, deadline} <- state.deadlines, deadline <= now, do: key)
+    Enum.reduce(expired, state, fn key, acc -> forget(acc, key) end)
+  end
+
+  defp forget(state: State, key: string): State do
+    %State{state | entries: Map.delete(state.entries, key), deadlines: Map.delete(state.deadlines, key)}
+  end
+
+  defp done(state: State, reply: Protocol.Reply): Outcome do
+    %Outcome{state: state, reply: reply, log: [], timers: []}
+  end
+
+  defp changed(state: State, reply: Protocol.Reply, log: list[string]): Outcome do
+    %Outcome{state: state, reply: reply, log: log, timers: []}
+  end
+
+  defp wrong_type(): Protocol.Reply do
+    Protocol.Reply.failure("WRONGTYPE operation against a key holding the wrong kind of value")
+  end
+
+  @doc """
+  Applies a command at a moment, in milliseconds since the Unix epoch.
+
+      alx> first = Store.run(Store.new(), Protocol.Command.set("n", "41", none, :always), 0)
+      alx> Store.run(first.state, Protocol.Command.increment("n", 1), 0).reply
+      Protocol.Reply.number(42)
+  """
+  def run(state: State, command: Protocol.Command, now: integer): Outcome do
+    current = %State{purge(state, now) | commands: state.commands + 1}
+    apply(current, command, now)
+  end
+
+  defp apply(state: State, command: Protocol.Command, now: integer): Outcome do
+    case command do
+      Protocol.Command.ping -> done(state, Protocol.Reply.text("PONG"))
+      Protocol.Command.echo(text) -> done(state, Protocol.Reply.text(text))
+      Protocol.Command.get(key) -> read_text(state, key)
+      Protocol.Command.set(key, value, ttl, only) -> write_text(state, key, value, ttl, only, now)
+      Protocol.Command.delete(keys) -> delete(state, keys)
+      Protocol.Command.exists(keys) ->
+        done(state, Protocol.Reply.number(Enum.count(keys, fn key -> Map.has_key?(state.entries, key) end)))
+      Protocol.Command.increment(key, by) -> increment(state, key, by)
+      Protocol.Command.append(key, value) -> append(state, key, value)
+      Protocol.Command.strlen(key) ->
+        case Map.get(state.entries, key) do
+          some(Value.text(value)) -> done(state, Protocol.Reply.number(String.length(value)))
+          some(_) -> done(state, wrong_type())
+          none -> done(state, Protocol.Reply.number(0))
+        end
+      Protocol.Command.keys(pattern) ->
+        matching = state.entries
+        |> Map.keys()
+        |> Enum.filter(fn key -> Glob.match?(pattern, key) end)
+        |> Enum.sort()
+        done(state, Protocol.Reply.many(Enum.map(matching, fn key -> Protocol.Reply.text(key) end)))
+      Protocol.Command.expire(key, seconds) -> expire_at(state, key, now + seconds * 1000, now)
+      Protocol.Command.expire_at(key, at) -> expire_at(state, key, at, now)
+      Protocol.Command.ttl(key) -> done(state, Protocol.Reply.number(ttl(state, key, now)))
+      Protocol.Command.persist(key) ->
+        if Map.has_key?(state.deadlines, key) do
+          changed(%State{state | deadlines: Map.delete(state.deadlines, key)}, Protocol.Reply.number(1), [Protocol.line(command)])
+        else
+          done(state, Protocol.Reply.number(0))
+        end
+      Protocol.Command.push(key, values, left) -> push(state, key, values, left, command)
+      Protocol.Command.pop(key, left) -> pop(state, key, left, command)
+      Protocol.Command.range(key, first, last) ->
+        case Map.get(state.entries, key) do
+          some(Value.items(values)) ->
+            done(state, Protocol.Reply.many(Enum.map(window(values, first, last), fn value -> Protocol.Reply.text(value) end)))
+          some(_) -> done(state, wrong_type())
+          none -> done(state, Protocol.Reply.many([]))
+        end
+      Protocol.Command.length(key) ->
+        case Map.get(state.entries, key) do
+          some(Value.items(values)) -> done(state, Protocol.Reply.number(length(values)))
+          some(_) -> done(state, wrong_type())
+          none -> done(state, Protocol.Reply.number(0))
+        end
+      Protocol.Command.dbsize -> done(state, Protocol.Reply.number(size(state)))
+      Protocol.Command.flush ->
+        changed(%State{state | entries: %{}, deadlines: %{}}, Protocol.Reply.ok, ["FLUSHDB"])
+      _ ->
+        done(state, Protocol.Reply.failure("the store does not run " <> Protocol.line(command)))
+    end
+  end
+
+  defp read_text(state: State, key: string): Outcome do
+    case Map.get(state.entries, key) do
+      some(Value.text(value)) ->
+        done(%State{state | hits: state.hits + 1}, Protocol.Reply.text(value))
+      some(_) -> done(state, wrong_type())
+      none -> done(%State{state | misses: state.misses + 1}, Protocol.Reply.nothing)
+    end
+  end
+
+  defp write_text(state: State, key: string, value: string, ttl: option[integer], only: atom, now: integer): Outcome do
+    present = Map.has_key?(state.entries, key)
+    if (only == :absent and present) or (only == :present and not present) do
+      done(state, Protocol.Reply.nothing)
+    else
+      stored = %State{state | entries: Map.put(state.entries, key, Value.text(value)), deadlines: Map.delete(state.deadlines, key)}
+      log = ["SET " <> Protocol.quote_word(key) <> " " <> Protocol.quote_word(value)]
+      case ttl do
+        none -> changed(stored, Protocol.Reply.ok, log)
+        some(ms) ->
+          at = now + ms
+          outcome = expire_at(stored, key, at, now)
+          %Outcome{outcome | reply: Protocol.Reply.ok, log: log ++ outcome.log}
+      end
+    end
+  end
+
+  defp delete(state: State, keys: list[string]): Outcome do
+    present = Enum.filter(Enum.uniq(keys), fn key -> Map.has_key?(state.entries, key) end)
+    remaining = Enum.reduce(present, state, fn key, acc -> forget(acc, key) end)
+    log = if present == [] do
+      []
+    else
+      [Protocol.line(Protocol.Command.delete(present))]
+    end
+    changed(remaining, Protocol.Reply.number(length(present)), log)
+  end
+
+  defp increment(state: State, key: string, by: integer): Outcome do
+    start = case Map.get(state.entries, key) do
+      some(Value.text(value)) -> Integer.parse(value)
+      some(_) -> error("wrong type")
+      none -> ok(0)
+    end
+    case start do
+      ok(n) ->
+        total = n + by
+        stored = %State{state | entries: Map.put(state.entries, key, Value.text(to_string(total)))}
+        changed(stored, Protocol.Reply.number(total), [Protocol.line(Protocol.Command.increment(key, by))])
+      error("wrong type") -> done(state, wrong_type())
+      error(_) -> done(state, Protocol.Reply.failure("value is not an integer"))
+    end
+  end
+
+  defp append(state: State, key: string, value: string): Outcome do
+    case Map.get(state.entries, key, Value.text("")) do
+      Value.text(old) ->
+        joined = old <> value
+        stored = %State{state | entries: Map.put(state.entries, key, Value.text(joined))}
+        changed(stored, Protocol.Reply.number(String.length(joined)), [Protocol.line(Protocol.Command.append(key, value))])
+      _ -> done(state, wrong_type())
+    end
+  end
+
+  defp expire_at(state: State, key: string, at: integer, now: integer): Outcome do
+    cond do
+      not Map.has_key?(state.entries, key) -> done(state, Protocol.Reply.number(0))
+      at <= now ->
+        changed(forget(state, key), Protocol.Reply.number(1), [Protocol.line(Protocol.Command.delete([key]))])
+      true ->
+        stored = %State{state | deadlines: Map.put(state.deadlines, key, at)}
+        outcome = changed(stored, Protocol.Reply.number(1), [Protocol.line(Protocol.Command.expire_at(key, at))])
+        %Outcome{outcome | timers: [{key, at}]}
+    end
+  end
+
+  @doc """
+  Seconds left before a key expires, rounded up; -1 for a key that does not
+  expire and -2 for one that is not there.
+  """
+  def ttl(state: State, key: string, now: integer): integer do
+    case {Map.has_key?(state.entries, key), Map.get(state.deadlines, key)} do
+      {false, _} -> -2
+      {true, none} -> -1
+      {true, some(at)} -> div(at - now + 999, 1000)
+    end
+  end
+
+  defp push(state: State, key: string, values: list[string], left: boolean, command: Protocol.Command): Outcome do
+    case Map.get(state.entries, key, Value.items([])) do
+      Value.items(old) ->
+        items = if left do
+          Enum.reverse(values) ++ old
+        else
+          old ++ values
+        end
+        stored = %State{state | entries: Map.put(state.entries, key, Value.items(items))}
+        changed(stored, Protocol.Reply.number(length(items)), [Protocol.line(command)])
+      _ -> done(state, wrong_type())
+    end
+  end
+
+  defp pop(state: State, key: string, left: boolean, command: Protocol.Command): Outcome do
+    case Map.get(state.entries, key) do
+      some(Value.items(values)) when values != [] ->
+        {taken, rest} = if left do
+          {hd(values), tl(values)}
+        else
+          {List.last(values, ""), Enum.drop(values, -1)}
+        end
+        stored = if rest == [] do
+          forget(state, key)
+        else
+          %State{state | entries: Map.put(state.entries, key, Value.items(rest))}
+        end
+        changed(stored, Protocol.Reply.text(taken), [Protocol.line(command)])
+      some(Value.items(_)) -> done(state, Protocol.Reply.nothing)
+      some(_) -> done(state, wrong_type())
+      none -> done(state, Protocol.Reply.nothing)
+    end
+  end
+
+  @doc """
+  The items from first to last, both included; negative positions count from
+  the end, as in LRANGE.
+
+      alx> Store.window(["a", "b", "c", "d"], 1, -2)
+      ["b", "c"]
+      alx> Store.window(["a", "b"], 5, 9)
+      []
+  """
+  def window(values: list[string], first: integer, last: integer): list[string] do
+    count = length(values)
+    from = max(position(first, count), 0)
+    to = min(position(last, count), count - 1)
+    if from > to do
+      []
+    else
+      Enum.slice(values, from, to - from + 1)
+    end
+  end
+
+  defp position(index: integer, count: integer): integer do
+    if index < 0 do
+      count + index
+    else
+      index
+    end
+  end
+
+  @doc ~S"""
+  Request lines that rebuild the state, for rewriting the log.
+
+      alx> state = Store.run(Store.new(), Protocol.Command.push("l", ["a", "b c"], false), 0).state
+      alx> Store.snapshot(state)
+      ["RPUSH l a \"b c\""]
+  """
+  def snapshot(state: State): list[string] do
+    state.entries
+    |> Map.to_list()
+    |> Enum.sort_by(fn {key, _} -> key end)
+    |> Enum.flat_map(fn {key, value} ->
+      rebuilt = case value do
+        Value.text(text) ->
+          ["SET " <> Protocol.quote_word(key) <> " " <> Protocol.quote_word(text)]
+        Value.items(values) -> [Protocol.line(Protocol.Command.push(key, values, false))]
+      end
+      case Map.get(state.deadlines, key) do
+        some(at) -> rebuilt ++ [Protocol.line(Protocol.Command.expire_at(key, at))]
+        none -> rebuilt
+      end
+    end)
+  end
+
+  @doc """
+  Rebuilds a state from log lines, skipping lines that do not parse.
+  """
+  def replay(lines: list[string], now: integer): State do
+    lines
+    |> Enum.reduce(new(), fn line, state ->
+      case Protocol.parse(line) do
+        ok(command) -> apply(state, command, now).state
+        error(_) -> state
+      end
+    end)
+    |> purge(now)
+  end
+end

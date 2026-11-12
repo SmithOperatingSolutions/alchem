@@ -1,0 +1,33 @@
+defmodule Client do
+  import "wire.alc"
+
+  def main() do
+    [address] = System.argv()
+    case Node.start("client", "127.0.0.1:0", "secret") do
+      error(reason) -> IO.puts("cannot start: #{reason}")
+      ok(_) -> IO.puts("started #{Node.self()}")
+    end
+    case Node.connect(address) do
+      error(reason) -> IO.puts("cannot connect: #{reason}")
+      ok(name) -> IO.puts("connected to #{name}, nodes: #{inspect(Node.list())}")
+    end
+    catalog: result[stream[string],string] = Node.stream("shop", :catalog)
+    case catalog do
+      ok(items) -> IO.puts(inspect(Enum.take(Stream.drop(items, 300), 2)))
+      error(reason) -> IO.puts("no catalog: #{reason}")
+    end
+    inbox: pid[Wire.Answer] = Process.self(8)
+    found: option[pid[Wire.Order]] = Node.whereis("shop", :orders)
+    case found do
+      none -> IO.puts("no orders process")
+      some(orders) ->
+        watch = Node.monitor("shop")
+        Process.send(orders, %Wire.Order{item: "tea", count: 3, tags: [:hot, :green], extra: %{"kg" => 0.5}, reply: inbox}, 1000)
+        IO.puts(inspect(Process.receive(inbox, 5000)))
+        Process.send(orders, %Wire.Order{item: "cup", count: 9, tags: Enum.take([:a], 0), extra: %{"kg" => 0.25}, reply: inbox}, 1000)
+        IO.puts(inspect(Process.receive(inbox, 5000)))
+        {arrived, reference, _, reason} = Process.event(5000)
+        IO.puts("#{arrived} #{reference == watch} #{reason}")
+    end
+  end
+end

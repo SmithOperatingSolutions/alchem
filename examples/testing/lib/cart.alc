@@ -1,0 +1,40 @@
+defmodule Cart do
+  struct Item do
+    name: string
+    price: integer
+    quantity: integer
+  end
+
+  def total(items: list[Item]): integer do
+    Enum.sum_by(items, &(&1.price * &1.quantity))
+  end
+
+  def discount(amount: integer, percent: integer): integer do
+    cond do
+      percent < 0 or percent > 100 -> raise("percent must be between 0 and 100")
+      percent == 0 -> amount
+      true -> amount - div(amount * percent, 100)
+    end
+  end
+
+  def cheapest([]: list[Item]): option[Item] do
+    none
+  end
+
+  def cheapest(items) do
+    some(Enum.min_by(items, &(&1.price)))
+  end
+
+  def summary(items: list[Item]): string do
+    if Enum.empty?(items) do
+      "empty cart"
+    else
+      "#{Enum.count(items)} items, total #{total(items)}"
+    end
+  end
+
+  def unused(n: integer): integer do
+    doubled = n * 2
+    doubled + 1
+  end
+end

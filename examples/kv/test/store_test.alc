@@ -1,0 +1,72 @@
+defmodule StoreTest do
+  import "../lib/protocol.alc"
+  import "../lib/glob.alc"
+  import "../lib/store.alc"
+  doctest Store
+  doctest Glob
+
+  def run_all(commands: list[string], now: integer): Store.Outcome do
+    start = %Store.Outcome{state: Store.new(), reply: Protocol.Reply.ok, log: [], timers: []}
+    Enum.reduce(commands, start, fn line, outcome ->
+      ok(command) = Protocol.parse(line)
+      Store.run(outcome.state, command, now)
+    end)
+  end
+
+  def reply(commands: list[string]): Protocol.Reply do
+    run_all(commands, 1000).reply
+  end
+
+  test "strings, counters and types" do
+    assert(reply(["SET a 1", "GET a"]) == Protocol.Reply.text("1"))
+    assert(reply(["GET missing"]) == Protocol.Reply.nothing)
+    assert(reply(["SET a 1", "INCRBY a 41"]) == Protocol.Reply.number(42))
+    assert(reply(["SET a x", "INCR a"]) == Protocol.Reply.failure("value is not an integer"))
+    assert(reply(["SET a x", "APPEND a yz", "STRLEN a"]) == Protocol.Reply.number(3))
+    assert(reply(["RPUSH l a", "GET l"]) == Protocol.Reply.failure("WRONGTYPE operation against a key holding the wrong kind of value"))
+    assert(reply(["SET a 1", "SET a 2 NX", "GET a"]) == Protocol.Reply.text("1"))
+    assert(reply(["SET a 1 XX", "EXISTS a"]) == Protocol.Reply.number(0))
+    assert(reply(["SET a 1", "SET b 2", "DEL a b c a"]) == Protocol.Reply.number(2))
+  end
+
+  test "lists" do
+    assert(reply(["LPUSH l a b c", "LRANGE l 0 -1"]) == Protocol.Reply.many(Enum.map(["c", "b", "a"], fn v -> Protocol.Reply.text(v) end)))
+    assert(reply(["RPUSH l a b c", "RPOP l"]) == Protocol.Reply.text("c"))
+    assert(reply(["RPUSH l a", "LPOP l", "EXISTS l"]) == Protocol.Reply.number(0))
+    assert(reply(["RPUSH l a b", "LLEN l"]) == Protocol.Reply.number(2))
+  end
+
+  test "keys match globs, sorted" do
+    expected = Protocol.Reply.many([Protocol.Reply.text("user:1"), Protocol.Reply.text("user:2")])
+    assert(reply(["SET user:2 b", "SET user:1 a", "SET other c", "KEYS user:*"]) == expected)
+  end
+
+  test "keys expire at their deadline" do
+    outcome = run_all(["SET s v EX 2"], 1000)
+    assert(outcome.timers == [{"s", 3000}])
+    assert(outcome.log == ["SET s v", "PEXPIREAT s 3000"])
+    assert(Store.ttl(outcome.state, "s", 1000) == 2)
+    assert(Store.run(outcome.state, Protocol.Command.get("s"), 2999).reply == Protocol.Reply.text("v"))
+    assert(Store.run(outcome.state, Protocol.Command.get("s"), 3000).reply == Protocol.Reply.nothing)
+    persisted = Store.run(outcome.state, Protocol.Command.persist("s"), 1500).state
+    assert(Store.ttl(persisted, "s", 1500) == -1)
+    assert(Store.ttl(persisted, "gone", 1500) == -2)
+  end
+
+  test "replaying the log rebuilds the state" do
+    lines = [
+      "SET a 1",
+      "INCRBY a 4",
+      "RPUSH l x \"y z\"",
+      "SET old v",
+      "PEXPIREAT old 500",
+      "DEL nothing",
+      "garbage \"line"
+    ]
+    state = Store.replay(lines, 1000)
+    assert(Store.size(state) == 2)
+    assert(Store.run(state, Protocol.Command.get("a"), 1000).reply == Protocol.Reply.text("5"))
+    assert(Store.snapshot(state) == ["SET a 5", "RPUSH l x \"y z\""])
+    assert(Store.snapshot(Store.replay(Store.snapshot(state), 1000)) == Store.snapshot(state))
+  end
+end

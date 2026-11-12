@@ -1,0 +1,155 @@
+defmodule ControlFlow do
+  struct User do
+    name: string
+    age: integer
+  end
+
+  # Parses "name:age" into a user.
+  def parse(text: string): result[User,string] do
+    with [name, age_text] <- String.split(text, ":"),
+         ok(age) <- Integer.parse(age_text) do
+      ok(%User{name: name, age: age})
+    else
+      error(reason) ->
+        error("bad age: #{reason}")
+      parts ->
+        error("expected name:age, got #{length(parts)} parts")
+    end
+  end
+
+  def sum_of(a: string, b: string): result[integer,string] do
+    with ok(x) <- Integer.parse(a),
+         ok(y) <- Integer.parse(b) do
+      ok((x + y))
+    end
+  end
+
+  def first_two(xs: list[integer]): option[integer] do
+    with some(a) <- List.first(xs),
+         some(b) <- Enum.at(xs, 1) do
+      some((a + b))
+    end
+  end
+
+  def safe_div(a: integer, b: integer): integer do
+    try do
+      (a / b)
+    rescue
+      "division by zero" ->
+        0
+    end
+  end
+
+  def describe(n: integer): string do
+    try do
+      if (n > 2) do
+        raise("too big")
+      end
+      "fine #{(100 / n)}"
+    rescue
+      "too big" ->
+        "rescued big"
+      message when String.contains?(message, "zero") ->
+        "rescued zero"
+    after
+      IO.write("[after #{n}]")
+    end
+  end
+
+  def deep(n: integer): integer do
+    if (n == 0) do
+      raise("bottom")
+    end
+    (deep((n - 1)) + 1)
+  end
+
+  def main() do
+    assert((parse("ada:36") == ok(%User{name: "ada", age: 36})))
+    assert(((parse("ada:x") == error("bad age: \"x\" is not an integer")) and (parse("ada") == error("expected name:age, got 1 parts"))))
+    assert(((sum_of("2", "3") == ok(5)) and (sum_of("2", "z") == error("\"z\" is not an integer"))))
+    assert(((first_two([4, 5, 6]) == some(9)) and (first_two([4]) == none)))
+    total = with ok(x) <- Integer.parse("7") do
+      (x * 2)
+    else
+      error(_) ->
+        -1
+    end
+    assert((total == 14))
+    assert(((safe_div(10, 2) == 5) and (safe_div(1, 0) == 0)))
+    assert((((describe(1) == "fine 100") and (describe(0) == "rescued zero")) and (describe(5) == "rescued big")))
+    IO.puts("")
+    caught = try do
+      deep(50)
+    rescue
+      message ->
+        String.length(message)
+    end
+    assert(((caught == 6) and (deep_after() == 3)))
+    unmatched = try do
+      try do
+        raise("inner")
+      rescue
+        "other" ->
+          "wrong"
+      end
+    rescue
+      message ->
+        "outer got #{message}"
+    end
+    assert((unmatched == "outer got inner"))
+    try do
+      IO.puts("statement try")
+      raise("ignored")
+    rescue
+      _ ->
+        IO.puts("handled")
+    end
+    task = Task.async(fn ->
+      try do
+        Process.sleep(60000)
+      rescue
+        _ ->
+          1
+      end
+    end)
+    assert(((Task.yield(task, 20) == none) and Task.shutdown(task)))
+    assert((for(n <- (1..5), do: (n * n)) == [1, 4, 9, 16, 25]))
+    pairs = for x <- [1, 2, 3], y <- [1, 2, 3], (x < y) do
+      {x, y}
+    end
+    assert((pairs == [{1, 2}, {1, 3}, {2, 3}]))
+    assert((for({name, score} <- %{"ada" => 3, "bo" => 9}, (score > 5), do: name) == ["bo"]))
+    assert((for(some(n) <- [some(1), none, some(3)], do: (n + 1)) == [2, 4]))
+    assert((for(n <- [1, 2], (rem(n, 2) == 0), m <- ["a", "b"], do: "#{n}#{m}") == ["2a", "2b"]))
+    assert((for(line <- Stream.take(Stream.cycle(["x"]), 3), do: line) == ["x", "x", "x"]))
+    for word <- ["for", "ready"] do
+      IO.write((word <> " "))
+    end
+    IO.puts("")
+    words = ~w(alpha beta gamma)
+    assert((((words == ["alpha", "beta", "gamma"]) and (~s(say "hi") == "say \"hi\"")) and (~S(a\b) == "a\\b")))
+    assert((Regex.match?(~r/^[a-z]+$/, "alpha") and (Regex.run(~r/(\d+)-(\d+)/, "tel 555-0199") == some(["555-0199", "555", "0199"]))))
+    assert(((Regex.match?(~r/HELLO/i, "hello") and (Regex.split(~r(/), "a/b") == ["a", "b"])) and String.match?("x1", ~r/\d/)))
+    IO.puts("control flow ready")
+  end
+
+  def deep_after(): integer do
+    # The call depth is restored after a rescued failure, so recursion still works.
+    counter = try do
+      deep(20000)
+    rescue
+      _ ->
+        3
+    end
+    assert((deep_ok(20000) == 20000))
+    counter
+  end
+
+  def deep_ok(n: integer): integer do
+    if (n == 0) do
+      0
+    else
+      (deep_ok((n - 1)) + 1)
+    end
+  end
+end

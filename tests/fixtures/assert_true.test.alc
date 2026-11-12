@@ -1,0 +1,5 @@
+defmodule AssertTrue do
+  def main() do
+    assert(true)
+  end
+end

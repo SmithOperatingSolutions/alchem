@@ -1,0 +1,183 @@
+defmodule Types do
+  import "shapes_lib/geometry.alc"
+
+  struct Account do
+    owner: string
+    balance: integer
+    tags: list[string]
+  end
+
+  struct Pair[a, b] do
+    first: a
+    second: b
+  end
+
+  type Tree[t] do
+    leaf
+    node(left: Tree[t], value: t, right: Tree[t])
+  end
+
+  type Command do
+    deposit(amount: integer)
+    withdraw(amount: integer)
+    close
+  end
+
+  def identity(value: a): a do
+    value
+  end
+
+  def swap(pair: Pair[a,b]): Pair[b,a] do
+    %Pair{first: pair.second, second: pair.first}
+  end
+
+  def apply_twice(value: a, f: fn[a,a]): a do
+    f(f(value))
+  end
+
+  def fold([]: list[a], acc: b, _: fn[b,a,b]): b do
+    acc
+  end
+
+  def fold([head | tail], acc, f) do
+    fold(tail, f(acc, head), f)
+  end
+
+  def insert(Tree.leaf: Tree[integer], value: integer): Tree[integer] do
+    Tree.node(Tree.leaf, value, Tree.leaf)
+  end
+
+  def insert(Tree.node(left, current, right), value) do
+    if (value < current) do
+      Tree.node(insert(left, value), current, right)
+    else
+      Tree.node(left, current, insert(right, value))
+    end
+  end
+
+  def to_list(tree: Tree[t]): list[t] do
+    case tree do
+      Tree.leaf ->
+        []
+      Tree.node(left, value, right) ->
+        concat(to_list(left), prepend(to_list(right), value))
+    end
+  end
+
+  def size(tree: Tree[t]): integer do
+    case tree do
+      Tree.leaf ->
+        0
+      Tree.node(left, _, right) ->
+        ((size(left) + 1) + size(right))
+    end
+  end
+
+  def run(account: Account, command: Command): result[Account,string] do
+    case command do
+      Command.deposit(amount) when (amount <= 0) ->
+        error("deposit must be positive")
+      Command.deposit(amount) ->
+        ok(%Account{account | balance: (account.balance + amount)})
+      Command.withdraw(amount) when (amount > account.balance) ->
+        error("insufficient funds")
+      Command.withdraw(amount) ->
+        ok(%Account{account | balance: (account.balance - amount)})
+      Command.close ->
+        error("closed")
+    end
+  end
+
+  def find(xs: list[a], wanted: fn[a,boolean]): option[a] do
+    case xs do
+      [] ->
+        none
+      [head | tail] ->
+        if wanted(head) do
+          some(head)
+        else
+          find(tail, wanted)
+        end
+    end
+  end
+
+  def unwrap_or(value: option[a], fallback: a): a do
+    case value do
+      some(inner) ->
+        inner
+      none ->
+        fallback
+    end
+  end
+
+  def halve(n: integer): result[integer,string] do
+    if ((n % 2) == 0) do
+      ok((n / 2))
+    else
+      error("#{n} is odd")
+    end
+  end
+
+  def describe(outcome: result[integer,string]): string do
+    case outcome do
+      ok(value) ->
+        "ok #{value}"
+      error(reason) ->
+        "error: #{reason}"
+    end
+  end
+
+  def main() do
+    account = %Account{owner: "ada", balance: 10, tags: ["new"]}
+    assert((((account.owner == "ada") and (account.balance == 10)) and (account.tags == ["new"])))
+    richer = %Account{account | balance: 25}
+    assert(((richer.balance == 25) and (account.balance == 10)))
+    assert(((richer == %Account{owner: "ada", balance: 25, tags: ["new"]}) and (richer != account)))
+    %Account{owner: who, balance: amount} = richer
+    assert(((who == "ada") and (amount == 25)))
+    pair = %Pair{first: 1, second: "one"}
+    swapped = swap(pair)
+    assert(((swapped.first == "one") and (swapped.second == 1)))
+    nested = %Pair{first: pair, second: [1.5]}
+    assert(((nested.first.second == "one") and (nested.second == [1.5])))
+    assert((((identity(5) == 5) and (identity("x") == "x")) and (identity([true]) == [true])))
+    assert((apply_twice(3, fn(n: integer): integer do
+      (n * n)
+    end) == 81))
+    assert((fold([1, 2, 3], 0, fn(acc: integer, n: integer): integer do
+      (acc + n)
+    end) == 6))
+    assert((fold(["a", "b"], "", fn(acc: string, s: string): string do
+      (acc <> s)
+    end) == "ab"))
+    empty: Tree[integer] = Tree.leaf
+    tree = fold([5, 2, 8, 1], empty, &insert)
+    assert(((to_list(tree) == [1, 2, 5, 8]) and (size(tree) == 4)))
+    assert(((tree == insert(insert(insert(insert(empty, 5), 2), 8), 1)) and (tree != empty)))
+    assert(((describe(halve(10)) == "ok 5") and (describe(halve(7)) == "error: 7 is odd")))
+    case run(account, Command.deposit(5)) do
+      ok(%Account{balance: balance}) ->
+        assert((balance == 15))
+      error(_) ->
+        assert(false)
+    end
+    assert((run(account, Command.withdraw(50)) == error("insufficient funds")))
+    assert((run(account, Command.close) == error("closed")))
+    found = find([1, 2, 3, 4], fn(n: integer): boolean do
+      (n > 2)
+    end)
+    assert(((found == some(3)) and (unwrap_or(found, 0) == 3)))
+    missing: option[integer] = find([1], fn(n: integer): boolean do
+      (n > 2)
+    end)
+    assert(((missing == none) and (unwrap_or(missing, 9) == 9)))
+    circle = Geometry.Shape.circle(2.0)
+    square = Geometry.Shape.rect(%Geometry.Size{width: 3.0, height: 3.0})
+    assert(((Geometry.area(circle) == 12.0) and (Geometry.area(square) == 9.0)))
+    shapes = [circle, square, Geometry.Shape.empty]
+    assert((map(shapes, &Geometry.area) == [12.0, 9.0, 0.0]))
+    scaled = Geometry.scale(%Geometry.Size{width: 1.0, height: 2.0}, 2.0)
+    assert(((scaled.width == 2.0) and (scaled.height == 4.0)))
+    IO.puts("types ready #{richer.owner} #{richer.balance}")
+  end
+end

@@ -1,0 +1,99 @@
+defmodule Clauses do
+  def total([]: list[integer]): integer do
+    0
+  end
+
+  def total([head | tail]) do
+    (head + total(tail))
+  end
+
+  def fact(0): integer do
+    1
+  end
+
+  def fact(n: integer) when (n > 0) do
+    (n * fact((n - 1)))
+  end
+
+  def fact(_) do
+    -1
+  end
+
+  def sign(n: integer): string when (n > 0) do
+    "positive"
+  end
+
+  def sign(0) do
+    "zero"
+  end
+
+  def sign(_) do
+    "negative"
+  end
+
+  def zip_sum([]: list[integer], _: list[integer], acc: integer): integer do
+    acc
+  end
+
+  def zip_sum(_, [], acc) do
+    acc
+  end
+
+  def zip_sum([a | rest_a], [b | rest_b], acc) do
+    zip_sum(rest_a, rest_b, (acc + (a * b)))
+  end
+
+  def first({a, _}: tuple[integer,string]): integer do
+    a
+  end
+
+  def describe(flag: boolean, count: integer): string do
+    if flag do
+      case count do
+        0 ->
+          "none"
+        1 ->
+          "one"
+        _ ->
+          "many"
+      end
+    else
+      "off"
+    end
+  end
+
+  def early(n: integer): integer do
+    if (n < 0) do
+      return 0
+    end
+    doubled = (n * 2)
+    doubled
+  end
+
+  def negate(n: integer): integer do
+    value = n
+    (- value)
+  end
+
+  def grouped(n: integer): integer do
+    value = n
+    ((value + 1) * 2)
+  end
+
+  def main() do
+    assert((total([1, 2, 3]) == 6))
+    assert((((fact(5) == 120) and (fact(0) == 1)) and (fact(-3) == -1)))
+    assert((((sign(4) == "positive") and (sign(0) == "zero")) and (sign(-4) == "negative")))
+    assert((zip_sum([1, 2, 3], [4, 5], 0) == 14))
+    assert((first({7, "x"}) == 7))
+    assert((((describe(true, 0) == "none") and (describe(true, 5) == "many")) and (describe(false, 1) == "off")))
+    assert(((early(-5) == 0) and (early(4) == 8)))
+    assert(((negate(3) == -3) and (grouped(2) == 6)))
+    triple = fn(n: integer): integer do
+      (n * 3)
+    end
+    assert((map([1, 2], triple) == [3, 6]))
+    assert((map([1, 2], &fact) == [1, 2]))
+    IO.puts("clauses ready")
+  end
+end

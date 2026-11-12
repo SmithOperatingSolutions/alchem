@@ -1,0 +1,21 @@
+defmodule Main do
+  def main() do
+    me: pid[string] = Process.self(16)
+    Logger.remove_handler(:console)
+    Logger.add_handler(:collect, fn level, text, meta -> Process.send(me, to_string(level) <> ":" <> text <> ":" <> Enum.map_join(meta, ",", fn {k, v} -> to_string(k) <> "=" <> v end), 100) end)
+    Logger.metadata([request_id: "r1"])
+    Logger.configure([format: "[$level] $metadata$message", metadata: "request_id"])
+    Logger.info("hello", [user: "ada"])
+    Logger.debug(fn -> "lazy" end)
+    Logger.configure([level: "warning"])
+    Logger.info(fn -> raise("never made") end)
+    Logger.log(:error, "bad")
+    IO.inspect(Logger.metadata())
+    IO.inspect(Process.receive(me, 100))
+    IO.inspect(Process.receive(me, 100))
+    IO.inspect(Process.receive(me, 100))
+    Logger.remove_handler(:console)
+    Logger.error("quiet")
+    IO.inspect(Logger.remove_handler(:collect))
+  end
+end

@@ -1,0 +1,107 @@
+defmodule Values do
+  struct Box[t] do
+    value: t
+  end
+
+  def sign(n: integer): string do
+    label = if (n > 0) do
+      "positive"
+    else
+      if (n == 0) do
+        "zero"
+      else
+        "negative"
+      end
+    end
+    "#{n} is #{label}"
+  end
+
+  def size(xs: list[a]): string do
+    count = case xs do
+      [] ->
+        0
+      [_] ->
+        1
+      [_, _ | rest] ->
+        (2 + length(rest))
+    end
+    case count do
+      0 ->
+        "empty"
+      n when (n > 2) ->
+        "many"
+      _ ->
+        "few"
+    end
+  end
+
+  def member([]: list[a], _: a): boolean do
+    false
+  end
+
+  def member([head | tail], wanted) do
+    ((head == wanted) or member(tail, wanted))
+  end
+
+  def has(xs: list[list[b]], wanted: list[b]): boolean do
+    member(xs, wanted)
+  end
+
+  def same(left: a, right: a): boolean do
+    (left == right)
+  end
+
+  def index_of(xs: list[a], wanted: a): option[integer] do
+    case xs do
+      [] ->
+        none
+      [^wanted | _] ->
+        some(0)
+      [_ | tail] ->
+        case index_of(tail, wanted) do
+          some(i) ->
+            some((i + 1))
+          none ->
+            none
+        end
+    end
+  end
+
+  def main() do
+    assert((((sign(3) == "3 is positive") and (sign(0) == "0 is zero")) and (sign(-2) == "-2 is negative")))
+    assert(((size([1]) == "few") and (size(["a", "b", "c"]) == "many")))
+    empty: list[float] = []
+    assert((size(empty) == "empty"))
+    total = (10 + if true do
+      1
+    else
+      2
+    end)
+    assert((total == 11))
+    words = map([1, 2, 3], fn(n: integer): string do
+      if ((n % 2) == 0) do
+        "even"
+      else
+        "odd"
+      end
+    end)
+    assert((words == ["odd", "even", "odd"]))
+    picked = case {total, words} do
+      {11, [first | _]} ->
+        prefix = "got "
+        (prefix <> first)
+      _ ->
+        "nothing"
+    end
+    assert((picked == "got odd"))
+    assert((member([1, 2, 3], 2) and (not member(["a"], "b"))))
+    assert((member([%Box{value: 1}], %Box{value: 1}) and has([[1.5], [2.5]], [2.5])))
+    assert((same({1, "a"}, {1, "a"}) and (not same(some(1), none))))
+    assert(((index_of(["a", "b", "c"], "c") == some(2)) and (index_of([1], 9) == none)))
+    IO.puts(if List.contains(words, "even") do
+      "values ready"
+    else
+      "broken"
+    end)
+  end
+end

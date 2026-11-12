@@ -1,0 +1,13 @@
+# Opens update pull requests for the commit-pinned actions in
+# .github/workflows, keeping the release comment beside each SHA current.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - "*"

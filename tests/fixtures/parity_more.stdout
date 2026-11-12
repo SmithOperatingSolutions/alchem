@@ -1,0 +1,9 @@
+empty
+none
+[104, 233, 33]
+["bin", "local", "usr"]
+2026-02-28 P1YT90M
+2026-03-28 12:00:00+01:00 CET Europe/Paris | 2026-03-29T12:00:00+02:00 | eq
+some("example.com") some(8443) https://example.com:8443/a?b=1 true
+%{"jobs" => "4", "verbose" => "true"} ["file"] [{"--nope", ""}]
+error

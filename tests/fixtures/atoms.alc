@@ -1,0 +1,45 @@
+defmodule Atoms do
+  def status(code: integer): atom do
+    case code do
+      200 ->
+        :ok
+      404 ->
+        :not_found
+      _ ->
+        :error
+    end
+  end
+
+  def describe(:ok): string do
+    "fine"
+  end
+
+  def describe(other) do
+    "problem: #{other}"
+  end
+
+  def main() do
+    IO.puts(inspect(status(200)))
+    IO.puts(describe(status(404)))
+    IO.puts(inspect(({:ok, 1} == {:ok, 1})))
+    counts = %{:red => 1, :blue => 2}
+    IO.puts(inspect(Map.put(counts, :green, 3)))
+    options = [verbose: true, dry_run: false]
+    IO.puts(inspect(options))
+    IO.puts(inspect(Enum.sort([:pear, :apple])))
+    result = case {:error, "boom"} do
+      {:ok, value} ->
+        value
+      {:error, reason} ->
+        ("failed: " <> reason)
+      {_, _} ->
+        "other"
+    end
+    IO.puts(result)
+    me: pid[atom] = Process.self(2)
+    Process.send(me, :ping, 10)
+    IO.puts(inspect(Process.receive(me, 10)))
+    IO.puts("#{inspect(Keyword.get(options, :verbose))} #{inspect(Keyword.put(options, :dry_run, true))} #{inspect(Keyword.to_map(options))}")
+    IO.puts("#{Atom.to_string(:done)} #{(String.to_atom("ok") == :ok)} #{(:a < :b)}")
+  end
+end

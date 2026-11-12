@@ -1,0 +1,19 @@
+defmodule InputAbsent do
+  def main() do
+    assert((System.argv() == []))
+    assert((IO.read_line() == none))
+    assert((IO.read_all() == ""))
+    assert(unreadable("no-such-file-for-this-fixture.txt"))
+    assert(unreadable("."))
+    IO.puts("no input")
+  end
+
+  def unreadable(path: string): boolean do
+    case File.read(path) do
+      ok(_) ->
+        false
+      error(reason) ->
+        (String.length(reason) > 0)
+    end
+  end
+end

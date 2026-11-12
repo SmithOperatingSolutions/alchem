@@ -1,0 +1,46 @@
+defmodule Main do
+  def serve(listener: socket, count: integer): integer do
+    case TCP.accept(listener, 2000) do
+      ok(client) ->
+        ok(line) = TCP.recv_line(client, 2000)
+        TCP.send(client, String.upcase(line) <> "\n")
+        TCP.close(client)
+        if count > 1 do
+          serve(listener, count - 1)
+        else
+          0
+        end
+      error(reason) ->
+        IO.puts("accept: " <> reason)
+        1
+    end
+  end
+
+  def main() do
+    ok(listener) = TCP.listen("127.0.0.1:0")
+    address = TCP.address(listener)
+    worker = Task.async(fn -> serve(listener, 2) end)
+    for word <- ["hello", "world"] do
+      ok(conn) = TCP.connect(address, 1000)
+      TCP.send(conn, word <> "\r\n")
+      IO.inspect(TCP.recv_line(conn, 1000))
+      IO.inspect(TCP.recv(conn, 0, 200))
+      TCP.close(conn)
+    end
+    IO.inspect(Task.await(worker))
+    IO.inspect(TCP.accept(listener, 50))
+    ok(c) = TCP.connect(address, 1000)
+    IO.inspect(TCP.recv(c, 4, 100))
+    IO.inspect(TCP.close(listener))
+    IO.inspect(TCP.close(listener))
+    # A process waiting without a deadline still stops when asked.
+    ok(idle) = TCP.listen("127.0.0.1:0")
+    waiter: pid[integer] = Process.spawn(fn(self: pid[integer]): integer do
+      TCP.accept(idle, -1)
+      0
+    end, 1)
+    Process.sleep(20)
+    Process.stop(waiter)
+    IO.inspect(Process.await(waiter, 1000))
+  end
+end

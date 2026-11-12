@@ -1,0 +1,35 @@
+defmodule Shop do
+  import "wire.alc"
+
+  def main() do
+    case Node.start("shop", "127.0.0.1:0", "secret") do
+      error(reason) -> IO.puts("cannot start: #{reason}")
+      ok(_) -> IO.puts(Node.address())
+    end
+    orders: pid[Wire.Order] = Process.self(8)
+    Process.register(orders, :orders)
+    Stream.publish(:catalog, fn ->
+      Stream.map(Stream.from_index(1), fn n ->
+        "item #{n}"
+      end)
+    end)
+    serve(orders, 2)
+  end
+
+  def serve(orders: pid[Wire.Order], remaining: integer): integer do
+    if remaining == 0 do
+      return 0
+    end
+    {arrived, order} = Process.receive(orders, 10000)
+    if (not arrived) do
+      return remaining
+    end
+    answer = if order.count > 5 do
+      Wire.Answer.refused("only 5 #{order.item} left")
+    else
+      Wire.Answer.shipped(order.item, order.count * 2)
+    end
+    Process.send(order.reply, answer, 1000)
+    serve(orders, remaining - 1)
+  end
+end

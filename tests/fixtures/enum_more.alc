@@ -1,0 +1,21 @@
+defmodule Main do
+  def main() do
+    IO.inspect(Enum.sort([3, 1, 2], :desc))
+    IO.inspect(Enum.sort_by(["bb", "a", "ccc"], &String.length/1, :desc))
+    IO.inspect(Enum.min([3, 1, 2], fn a, b -> a >= b end))
+    IO.inspect(Enum.max(["a", "bbb"], fn a, b -> String.length(a) >= String.length(b) end))
+    empty: list[integer] = []
+    IO.inspect(Enum.min(empty, fn a, b -> a <= b end, fn -> 0 end))
+    IO.inspect(Enum.max_by([{1, "a"}, {3, "b"}], fn {n, _} -> n end, fn a, b -> a >= b end))
+    IO.inspect(Enum.into([1, 2], %{}, fn n -> {n, n * n} end))
+    IO.inspect(Enum.slide([:a, :b, :c, :d], 0, 2))
+    IO.inspect(Enum.zip([[1, 2, 3], [4, 5], [6, 7, 8]]))
+    IO.inspect(Enum.zip_with([[1, 2], [3, 4]], fn row -> Enum.sum(row) end))
+    IO.inspect(Enum.chunk_every([1, 2, 3, 4, 5], 2, 2, [0]))
+    IO.inspect(Enum.chunk_every([1, 2, 3, 4, 5], 2, 2, :discard))
+    IO.inspect(Enum.with_index([:a, :b], fn x, i -> {i, x} end))
+    IO.inspect(Enum.with_index([:a, :b], 1))
+    IO.inspect(Enum.min([2, 1]))
+    IO.inspect(Enum.min(empty, fn -> 9 end))
+  end
+end

@@ -1,0 +1,88 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+  # A manual run builds and checks the archives without publishing them.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            version="$GITHUB_REF_NAME"
+          else
+            version="v0.0.0-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build archives for every target
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 windows/amd64 windows/arm64 darwin/amd64 darwin/arm64; do
+            target_os=${target%/*}
+            target_arch=${target#*/}
+            exe=''
+            if [[ "$target_os" == windows ]]; then exe='.exe'; fi
+            name="alchem_${VERSION}_${target_os}_${target_arch}"
+            mkdir -p "build/$name"
+            GOOS="$target_os" GOARCH="$target_arch" CGO_ENABLED=0 go build -trimpath \
+              -ldflags "-s -w -X main.version=$VERSION" -o "build/$name/alchem$exe" ./cmd/alchem
+            cp README.md LICENSE "build/$name/"
+            if [[ "$target_os" == windows ]]; then
+              (cd build && zip -qr "../dist/$name.zip" "$name")
+            else
+              tar -C build -czf "dist/$name.tar.gz" "$name"
+            fi
+          done
+          (cd dist && sha256sum * > checksums.txt)
+          cat dist/checksums.txt
+      # The released binary, on a machine without Go on PATH, downloads the
+      # pinned release and builds a program with it.
+      - name: Released binary builds without an installed Go
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          bin="build/alchem_${VERSION}_linux_amd64/alchem"
+          "$bin" version | grep -q "alchem $VERSION linux/amd64"
+          env -u GOROOT PATH=/usr/bin:/bin ALCHEM_CACHE="$RUNNER_TEMP/alchem" "$bin" build -o "$RUNNER_TEMP/hello" examples/hello.alc
+          test "$("$RUNNER_TEMP/hello")" = "Hello from Alchem!"
+          env PATH=/usr/bin:/bin ALCHEM_CACHE="$RUNNER_TEMP/alchem" "$bin" version | grep -q "(downloaded)"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-archives
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Publish the GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$VERSION" --verify-tag --generate-notes --title "Alchem $VERSION" "${prerelease[@]}" dist/*

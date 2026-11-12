@@ -1,0 +1,207 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Actions are pinned to full commit SHAs so a moved tag cannot change what
+# runs here; the trailing comment records the release each SHA belongs to.
+jobs:
+  native:
+    name: Native (${{ matrix.os }}, Go ${{ matrix.go }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            go: 1.27.x
+            exe: ''
+          - os: windows-latest
+            go: 1.27.x
+            exe: .exe
+          - os: macos-latest
+            go: 1.27.x
+            exe: ''
+          - os: ubuntu-latest
+            go: stable
+            exe: ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ matrix.go }}
+          cache: false
+      - name: Toolchain and runner architecture
+        run: go version
+      - name: Unit, integration and race checks
+        run: go test -race -timeout 25m ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Native CLI smoke test
+        run: |
+          go build -o artifacts/alchem${{ matrix.exe }} ./cmd/alchem
+          ./artifacts/alchem${{ matrix.exe }} build examples/map_traversal.alc
+          actual_output=$(./map_traversal${{ matrix.exe }})
+          if [[ "$actual_output" != "traversal ready" ]]; then
+            printf 'unexpected output: %q\n' "$actual_output" >&2
+            exit 1
+          fi
+          ./artifacts/alchem${{ matrix.exe }} check examples/system
+          ./artifacts/alchem${{ matrix.exe }} fmt --check examples/system
+          ./artifacts/alchem${{ matrix.exe }} build -o artifacts/system${{ matrix.exe }} examples/system
+          actual_output=$(./artifacts/system${{ matrix.exe }})
+          test "$actual_output" = "system ready"
+      - name: Key-value server example
+        run: |
+          ./artifacts/alchem${{ matrix.exe }} fmt --check examples
+          ./artifacts/alchem${{ matrix.exe }} check examples/kv/main.alc
+          ./artifacts/alchem${{ matrix.exe }} check examples/kv/client.alc
+          ./artifacts/alchem${{ matrix.exe }} test examples/kv/test
+
+  cross:
+    name: Cross-compile six targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Go formatting
+        shell: bash
+        run: |
+          unformatted=$(gofmt -l .)
+          if [[ -n "$unformatted" ]]; then
+            printf 'gofmt required:\n%s\n' "$unformatted" >&2
+            exit 1
+          fi
+      - name: 100,000-process memory budget
+        run: go test -run TestHundredThousandProcessesWithinMemoryBudget -count=1 -v ./compiler/actor
+      - name: Build CLI and Alchem program for every target
+        shell: bash
+        run: |
+          go build -o artifacts/alchem-host ./cmd/alchem
+          for target in linux/amd64 linux/arm64 windows/amd64 windows/arm64 darwin/amd64 darwin/arm64; do
+            target_os=${target%/*}
+            target_arch=${target#*/}
+            target_exe=''
+            if [[ "$target_os" == windows ]]; then target_exe='.exe'; fi
+            target_dir="artifacts/targets/$target_os-$target_arch"
+            mkdir -p "$target_dir"
+            GOOS="$target_os" GOARCH="$target_arch" CGO_ENABLED=0 go build -o "$target_dir/alchem$target_exe" ./cmd/alchem
+            (
+              cd "$target_dir"
+              GOOS="$target_os" GOARCH="$target_arch" CGO_ENABLED=0 "$GITHUB_WORKSPACE/artifacts/alchem-host" build "$GITHUB_WORKSPACE/examples/system"
+              test -s "system$target_exe"
+            )
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cross-compiled-binaries
+          path: artifacts/targets/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Native execution on the three OS/architecture pairs the required matrix
+  # does not cover. It is deliberately outside the required "test" gate: these
+  # runner labels are not offered on every plan, and an unavailable runner
+  # would otherwise leave the gate waiting.
+  native-extended:
+    name: Native extended (${{ matrix.goos }}/${{ matrix.goarch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            exe: ''
+          - os: windows-11-arm
+            goos: windows
+            goarch: arm64
+            exe: .exe
+          - os: macos-15-intel
+            goos: darwin
+            goarch: amd64
+            exe: ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Confirm runner platform
+        env:
+          WANT: ${{ matrix.goos }}/${{ matrix.goarch }}
+        run: |
+          actual="$(go env GOOS)/$(go env GOARCH)"
+          go version
+          if [[ "$actual" != "$WANT" ]]; then
+            printf 'runner is %s, expected %s\n' "$actual" "$WANT" >&2
+            exit 1
+          fi
+      - name: Unit and integration tests
+        # The Intel macOS runner takes about ten minutes for the compiler
+        # package alone, so the per-package limit matches the Native jobs.
+        run: go test -timeout 25m ./...
+      - name: Native CLI smoke test
+        run: |
+          go build -o artifacts/alchem${{ matrix.exe }} ./cmd/alchem
+          ./artifacts/alchem${{ matrix.exe }} test tests/fixtures
+          ./artifacts/alchem${{ matrix.exe }} build -o artifacts/system${{ matrix.exe }} examples/system
+          actual_output=$(./artifacts/system${{ matrix.exe }})
+          test "$actual_output" = "system ready"
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.x
+          cache: false
+      # The compiler, the tools and the runtime that compiled programs
+      # carry, measured together; the minimum only ever rises.
+      - name: Measure coverage
+        shell: bash
+        run: go run ./tools/coverage -min 94 -o coverage.out | tee coverage.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage.txt
+
+  test:
+    name: test
+    if: always()
+    needs: [native, cross, coverage]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every platform check to pass
+        env:
+          NATIVE_RESULT: ${{ needs.native.result }}
+          CROSS_RESULT: ${{ needs.cross.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+        run: test "$NATIVE_RESULT" = success && test "$CROSS_RESULT" = success && test "$COVERAGE_RESULT" = success

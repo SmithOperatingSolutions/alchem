@@ -1,0 +1,5 @@
+defmodule Main do
+  def main() do
+    IO.inspect({0xFF, 0o755, 0b1010, 1_000_000, 0755, 1_000.5, -0x10})
+  end
+end

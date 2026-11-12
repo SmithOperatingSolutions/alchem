@@ -1,0 +1,38 @@
+# Elixir baseline for benchmarks/alchem/suite/list.alc.
+Code.require_file("bench.exs", __DIR__)
+
+defmodule ListBench do
+  def walk([], total), do: total
+  def walk([head | tail], total), do: walk(tail, total + head)
+
+  def at(i), do: rem(i * 37, 10_000)
+
+  def main do
+    items = Enum.map(1..10_000, fn i -> rem(i * 7919 + 13, 1_000_003) end)
+    big = Enum.map(1..100_000, fn i -> rem(i * 7919 + 13, 1_000_003) end)
+    short = Enum.take(items, 5000)
+    chunk = Enum.to_list(1..1000)
+    nested = Enum.map(1..1000, fn i -> Enum.to_list(i..(i + 99)) end)
+    removed = Enum.take_every(items, 10)
+
+    Bench.run("list.at 2,000 reads of 10k", fn -> Enum.reduce(1..2000, 0, fn i, acc -> acc + Enum.at(items, at(i), 0) end) end)
+    Bench.run("list.replace_at 1,000 of 10k", fn -> Enum.reduce(1..1000, items, fn i, acc -> List.replace_at(acc, at(i), i) end) |> Enum.sum() end)
+    Bench.run("list.update_at 1,000 of 10k", fn -> Enum.reduce(1..1000, items, fn i, acc -> List.update_at(acc, at(i), fn x -> x + 1 end) end) |> Enum.sum() end)
+    Bench.run("list.insert_at 1,000 into 10k", fn -> Enum.reduce(1..1000, items, fn i, acc -> List.insert_at(acc, at(i), i) end) |> Enum.sum() end)
+    Bench.run("list.delete_at 1,000 of 10k", fn -> Enum.reduce(1..1000, items, fn i, acc -> List.delete_at(acc, rem(i * 37, 9000)) end) |> Enum.sum() end)
+    Bench.run("list.delete value 1,000 of 10k", fn -> Enum.reduce(removed, items, fn x, acc -> List.delete(acc, x) end) |> length() end)
+    Bench.run("list.last 1,000 times of 100k", fn -> Enum.reduce(1..1000, 0, fn _, acc -> acc + List.last(big, 0) end) end)
+    Bench.run("list.length 1,000 times of 100k", fn -> Enum.reduce(1..1000, 0, fn _, acc -> acc + length(big) end) end)
+    Bench.run("list ++ append 1k to growing list 200 times", fn -> Enum.reduce(1..200, [], fn _, acc -> acc ++ chunk end) |> length() end)
+    Bench.run("list ++ prepend 1k to growing list 200 times", fn -> Enum.reduce(1..200, [], fn _, acc -> chunk ++ acc end) |> length() end)
+    Bench.run("list -- 1,000 from 10k", fn -> length(items -- removed) end)
+    Bench.run("list.flatten 1,000 lists of 100", fn -> nested |> List.flatten() |> length() end)
+    Bench.run("list prepend build 1M", fn -> Enum.reduce(1..1_000_000, [], fn i, acc -> [i | acc] end) |> hd() end)
+    Bench.run("list head/tail recursive walk 5k, 20 times", fn -> Enum.reduce(1..20, 0, fn _, acc -> acc + walk(short, 0) end) end)
+    Bench.run("list.foldr 100k", fn -> List.foldr(big, 0, fn x, acc -> rem(acc * 31 + x, 1_000_000_007) end) end)
+    Bench.run("list.duplicate 1M", fn -> List.duplicate(7, 1_000_000) |> hd() end)
+    Bench.run("list in (membership) 1,000 misses of 10k", fn -> Enum.count(1..1000, fn i -> (0 - i) in items end) end)
+  end
+end
+
+ListBench.main()

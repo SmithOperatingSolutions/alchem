@@ -1,0 +1,89 @@
+defmodule Main do
+  def member(rooms: registry[string, integer], room: string, value: integer, done: pid[integer]): pid[integer] do
+    Process.spawn(fn(self: pid[integer]): integer do
+      Registry.register(rooms, room, value)
+      Process.send(done, value, 1000)
+      Process.receive(self, 60000)
+      0
+    end, 1)
+  end
+
+  def main() do
+    me: pid[integer] = Process.self(16)
+    rooms: registry[string, integer] = Registry.start_link([keys: :duplicate], [partitions: 4])
+    IO.inspect(Registry.partitions(rooms))
+    first = member(rooms, "lobby", 1, me)
+    second = member(rooms, "lobby", 2, me)
+    member(rooms, "kitchen", 3, me)
+    for _ <- 1..3 do
+      Process.receive(me, 1000)
+    end
+    Registry.register(rooms, "lobby", 10)
+    Registry.register(rooms, "lobby", 20)
+
+    # Entries carry the process id of their owner.
+    ids = Enum.map(Registry.entries(rooms, "lobby"), fn {id, _} -> id end)
+    IO.inspect(Enum.member?(ids, Process.id(first)) and Enum.member?(ids, Process.id(second)))
+    IO.inspect(Enum.sort(Enum.map(Registry.entries(rooms, "lobby"), fn {_, value} -> value end)))
+    IO.inspect(Enum.sort(Enum.map(Registry.match(rooms, "lobby", fn value -> value > 5 end), fn {_, value} -> value end)))
+    IO.inspect(Registry.count_match(rooms, "lobby", fn value -> value < 5 end))
+    IO.inspect(Registry.values(rooms, "lobby", me))
+    IO.inspect(Registry.values(rooms, "lobby", first))
+
+    # Dispatch hands the entries to a function, and does nothing for a key
+    # nobody holds.
+    Registry.dispatch(rooms, "lobby", fn entries ->
+      Enum.each(Enum.sort(Enum.map(entries, fn {_, value} -> value end)), fn value -> IO.puts("dispatched " <> to_string(value)) end)
+    end)
+    IO.inspect(Registry.dispatch(rooms, "nobody", fn entries -> IO.puts("never " <> to_string(length(entries))) end))
+
+    selected = Registry.select(rooms, fn key, _, value -> key == "kitchen" or value == 10 end)
+    IO.inspect(Enum.sort(Enum.map(selected, fn {key, _, value} -> {key, value} end)))
+
+    IO.inspect(Registry.unregister_match(rooms, "lobby", fn value -> value == 20 end))
+    IO.inspect(Registry.values(rooms, "lobby", me))
+    IO.inspect(Registry.unregister_match(rooms, "lobby", fn value -> value == 99 end))
+
+    # Values of an ended process go away.
+    Process.stop(first)
+    Process.await(first, 1000)
+    IO.inspect(Enum.sort(Registry.lookup(rooms, "lobby")))
+
+    # A unique registry can update the caller's own value.
+    names: registry[atom, integer] = Registry.start_link([keys: :unique])
+    IO.inspect(Registry.update_value(names, :counter, fn n -> n + 1 end))
+    Registry.register(names, :counter, 1)
+    IO.inspect(Registry.update_value(names, :counter, fn n -> n + 1 end))
+    IO.inspect(Registry.lookup(names, :counter))
+
+    # Metadata belongs to the registry, typed by what reads it.
+    IO.inspect(Registry.put_meta(names, :owner, "kv"))
+    owner: option[string] = Registry.meta(names, :owner)
+    IO.inspect(owner)
+    wrong: option[integer] = Registry.meta(names, :owner)
+    IO.inspect(wrong)
+    missing: option[string] = Registry.meta(names, :absent)
+    IO.inspect(missing)
+
+    # A dynamic supervisor can limit how many children it runs.
+    pool = DynamicSupervisor.start_link([max_children: 2])
+    worker = fn(self: pid[integer]): integer do
+      Process.receive(self, 60000)
+      0
+    end
+    ok(a) = DynamicSupervisor.start_child(pool, worker)
+    ok(_) = DynamicSupervisor.start_child(pool, worker)
+    IO.inspect(DynamicSupervisor.start_child(pool, worker, :temporary))
+    DynamicSupervisor.terminate_child(pool, a)
+    IO.inspect(case DynamicSupervisor.start_child(pool, worker) do
+      ok(_) -> "started"
+      error(reason) -> reason
+    end)
+    IO.inspect(DynamicSupervisor.count_children(pool))
+    DynamicSupervisor.stop(pool)
+    IO.inspect(case DynamicSupervisor.start_child(pool, worker) do
+      ok(_) -> "started"
+      error(reason) -> reason
+    end)
+  end
+end

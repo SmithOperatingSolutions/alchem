@@ -1,0 +1,35 @@
+defmodule Build do
+  def push(items: list[integer], n: integer): list[integer] do
+    return prepend(items, n)
+  end
+
+  def add(total: integer, n: integer): integer do
+    return (total + n)
+  end
+
+  def count(xs: list[integer], seen: integer): integer do
+    case xs do
+      [] ->
+        return seen
+      [_ | rest] ->
+        return count(rest, (seen + 1))
+    end
+  end
+
+  def phase(name: string, since: integer): integer do
+    now = System.monotonic_time(:microsecond)
+    IO.puts(:stderr, "phase " <> name <> " " <> to_string(now - since))
+    return now
+  end
+
+  def main() do
+    started = System.monotonic_time(:microsecond)
+    items = (List.range(1, 50000) |> reduce([], &push))
+    assert((items[0] == 50000))
+    grown = phase("grow", started)
+    assert((count(items, 0) == 50000))
+    assert(((items |> reduce(0, &add)) == 1250025000))
+    phase("walk", grown)
+    IO.puts("built")
+  end
+end

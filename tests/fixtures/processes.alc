@@ -1,0 +1,56 @@
+defmodule Processes do
+ def main() do
+  parent: pid[list[integer]] = Process.self(4)
+  worker = Process.spawn(fn(self: pid[integer]): integer do
+   {ok,number} = Process.receive(self,1000)
+   assert(ok)
+   assert(Process.send(parent,[number,number+1],1000))
+   return 0
+  end,2)
+  assert(Process.send(worker,7,1000))
+  {ok,result} = Process.receive(parent,2000)
+  assert(ok and result == [7,8])
+  {done,reason} = Process.await(worker,1000)
+  assert(done and reason == "normal")
+  assert(not Process.alive(worker))
+  assert(not Process.send(worker,9,0))
+  Process.trap_exits(true)
+  bad = Process.spawn(fn(self: pid[integer]): integer do
+   {ready,n} = Process.receive(self,1000)
+   return Process.crash("boom")
+  end,1)
+  ref = Process.monitor(bad)
+  Process.link(bad)
+  Process.send(bad,1,1000)
+  {finished,why} = Process.await(bad,1000)
+  assert(finished and why == "boom")
+  {event,reference,id,text} = Process.event(1000)
+  assert(event and id == Process.id(bad) and text == "boom")
+  {event2,reference2,id2,text2} = Process.event(1000)
+  assert(event2 and id2 == Process.id(bad) and text2 == "boom")
+  assert((reference == ref and reference2 == 0) or (reference == 0 and reference2 == ref))
+  blocked = Process.spawn(fn(self: pid[integer]): integer do
+   Process.receive(self,-1)
+   return 0
+  end,1)
+  assert(Process.stop(blocked))
+  {stopped,status} = Process.await(blocked,1000)
+  assert(stopped and status == "shutdown")
+  counter = Process.spawn(fn(self: pid[integer]): integer do
+   total = Process.loop(0,fn(sum: integer): tuple[boolean,integer] do
+    {available,value} = Process.receive(self,1000)
+    assert(available)
+    return {value!=0,sum+value}
+   end)
+   assert(total==6)
+   return 0
+  end,4)
+  Process.send(counter,1,1000)
+  Process.send(counter,2,1000)
+  Process.send(counter,3,1000)
+  Process.send(counter,0,1000)
+  {counted,countStatus} = Process.await(counter,1000)
+  assert(counted and countStatus=="normal")
+  IO.puts("processes ready")
+ end
+end

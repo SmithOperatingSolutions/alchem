@@ -1,0 +1,36 @@
+defmodule State do
+  def record(counts: map[integer,integer], n: integer): map[integer,integer] do
+    return put(counts, n, (get(counts, n, 0) + n))
+  end
+
+  def bump(counts: map[integer,integer], n: integer): map[integer,integer] do
+    return put(counts, (n % 1000), (get(counts, (n % 1000), 0) + 1))
+  end
+
+  def total(sum: integer, entry: tuple[integer,integer]): integer do
+    return (sum + entry[1])
+  end
+
+  # phase writes how long a phase took, in microseconds, to standard error.
+  def phase(name: string, since: integer): integer do
+    now = System.monotonic_time(:microsecond)
+    IO.puts(:stderr, "phase " <> name <> " " <> to_string(now - since))
+    return now
+  end
+
+  def main() do
+    started = System.monotonic_time(:microsecond)
+    numbers = List.range(1, 50000)
+    counts = (numbers |> reduce(%{}, &record))
+    assert((length(counts) == 50000))
+    assert((counts[50000] == 50000))
+    built = phase("build", started)
+    assert(((Map.entries(counts) |> reduce(0, &total)) == 1250025000))
+    summed = phase("sum", built)
+    buckets = (numbers |> reduce(%{}, &bump))
+    assert((length(buckets) == 1000))
+    assert((buckets[0] == 50))
+    phase("update", summed)
+    IO.puts("state kept")
+  end
+end

@@ -1,0 +1,5 @@
+# Local compiler and CI output.
+/artifacts/
+
+# Test binaries left by go test -c.
+*.test

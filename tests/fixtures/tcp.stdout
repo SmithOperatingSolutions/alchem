@@ -1,0 +1,10 @@
+ok("HELLO")
+error("closed")
+ok("WORLD")
+error("closed")
+0
+error("timeout")
+error("timeout")
+true
+false
+{true, "shutdown"}

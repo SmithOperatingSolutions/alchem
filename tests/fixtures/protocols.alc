@@ -1,0 +1,72 @@
+defmodule Protocols do
+  struct Circle do
+    radius: float
+  end
+
+  struct Rect do
+    width: float
+    height: float
+  end
+
+  defprotocol Shape do
+    def area(shape): float
+    def describe(shape, unit): string
+  end
+
+  defprotocol Show do
+    def show(value): string
+  end
+
+  defimpl Shape, for: Circle do
+    def area(circle: Circle): float do
+      ((3.0 * circle.radius) * circle.radius)
+    end
+
+    def describe(circle: Circle, unit: string): string do
+      "circle of radius #{circle.radius}#{unit}"
+    end
+  end
+
+  defimpl Shape, for: Rect do
+    def area(rect: Rect): float do
+      (rect.width * rect.height)
+    end
+
+    def describe(rect: Rect, unit: string): string do
+      "#{rect.width}#{unit} by #{rect.height}#{unit}"
+    end
+  end
+
+  defimpl Show, for: integer do
+    def show(n: integer): string do
+      "int #{n}"
+    end
+  end
+
+  defimpl Show, for: atom do
+    def show(name: atom): string do
+      "atom #{name}"
+    end
+  end
+
+  defimpl Show, for: list[a] do
+    def show(items: list[a]): string do
+      "#{length(items)} items"
+    end
+  end
+
+  defimpl Show, for: Rect do
+    def show(rect: Rect): string do
+      ("rect " <> Shape.describe(rect, "cm"))
+    end
+  end
+
+  def main() do
+    circle = %Circle{radius: 2.0}
+    rect = %Rect{width: 2.0, height: 3.0}
+    IO.puts("#{Shape.area(circle)} #{Shape.area(rect)}")
+    IO.puts(Shape.describe(circle, "m"))
+    IO.puts("#{Show.show(7)} | #{Show.show(:ok)} | #{Show.show(["a", "b"])} | #{Show.show(rect)}")
+    IO.puts(Enum.join(Enum.map([1, 2], &(Show.show(&1))), ", "))
+  end
+end

@@ -1,0 +1,33 @@
+defmodule Main do
+  @moduledoc """
+  A key-value server: alchem run main.alc -- --port 127.0.0.1:6380 --http 127.0.0.1:8380 --data kv.log
+  """
+  import "lib/protocol.alc"
+  import "lib/glob.alc"
+  import "lib/store.alc"
+  import "lib/log.alc"
+  import "lib/database.alc"
+  import "lib/connection.alc"
+  import "lib/web.alc"
+  import "lib/kv.alc"
+
+  def main() do
+    switches = %{"port" => "string", "http" => "string", "data" => "string"}
+    {options, _, invalid} = OptionParser.parse(System.argv(), switches)
+    if invalid != [] do
+      IO.puts(:stderr, "unknown options: " <> Enum.join(Enum.map(invalid, fn {name, _} -> name end), ", "))
+      System.halt(2)
+    end
+    address = Map.get(options, "port", "127.0.0.1:6380")
+    web_address = Map.get(options, "http", "127.0.0.1:8380")
+    data = Map.get(options, "data", "kv.log")
+    case KV.start(address, web_address, data) do
+      ok(running) ->
+        Logger.info("serving on " <> running.address <> ", HTTP on " <> running.web_address <> ", data in " <> data)
+        HTTP.await(running.web, -1)
+      error(reason) ->
+        IO.puts(:stderr, "cannot start: " <> reason)
+        System.halt(1)
+    end
+  end
+end

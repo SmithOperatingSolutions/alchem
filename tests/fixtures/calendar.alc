@@ -1,0 +1,63 @@
+defmodule CalendarFixture do
+  def weekday(date: Date): string do
+    case Date.day_of_week(date) do
+      6 ->
+        "weekend"
+      7 ->
+        "weekend"
+      _ ->
+        "weekday"
+    end
+  end
+
+  def main() do
+    date = ~D[2026-11-10]
+    assert((((date == %Date{year: 2026, month: 11, day: 10}) and (date.year == 2026)) and (Date.to_string(date) == "2026-11-10")))
+    assert((((Date.new(2024, 2, 29) == ok(~D[2024-02-29])) and (Date.new(2025, 2, 29) == error("invalid date"))) and (Date.new!(2026, 1, 5) == ~D[2026-01-05])))
+    assert(((Date.from_iso8601("2026-01-05") == ok(~D[2026-01-05])) and (Date.from_iso8601!("1999-12-31") == ~D[1999-12-31])))
+    case Date.from_iso8601("2026-13-01") do
+      ok(_) ->
+        assert(false)
+      error(reason) ->
+        assert((reason == "invalid date: \"2026-13-01\""))
+    end
+    assert((((Date.add(date, 60) == ~D[2027-01-09]) and (Date.add(date, -10) == ~D[2026-10-31])) and (Date.diff(~D[2027-01-09], date) == 60)))
+    assert(((((Date.compare(date, ~D[2026-11-11]) == :lt) and (Date.compare(date, date) == :eq)) and Date.before?(date, ~D[2027-01-01])) and Date.after?(date, ~D[2020-01-01])))
+    assert((((Date.day_of_week(date) == 2) and (weekday(~D[2026-11-14]) == "weekend")) and (Date.day_of_year(~D[2026-02-01]) == 32)))
+    assert(((((Date.days_in_month(~D[2024-02-10]) == 29) and (Date.days_in_month(date) == 30)) and Date.leap_year?(~D[2024-01-01])) and (not Date.leap_year?(~D[1900-01-01]))))
+    assert((((Date.quarter_of_year(date) == 4) and (Date.beginning_of_month(date) == ~D[2026-11-01])) and (Date.end_of_month(date) == ~D[2026-11-30])))
+    assert(((Date.beginning_of_week(date) == ~D[2026-11-09]) and (Date.end_of_week(date) == ~D[2026-11-15])))
+    %Date{year: year, month: 11} = date
+    assert((year == 2026))
+    time = ~T[13:04:05]
+    assert((((time.hour == 13) and (Time.to_string(time) == "13:04:05")) and (Time.to_iso8601(~T[01:02:03.250]) == "01:02:03.25")))
+    assert((((Time.new(23, 59, 59) == ok(~T[23:59:59])) and (Time.new(24, 0, 0) == error("invalid time"))) and (Time.new(1, 2, 3, 500000) == ok(~T[01:02:03.5]))))
+    assert((((Time.add(time, 3600) == ~T[14:04:05]) and (Time.add(~T[23:30:00], 3600) == ~T[00:30:00])) and (Time.add(~T[00:10:00], -1200) == ~T[23:50:00])))
+    assert((((Time.diff(~T[14:00:00], time) == 3355) and (Time.compare(time, ~T[13:04:06]) == :lt)) and Time.after?(time, ~T[00:00:00])))
+    assert(((Time.from_iso8601("07:08:09") == ok(~T[07:08:09])) and (Time.from_iso8601!("07:08:09.125") == ~T[07:08:09.125])))
+    naive = ~N[2026-11-10 13:04:05]
+    assert(((NaiveDateTime.to_string(naive) == "2026-11-10 13:04:05") and (NaiveDateTime.to_iso8601(naive) == "2026-11-10T13:04:05")))
+    assert((((NaiveDateTime.new(2026, 11, 10, 13, 4, 5) == ok(naive)) and (NaiveDateTime.new(date, time) == ok(naive))) and (NaiveDateTime.new!(date, time) == naive)))
+    assert(((NaiveDateTime.from_iso8601("2026-11-10T13:04:05") == ok(naive)) and (NaiveDateTime.from_iso8601!("2026-11-10 13:04:05") == naive)))
+    assert(((NaiveDateTime.add(naive, (86400 * 30)) == ~N[2026-12-10 13:04:05]) and (NaiveDateTime.diff(~N[2026-11-11 13:04:05], naive) == 86400)))
+    assert((((NaiveDateTime.to_date(naive) == date) and (NaiveDateTime.to_time(naive) == time)) and NaiveDateTime.before?(naive, ~N[2030-01-01 00:00:00])))
+    moment = ~U[2026-11-10T13:04:05Z]
+    assert((((moment.time_zone == "Etc/UTC") and (DateTime.to_iso8601(moment) == "2026-11-10T13:04:05Z")) and (DateTime.to_string(moment) == "2026-11-10 13:04:05Z")))
+    assert((((DateTime.to_unix(moment) == 1794315845) and (DateTime.from_unix(1794315845) == ok(moment))) and (DateTime.from_unix!(0) == ~U[1970-01-01T00:00:00Z])))
+    assert(((DateTime.from_iso8601("2026-11-10T15:04:05+02:00") == ok({moment, 7200})) and (DateTime.from_iso8601("2026-11-10T13:04:05Z") == ok({moment, 0}))))
+    case DateTime.from_iso8601("2026-11-10 13:04:05") do
+      ok(_) ->
+        assert(false)
+      error(reason) ->
+        assert(String.contains?(reason, "invalid date and time with offset"))
+    end
+    assert((((DateTime.add(moment, 55) == ~U[2026-11-10T13:05:00Z]) and (DateTime.diff(~U[2026-11-10T14:04:05Z], moment) == 3600)) and (DateTime.compare(moment, moment) == :eq)))
+    assert(((((DateTime.to_date(moment) == date) and (DateTime.to_time(moment) == time)) and (DateTime.to_naive(moment) == naive)) and (DateTime.from_naive!(naive) == moment)))
+    now = DateTime.utc_now()
+    assert((((now.year >= 2026) and DateTime.after?(now, moment)) or (now.year < 2026)))
+    assert((((Date.compare(Date.utc_today(), DateTime.to_date(now)) != :gt) and (Time.utc_now().hour >= 0)) and (NaiveDateTime.utc_now().year == Date.utc_today().year)))
+    sorted = Enum.sort([~D[2026-03-01], ~D[2025-12-31], ~D[2026-01-15]], &(Date.compare(&1, &2) != :gt))
+    assert((Enum.map(sorted, &(Date.to_iso8601(&1))) == ["2025-12-31", "2026-01-15", "2026-03-01"]))
+    IO.puts("calendar ready #{inspect(date)} #{Date.to_string(Date.add(date, 1))}")
+  end
+end

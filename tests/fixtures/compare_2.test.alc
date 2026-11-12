@@ -1,0 +1,1 @@
+defmodule Check do def main() do assert(-2 < 0) end end

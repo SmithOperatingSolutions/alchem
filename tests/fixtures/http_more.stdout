@@ -1,0 +1,19 @@
+{200, "user 7 via GET", none}
+{200, "user a b via DELETE", none}
+{405, "method not allowed", some("GET, DELETE")}
+{200, "file a/b/c", none}
+{404, "not found", none}
+413
+"1\n2\n3\n4\n5\n"
+{200, ""}
+["1", "2", "3", "4", "5"]
+10
+"plain"
+"123"
+some(%{"id" => "42"})
+none
+none
+"user 9 via GET"
+refused an unknown certificate
+200
+no certificate, no server

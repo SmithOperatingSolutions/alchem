@@ -1,0 +1,40 @@
+defmodule ClusterClient do
+  def main() do
+    [address] = System.argv()
+    ok(_) = Node.start("client", "127.0.0.1:0", "cluster secret")
+    ok(server) = Node.connect(address, [reconnect: true])
+    squared: result[integer, string] = Node.call(server, :square, 7)
+    IO.inspect(squared)
+    failed: result[integer, string] = Node.call(server, :fail, 1)
+    IO.inspect(failed)
+    found: option[pid[string]] = Node.whereis_global(:worker)
+    IO.inspect(case found do
+      some(_) -> "worker found"
+      none -> "worker missing"
+    end)
+    me: pid[string] = Process.self(4)
+    IO.inspect(Node.register_global(me, :worker))
+
+    # A process linked to one on the other node ends when it fails.
+    linked: pid[integer] = Process.spawn(fn(_: pid[integer]): integer do
+      looked: option[pid[string]] = Node.whereis(server, :victim)
+      some(victim) = looked
+      Process.link(victim)
+      Process.sleep(10000)
+      0
+    end, 1)
+    Process.sleep(200)
+    crashed: result[boolean, string] = Node.call(server, :crash, 0)
+    IO.inspect(crashed)
+    IO.inspect(Process.await(linked, 5000))
+
+    # A dropped connection is made again.
+    Node.disconnect(server)
+    Process.sleep(100)
+    IO.inspect(Enum.member?(Node.list(), server))
+    Process.sleep(2500)
+    IO.inspect(Enum.member?(Node.list(), server))
+    again: result[integer, string] = Node.call(server, :square, 3)
+    IO.inspect(again)
+  end
+end

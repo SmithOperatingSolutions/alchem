@@ -1,0 +1,51 @@
+defmodule ElixirForms do
+  @moduledoc """
+  Forms written as in Elixir: list construction with a tail, functions
+  overloaded by arity and references to one arity.
+  """
+
+  type Command do
+    get(key: string)
+    put(key: string, value: integer)
+    length
+  end
+
+  def describe(command: Command): string do
+    case command do
+      Command.get(key) -> "get " <> key
+      Command.put(key, value) -> "put " <> key <> "=" <> to_string(value)
+      Command.length -> "length"
+    end
+  end
+
+  def area(side: integer): integer do
+    side * side
+  end
+
+  def area(width: integer, height: integer): integer do
+    width * height
+  end
+
+  def total(xs: list[integer], start: integer \\ 0): integer do
+    Enum.reduce(xs, start, fn x, acc -> x + acc end)
+  end
+
+  def total(a: integer, b: integer, c: integer): integer do
+    a + b + c
+  end
+
+  def main() do
+    rest = [3, 4]
+    IO.inspect([1, 2 | rest])
+    IO.inspect(["only" | []])
+    IO.inspect(Enum.map([Command.get("a"), Command.put("b", 2), Command.length], &describe/1))
+    IO.inspect({area(3), area(2, 5), 4 |> area(2)})
+    IO.inspect({total([1, 2]), total([1, 2], 10), total(1, 2, 3)})
+    squares = Enum.map([1, 2, 3], &area/1)
+    pairs = Enum.zip_with([1, 2], [3, 4], &area/2)
+    IO.inspect({squares, pairs})
+    IO.puts(:stdio, "to standard output")
+    IO.puts(:stderr, "to standard error")
+    IO.inspect(System.tmp_dir!() != "")
+  end
+end

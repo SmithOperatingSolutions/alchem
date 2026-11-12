@@ -1,0 +1,59 @@
+defmodule Main do
+  type Job do
+    start
+    step(n: integer)
+    ping
+    note(text: string)
+    boom
+  end
+
+  # Work continued from a handler runs before requests already waiting, in
+  # the order it was continued.
+  def jobs(log: list[string], job: Job): tuple[list[string], list[string]] do
+    case job do
+      Job.start ->
+        Server.continue(Job.step(1))
+        Server.continue(Job.step(2))
+        {log ++ ["start"], log ++ ["start"]}
+      Job.step(n) -> {log ++ ["step " <> to_string(n)], log}
+      Job.ping -> {log ++ ["ping"], log ++ ["ping"]}
+      Job.note(text) -> {log ++ [text], log ++ [text]}
+      Job.boom -> {raise("boom"), log}
+    end
+  end
+
+  def main() do
+    server = Server.start([], &jobs/2)
+    Server.cast(server, Job.start)
+    Server.cast(server, Job.ping)
+    IO.inspect(Server.call(server, Job.note("checked"), 1000))
+
+    # A mailbox turns plain messages into requests; for a supervised server
+    # it outlives restarts.
+    supervised = Server.start_supervised([], &jobs/2, 3, 5000)
+    inbox: pid[string] = Server.mailbox(supervised, fn text -> Job.note("mail: " <> text) end)
+    Process.send(inbox, "one", 1000)
+    Process.sleep(50)
+    IO.inspect(Server.call(supervised, Job.ping, 1000))
+    IO.inspect(Server.call(supervised, Job.boom, 1000))
+    Process.send(inbox, "two", 1000)
+    Process.sleep(50)
+    IO.inspect(Server.call(supervised, Job.ping, 1000))
+    IO.inspect(Server.restarts(supervised))
+
+    # A delayed message to a name reaches what holds the name when it fires.
+    Server.register(server, :jobs)
+    Process.send_after(:jobs, Job.note("named"), 10)
+    Process.send_after(:nobody, Job.note("lost"), 10)
+    Process.send_after(:jobs, "wrong type", 10)
+    Process.sleep(100)
+    IO.inspect(Server.call(server, Job.ping, 1000))
+
+    # The mailbox ends with its server.
+    Server.stop(supervised)
+    Server.await(supervised, 1000)
+    Process.sleep(50)
+    IO.inspect(Process.alive(inbox))
+    Server.stop(server)
+  end
+end

@@ -1,0 +1,41 @@
+defmodule Main do
+  def main() do
+    r = 1..10
+    IO.inspect(r)
+    IO.inspect({r.first, r.last, r.step, Range.size(r)})
+    IO.inspect(Enum.sum(r))
+    IO.inspect(for n <- 1..10//3, do: n)
+    IO.inspect(5 in r)
+    IO.inspect(Range.disjoint?(1..5, 6..10))
+    IO.inspect(Range.disjoint?(1..5, 5..10))
+    IO.inspect(Range.new(1, 3))
+    IO.inspect(10..1)
+    IO.inspect(Range.size(10..1))
+    IO.inspect(Enum.slice([1, 2, 3, 4, 5], 1..-2))
+    IO.inspect(String.slice("hello world", 6..-1))
+    IO.inspect(Range.split(1..10, 3))
+    IO.inspect(Range.shift(1..3, 2))
+    s: stream[integer] = 1..3
+    IO.inspect(Enum.to_list(s))
+    IO.inspect(Stream.map(1..3, fn n -> n * 2 end) |> Enum.to_list())
+    IO.inspect(1..3 == Range.new(1, 3))
+    grid = %{{0, 0} => "origin", {1, 2} => "point"}
+    IO.inspect(grid)
+    IO.inspect(Map.get(grid, {1, 2}))
+    seen = MapSet.new([{:a, 1}, {:b, 2}, {:a, 1}])
+    IO.inspect(MapSet.size(seen))
+    IO.inspect(MapSet.member?(seen, {:b, 2}))
+    weights = %{1.5 => "light", 3.0 => "heavy"}
+    IO.inspect(Map.keys(weights))
+    IO.inspect(Enum.frequencies([{1, "x"}, {1, "x"}, {2, "y"}]))
+    IO.inspect(Enum.group_by(["apple", "avocado", "banana"], fn w -> {String.length(w), w > "b"} end))
+    IO.puts(JSON.encode!(%{{1, 2} => true}))
+    path = Path.join(System.tmp_dir!(), "stream_into.txt")
+    ok(f) = File.open(path, [:write])
+    count = ["a\n", "b\n"] |> Stream.into(f) |> Enum.count()
+    Stream.into(1..3, f, fn n -> to_string(n) <> "\n" end) |> Stream.run()
+    File.close(f)
+    IO.inspect({count, File.read(path)})
+    File.rm(path)
+  end
+end

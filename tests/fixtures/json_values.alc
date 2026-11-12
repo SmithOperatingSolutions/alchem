@@ -1,0 +1,23 @@
+defmodule Main do
+  struct User do
+    name: string
+    tags: list[atom]
+    age: option[integer] = none
+  end
+
+  type Shape do
+    point
+    circle(r: float)
+  end
+
+  def main() do
+    IO.puts(JSON.encode!(%User{name: "ada", tags: [:admin]}))
+    IO.puts(JSON.encode!(%{"a" => [1, 2], "b" => [3]}))
+    IO.puts(JSON.encode!(%{1 => true}))
+    IO.puts(JSON.encode!([Shape.point, Shape.circle(1.5)]))
+    IO.puts(JSON.encode!({1, "x"}))
+    IO.puts(JSON.encode!(JSON.object(%{"k" => JSON.null})))
+    IO.puts(JSON.encode!(%User{name: "b", tags: [], age: some(3)}, [pretty: true]))
+    IO.inspect(JSON.encode(1.0 / 3.0))
+  end
+end

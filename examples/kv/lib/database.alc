@@ -1,0 +1,102 @@
+defmodule Database do
+  @moduledoc """
+  The process that owns the data. It runs one command at a time on the
+  store, writes each change to the log before it replies, and expires keys
+  on time.
+  """
+  import "protocol.alc"
+  import "glob.alc"
+  import "store.alc"
+  import "log.alc"
+
+  type Request do
+    run(command: Protocol.Command)
+    expire
+    rewrite
+    stats
+  end
+
+  struct Stats do
+    keys: integer
+    hits: integer
+    misses: integer
+    commands: integer
+  end
+
+  @doc """
+  Starts the database from the log at a path, which it then appends to.
+  """
+  def start(path: string): server[Request, Protocol.Reply] do
+    now = Time.now()
+    state = Store.replay(Log.load(path), now)
+    log = Log.start(path)
+    database = Server.start(state, fn(current: Store.State, request: Request): tuple[Store.State, Protocol.Reply] do
+      handle(log, current, request)
+    end)
+    for {_, at} <- state.deadlines do
+      Server.send_after(database, Request.expire, max(at - now, 0))
+    end
+    database
+  end
+
+  @doc """
+  Runs a command, turning a database that does not answer into an error reply.
+  """
+  def run(database: server[Request, Protocol.Reply], command: Protocol.Command): Protocol.Reply do
+    reply(Server.call(database, Request.run(command), 5000))
+  end
+
+  def rewrite(database: server[Request, Protocol.Reply]): Protocol.Reply do
+    reply(Server.call(database, Request.rewrite, 30000))
+  end
+
+  def stats(database: server[Request, Protocol.Reply]): Stats do
+    case Server.call(database, Request.stats, 5000) do
+      ok(Protocol.Reply.many([Protocol.Reply.number(keys), Protocol.Reply.number(hits), Protocol.Reply.number(misses), Protocol.Reply.number(commands)])) ->
+        %Stats{keys: keys, hits: hits, misses: misses, commands: commands}
+      _ -> %Stats{keys: 0, hits: 0, misses: 0, commands: 0}
+    end
+  end
+
+  defp reply(answer: result[Protocol.Reply, string]): Protocol.Reply do
+    case answer do
+      ok(value) -> value
+      error(reason) -> Protocol.Reply.failure("database unavailable: " <> reason)
+    end
+  end
+
+  defp handle(log: server[Log.Request, result[tuple[], string]], state: Store.State, request: Request): tuple[Store.State, Protocol.Reply] do
+    case request do
+      Request.run(command) ->
+        now = Time.now()
+        outcome = Store.run(state, command, now)
+        me: server[Request, Protocol.Reply] = Server.self()
+        for {_, at} <- outcome.timers do
+          Server.send_after(me, Request.expire, max(at - now, 0))
+        end
+        # A change is acknowledged once it is in the log.
+        written = case outcome.log do
+          [] -> ok(ok({}))
+          lines -> Server.call(log, Log.Request.append(lines), 5000)
+        end
+        case written do
+          ok(ok(_)) -> {outcome.state, outcome.reply}
+          ok(error(reason)) ->
+            {outcome.state, Protocol.Reply.failure("applied but not logged: " <> reason)}
+          error(reason) ->
+            {outcome.state, Protocol.Reply.failure("applied but not logged: " <> reason)}
+        end
+      Request.expire -> {Store.purge(state, Time.now()), Protocol.Reply.ok}
+      Request.rewrite ->
+        case Server.call(log, Log.Request.replace(Store.snapshot(state)), 30000) do
+          ok(ok(_)) -> {state, Protocol.Reply.ok}
+          ok(error(reason)) -> {state, Protocol.Reply.failure("rewrite failed: " <> reason)}
+          error(reason) -> {state, Protocol.Reply.failure("rewrite failed: " <> reason)}
+        end
+      Request.stats ->
+        current = Store.purge(state, Time.now())
+        numbers = [Store.size(current), current.hits, current.misses, current.commands]
+        {current, Protocol.Reply.many(Enum.map(numbers, fn n -> Protocol.Reply.number(n) end))}
+    end
+  end
+end

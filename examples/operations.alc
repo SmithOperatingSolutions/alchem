@@ -1,0 +1,30 @@
+defmodule Operations do
+  def double(n: integer): integer do
+    return n * 2
+  end
+
+  def positive(n: integer): boolean do
+    return n > 0
+  end
+
+  def sum(acc: integer, n: integer): integer do
+    return acc + n
+  end
+
+  def main() do
+    items = [-1, 0, 1, 2]
+    |> map(&double)
+    |> filter(&positive)
+    total = items |> reduce(0, &sum)
+    original = %{"total" => total}
+    updated = original |> put("total", total + 1)
+    assert(original["total"] == 6)
+    case updated do
+      %{"total" => value} when value > 0 ->
+        assert(value == 7)
+      _ ->
+        assert(false)
+    end
+    IO.puts("operations ready")
+  end
+end
