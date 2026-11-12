@@ -168,9 +168,15 @@ Run the harness before and after a performance change on the same machine and re
 - [x] Apache-2.0 license, shipped in every release archive.
 - [x] The shell is `alchem alx` and documentation examples use `alx>`, so nothing is named after Elixir's tools.
 - [x] `tools/provenance` checks the documentation for passages shared with Elixir's; see [provenance](provenance.md).
-- [ ] Tag `v0.1.0`.
+- [x] Tag `v0.1.0`.
 - [ ] Install script and package-manager formulas (Homebrew, Scoop) that point at the release archives.
 - [ ] Sign or notarize the macOS and Windows binaries.
+
+## M10 — Building on Alchem
+
+- [x] `WebSocket`: upgrading an `HTTP.serve` request, a client with `ws://` and `wss://`, text and binary messages, pings and the closing handshake handled by the runtime, active mode and message size limits.
+- [x] `Crypto`: secure random bytes, hashes, HMAC and constant-time comparison.
+- [ ] An escaping template sigil, for server-rendered HTML.
 
 ## Workflow
 

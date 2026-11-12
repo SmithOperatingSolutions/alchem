@@ -8,7 +8,7 @@ Every library function with its signatures, a description and examples; `alchem 
 
 **Collections**: [Enum](#enum), [Stream](#stream), [List](#list), [Map](#map), [Keyword](#keyword), [MapSet](#mapset), [Range](#range)
 
-**Text**: [String](#string), [Regex](#regex), [Integer](#integer), [Float](#float), [Base](#base), [JSON](#json), [URI](#uri), [Version](#version)
+**Text**: [String](#string), [Regex](#regex), [Integer](#integer), [Float](#float), [Base](#base), [JSON](#json), [URI](#uri), [Version](#version), [Crypto](#crypto)
 
 **Dates and times**: [Date](#date), [Time](#time), [NaiveDateTime](#naivedatetime), [DateTime](#datetime), [Calendar](#calendar), [Duration](#duration)
 
@@ -18,7 +18,7 @@ Every library function with its signatures, a description and examples; `alchem 
 
 **Testing**: [Testing](#testing), [Gen](#gen)
 
-**Network**: [TCP](#tcp), [UDP](#udp), [HTTP](#http)
+**Network**: [TCP](#tcp), [UDP](#udp), [HTTP](#http), [WebSocket](#websocket)
 
 ## Kernel
 
@@ -11674,4 +11674,371 @@ alx> ok(worker) = DynamicSupervisor.start_child(sup, fn(self: pid[string]): inte
 ...> end)
 alx> DynamicSupervisor.which_children(sup) == [Process.id(worker)]
 true
+```
+
+## WebSocket
+
+WebSockets, RFC 6455: a handler of HTTP.serve upgrades its request into a socket, and WebSocket.connect opens one to a server. Messages are text or binary; pings and the closing handshake are answered without the program's help. Calls that wait take milliseconds and give error("timeout") or error("closed"). A socket belongs to the process that made it and closes when that process ends, so a handler that upgrades either keeps the socket or hands it on with controlling_process.
+
+### WebSocket.close
+
+```
+WebSocket.close(websocket) -> boolean
+WebSocket.close(websocket, integer, string) -> boolean
+```
+
+Closes with code 1000, or with a code from 3000 to 4999 and a reason of at most 123 bytes, waiting up to a second for the other end to answer. false when the socket was already closed.
+
+```elixir
+alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+...>   case WebSocket.upgrade(request) do
+...>     ok(ws) ->
+...>       answered: result[tuple[], string] = case WebSocket.recv(ws, 5000) do
+...>         ok(WebSocket.Event.text(text)) -> WebSocket.send(ws, String.upcase(text))
+...>         ok(WebSocket.Event.binary(data)) -> WebSocket.send_binary(ws, data)
+...>         _ -> ok({})
+...>       end
+...>       if answered == ok({}) do
+...>         WebSocket.recv(ws, 5000)
+...>       end
+...>       HTTP.text(200, "")
+...>     error(reason) -> HTTP.text(400, reason)
+...>   end
+...> end)
+alx> ok(ws) = WebSocket.connect("ws://" <> HTTP.address(server) <> "/echo", 1000)
+alx> WebSocket.close(ws)
+true
+alx> WebSocket.close(ws)
+false
+alx> WebSocket.send(ws, "late")
+error("closed")
+```
+
+### WebSocket.connect
+
+```
+WebSocket.connect(string, integer) -> result[websocket,string]
+WebSocket.connect(string, integer, list[tuple[atom,string]]) -> result[websocket,string]
+```
+
+Opens a WebSocket to a ws:// or wss:// address, waiting up to the given milliseconds for the connection and the handshake. Options, as text: ca_file: a PEM file of certificates to trust, insecure: "true" to trust any, and origin: the Origin header to send.
+
+```elixir
+alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+...>   case WebSocket.upgrade(request) do
+...>     ok(ws) ->
+...>       answered: result[tuple[], string] = case WebSocket.recv(ws, 5000) do
+...>         ok(WebSocket.Event.text(text)) -> WebSocket.send(ws, String.upcase(text))
+...>         ok(WebSocket.Event.binary(data)) -> WebSocket.send_binary(ws, data)
+...>         _ -> ok({})
+...>       end
+...>       if answered == ok({}) do
+...>         WebSocket.recv(ws, 5000)
+...>       end
+...>       HTTP.text(200, "")
+...>     error(reason) -> HTTP.text(400, reason)
+...>   end
+...> end)
+alx> ok(ws) = WebSocket.connect("ws://" <> HTTP.address(server) <> "/echo", 1000)
+alx> WebSocket.send(ws, "hi")
+ok({})
+alx> WebSocket.recv(ws, 1000)
+ok(WebSocket.Event.text("HI"))
+alx> case WebSocket.connect("http://" <> HTTP.address(server), 1000) do
+...>   ok(_) -> "connected"
+...>   error(reason) -> reason
+...> end
+"a WebSocket address starts with ws:// or wss://"
+```
+
+### WebSocket.controlling_process
+
+```
+WebSocket.controlling_process(websocket, pid[a]) -> boolean
+```
+
+Hands a socket to another process, whose end then closes it and to which an active socket sends its events.
+
+```elixir
+alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+...>   case WebSocket.upgrade(request) do
+...>     ok(ws) ->
+...>       answered: result[tuple[], string] = case WebSocket.recv(ws, 5000) do
+...>         ok(WebSocket.Event.text(text)) -> WebSocket.send(ws, String.upcase(text))
+...>         ok(WebSocket.Event.binary(data)) -> WebSocket.send_binary(ws, data)
+...>         _ -> ok({})
+...>       end
+...>       if answered == ok({}) do
+...>         WebSocket.recv(ws, 5000)
+...>       end
+...>       HTTP.text(200, "")
+...>     error(reason) -> HTTP.text(400, reason)
+...>   end
+...> end)
+alx> ok(ws) = WebSocket.connect("ws://" <> HTTP.address(server) <> "/echo", 1000)
+alx> keeper: pid[WebSocket.Event] = Process.spawn(fn(self: pid[WebSocket.Event]): integer do
+...>   Process.receive(self, 60000)
+...>   0
+...> end, 1)
+alx> WebSocket.controlling_process(ws, keeper)
+true
+```
+
+### WebSocket.peer
+
+```
+WebSocket.peer(websocket) -> string
+```
+
+The address of the other end, host:port.
+
+```elixir
+alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+...>   case WebSocket.upgrade(request) do
+...>     ok(ws) ->
+...>       answered: result[tuple[], string] = case WebSocket.recv(ws, 5000) do
+...>         ok(WebSocket.Event.text(text)) -> WebSocket.send(ws, String.upcase(text))
+...>         ok(WebSocket.Event.binary(data)) -> WebSocket.send_binary(ws, data)
+...>         _ -> ok({})
+...>       end
+...>       if answered == ok({}) do
+...>         WebSocket.recv(ws, 5000)
+...>       end
+...>       HTTP.text(200, "")
+...>     error(reason) -> HTTP.text(400, reason)
+...>   end
+...> end)
+alx> ok(ws) = WebSocket.connect("ws://" <> HTTP.address(server) <> "/echo", 1000)
+alx> String.starts_with?(WebSocket.peer(ws), "127.0.0.1:")
+true
+```
+
+### WebSocket.recv
+
+```
+WebSocket.recv(websocket, integer) -> result[WebSocket.Event,string]
+```
+
+Waits up to the given milliseconds for the next event: a text or binary message, WebSocket.Event.closed(code, reason) when the other end closes, or WebSocket.Event.error(reason) when the connection fails. After the last event it is error("closed").
+
+```elixir
+alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+...>   case WebSocket.upgrade(request) do
+...>     ok(ws) ->
+...>       answered: result[tuple[], string] = case WebSocket.recv(ws, 5000) do
+...>         ok(WebSocket.Event.text(text)) -> WebSocket.send(ws, String.upcase(text))
+...>         ok(WebSocket.Event.binary(data)) -> WebSocket.send_binary(ws, data)
+...>         _ -> ok({})
+...>       end
+...>       if answered == ok({}) do
+...>         WebSocket.recv(ws, 5000)
+...>       end
+...>       HTTP.text(200, "")
+...>     error(reason) -> HTTP.text(400, reason)
+...>   end
+...> end)
+alx> ok(ws) = WebSocket.connect("ws://" <> HTTP.address(server) <> "/echo", 1000)
+alx> WebSocket.recv(ws, 10)
+error("timeout")
+alx> WebSocket.send(ws, "x")
+ok({})
+alx> WebSocket.recv(ws, 1000)
+ok(WebSocket.Event.text("X"))
+alx> WebSocket.close(ws)
+true
+alx> WebSocket.recv(ws, 1000)
+ok(WebSocket.Event.closed(1000, ""))
+alx> WebSocket.recv(ws, 1000)
+error("closed")
+```
+
+### WebSocket.send
+
+```
+WebSocket.send(websocket, string) -> result[tuple[],string]
+```
+
+Sends a text message.
+
+```elixir
+alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+...>   case WebSocket.upgrade(request) do
+...>     ok(ws) ->
+...>       answered: result[tuple[], string] = case WebSocket.recv(ws, 5000) do
+...>         ok(WebSocket.Event.text(text)) -> WebSocket.send(ws, String.upcase(text))
+...>         ok(WebSocket.Event.binary(data)) -> WebSocket.send_binary(ws, data)
+...>         _ -> ok({})
+...>       end
+...>       if answered == ok({}) do
+...>         WebSocket.recv(ws, 5000)
+...>       end
+...>       HTTP.text(200, "")
+...>     error(reason) -> HTTP.text(400, reason)
+...>   end
+...> end)
+alx> ok(ws) = WebSocket.connect("ws://" <> HTTP.address(server) <> "/echo", 1000)
+alx> WebSocket.send(ws, "abc")
+ok({})
+alx> WebSocket.recv(ws, 1000)
+ok(WebSocket.Event.text("ABC"))
+```
+
+### WebSocket.send_binary
+
+```
+WebSocket.send_binary(websocket, string) -> result[tuple[],string]
+```
+
+Sends a binary message: any bytes, which arrive as WebSocket.Event.binary.
+
+```elixir
+alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+...>   case WebSocket.upgrade(request) do
+...>     ok(ws) ->
+...>       answered: result[tuple[], string] = case WebSocket.recv(ws, 5000) do
+...>         ok(WebSocket.Event.text(text)) -> WebSocket.send(ws, String.upcase(text))
+...>         ok(WebSocket.Event.binary(data)) -> WebSocket.send_binary(ws, data)
+...>         _ -> ok({})
+...>       end
+...>       if answered == ok({}) do
+...>         WebSocket.recv(ws, 5000)
+...>       end
+...>       HTTP.text(200, "")
+...>     error(reason) -> HTTP.text(400, reason)
+...>   end
+...> end)
+alx> ok(ws) = WebSocket.connect("ws://" <> HTTP.address(server) <> "/echo", 1000)
+alx> WebSocket.send_binary(ws, "\x01\xff")
+ok({})
+alx> WebSocket.recv(ws, 1000)
+ok(WebSocket.Event.binary("\x01\xff"))
+```
+
+### WebSocket.setopts
+
+```
+WebSocket.setopts(websocket, list[tuple[atom,atom]]) -> result[tuple[],string]
+```
+
+active: true sends every event to the controlling process as a WebSocket.Event message, active: :once sends one, and active: false stops. The controlling process is the one given to controlling_process, or the socket's maker, and its messages must be WebSocket.Event.
+
+```elixir
+alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+...>   case WebSocket.upgrade(request) do
+...>     ok(ws) ->
+...>       answered: result[tuple[], string] = case WebSocket.recv(ws, 5000) do
+...>         ok(WebSocket.Event.text(text)) -> WebSocket.send(ws, String.upcase(text))
+...>         ok(WebSocket.Event.binary(data)) -> WebSocket.send_binary(ws, data)
+...>         _ -> ok({})
+...>       end
+...>       if answered == ok({}) do
+...>         WebSocket.recv(ws, 5000)
+...>       end
+...>       HTTP.text(200, "")
+...>     error(reason) -> HTTP.text(400, reason)
+...>   end
+...> end)
+alx> ok(ws) = WebSocket.connect("ws://" <> HTTP.address(server) <> "/echo", 1000)
+alx> me: pid[WebSocket.Event] = Process.self(8)
+alx> WebSocket.setopts(ws, [active: :once])
+ok({})
+alx> WebSocket.send(ws, "hi")
+ok({})
+alx> Process.receive(me, 1000)
+{true, WebSocket.Event.text("HI")}
+```
+
+### WebSocket.upgrade
+
+```
+WebSocket.upgrade(HTTP.Request) -> result[websocket,string]
+WebSocket.upgrade(HTTP.Request, list[tuple[atom,integer]]) -> result[websocket,string]
+```
+
+Called by an HTTP.serve handler, answers its request with the WebSocket handshake and returns the socket. The response the handler returns afterwards is not sent. A request that is not a WebSocket handshake is error("not a WebSocket request: ..."), and the handler answers it as it likes. [max_message_bytes: n] bounds incoming messages (16 MB by default); a larger one closes the socket with code 1009. Check HTTP.header(request, "origin") before upgrading when only your own pages should connect.
+
+```elixir
+alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+...>   case WebSocket.upgrade(request) do
+...>     ok(ws) ->
+...>       answered: result[tuple[], string] = case WebSocket.recv(ws, 5000) do
+...>         ok(WebSocket.Event.text(text)) -> WebSocket.send(ws, String.upcase(text))
+...>         ok(WebSocket.Event.binary(data)) -> WebSocket.send_binary(ws, data)
+...>         _ -> ok({})
+...>       end
+...>       if answered == ok({}) do
+...>         WebSocket.recv(ws, 5000)
+...>       end
+...>       HTTP.text(200, "")
+...>     error(reason) -> HTTP.text(400, reason)
+...>   end
+...> end)
+alx> ok(ws) = WebSocket.connect("ws://" <> HTTP.address(server) <> "/echo", 1000)
+alx> WebSocket.send(ws, "hello")
+ok({})
+alx> WebSocket.recv(ws, 1000)
+ok(WebSocket.Event.text("HELLO"))
+alx> ok(plain) = HTTP.get("http://" <> HTTP.address(server) <> "/echo")
+alx> {plain.status, plain.body}
+{400, "not a WebSocket request: no upgrade to websocket"}
+```
+
+## Crypto
+
+Cryptographic building blocks: random bytes from the operating system's secure source, hashes, HMAC signatures and a comparison that takes the same time however much of its input matches. Results are raw bytes; Base.encode16 or Base.encode64 makes them printable.
+
+### Crypto.hash
+
+```
+Crypto.hash(atom, string) -> string
+```
+
+The digest of some data with :md5, :sha1, :sha224, :sha256, :sha384 or :sha512, as raw bytes. MD5 and SHA-1 are for checking old formats, not for security.
+
+```elixir
+alx> Base.encode16(Crypto.hash(:sha256, "abc"), [case: :lower])
+"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+```
+
+### Crypto.hmac
+
+```
+Crypto.hmac(atom, string, string) -> string
+```
+
+The HMAC of data under a key with one of the hash algorithms, as raw bytes: a signature only someone holding the key can make. Compare signatures with Crypto.secure_compare.
+
+```elixir
+alx> Base.encode16(Crypto.hmac(:sha256, "Jefe", "what do ya want for nothing?"), [case: :lower])
+"5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+```
+
+### Crypto.secure_compare
+
+```
+Crypto.secure_compare(string, string) -> boolean
+```
+
+Reports whether two strings are equal, taking a time that depends only on their lengths, so that checking a signature or token does not reveal how much of a guess was right.
+
+```elixir
+alx> Crypto.secure_compare("token", "token")
+true
+alx> Crypto.secure_compare("token", "tokem")
+false
+```
+
+### Crypto.strong_rand_bytes
+
+```
+Crypto.strong_rand_bytes(integer) -> string
+```
+
+The given number of random bytes from the operating system's secure source, for keys, tokens and nonces.
+
+```elixir
+alx> byte_size(Crypto.strong_rand_bytes(16))
+16
+alx> Crypto.strong_rand_bytes(16) == Crypto.strong_rand_bytes(16)
+false
 ```

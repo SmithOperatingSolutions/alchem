@@ -15,10 +15,10 @@ Alchem is experimental and has no long-term support branches. Fixes go into the 
 In scope:
 
 - The compiler and CLI, including the Go toolchain it downloads (`compiler/toolchain.go` checks each download against recorded SHA-256 sums).
-- The runtime embedded in compiled programs: processes, supervision, the `TCP`, `UDP`, `HTTP` and `File` libraries, and connections between nodes (TLS 1.3 with a cookie proof).
+- The runtime embedded in compiled programs: processes, supervision, the `TCP`, `UDP`, `HTTP`, `WebSocket`, `Crypto` and `File` libraries, and connections between nodes (TLS 1.3 with a cookie proof).
 - The release workflow and the archives it publishes.
 
 Not vulnerabilities:
 
-- The private key in `tests/fixtures/http_more.alc`. It is a self-signed key used only by the HTTPS tests and protects nothing.
+- The private keys in `tests/fixtures` (`http_more.alc`, `websocket_test.alc`). They belong to a self-signed certificate used only by the HTTPS and secure WebSocket tests and protect nothing.
 - Programs that run untrusted Alchem source. Compiling and running a program executes it with your permissions; neither `alchem test` nor `alchem alx` is a sandbox.

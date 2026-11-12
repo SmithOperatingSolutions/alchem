@@ -8818,6 +8818,17 @@ func tcpShutdown(ctx *actor.Context, s *socketHandle, how actor.Atom, where stri
 }
 
 func tcpConnect(ctx *actor.Context, address string, ms int64) Tresult[*socketHandle, string] {
+	conn, err := netDial(ctx, address, ms)
+	if err != nil {
+		return errOf[*socketHandle](netProblem(err))
+	}
+	return okOf(newConnection(ctx, conn))
+}
+
+// netDial connects to a TCP address, waiting up to ms milliseconds (negative
+// waits as long as the system allows); a process asked to stop while it waits
+// stops.
+func netDial(ctx *actor.Context, address string, ms int64) (net.Conn, error) {
 	dialer := net.Dialer{}
 	if ms >= 0 {
 		dialer.Timeout = time.Duration(ms) * time.Millisecond
@@ -8844,10 +8855,7 @@ func tcpConnect(ctx *actor.Context, address string, ms int64) Tresult[*socketHan
 		actor.Check(ctx)
 	default:
 	}
-	if err != nil {
-		return errOf[*socketHandle](netProblem(err))
-	}
-	return okOf(newConnection(ctx, conn))
+	return conn, err
 }
 
 func newConnection(ctx *actor.Context, conn net.Conn) *socketHandle {
@@ -10453,6 +10461,7 @@ func httpAnswer(serving *actor.Context, handle func(*actor.Context, THTTP_oReque
 	request := THTTP_oRequest{r.Method, r.URL.Path, r.URL.RawQuery, httpHeaders(r.Header), string(data)}
 	answer := make(chan THTTP_oResponse, 1)
 	streaming := make(chan struct{})
+	exchange := &httpExchange{w: w, r: r, upgraded: make(chan struct{})}
 	var worker *actor.PID[struct{}]
 	func() {
 		defer func() {
@@ -10461,7 +10470,13 @@ func httpAnswer(serving *actor.Context, handle func(*actor.Context, THTTP_oReque
 			}
 		}()
 		worker = actor.Spawn(serving, func(c *actor.Context, _ *actor.PID[struct{}]) int64 {
+			httpExchanges.Store(c, exchange)
+			defer httpExchanges.Delete(c)
 			response := handle(c, request)
+			if exchange.taken() {
+				// The connection became a WebSocket; the response is not sent.
+				return 0
+			}
 			chunks, streamed := response.F3.(Toption_c1[iter.Seq[string]])
 			if !streamed {
 				answer <- response
@@ -10492,7 +10507,11 @@ func httpAnswer(serving *actor.Context, handle func(*actor.Context, THTTP_oReque
 		httpHead(w, response)
 		io.WriteString(w, response.F2)
 	case <-streaming:
+	case <-exchange.upgraded:
 	case <-actor.Ended(worker):
+		if exchange.taken() {
+			return
+		}
 		select {
 		case response := <-answer:
 			httpHead(w, response)
@@ -10509,6 +10528,25 @@ func httpAnswer(serving *actor.Context, handle func(*actor.Context, THTTP_oReque
 		actor.Stop(serving, worker, where)
 		<-actor.Ended(worker)
 	}
+}
+
+// httpExchange is the request a handler process is answering, kept so that
+// WebSocket.upgrade can take over its connection.
+type httpExchange struct {
+	w        http.ResponseWriter
+	r        *http.Request
+	mu       sync.Mutex
+	hijacked bool
+	upgraded chan struct{}
+}
+
+// httpExchanges maps each handler process to its exchange.
+var httpExchanges sync.Map
+
+func (e *httpExchange) taken() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.hijacked
 }
 
 // httpHead writes a response's status and headers.
@@ -10631,4 +10669,706 @@ func httpHeader(headers L[pair[string, string]], name string) Toption[string] {
 		}
 	}
 	return noneOf[string]()
+}
+
+// ---- WebSocket ----
+
+// wsGUID is the constant RFC 6455 joins to a client's key to prove that a
+// server understood the handshake.
+const wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+// wsDefaultLimit bounds a message unless max_message_bytes: says otherwise.
+const wsDefaultLimit = 16 << 20
+
+// wsWriteTimeout is how long a frame may take to write before the connection
+// is given up.
+const wsWriteTimeout = 10 * time.Second
+
+// wsConn is one end of a WebSocket. A goroutine reads frames from the start,
+// answering pings and the closing handshake itself, and queues whole messages
+// in events; recv and an active socket take them from there, so a read that
+// times out never loses part of a frame.
+type wsConn struct {
+	conn   net.Conn
+	reader *bufio.Reader
+	client bool
+	limit  int64
+	writes sync.Mutex
+	events chan TWebSocket_oEvent
+	// done is closed when the reader has ended, quit when the connection has
+	// been closed from this end.
+	done chan struct{}
+	quit chan struct{}
+	mu   sync.Mutex
+	// closing is set once a close frame has been sent, closed once the
+	// connection has been closed from this end.
+	closing bool
+	closed  bool
+	owner   *actor.Context
+	// receiver, active and pumping work as they do for TCP sockets.
+	receiver any
+	active   int64
+	pumping  bool
+}
+
+// wsFailure is a broken rule of the protocol, with the close code that
+// reports it.
+type wsFailure struct {
+	code int
+	text string
+}
+
+func (f wsFailure) Error() string { return f.text }
+
+func newWebSocket(ctx *actor.Context, conn net.Conn, reader *bufio.Reader, client bool, limit int64) *wsConn {
+	ws := &wsConn{conn: conn, reader: reader, client: client, limit: limit, events: make(chan TWebSocket_oEvent, 16), done: make(chan struct{}), quit: make(chan struct{})}
+	ws.own(ctx)
+	go ws.read()
+	return ws
+}
+
+// own makes a process the socket's owner: when it ends, the socket closes
+// with 1001, going away.
+func (ws *wsConn) own(owner *actor.Context) {
+	ws.mu.Lock()
+	ws.owner = owner
+	ws.mu.Unlock()
+	actor.OnEnd(owner, func() {
+		ws.mu.Lock()
+		current := ws.owner == owner
+		ws.mu.Unlock()
+		if current {
+			ws.shut(1001, "", false)
+		}
+	})
+}
+
+// wsAccept is the Sec-WebSocket-Accept value for a key.
+func wsAccept(key string) string {
+	sum := sha1.Sum([]byte(key + wsGUID))
+	return base64.StdEncoding.EncodeToString(sum[:])
+}
+
+// wsHeaderHas reports whether a comma-separated header holds a token.
+func wsHeaderHas(header http.Header, name, token string) bool {
+	for _, value := range header.Values(name) {
+		for _, part := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), token) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func wsUpgrade(ctx *actor.Context, request THTTP_oRequest, where string) Tresult[*wsConn, string] {
+	return wsUpgradeWith(ctx, request, L[pair[actor.Atom, int64]]{}, where)
+}
+
+// wsUpgradeWith answers the request its process is handling with the
+// WebSocket handshake and takes over the connection.
+func wsUpgradeWith(ctx *actor.Context, request THTTP_oRequest, options L[pair[actor.Atom, int64]], where string) Tresult[*wsConn, string] {
+	limit := int64(wsDefaultLimit)
+	for _, option := range fwd(options) {
+		switch {
+		case option.E0 == "max_message_bytes" && option.E1 > 0:
+			limit = option.E1
+		case option.E0 == "max_message_bytes":
+			failAt(ctx, where, "WebSocket.upgrade: max_message_bytes: must be positive")
+		default:
+			failAt(ctx, where, "WebSocket.upgrade: unknown option :"+string(option.E0)+"; the option is max_message_bytes:")
+		}
+	}
+	found, ok := httpExchanges.Load(ctx)
+	if !ok {
+		return errOf[*wsConn]("WebSocket.upgrade must be called by the process handling the request")
+	}
+	exchange := found.(*httpExchange)
+	r := exchange.r
+	key := r.Header.Get("Sec-WebSocket-Key")
+	decoded, _ := base64.StdEncoding.DecodeString(key)
+	switch {
+	case r.Method != http.MethodGet:
+		return errOf[*wsConn]("not a WebSocket request: the method is " + r.Method)
+	case !wsHeaderHas(r.Header, "Connection", "upgrade") || !wsHeaderHas(r.Header, "Upgrade", "websocket"):
+		return errOf[*wsConn]("not a WebSocket request: no upgrade to websocket")
+	case r.Header.Get("Sec-WebSocket-Version") != "13":
+		return errOf[*wsConn]("not a WebSocket request: the version must be 13")
+	case len(decoded) != 16:
+		return errOf[*wsConn]("not a WebSocket request: the key is missing or malformed")
+	}
+	exchange.mu.Lock()
+	defer exchange.mu.Unlock()
+	if exchange.hijacked {
+		return errOf[*wsConn]("the request has already been upgraded")
+	}
+	hijacker, ok := exchange.w.(http.Hijacker)
+	if !ok {
+		return errOf[*wsConn]("the connection cannot be taken over")
+	}
+	conn, buffered, err := hijacker.Hijack()
+	if err != nil {
+		return errOf[*wsConn](err.Error())
+	}
+	exchange.hijacked = true
+	close(exchange.upgraded)
+	// The server's own deadlines no longer apply.
+	conn.SetDeadline(time.Time{})
+	conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+	_, err = io.WriteString(conn, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: "+wsAccept(key)+"\r\n\r\n")
+	if err != nil {
+		conn.Close()
+		return errOf[*wsConn](netProblem(err))
+	}
+	conn.SetWriteDeadline(time.Time{})
+	return okOf(newWebSocket(ctx, conn, buffered.Reader, false, limit))
+}
+
+func wsConnect(ctx *actor.Context, address string, ms int64, where string) Tresult[*wsConn, string] {
+	return wsConnectWith(ctx, address, ms, L[pair[actor.Atom, string]]{}, where)
+}
+
+// wsConnectWith opens a WebSocket to a ws:// or wss:// address. The options
+// are ca_file:, insecure: "true" and origin:, as text.
+func wsConnectWith(ctx *actor.Context, address string, ms int64, options L[pair[actor.Atom, string]], where string) Tresult[*wsConn, string] {
+	caFile, insecure, origin := "", false, ""
+	for _, option := range fwd(options) {
+		switch option.E0 {
+		case "ca_file":
+			caFile = option.E1
+		case "insecure":
+			insecure = option.E1 == "true"
+		case "origin":
+			origin = option.E1
+		default:
+			failAt(ctx, where, "WebSocket.connect: unknown option :"+string(option.E0)+"; the options are ca_file:, insecure: and origin:")
+		}
+	}
+	target, err := url.Parse(address)
+	if err != nil {
+		return errOf[*wsConn](err.Error())
+	}
+	secure := false
+	switch target.Scheme {
+	case "ws":
+	case "wss":
+		secure = true
+	default:
+		return errOf[*wsConn]("a WebSocket address starts with ws:// or wss://")
+	}
+	host := target.Host
+	if target.Port() == "" {
+		host = net.JoinHostPort(target.Hostname(), map[bool]string{false: "80", true: "443"}[secure])
+	}
+	until, bounded := netDeadline(ms)
+	conn, err := netDial(ctx, host, ms)
+	if err != nil {
+		return errOf[*wsConn](netProblem(err))
+	}
+	if bounded {
+		conn.SetDeadline(until)
+	}
+	if secure {
+		config := &tls.Config{ServerName: target.Hostname(), InsecureSkipVerify: insecure}
+		if caFile != "" {
+			pem, err := os.ReadFile(caFile)
+			if err != nil {
+				conn.Close()
+				return errOf[*wsConn](err.Error())
+			}
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(pem) {
+				conn.Close()
+				return errOf[*wsConn]("no certificates in " + caFile)
+			}
+			config.RootCAs = pool
+		}
+		encrypted := tls.Client(conn, config)
+		if err := encrypted.Handshake(); err != nil {
+			conn.Close()
+			return errOf[*wsConn](netProblem(err))
+		}
+		conn = encrypted
+	}
+	nonce := make([]byte, 16)
+	crand.Read(nonce)
+	key := base64.StdEncoding.EncodeToString(nonce)
+	path := target.RequestURI()
+	request := "GET " + path + " HTTP/1.1\r\nHost: " + target.Host + "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: " + key + "\r\nSec-WebSocket-Version: 13\r\n"
+	if origin != "" {
+		request += "Origin: " + origin + "\r\n"
+	}
+	reader := bufio.NewReader(conn)
+	if _, err := io.WriteString(conn, request+"\r\n"); err != nil {
+		conn.Close()
+		return errOf[*wsConn](netProblem(err))
+	}
+	response, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		conn.Close()
+		return errOf[*wsConn](netProblem(err))
+	}
+	if response.StatusCode != http.StatusSwitchingProtocols || !wsHeaderHas(response.Header, "Upgrade", "websocket") || response.Header.Get("Sec-WebSocket-Accept") != wsAccept(key) {
+		conn.Close()
+		return errOf[*wsConn]("the server did not accept the WebSocket: " + response.Status)
+	}
+	conn.SetDeadline(time.Time{})
+	return okOf(newWebSocket(ctx, conn, reader, true, wsDefaultLimit))
+}
+
+// frame reads one frame, unmasking its payload.
+func (ws *wsConn) frame() (bool, byte, []byte, error) {
+	var head [2]byte
+	if _, err := io.ReadFull(ws.reader, head[:]); err != nil {
+		return false, 0, nil, err
+	}
+	fin, op := head[0]&0x80 != 0, head[0]&0x0f
+	if head[0]&0x70 != 0 {
+		return false, 0, nil, wsFailure{1002, "protocol error: reserved bits are set"}
+	}
+	masked := head[1]&0x80 != 0
+	if masked == ws.client {
+		if ws.client {
+			return false, 0, nil, wsFailure{1002, "protocol error: the server masked a frame"}
+		}
+		return false, 0, nil, wsFailure{1002, "protocol error: the client sent an unmasked frame"}
+	}
+	size := uint64(head[1] & 0x7f)
+	switch size {
+	case 126, 127:
+		extended := make([]byte, map[uint64]int{126: 2, 127: 8}[size])
+		if _, err := io.ReadFull(ws.reader, extended); err != nil {
+			return false, 0, nil, err
+		}
+		size = 0
+		for _, b := range extended {
+			size = size<<8 | uint64(b)
+		}
+	}
+	if op >= 8 && (!fin || size > 125) {
+		return false, 0, nil, wsFailure{1002, "protocol error: a control frame is fragmented or too long"}
+	}
+	if size > uint64(ws.limit) {
+		return false, 0, nil, wsFailure{1009, "message too large"}
+	}
+	var mask [4]byte
+	if masked {
+		if _, err := io.ReadFull(ws.reader, mask[:]); err != nil {
+			return false, 0, nil, err
+		}
+	}
+	payload := make([]byte, size)
+	if _, err := io.ReadFull(ws.reader, payload); err != nil {
+		return false, 0, nil, err
+	}
+	if masked {
+		for i := range payload {
+			payload[i] ^= mask[i%4]
+		}
+	}
+	return fin, op, payload, nil
+}
+
+// read takes frames until the connection ends, putting whole messages in
+// events and ending with a closed or error event.
+func (ws *wsConn) read() {
+	var message []byte
+	var kind byte
+	for {
+		fin, op, payload, err := ws.frame()
+		if err == nil {
+			switch op {
+			case 0x8:
+				ws.peerClosed(payload)
+				return
+			case 0x9:
+				ws.write(0xA, payload)
+				continue
+			case 0xA:
+				continue
+			case 0x1, 0x2:
+				if kind != 0 {
+					err = wsFailure{1002, "protocol error: a message began before the last one ended"}
+				}
+				kind, message = op, payload
+			case 0x0:
+				if kind == 0 {
+					err = wsFailure{1002, "protocol error: a continuation frame without a message"}
+				}
+				message = append(message, payload...)
+			default:
+				err = wsFailure{1002, "protocol error: unknown opcode " + strconv.Itoa(int(op))}
+			}
+		}
+		if err == nil && int64(len(message)) > ws.limit {
+			err = wsFailure{1009, "message too large"}
+		}
+		if err == nil && fin && kind == 0x1 && !utf8.Valid(message) {
+			err = wsFailure{1007, "a text message is not valid UTF-8"}
+		}
+		if err != nil {
+			ws.broken(err)
+			return
+		}
+		if !fin {
+			continue
+		}
+		event := TWebSocket_oEvent(TWebSocket_oEvent_c0{string(message)})
+		if kind == 0x2 {
+			event = TWebSocket_oEvent(TWebSocket_oEvent_c1{string(message)})
+		}
+		kind, message = 0, nil
+		select {
+		case ws.events <- event:
+		case <-ws.quit:
+			ws.finish(nil)
+			return
+		}
+	}
+}
+
+// peerClosed answers the other end's close frame and ends the reader with
+// its code and reason.
+func (ws *wsConn) peerClosed(payload []byte) {
+	code, reason := 1005, ""
+	switch {
+	case len(payload) == 1:
+		ws.broken(wsFailure{1002, "protocol error: a close frame with a one-byte body"})
+		return
+	case len(payload) >= 2:
+		code, reason = int(binary.BigEndian.Uint16(payload)), string(payload[2:])
+		valid := code >= 1000 && code < 5000 && code != 1004 && code != 1005 && code != 1006 && (code < 1012 || code >= 3000)
+		if !valid || !utf8.ValidString(reason) {
+			ws.broken(wsFailure{1002, "protocol error: an invalid close code or reason"})
+			return
+		}
+	}
+	ws.mu.Lock()
+	answered := ws.closing
+	ws.closing = true
+	ws.mu.Unlock()
+	if !answered {
+		echo := []byte{}
+		if code != 1005 {
+			echo = binary.BigEndian.AppendUint16(echo, uint16(code))
+		}
+		ws.write(0x8, echo)
+	}
+	ws.conn.Close()
+	ws.finish(TWebSocket_oEvent(TWebSocket_oEvent_c2{int64(code), reason}))
+}
+
+// broken ends the reader after a failure: a broken rule is reported to the
+// other end with its close code, and the connection is dropped.
+func (ws *wsConn) broken(err error) {
+	var failure wsFailure
+	if errors.As(err, &failure) {
+		ws.mu.Lock()
+		sending := !ws.closing
+		ws.closing = true
+		ws.mu.Unlock()
+		if sending {
+			ws.write(0x8, append(binary.BigEndian.AppendUint16(nil, uint16(failure.code)), failure.text...))
+		}
+		ws.conn.Close()
+		ws.finish(TWebSocket_oEvent(TWebSocket_oEvent_c3{failure.text}))
+		return
+	}
+	ws.conn.Close()
+	ws.mu.Lock()
+	local := ws.closed
+	ws.mu.Unlock()
+	if local || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
+		// The connection ended without a closing handshake.
+		ws.finish(TWebSocket_oEvent(TWebSocket_oEvent_c2{1006, ""}))
+		return
+	}
+	ws.finish(TWebSocket_oEvent(TWebSocket_oEvent_c3{netProblem(err)}))
+}
+
+// finish queues the last event, if any, and ends the event stream.
+func (ws *wsConn) finish(last TWebSocket_oEvent) {
+	if last != nil {
+		select {
+		case ws.events <- last:
+		case <-ws.quit:
+		}
+	}
+	close(ws.events)
+	close(ws.done)
+}
+
+// write sends one frame, masked when this end is the client.
+func (ws *wsConn) write(op byte, payload []byte) error {
+	header := []byte{0x80 | op}
+	mask := byte(0)
+	if ws.client {
+		mask = 0x80
+	}
+	switch size := len(payload); {
+	case size < 126:
+		header = append(header, mask|byte(size))
+	case size < 1<<16:
+		header = binary.BigEndian.AppendUint16(append(header, mask|126), uint16(size))
+	default:
+		header = binary.BigEndian.AppendUint64(append(header, mask|127), uint64(size))
+	}
+	body := payload
+	if ws.client {
+		key := make([]byte, 4)
+		crand.Read(key)
+		header = append(header, key...)
+		body = make([]byte, len(payload))
+		for i, b := range payload {
+			body[i] = b ^ key[i%4]
+		}
+	}
+	ws.writes.Lock()
+	defer ws.writes.Unlock()
+	ws.conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+	_, err := ws.conn.Write(append(header, body...))
+	return err
+}
+
+func (ws *wsConn) send(ctx *actor.Context, op byte, data string) Tresult[struct{}, string] {
+	actor.Check(ctx)
+	ws.mu.Lock()
+	closing := ws.closing
+	ws.mu.Unlock()
+	if closing {
+		return errOf[struct{}]("closed")
+	}
+	if err := ws.write(op, []byte(data)); err != nil {
+		ws.conn.Close()
+		return errOf[struct{}](netProblem(err))
+	}
+	return okOf(struct{}{})
+}
+
+func wsSendText(ctx *actor.Context, ws *wsConn, text string) Tresult[struct{}, string] {
+	return ws.send(ctx, 0x1, text)
+}
+
+func wsSendBinary(ctx *actor.Context, ws *wsConn, data string) Tresult[struct{}, string] {
+	return ws.send(ctx, 0x2, data)
+}
+
+// shut starts the closing handshake and drops the connection, after waiting
+// up to a second for the other end's answer when wait is set.
+func (ws *wsConn) shut(code int, reason string, wait bool) bool {
+	ws.mu.Lock()
+	if ws.closed {
+		ws.mu.Unlock()
+		return false
+	}
+	sending := !ws.closing
+	ws.closing = true
+	ws.mu.Unlock()
+	if sending {
+		ws.write(0x8, append(binary.BigEndian.AppendUint16(nil, uint16(code)), reason...))
+	}
+	if wait {
+		select {
+		case <-ws.done:
+		case <-time.After(time.Second):
+		}
+	}
+	ws.mu.Lock()
+	ws.closed = true
+	ws.mu.Unlock()
+	close(ws.quit)
+	ws.conn.Close()
+	return true
+}
+
+func wsClose(ws *wsConn) bool {
+	return ws.shut(1000, "", true)
+}
+
+// wsCloseWith closes with a code a program may send, 1000 or 3000 to 4999,
+// and a reason of at most 123 bytes.
+func wsCloseWith(ctx *actor.Context, ws *wsConn, code int64, reason string, where string) bool {
+	if code != 1000 && (code < 3000 || code > 4999) {
+		failAt(ctx, where, "WebSocket.close: the code must be 1000 or 3000 to 4999, not "+strconv.FormatInt(code, 10))
+	}
+	if len(reason) > 123 || !utf8.ValidString(reason) {
+		failAt(ctx, where, "WebSocket.close: the reason must be valid text of at most 123 bytes")
+	}
+	return ws.shut(int(code), reason, true)
+}
+
+// wsRecv waits up to ms milliseconds for the next event.
+func wsRecv(ctx *actor.Context, ws *wsConn, ms int64) Tresult[TWebSocket_oEvent, string] {
+	ws.mu.Lock()
+	active := ws.active != 0 || ws.pumping
+	ws.mu.Unlock()
+	if active {
+		return errOf[TWebSocket_oEvent]("the socket is active")
+	}
+	until, bounded := netDeadline(ms)
+	for {
+		actor.Check(ctx)
+		slice := netSlice
+		if bounded {
+			if left := time.Until(until); left < slice {
+				slice = max(left, 0)
+			}
+		}
+		timer := time.NewTimer(slice)
+		select {
+		case event, ok := <-ws.events:
+			timer.Stop()
+			if !ok {
+				return errOf[TWebSocket_oEvent]("closed")
+			}
+			return okOf(event)
+		case <-timer.C:
+			if bounded && !time.Now().Before(until) {
+				return errOf[TWebSocket_oEvent]("timeout")
+			}
+		}
+	}
+}
+
+func wsControllingProcess[A any](ctx *actor.Context, ws *wsConn, p *actor.PID[A]) bool {
+	owner := actor.ContextOf(p)
+	if owner == nil {
+		return false
+	}
+	ws.own(owner)
+	ws.mu.Lock()
+	ws.receiver = p
+	ws.mu.Unlock()
+	return true
+}
+
+// wsSetopts sets active: true, :once or false.
+func wsSetopts(ctx *actor.Context, ws *wsConn, options L[pair[actor.Atom, actor.Atom]], where string) Tresult[struct{}, string] {
+	for _, option := range fwd(options) {
+		count, valid := map[actor.Atom]int64{"true": -1, "once": 1, "false": 0}[option.E1]
+		if option.E0 != "active" || !valid {
+			failAt(ctx, where, "WebSocket.setopts: the option is active: true, :once or false")
+		}
+		ws.mu.Lock()
+		ws.active = count
+		if count == 0 || ws.pumping {
+			ws.mu.Unlock()
+			continue
+		}
+		var receiver *actor.PID[TWebSocket_oEvent]
+		ok := false
+		if ws.receiver != nil {
+			receiver, ok = ws.receiver.(*actor.PID[TWebSocket_oEvent])
+		} else if ws.owner != nil {
+			receiver, ok = actor.MailboxOf[TWebSocket_oEvent](ws.owner)
+		}
+		if !ok {
+			ws.active = 0
+			ws.mu.Unlock()
+			return errOf[struct{}]("the controlling process does not take WebSocket.Event messages")
+		}
+		ws.pumping = true
+		ws.mu.Unlock()
+		go ws.pump(receiver)
+	}
+	return okOf(struct{}{})
+}
+
+// pump sends events to the receiver while the socket is active.
+func (ws *wsConn) pump(receiver *actor.PID[TWebSocket_oEvent]) {
+	for {
+		ws.mu.Lock()
+		if ws.active == 0 {
+			ws.pumping = false
+			ws.mu.Unlock()
+			return
+		}
+		ws.mu.Unlock()
+		timer := time.NewTimer(netSlice)
+		select {
+		case event, ok := <-ws.events:
+			timer.Stop()
+			if !ok {
+				ws.mu.Lock()
+				ws.active, ws.pumping = 0, false
+				ws.mu.Unlock()
+				return
+			}
+			// The count is settled before the event is delivered, so that a
+			// receiver given the last one can read passively at once.
+			ws.mu.Lock()
+			if ws.active > 0 {
+				ws.active--
+			}
+			last := ws.active == 0
+			if last {
+				ws.pumping = false
+			}
+			ws.mu.Unlock()
+			for !actor.Deliver(receiver, event, netSlice) {
+				select {
+				case <-actor.Ended(receiver):
+					return
+				default:
+				}
+			}
+			if last {
+				return
+			}
+		case <-timer.C:
+		}
+	}
+}
+
+func wsPeer(ws *wsConn) string {
+	return ws.conn.RemoteAddr().String()
+}
+
+// ---- Crypto ----
+
+func cryptoRandBytes(ctx *actor.Context, n int64, where string) string {
+	if n < 0 || n > 1<<20 {
+		failAt(ctx, where, "Crypto.strong_rand_bytes takes a count from 0 to 1048576")
+	}
+	out := make([]byte, n)
+	crand.Read(out)
+	return string(out)
+}
+
+// cryptoDigest is the hash function an algorithm names.
+func cryptoDigest(ctx *actor.Context, algorithm actor.Atom, function, where string) func() hash.Hash {
+	switch algorithm {
+	case "md5":
+		return md5.New
+	case "sha1":
+		return sha1.New
+	case "sha224":
+		return sha256.New224
+	case "sha256":
+		return sha256.New
+	case "sha384":
+		return sha512.New384
+	case "sha512":
+		return sha512.New
+	}
+	failAt(ctx, where, function+": the algorithms are :md5, :sha1, :sha224, :sha256, :sha384 and :sha512, not :"+string(algorithm))
+	return nil
+}
+
+func cryptoHash(ctx *actor.Context, algorithm actor.Atom, data string, where string) string {
+	h := cryptoDigest(ctx, algorithm, "Crypto.hash", where)()
+	h.Write([]byte(data))
+	return string(h.Sum(nil))
+}
+
+func cryptoHmac(ctx *actor.Context, algorithm actor.Atom, key, data string, where string) string {
+	mac := hmac.New(cryptoDigest(ctx, algorithm, "Crypto.hmac", where), []byte(key))
+	mac.Write([]byte(data))
+	return string(mac.Sum(nil))
+}
+
+// cryptoSecureCompare compares in time that depends only on the lengths, so
+// that checking a signature does not reveal how much of it was right.
+func cryptoSecureCompare(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }

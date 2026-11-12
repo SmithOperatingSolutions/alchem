@@ -502,6 +502,8 @@ func goType(t string) string {
 		return "*socketHandle"
 	case "http_server":
 		return "*httpServer"
+	case "websocket":
+		return "*wsConn"
 	case "file":
 		return "*fileHandle"
 	}
