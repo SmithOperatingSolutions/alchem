@@ -157,3 +157,80 @@ end
 		}
 	}
 }
+
+// Heredocs are written back as heredocs, at the indentation of the code
+// around them; formatting changes nothing else about them.
+func TestFormatKeepsHeredocs(t *testing.T) {
+	source := `defmodule Main do
+  def text(name: string): list[string] do
+      plain = """
+        line one
+          indented "quoted"
+        """
+      raw = ~S"""
+      no \n escapes #{here}
+      """
+      escaped = ~s"""
+      hi #{name}\tthere
+      """
+      words = ~w"""
+      alpha beta
+      """
+      [plain, raw, escaped] ++ words
+  end
+
+  def size(): integer do
+    String.length(
+      """
+      abc
+      """
+    )
+  end
+
+  def main() do
+    IO.inspect(text("x"))
+  end
+end
+`
+	want := `defmodule Main do
+  def text(name: string): list[string] do
+    plain = """
+    line one
+      indented "quoted"
+    """
+    raw = ~S"""
+    no \n escapes #{here}
+    """
+    escaped = ~s"""
+    hi #{name}\tthere
+    """
+    words = ~w"""
+    alpha beta
+    """
+    [plain, raw, escaped] ++ words
+  end
+
+  def size(): integer do
+    String.length("""
+    abc
+    """
+    )
+  end
+
+  def main() do
+    IO.inspect(text("x"))
+  end
+end
+`
+	got, err := Format(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("formatted:\n%s\nwant:\n%s", got, want)
+	}
+	again, err := Format(got)
+	if err != nil || again != got {
+		t.Fatalf("not stable: %v\n%s", err, again)
+	}
+}
