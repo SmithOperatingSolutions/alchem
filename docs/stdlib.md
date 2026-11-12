@@ -196,7 +196,7 @@ TCP.send(client, String.upcase(line) <> "\n")
 
 `HTTP.serve(address, handler, [idle_timeout: 5000, max_body_bytes: 1000000])` tunes timeouts, keep-alive and sizes; `HTTP.serve_tls(address, handler, [certfile: path, keyfile: path])` serves HTTPS. `HTTP.route(request, routes)` dispatches on `{method, "/users/:id", handler}` routes, answering 404 and 405 itself. `HTTP.chunked(status, headers, stream)` sends a body as it is made, and `HTTP.stream` receives one as a stream of chunks.
 
-`HTTP.serve(address, handler)` answers each request by running the handler, `fn[HTTP.Request, HTTP.Response]`, in a process of its own, so a slow or failing request holds up no other; a handler that fails answers 500. `HTTP.Request` has `method`, `path`, `query`, `headers` (lower-case names) and `body`; `HTTP.Response` has `status`, `headers` and `body`, and `HTTP.text` and `HTTP.json` build common ones. The client functions, `HTTP.get`, `HTTP.post` and `HTTP.request`, return `ok(response)` for a response with any status and `error(reason)` when there was none.
+`HTTP.serve(address, handler)` answers each request by running the handler, `fn[HTTP.Request, HTTP.Response]`, in a process of its own, so a slow or failing request holds up no other; a handler that fails answers 500. `HTTP.Request` has `method`, `path`, `query`, `headers` (lower-case names, including `host`) and `body`; `HTTP.Response` has `status`, `headers` and `body`, and `HTTP.text` and `HTTP.json` build common ones. The client functions, `HTTP.get`, `HTTP.post` and `HTTP.request`, return `ok(response)` for a response with any status and `error(reason)` when there was none.
 
 ```elixir
 def handle(request: HTTP.Request): HTTP.Response do

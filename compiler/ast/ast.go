@@ -18,7 +18,9 @@ type Program struct {
 	Uses   []Use
 	// GroupTags holds the tags written above each describe, by its path;
 	// the empty path holds the module's own (@moduletag).
-	GroupTags                map[string][]string
+	GroupTags map[string][]string
+	// Constants are the module's @name value declarations, in source order.
+	Constants                []Constant
 	Remotes                  []Remote
 	Types                    []TypeDecl
 	Requires                 []Require
@@ -32,6 +34,14 @@ type Program struct {
 	Output                   string
 	Comparison               *Comparison
 	Assertion                *bool // nil for IO.puts, non-nil for assert(true|false)
+}
+
+// Constant is a module constant, @name value: every @name in the module
+// stands for the value.
+type Constant struct {
+	Name         string
+	Value        *Expr
+	Line, Column int
 }
 
 // Literal holds a validated value; integers use signed 64-bit semantics.

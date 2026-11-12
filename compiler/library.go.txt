@@ -10458,7 +10458,13 @@ func httpAnswer(serving *actor.Context, handle func(*actor.Context, THTTP_oReque
 		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 		return
 	}
-	request := THTTP_oRequest{r.Method, r.URL.Path, r.URL.RawQuery, httpHeaders(r.Header), string(data)}
+	// Go keeps Host out of the header map; a handler sees it as a header,
+	// as it arrived.
+	headers := r.Header.Clone()
+	if r.Host != "" {
+		headers.Set("Host", r.Host)
+	}
+	request := THTTP_oRequest{r.Method, r.URL.Path, r.URL.RawQuery, httpHeaders(headers), string(data)}
 	answer := make(chan THTTP_oResponse, 1)
 	streaming := make(chan struct{})
 	exchange := &httpExchange{w: w, r: r, upgraded: make(chan struct{})}
