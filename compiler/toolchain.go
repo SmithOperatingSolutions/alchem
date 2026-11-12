@@ -45,28 +45,117 @@ type Toolchain struct {
 	// Source is "ALCHEM_GO", "PATH", "downloaded", "download" (fetched on
 	// first use) or "missing" (downloads are turned off).
 	Source string `json:"source"`
+	// Skipped explains why a go on PATH was not used, when it is too old.
+	Skipped string `json:"skipped,omitempty"`
 }
 
 // LocateGo finds the go command without downloading anything. The
 // ALCHEM_GO environment variable names one explicitly; otherwise a go on
-// PATH is used, then a release this compiler downloaded before.
+// PATH is used when it is at least MinimumGo, then a release this compiler
+// downloaded before.
 func LocateGo() Toolchain {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return locateGo(ctx)
+}
+
+func locateGo(ctx context.Context) Toolchain {
 	if explicit := os.Getenv("ALCHEM_GO"); explicit != "" {
 		return Toolchain{Path: explicit, Source: "ALCHEM_GO"}
 	}
+	skipped := ""
 	if path, err := exec.LookPath("go"); err == nil {
-		return Toolchain{Path: path, Source: "PATH"}
+		version, known := goVersion(ctx, path)
+		if !known || atLeast(version, MinimumGo) {
+			return Toolchain{Path: path, Source: "PATH"}
+		}
+		skipped = fmt.Sprintf("%s is %s; Alchem needs %s or newer", path, version, MinimumGo)
 	}
 	if root, err := toolchainRoot(); err == nil {
 		executable := filepath.Join(root, "go", "bin", "go"+exeSuffix())
 		if info, err := os.Stat(executable); err == nil && !info.IsDir() {
-			return Toolchain{Path: executable, Source: "downloaded"}
+			return Toolchain{Path: executable, Source: "downloaded", Skipped: skipped}
 		}
 	}
 	if downloadsOff() {
-		return Toolchain{Source: "missing"}
+		return Toolchain{Source: "missing", Skipped: skipped}
 	}
-	return Toolchain{Source: "download"}
+	return Toolchain{Source: "download", Skipped: skipped}
+}
+
+// MinimumGo is the oldest Go release that can build Alchem programs: the
+// generated module and the embedded runtime declare it.
+const MinimumGo = "go1.27"
+
+var (
+	versionMu sync.Mutex
+	versions  = map[string]string{}
+)
+
+// goVersion asks the go executable at path for its release, such as
+// "go1.27.4". known is false when it cannot tell, and such a go is used
+// rather than second-guessed.
+func goVersion(ctx context.Context, path string) (version string, known bool) {
+	versionMu.Lock()
+	cached, ok := versions[path]
+	versionMu.Unlock()
+	if ok {
+		return cached, true
+	}
+	cmd := exec.CommandContext(ctx, path, "env", "GOVERSION")
+	cmd.Dir = os.TempDir()
+	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=")
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	version = strings.TrimSpace(string(out))
+	if err != nil || releaseNumbers(version) == nil {
+		return version, false
+	}
+	versionMu.Lock()
+	versions[path] = version
+	versionMu.Unlock()
+	return version, true
+}
+
+// releaseNumbers parses "go1.27.4", "go1.27" or "go1.28rc1" into its
+// numbers; anything else, such as a development build, is nil.
+func releaseNumbers(version string) []int {
+	rest, ok := strings.CutPrefix(version, "go")
+	if !ok {
+		return nil
+	}
+	if i := strings.IndexAny(rest, "abcdefghijklmnopqrstuvwxyz -+"); i >= 0 {
+		rest = rest[:i]
+	}
+	var numbers []int
+	for _, part := range strings.Split(rest, ".") {
+		n := 0
+		if part == "" {
+			return nil
+		}
+		for _, c := range part {
+			if c < '0' || c > '9' {
+				return nil
+			}
+			n = n*10 + int(c-'0')
+		}
+		numbers = append(numbers, n)
+	}
+	return numbers
+}
+
+// atLeast reports whether release version is minimum or newer.
+func atLeast(version, minimum string) bool {
+	have, want := releaseNumbers(version), releaseNumbers(minimum)
+	for i := range want {
+		if i >= len(have) {
+			return false
+		}
+		if have[i] != want[i] {
+			return have[i] > want[i]
+		}
+	}
+	return true
 }
 
 var downloadMu sync.Mutex
@@ -74,14 +163,17 @@ var downloadMu sync.Mutex
 // goCommand returns the go executable, downloading GoRelease into the user
 // cache when no go command is installed.
 func goCommand(ctx context.Context) (string, error) {
-	found := LocateGo()
+	found := locateGo(ctx)
 	switch found.Source {
 	case "missing":
+		if found.Skipped != "" {
+			return "", fmt.Errorf("%s: install a newer Go, set ALCHEM_GO to a go executable, or unset ALCHEM_GO_DOWNLOAD to let alchem download %s", found.Skipped, GoRelease)
+		}
 		return "", fmt.Errorf("no go command: install Go 1.27 or newer, set ALCHEM_GO to a go executable, or unset ALCHEM_GO_DOWNLOAD to let alchem download %s", GoRelease)
 	case "download":
 		downloadMu.Lock()
 		defer downloadMu.Unlock()
-		if again := LocateGo(); again.Path != "" {
+		if again := locateGo(ctx); again.Path != "" {
 			return again.Path, nil
 		}
 		return downloadGo(ctx)
@@ -158,7 +250,11 @@ func downloadGo(ctx context.Context) (string, error) {
 		base = goDownloadBase
 	}
 	url := strings.TrimSuffix(base, "/") + "/" + archive
-	fmt.Fprintf(ToolchainLog, "alchem: no go command found; downloading %s to %s (once)\n", GoRelease, root)
+	if found := locateGo(ctx); found.Skipped != "" {
+		fmt.Fprintf(ToolchainLog, "alchem: %s; downloading %s to %s (once)\n", found.Skipped, GoRelease, root)
+	} else {
+		fmt.Fprintf(ToolchainLog, "alchem: no go command found; downloading %s to %s (once)\n", GoRelease, root)
+	}
 
 	if err := os.MkdirAll(filepath.Dir(root), 0o755); err != nil {
 		return "", fmt.Errorf("download Go: %w", err)
