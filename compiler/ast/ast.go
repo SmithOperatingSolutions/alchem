@@ -87,6 +87,9 @@ type Expr struct {
 	// holds the types chosen for a generic function's type variables.
 	Labels, TypeArgs []string
 	Line, Column     int
+	// Heredoc is how a string or sigil written as a heredoc looked, kept
+	// when parsing for the formatter; see lexer.Heredoc.
+	Heredoc string
 }
 
 // Parameter is a typed name. In a function clause as written it may instead

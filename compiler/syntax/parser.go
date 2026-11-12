@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/SmithOperatingSolutions/alchem/compiler/ast"
 	"github.com/SmithOperatingSolutions/alchem/compiler/lexer"
@@ -20,6 +21,9 @@ const (
 )
 
 type parser struct {
+	// source is kept when parsing for the formatter, which writes heredocs
+	// back as they were written.
+	source         string
 	tokens         []lexer.Token
 	pos, depth     int
 	inArm, probing bool
@@ -119,6 +123,9 @@ func parse(source string, check bool, raw ...bool) (ast.Program, error) {
 		return ast.Program{}, err
 	}
 	p := parser{tokens: ts, capture: -1, comments: comments, keep: len(raw) > 0}
+	if p.keep {
+		p.source = source
+	}
 	leading := p.commentsBefore(p.peek())
 	if _, err = p.expect(lexer.Ident, "defmodule"); err != nil {
 		return ast.Program{}, err
@@ -862,6 +869,7 @@ func (p *parser) atom() (*ast.Expr, error) {
 		p.pos++
 		parts := strings.SplitN(t.Text, "\x00", 3)
 		e.Kind, e.Name, e.Value, e.Op = "sigil", parts[0], ast.Literal{Kind: "string", Text: parts[1]}, parts[2]
+		e.Heredoc = p.heredoc(t)
 		// The lower-case text sigils interpolate #{...}; the template is
 		// kept beside the text so that the formatter still sees the source.
 		if unicode.IsLower([]rune(e.Name)[0]) && strings.Contains(parts[1], "#{") {
@@ -1130,7 +1138,11 @@ func (p *parser) atom() (*ast.Expr, error) {
 		e.Value = ast.Literal{Kind: "float", Float: v}
 	case lexer.Template:
 		p.pos++
-		return p.template(t)
+		template, err := p.template(t)
+		if template != nil {
+			template.Heredoc = p.heredoc(t)
+		}
+		return template, err
 	case lexer.Atom:
 		p.pos++
 		e.Kind = "literal"
@@ -1143,6 +1155,7 @@ func (p *parser) atom() (*ast.Expr, error) {
 		p.pos++
 		e.Kind = "literal"
 		e.Value = ast.Literal{Kind: "string", Text: v}
+		e.Heredoc = p.heredoc(t)
 	case lexer.Ident:
 		p.pos++
 		if t.Text == "true" || t.Text == "false" {
@@ -2692,4 +2705,26 @@ func copyExpr(e *ast.Expr) *ast.Expr {
 		out.Keys = nil
 	}
 	return &out
+}
+
+// heredoc is how the token was written when it is a heredoc, for the
+// formatter; it is empty otherwise, and always outside formatting.
+func (p *parser) heredoc(t lexer.Token) string {
+	if p.source == "" {
+		return ""
+	}
+	offset := 0
+	for line := 1; line < t.Line; line++ {
+		next := strings.IndexByte(p.source[offset:], '\n')
+		if next < 0 {
+			return ""
+		}
+		offset += next + 1
+	}
+	for column := 1; column < t.Column && offset < len(p.source); column++ {
+		_, size := utf8.DecodeRuneInString(p.source[offset:])
+		offset += size
+	}
+	written, _ := lexer.Heredoc(p.source, offset)
+	return written
 }

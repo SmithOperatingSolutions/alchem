@@ -606,3 +606,30 @@ func heredocString(text string, line, col int) (Token, error) {
 	}
 	return Token{String, unescaped, line, col}, nil
 }
+
+// Heredoc reports how the string or sigil at offset in source is written
+// when it is a heredoc: the opening quotes with any sigil letter, a
+// newline, its lines with the closing indentation removed, and the closing
+// quotes with any modifiers. ok is false for anything else.
+func Heredoc(source string, offset int) (written string, ok bool) {
+	open := `"""`
+	quotes := offset
+	if strings.HasPrefix(source[offset:], "~") && offset+2 < len(source) {
+		open = source[offset:offset+2] + `"""`
+		quotes = offset + 2
+	}
+	if !strings.HasPrefix(source[offset:], open) {
+		return "", false
+	}
+	text, next, _, _, err := heredoc(source, quotes, 0, 0)
+	if err != nil {
+		return "", false
+	}
+	modifiers := next
+	if open != `"""` {
+		for modifiers < len(source) && (source[modifiers] >= 'a' && source[modifiers] <= 'z' || source[modifiers] == 'U') {
+			modifiers++
+		}
+	}
+	return open + "\n" + text + `"""` + source[next:modifiers], true
+}
