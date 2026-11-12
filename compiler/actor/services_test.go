@@ -169,8 +169,10 @@ func TestRegistryForgetsEndedOwners(t *testing.T) {
 func TestDynamicSupervisorRestartsByPolicy(t *testing.T) {
 	c := root(t)
 	s := StartDynamicSupervisor(c, 10, 5000, "test")
+	// A crash every 20 ms keeps ten restarts well inside the five-second
+	// window while the test looks at the restarted child.
 	crash := func(c *Context, _ *PID[int64]) int64 {
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 		Fail(c, "test", "crash")
 		return 0
 	}
@@ -186,11 +188,13 @@ func TestDynamicSupervisorRestartsByPolicy(t *testing.T) {
 	if !DynamicSupervisorAlive(c, s, "test") {
 		t.Fatal("gave up too soon")
 	}
-	children := DynamicChildren(c, s, "test")
-	if len(children) != 1 || children[0] == first.task.id {
-		t.Fatalf("restarted child: %v (first %d)", children, first.task.id)
-	}
-	if !TerminateDynamicChild(c, s, children[0], "test") || len(DynamicChildren(c, s, "test")) != 0 {
+	// Between a crash and its restart the supervisor has no children, so
+	// the replacement is looked for, and terminated, until one is found.
+	waitFor(t, func() bool {
+		children := DynamicChildren(c, s, "test")
+		return len(children) == 1 && children[0] != first.task.id && TerminateDynamicChild(c, s, children[0], "test")
+	})
+	if len(DynamicChildren(c, s, "test")) != 0 {
 		t.Fatal("terminate_child")
 	}
 	// Past the restart intensity the supervisor stops.
