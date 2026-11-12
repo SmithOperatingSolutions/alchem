@@ -189,3 +189,67 @@ func TestDownloadedGoGetsItsOwnRoot(t *testing.T) {
 		t.Fatalf("an installed go had its environment changed: %v", got)
 	}
 }
+
+func TestReleaseNumbersAndMinimum(t *testing.T) {
+	for version, want := range map[string]bool{
+		"go1.27": true, "go1.27.0": true, "go1.27.4": true, "go1.28rc1": true, "go2.0": true,
+		"go1.26.10": false, "go1.9": false, "go1": false,
+	} {
+		if got := atLeast(version, MinimumGo); got != want {
+			t.Errorf("atLeast(%q) = %v", version, got)
+		}
+	}
+	for _, unknown := range []string{"", "devel go1.28-abc", "go", "go1..2", "go1.x"} {
+		if releaseNumbers(unknown) != nil {
+			t.Errorf("%q parsed", unknown)
+		}
+	}
+}
+
+// goOnPath puts a fake go on PATH that reports version from go env.
+func goOnPath(t *testing.T, version string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fake toolchain is Unix only")
+	}
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "go")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho '"+version+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	return fake
+}
+
+func TestAnOldGoOnPathIsSkipped(t *testing.T) {
+	archive := fakeGoArchive(t)
+	cache, _ := withoutGo(t, archive, hashOf(archive))
+	old := goOnPath(t, "go1.26.10")
+	found := LocateGo()
+	if found.Source != "download" || !strings.Contains(found.Skipped, old+" is go1.26.10; Alchem needs go1.27 or newer") {
+		t.Fatalf("old go: %+v", found)
+	}
+	path, err := goCommand(context.Background())
+	if err != nil || path != filepath.Join(cache, "toolchains", GoRelease, "go", "bin", "go") {
+		t.Fatalf("path=%s err=%v", path, err)
+	}
+	if found := LocateGo(); found.Source != "downloaded" || found.Skipped == "" {
+		t.Fatalf("after download: %+v", found)
+	}
+
+	t.Setenv("ALCHEM_CACHE", t.TempDir())
+	t.Setenv("ALCHEM_GO_DOWNLOAD", "off")
+	if _, err := goCommand(context.Background()); err == nil || !strings.Contains(err.Error(), "Alchem needs go1.27 or newer: install a newer Go") {
+		t.Fatalf("downloads off: %v", err)
+	}
+}
+
+func TestACurrentOrUnknownGoOnPathIsUsed(t *testing.T) {
+	withoutGo(t, nil, "")
+	for _, version := range []string{"go1.27.0", "go1.30", "devel go1.28-abcdef"} {
+		fake := goOnPath(t, version)
+		if found := LocateGo(); found != (Toolchain{Path: fake, Source: "PATH"}) {
+			t.Fatalf("%s: %+v", version, found)
+		}
+	}
+}

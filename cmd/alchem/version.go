@@ -36,11 +36,14 @@ func versionText(asJSON bool) string {
 		return string(data) + "\n"
 	}
 	text := fmt.Sprintf("alchem %s %s/%s\n", compilerVersion(), runtime.GOOS, runtime.GOARCH)
+	if toolchain.Skipped != "" {
+		text += "go: skipping " + toolchain.Skipped + "\n"
+	}
 	switch toolchain.Source {
 	case "download":
-		text += fmt.Sprintf("go: none installed; the first build downloads %s\n", compiler.GoRelease)
+		text += fmt.Sprintf("go: no usable go installed; the first build downloads %s\n", compiler.GoRelease)
 	case "missing":
-		text += "go: none installed, and ALCHEM_GO_DOWNLOAD turns downloading off\n"
+		text += "go: no usable go installed, and ALCHEM_GO_DOWNLOAD turns downloading off\n"
 	default:
 		text += fmt.Sprintf("go: %s (%s)\n", toolchain.Path, toolchain.Source)
 	}

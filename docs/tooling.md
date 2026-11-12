@@ -136,7 +136,7 @@ Library entry points are `Check`/`CheckContext`, `Format`, `BuildWithOptions`/`B
 Builds, tests, `run`, `alx`, and `check` of a program with `extern` run a `go` command, found in this order:
 
 1. `ALCHEM_GO`, the path of a go executable.
-2. `go` on `PATH`. Go 1.21 and later switch to a newer release on their own when a module needs one.
+2. `go` on `PATH`, when it is Go 1.27 or newer. An older one is skipped, and `alchem version` says so; one whose version cannot be read is used as it is.
 3. The Go release alchem downloaded before, in `<user cache>/alchem/toolchains/<release>` (`ALCHEM_CACHE` replaces `<user cache>/alchem`).
 4. Otherwise the pinned release (`compiler.GoRelease`) is downloaded from `https://go.dev/dl/` (`ALCHEM_GO_MIRROR` replaces it), checked against the SHA-256 recorded in the compiler, and unpacked there. A notice goes to standard error. Set `ALCHEM_GO_DOWNLOAD=off` to fail with an explanation instead.
 
