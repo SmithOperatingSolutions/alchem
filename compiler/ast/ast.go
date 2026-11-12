@@ -88,8 +88,10 @@ type Expr struct {
 	Labels, TypeArgs []string
 	Line, Column     int
 	// Heredoc is how a string or sigil written as a heredoc looked, kept
-	// when parsing for the formatter; see lexer.Heredoc.
-	Heredoc string
+	// when parsing for the formatter; see lexer.Heredoc. Delimiter is the
+	// opening delimiter of a one-line sigil, also kept for the formatter.
+	Heredoc   string
+	Delimiter string
 }
 
 // Parameter is a typed name. In a function clause as written it may instead

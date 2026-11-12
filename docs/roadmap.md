@@ -176,7 +176,7 @@ Run the harness before and after a performance change on the same machine and re
 
 - [x] `WebSocket`: upgrading an `HTTP.serve` request, a client with `ws://` and `wss://`, text and binary messages, pings and the closing handshake handled by the runtime, active mode and message size limits.
 - [x] `Crypto`: secure random bytes, hashes, HMAC and constant-time comparison.
-- [ ] An escaping template sigil, for server-rendered HTML.
+- [x] `~h` HTML templates that escape what they interpolate, and the `Markup` type.
 
 ## Workflow
 

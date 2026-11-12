@@ -870,6 +870,9 @@ func (p *parser) atom() (*ast.Expr, error) {
 		parts := strings.SplitN(t.Text, "\x00", 3)
 		e.Kind, e.Name, e.Value, e.Op = "sigil", parts[0], ast.Literal{Kind: "string", Text: parts[1]}, parts[2]
 		e.Heredoc = p.heredoc(t)
+		if e.Heredoc == "" {
+			e.Delimiter = p.sigilDelimiter(t)
+		}
 		// The lower-case text sigils interpolate #{...}; the template is
 		// kept beside the text so that the formatter still sees the source.
 		if unicode.IsLower([]rune(e.Name)[0]) && strings.Contains(parts[1], "#{") {
@@ -2279,7 +2282,7 @@ func (p *parser) sigilTemplate(t lexer.Token, text string) (*ast.Expr, error) {
 	var raw strings.Builder
 	raw.WriteByte('"')
 	literal := func(part string) {
-		raw.WriteString(strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(part))
+		raw.WriteString(strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`).Replace(part))
 	}
 	start := 0
 	for i := 0; i+1 < len(text); i++ {
@@ -2707,23 +2710,42 @@ func copyExpr(e *ast.Expr) *ast.Expr {
 	return &out
 }
 
-// heredoc is how the token was written when it is a heredoc, for the
-// formatter; it is empty otherwise, and always outside formatting.
-func (p *parser) heredoc(t lexer.Token) string {
-	if p.source == "" {
+// sigilDelimiter is the opening delimiter of a one-line sigil, for the
+// formatter; it is empty outside formatting.
+func (p *parser) sigilDelimiter(t lexer.Token) string {
+	offset, ok := p.offset(t)
+	if !ok || offset+2 >= len(p.source) || p.source[offset] != '~' {
 		return ""
+	}
+	return p.source[offset+2 : offset+3]
+}
+
+// offset is where a token starts in the source kept for the formatter.
+func (p *parser) offset(t lexer.Token) (int, bool) {
+	if p.source == "" {
+		return 0, false
 	}
 	offset := 0
 	for line := 1; line < t.Line; line++ {
 		next := strings.IndexByte(p.source[offset:], '\n')
 		if next < 0 {
-			return ""
+			return 0, false
 		}
 		offset += next + 1
 	}
 	for column := 1; column < t.Column && offset < len(p.source); column++ {
 		_, size := utf8.DecodeRuneInString(p.source[offset:])
 		offset += size
+	}
+	return offset, true
+}
+
+// heredoc is how the token was written when it is a heredoc, for the
+// formatter; it is empty otherwise, and always outside formatting.
+func (p *parser) heredoc(t lexer.Token) string {
+	offset, ok := p.offset(t)
+	if !ok {
+		return ""
 	}
 	written, _ := lexer.Heredoc(p.source, offset)
 	return written

@@ -124,6 +124,10 @@ Run `alchem syntax <topic>`.
 - `macros`: defmacro defines a template; a call is replaced by the template with its arguments filled in.
 - `extern`: extern name(params): result = "package.Function" calls a Go function.
 
+**Text**
+
+- `templates`: ~h"..." and ~h"""...""" are HTML templates that escape what they interpolate.
+
 **Concurrency**
 
 - `nodes`: Programs connect as nodes and their processes exchange messages, which are copied.
@@ -189,6 +193,7 @@ alx> MapSet.new([3, 1, 3]) |> MapSet.to_list()
 - `JSON` (4): Converts between JSON text and the builtin JSON type.
 - `URI` (12): Percent-encoding and query strings.
 - `Version` (7): Parsing and comparing semantic versions.
+- `Markup` (5): HTML built by ~h templates, which escape every value they interpolate; see alchem syntax templates.
 - `Crypto` (4): Cryptographic building blocks: random bytes from the operating system's secure source, hashes, HMAC signatures and a comparison that takes the same time however much of its input matches. Results are raw bytes; Base.encode16 or Base.encode64 makes them printable.
 
 ```elixir

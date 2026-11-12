@@ -14,6 +14,8 @@ One section per topic of `alchem syntax`. Every example is compiled and run by t
 
 **Modules**: [modules](#modules), [constants](#constants), [protocols](#protocols), [macros](#macros), [extern](#extern)
 
+**Text**: [templates](#templates)
+
 **Concurrency**: [nodes](#nodes), [processes](#processes)
 
 **Testing**: [tests](#tests), [properties](#properties), [doctests](#doctests)
@@ -969,6 +971,7 @@ See also: alchem syntax ranges, alchem doc Stream, alchem doc Enum, alchem doc F
 - ~s, ~w and ~r interpolate #{expression}; ~S never does. A ~r that interpolates is compiled when it runs rather than checked at compile time.
 - String.replace and String.split accept a ~r in place of the text to look for.
 - ~c(text) is the code points of the text as a list of integers; there are no charlists.
+- ~h is an HTML template: it builds Markup, escaping every value it interpolates (see alchem syntax templates); ~H does not interpolate.
 - Any other letter is a sigil the program defines: ~x(text)mods calls sigil_x(text, "mods"), a function taking two strings. A lower-case one interpolates.
 
 Example: sigils
@@ -1052,6 +1055,39 @@ end
 ```
 
 See also: alchem syntax program, alchem syntax extern, alchem syntax functions
+
+## templates
+
+~h"..." and ~h"""...""" are HTML templates that escape what they interpolate.
+
+- A template's own text is HTML as written. Each #{...} value is escaped by its type: a string is escaped, Markup (such as another template) goes in as it is, integers, floats and atoms are written as text, and a list of Markup is joined.
+- The result is a Markup value; Markup.to_string gives its text. Markup.raw makes Markup from trusted text, and Markup.escape escapes a string.
+- Quote attribute values, href="#{url}": escaping makes a value safe inside quotes. It does not check what a URL points to.
+- Any other type in #{...}, such as a boolean or a map, is a compile error; convert it to a string first.
+
+Example: a list page
+
+```elixir
+defmodule Example do
+  def item(name: string): Markup do
+    ~h"<li>#{name}</li>"
+  end
+
+  def page(names: list[string]): Markup do
+    ~h"""
+    <h1>#{length(names)} names</h1>
+    <ul>#{Enum.map(names, &item/1)}</ul>
+    """
+  end
+
+  def main() do
+    html = Markup.to_string(page(["ada", "<script>"]))
+    assert(html == "<h1>2 names</h1>\n<ul><li>ada</li><li>&lt;script&gt;</li></ul>\n")
+  end
+end
+```
+
+See also: alchem syntax sigils, alchem syntax strings
 
 ## constants
 

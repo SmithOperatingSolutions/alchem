@@ -14,7 +14,7 @@ alchem build --race -o system-race examples/system
 alchem test --timeout 10s tests/fixtures
 ```
 
-`alchem fmt` rewrites files into one layout: two-space indentation, one declaration group after another, and long collections split one item per line. Strings and sigils written as heredocs (`"""`, `~S"""`, `~s"""` and other sigil letters) stay heredocs, their lines indented to the code around them; because the closing quotes stand on a line of their own, whatever follows a heredoc in the same expression moves to the next line.
+`alchem fmt` rewrites files into one layout: two-space indentation, one declaration group after another, and long collections split one item per line. Strings and sigils written as heredocs (`"""`, `~S"""`, `~s"""` and other sigil letters) stay heredocs, their lines indented to the code around them; because the closing quotes stand on a line of their own, whatever follows a heredoc in the same expression moves to the next line. A one-line sigil keeps the delimiters it was written with.
 
 ## Help built into the command
 

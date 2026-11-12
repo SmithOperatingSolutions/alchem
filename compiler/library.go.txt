@@ -11378,3 +11378,32 @@ func cryptoHmac(ctx *actor.Context, algorithm actor.Atom, key, data string, wher
 func cryptoSecureCompare(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
+
+// ---- Markup ----
+
+// markupEscape makes text safe inside HTML elements and quoted attribute
+// values: &, <, >, " and ' become character references.
+func markupEscape(text string) string { return html.EscapeString(text) }
+
+func markupRaw(text string) TMarkup { return TMarkup{text} }
+
+func markupString(m TMarkup) string { return m.F0 }
+
+func markupOf(m TMarkup) TMarkup { return m }
+
+func markupOfString(text string) TMarkup { return TMarkup{markupEscape(text)} }
+
+func markupOfInteger(n int64) TMarkup { return TMarkup{strconv.FormatInt(n, 10)} }
+
+func markupOfFloat(f float64) TMarkup { return TMarkup{floatString(f)} }
+
+func markupOfAtom(a actor.Atom) TMarkup { return TMarkup{markupEscape(string(a))} }
+
+// markupJoin puts pieces of markup one after another.
+func markupJoin(pieces L[TMarkup]) TMarkup {
+	var b strings.Builder
+	for _, piece := range fwd(pieces) {
+		b.WriteString(piece.F0)
+	}
+	return TMarkup{b.String()}
+}

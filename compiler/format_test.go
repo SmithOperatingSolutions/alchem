@@ -234,3 +234,28 @@ end
 		t.Fatalf("not stable: %v\n%s", err, again)
 	}
 }
+
+// A one-line sigil keeps the delimiters it was written with.
+func TestFormatKeepsSigilDelimiters(t *testing.T) {
+	source := `defmodule Main do
+  def main() do
+    name = "ada"
+    page = ~h"<p class=\"x\">#{name}</p>"
+    plain = ~H(<br>)
+    words = ~w[a b]
+    pattern = ~r{a/b}i
+    text = ~S|raw \n|
+    quoted = ~s'it\'s'
+    day = ~D"2026-01-02"
+    IO.inspect({page, plain, words, pattern, text, quoted, day})
+  end
+end
+`
+	got, err := Format(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != source {
+		t.Fatalf("formatted:\n%s\nwant it unchanged:\n%s", got, source)
+	}
+}

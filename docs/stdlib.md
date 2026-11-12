@@ -240,6 +240,25 @@ end
 
 `Crypto.strong_rand_bytes(n)` reads the operating system's secure random source, `Crypto.hash(:sha256, data)` and `Crypto.hmac(:sha256, key, data)` give raw digests (`Base.encode16` or `Base.encode64` make them printable), and `Crypto.secure_compare(a, b)` compares signatures and tokens in time that does not depend on where they differ.
 
+## HTML templates
+
+`~h"<li>#{name}</li>"` and `~h"""` heredocs build `Markup`: the template's own text is kept, and every interpolated string is escaped, so text from users cannot become markup. A `Markup` value interpolated into another template goes in unchanged, a list of them is joined, and numbers and atoms are written as text. `Markup.to_string` gives the HTML, `Markup.raw` marks trusted text as markup, and `Markup.escape` escapes a string.
+
+```elixir
+def item(name: string): Markup do
+  ~h"<li>#{name}</li>"
+end
+
+def page(names: list[string]): Markup do
+  ~h"""
+  <h1>#{length(names)} names</h1>
+  <ul>#{Enum.map(names, &item/1)}</ul>
+  """
+end
+
+HTTP.text(200, Markup.to_string(page(["ada", "<script>"])))
+```
+
 ## Atoms, keyword lists and ports
 
 `Atom.to_string` and `String.to_atom` convert between an atom and its name. The `Keyword` module works on keyword lists, `[name: value]`: `get`, `fetch`, `put`, `delete`, `merge`, `keys`, `values`, `update`, `pop`, `take`, `drop`, `get_values` and `to_map`.
