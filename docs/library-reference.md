@@ -8676,6 +8676,26 @@ alx> Supervisor.stop(group, 1000)
 true
 ```
 
+### Supervisor.server
+
+```
+Supervisor.server(atom, string, s, fn[s,q,tuple[s,r]]) -> tuple[string,string,fn[pid[tuple[]],integer]]
+```
+
+A child for Supervisor.start that runs a server under a name: the child registers the server, Supervisor.start returns once it has, and Server.whereis finds whichever server is running. A failing server makes its child fail, so the strategy and the policy ("permanent", "transient" or "temporary") decide the restart, which begins from the initial state. Servers of different types can share one supervisor.
+
+```elixir
+alx> tree = Supervisor.start("one_for_one", 3, 1000, [Supervisor.server(:doc_total, "permanent", 0, fn(total: integer, n: integer): tuple[integer, integer] do {total + n, total + n} end)], 1)
+alx> found: option[server[integer, integer]] = Server.whereis(:doc_total)
+alx> case found do
+...>   some(total) -> Server.call(total, 5, 1000)
+...>   none -> error("not found")
+...> end
+ok(5)
+alx> Supervisor.stop(tree, 1000)
+true
+```
+
 ### Supervisor.start
 
 ```

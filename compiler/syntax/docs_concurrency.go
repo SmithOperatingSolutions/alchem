@@ -75,6 +75,11 @@ func init() {
 	legacy("Supervisor.stop", "Supervisor.stop(supervisor[t], integer) -> boolean")
 	legacy("Supervisor.await", "Supervisor.await(supervisor[t], integer) -> tuple[boolean,string]")
 	const group = "alx> group = Supervisor.start(\"one_for_one\", 3, 1000, [{\"worker\", \"permanent\", fn(self: pid[integer]): integer do Process.sleep(60000) end}], 4)"
+	doc("Supervisor.server", "A child for Supervisor.start that runs a server under a name: the child registers the server, Supervisor.start returns once it has, and Server.whereis finds whichever server is running. A failing server makes its child fail, so the strategy and the policy (\"permanent\", \"transient\" or \"temporary\") decide the restart, which begins from the initial state. Servers of different types can share one supervisor.",
+		"alx> tree = Supervisor.start(\"one_for_one\", 3, 1000, [Supervisor.server(:doc_total, \"permanent\", 0, fn(total: integer, n: integer): tuple[integer, integer] do {total + n, total + n} end)], 1)",
+		"alx> found: option[server[integer, integer]] = Server.whereis(:doc_total)",
+		"alx> case found do", "...>   some(total) -> Server.call(total, 5, 1000)", "...>   none -> error(\"not found\")", "...> end", "ok(5)",
+		"alx> Supervisor.stop(tree, 1000)", "true")
 	doc("Supervisor.start", "Starts children under a strategy (\"one_for_one\", \"one_for_all\" or \"rest_for_one\"), giving up after max_restarts within window_ms. Each child is {name, restart_policy, function}, with policy \"permanent\", \"transient\" or \"temporary\"; the last argument is each child's mailbox capacity.",
 		group, "alx> Supervisor.alive(group)", "true", "alx> Supervisor.stop(group, 1000)", "true")
 	doc("Supervisor.start_link", "Like Supervisor.start, and also links the supervisor to the process starting it.",

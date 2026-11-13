@@ -1,0 +1,115 @@
+defmodule SupervisedServersTest do
+  @moduletag area: "supervised servers"
+
+  type Counter do
+    add(n: integer)
+    read
+    crash
+  end
+
+  def count(total: integer, request: Counter): tuple[integer, integer] do
+    case request do
+      Counter.add(n) -> {total + n, total + n}
+      Counter.read -> {total, total}
+      Counter.crash -> raise("counter crashed")
+    end
+  end
+
+  def echo(times: integer, text: string): tuple[integer, string] do
+    {times + 1, text <> " #" <> Integer.to_string(times + 1)}
+  end
+
+  def counter(name: atom): server[Counter, integer] do
+    found: option[server[Counter, integer]] = Server.whereis(name)
+    case found do
+      some(s) -> s
+      none -> raise("no server named " <> Atom.to_string(name))
+    end
+  end
+
+  def echoer(name: atom): server[string, string] do
+    found: option[server[string, string]] = Server.whereis(name)
+    case found do
+      some(s) -> s
+      none -> raise("no server named " <> Atom.to_string(name))
+    end
+  end
+
+  def wait_for_restarts(tree: supervisor[tuple[]], n: integer, tries: integer): boolean do
+    cond do
+      Supervisor.restarts(tree) >= n -> true
+      tries == 0 -> false
+      true ->
+        Process.sleep(10)
+        wait_for_restarts(tree, n, tries - 1)
+    end
+  end
+
+  test "servers of different types under one supervisor, named and ready" do
+    tree = Supervisor.start("one_for_one", 5, 5000, [
+      Supervisor.server(:sst_counter, "permanent", 10, &count/2),
+      Supervisor.server(:sst_echo, "permanent", 0, &echo/2)
+    ], 1)
+    assert(Server.call(counter(:sst_counter), Counter.add(5), 1000) == ok(15))
+    assert(Server.call(echoer(:sst_echo), "hi", 1000) == ok("hi #1"))
+    assert(Enum.map(Supervisor.children(tree), fn {name, _} -> name end) == ["sst_counter", "sst_echo"])
+    assert(Supervisor.stop(tree, 1000))
+  end
+
+  test "a failed server starts again from its initial state, under the same name" do
+    tree = Supervisor.start("one_for_one", 5, 5000, [
+      Supervisor.server(:sst_restart, "permanent", 1, &count/2),
+      Supervisor.server(:sst_neighbor, "permanent", 0, &echo/2)
+    ], 1)
+    assert(Server.call(counter(:sst_restart), Counter.add(9), 1000) == ok(10))
+    assert(Server.call(echoer(:sst_neighbor), "a", 1000) == ok("a #1"))
+    Server.cast(counter(:sst_restart), Counter.crash)
+    assert(wait_for_restarts(tree, 1, 200))
+    assert(Server.call(counter(:sst_restart), Counter.read, 1000) == ok(1))
+    assert(Server.call(echoer(:sst_neighbor), "b", 1000) == ok("b #2"))
+    assert(Supervisor.stop(tree, 1000))
+  end
+
+  test "one_for_all restarts every server" do
+    tree = Supervisor.start("one_for_all", 5, 5000, [
+      Supervisor.server(:sst_all_counter, "permanent", 0, &count/2),
+      Supervisor.server(:sst_all_echo, "permanent", 0, &echo/2)
+    ], 1)
+    assert(Server.call(echoer(:sst_all_echo), "x", 1000) == ok("x #1"))
+    Server.cast(counter(:sst_all_counter), Counter.crash)
+    assert(wait_for_restarts(tree, 1, 200))
+    assert(Server.call(echoer(:sst_all_echo), "y", 1000) == ok("y #1"))
+    assert(Supervisor.stop(tree, 1000))
+  end
+
+  test "temporary servers are not restarted, and stopping the supervisor stops its servers" do
+    tree = Supervisor.start("one_for_one", 5, 5000, [
+      Supervisor.server(:sst_temp, "temporary", 0, &count/2)
+    ], 1)
+    temp = counter(:sst_temp)
+    Server.cast(temp, Counter.crash)
+    Process.sleep(100)
+    assert(Supervisor.restarts(tree) == 0)
+    gone: option[server[Counter, integer]] = Server.whereis(:sst_temp)
+    case gone do
+      some(_) -> raise("a temporary server came back")
+      none -> assert(true)
+    end
+    other = Supervisor.start("one_for_one", 5, 5000, [Supervisor.server(:sst_stopped, "permanent", 0, &count/2)], 1)
+    stopped = counter(:sst_stopped)
+    assert(Supervisor.stop(other, 1000))
+    Process.sleep(50)
+    assert(not Server.alive(stopped))
+    assert(Supervisor.stop(tree, 1000))
+  end
+
+  test "names must be free and policies valid" do
+    first = Supervisor.start("one_for_one", 5, 5000, [Supervisor.server(:sst_taken, "permanent", 0, &count/2)], 1)
+    second = Supervisor.start("one_for_one", 2, 5000, [Supervisor.server(:sst_taken, "permanent", 0, &count/2)], 1)
+    result = Supervisor.await(second, 2000)
+    assert(result == {true, "restart_intensity"})
+    assert(Server.call(counter(:sst_taken), Counter.add(1), 1000) == ok(1))
+    assert_raise("restart policy", fn -> Supervisor.server(:sst_bad, "sometimes", 0, &count/2) end)
+    assert(Supervisor.stop(first, 1000))
+  end
+end

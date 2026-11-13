@@ -8,7 +8,34 @@ Alchem explores expressive functional syntax, message-passing concurrency and OT
 
 ## Install
 
-Download the archive for your platform from [Releases](https://github.com/SmithOperatingSolutions/alchem/releases), unpack it, and put `alchem` on your `PATH`. With Go installed you can instead run `go install github.com/SmithOperatingSolutions/alchem/cmd/alchem@latest`.
+On macOS or Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SmithOperatingSolutions/alchem/main/install.sh | sh
+```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/SmithOperatingSolutions/alchem/main/install.ps1 | iex
+```
+
+The scripts install the latest release, after checking it against the release's checksums, into `~/.local/bin` or `%LOCALAPPDATA%\Programs\alchem`; `ALCHEM_VERSION` and `ALCHEM_INSTALL_DIR` choose another release or place.
+
+With Homebrew, this repository is a tap:
+
+```bash
+brew tap smithoperatingsolutions/alchem https://github.com/SmithOperatingSolutions/alchem
+brew install alchem
+```
+
+With Scoop:
+
+```powershell
+scoop install https://raw.githubusercontent.com/SmithOperatingSolutions/alchem/main/bucket/alchem.json
+```
+
+Or download the archive for your platform from [Releases](https://github.com/SmithOperatingSolutions/alchem/releases), unpack it, and put `alchem` on your `PATH`. With Go installed you can instead run `go install github.com/SmithOperatingSolutions/alchem/cmd/alchem@latest`.
 
 Alchem compiles through Go, but you do not need to install Go: when no `go` command is on `PATH`, the first build downloads the pinned Go release into the user cache, checks its SHA-256 and uses it from then on. `alchem version` shows which Go builds use; see [toolchain](docs/tooling.md#the-go-toolchain).
 

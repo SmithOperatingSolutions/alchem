@@ -250,3 +250,35 @@ func ServerRestarts[Q, R any](c *Context, s *Server[Q, R], where string) int64 {
 	}
 	return Restarts(c, s.group, where)
 }
+
+// ServerChild is the body of a supervisor child that runs a server under a
+// name. The child starts the server, registers it, and lives as long as it:
+// a server that fails makes the child fail, so the supervisor's strategy and
+// the child's restart policy apply, and a child that is stopped stops its
+// server. Every start begins from the initial state, and the name moves to
+// the new server, so Server.whereis finds whichever is running.
+func ServerChild[S, Q, R, T any](name string, state S, handle func(*Context, S, Q) struct {
+	E0 S
+	E1 R
+}, where string) func(*Context, *PID[T]) int64 {
+	body := func(c *Context, _ *PID[T]) int64 {
+		s := StartServer(c, state, handle, where)
+		task := s.pid.task
+		OnEnd(c, func() {
+			c.rt.mu.Lock()
+			defer c.rt.mu.Unlock()
+			task.cancel("shutdown", nil)
+		})
+		if !RegisterServer(c, s, name, where) {
+			Fail(c, where, "Supervisor.server: the name "+name+" is already registered")
+		}
+		Started(c)
+		ended := wait(c, task, -1)
+		if abnormal(ended.E1) {
+			Fail(c, where, "server "+name+" failed: "+ended.E1)
+		}
+		return 0
+	}
+	announcesStart(body)
+	return body
+}

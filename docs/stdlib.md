@@ -160,7 +160,17 @@ end
 
 Requests and replies must be sendable (no functions). A call that times out is not withdrawn: the server still handles the request and discards the reply. A handler failure stops the server; the caller whose request failed, and later callers, receive an error instead of failing themselves. Timeouts follow the runtime convention: negative waits indefinitely, zero polls. A server queues at most 1024 requests, and callers wait for space within their deadline. A server cannot call itself.
 
-A supervised server runs as the only child of its own one-for-one supervisor. When its handler fails, the caller of that request receives `error("server stopped: reason")`, and the server is started again **with its initial state**; requests queued for the failed instance are lost. Calls made during the restart wait for the replacement within their deadline. After more than `max_restarts` failures within `window_ms` the supervisor gives up and the server stays down: calls return `error("server is not running")` and `Server.alive` is false. `Server.stop` and `Server.await` act on the supervisor. A supervised server started by a supervised worker is part of that worker's tree and stops with it; a server is not a named child of a user `Supervisor`, whose children all share one mailbox type.
+A supervised server runs as the only child of its own one-for-one supervisor. When its handler fails, the caller of that request receives `error("server stopped: reason")`, and the server is started again **with its initial state**; requests queued for the failed instance are lost. Calls made during the restart wait for the replacement within their deadline. After more than `max_restarts` failures within `window_ms` the supervisor gives up and the server stays down: calls return `error("server is not running")` and `Server.alive` is false. `Server.stop` and `Server.await` act on the supervisor. A supervised server started by a supervised worker is part of that worker's tree and stops with it.
+
+`Supervisor.server(name, policy, state, handler)` makes a server a named child of a user `Supervisor`, so servers of different state, request and reply types share one supervision tree. Each such child starts its server and registers it under `name`, and `Supervisor.start` returns only once every server child is registered, so `Server.whereis(name)` finds it at once. A server that fails makes its child fail: the supervisor's strategy and the child's policy (`"permanent"`, `"transient"` or `"temporary"`) decide what restarts, and a restarted server begins from its initial state under the same name. Stopping the supervisor stops its servers. Server children have the mailbox type `tuple[]`, so a worker beside them is written `fn(self: pid[tuple[]]): integer do ... end`.
+
+```elixir
+tree = Supervisor.start("one_for_one", 3, 5000, [
+  Supervisor.server(:accounts, "permanent", %{}, &Accounts.handle/2),
+  Supervisor.server(:sessions, "permanent", [], &Sessions.handle/2)
+], 1)
+accounts: option[server[Accounts.Request, Accounts.Reply]] = Server.whereis(:accounts)
+```
 
 Servers are started by the process that calls `Server.start` or `Server.start_supervised` and are stopped with the runtime at exit.
 

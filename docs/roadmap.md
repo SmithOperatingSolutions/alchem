@@ -146,7 +146,7 @@ Run the harness before and after a performance change on the same machine and re
 - [x] `extern` checked against Go type information by `alchem check`; bindings to methods, opaque Go types, structs, variadic functions, callbacks and multiple results.
 - [x] Equality on type variables as an inferred requirement on callers.
 - [x] `alchem.lock` and `--locked`.
-- [ ] Servers as named children of a user `Supervisor`.
+- [x] Servers as named children of a user `Supervisor` (`Supervisor.server`), registered before `Supervisor.start` returns.
 - [ ] Bindings to generic Go functions and to Go interfaces implemented in Alchem.
 
 ## M8 — Elixir-style library and testing
@@ -169,8 +169,9 @@ Run the harness before and after a performance change on the same machine and re
 - [x] The shell is `alchem alx` and documentation examples use `alx>`, so nothing is named after Elixir's tools.
 - [x] `tools/provenance` checks the documentation for passages shared with Elixir's; see [provenance](provenance.md).
 - [x] Tag `v0.1.0`.
-- [ ] Install script and package-manager formulas (Homebrew, Scoop) that point at the release archives.
-- [ ] Sign or notarize the macOS and Windows binaries.
+- [x] Install scripts (`install.sh`, `install.ps1`), a Homebrew tap (`Formula/`) and a Scoop bucket (`bucket/`), checked by the Packaging workflow.
+- [x] Release steps that sign and notarize the macOS binaries and sign the Windows ones when the signing secrets are set.
+- [ ] Add the Apple and Windows signing certificates as repository secrets, and check the first signed release.
 
 ## M10 — Building on Alchem
 

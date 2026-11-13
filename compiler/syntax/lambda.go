@@ -275,6 +275,12 @@ func (c checker) lambda(e *ast.Expr, scope map[string]string, params []string, r
 	inner := c
 	inner.yield, inner.infer = nil, &produced
 	returns, err := inner.block(body, local, "?")
+	if err != nil && produced == "" && strings.Contains(err.Error(), "cannot infer the type this raise stands in for") {
+		// Every way out of the function raises, so it never returns a
+		// value and its result type does not matter.
+		produced = "tuple[]"
+		returns, err = inner.block(body, local, "?")
+	}
 	if err != nil {
 		return "", err
 	}
