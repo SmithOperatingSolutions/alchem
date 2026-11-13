@@ -33,7 +33,7 @@ defmodule CalendarBench do
     Bench.run("date.end_of_month 100k", fn -> Enum.reduce(dates, 0, fn date, acc -> acc + Date.end_of_month(date).day end) end)
     Bench.run("date.to_iso8601 100k", fn -> Enum.reduce(dates, 0, fn date, acc -> acc + byte_size(Date.to_iso8601(date)) end) end)
     Bench.run("date.from_iso8601 100k", fn -> Enum.reduce(date_text, 0, fn text, acc -> acc + day(text) end) end)
-    Bench.run("date sort 100k", fn -> Date.diff(hd(Enum.sort(dates, fn left, right -> Date.compare(left, right) <= 0 end)), base) end)
+    Bench.run("date sort 100k", fn -> Date.diff(hd(Enum.sort(dates, fn left, right -> Date.compare(left, right) != :gt end)), base) end)
     Bench.run("naive_date_time.add 1M", fn -> Enum.reduce(1..1000000, 0, fn i, acc -> acc + NaiveDateTime.add(start, i * 61).second end) end)
     Bench.run("naive_date_time.diff 100k", fn -> Enum.reduce(naive, 0, fn moment, acc -> acc + NaiveDateTime.diff(moment, start) end) end)
     Bench.run("naive_date_time.to_iso8601 100k", fn -> Enum.reduce(naive, 0, fn moment, acc -> acc + byte_size(NaiveDateTime.to_iso8601(moment)) end) end)
@@ -41,7 +41,7 @@ defmodule CalendarBench do
     Bench.run("date_time.from_unix! 1M", fn -> Enum.reduce(1..1000000, 0, fn i, acc -> acc + DateTime.from_unix!(946684800 + i * 61).minute end) end)
     Bench.run("date_time.to_unix 100k", fn -> Enum.reduce(moments, 0, fn moment, acc -> acc + DateTime.to_unix(moment) end) end)
     Bench.run("date_time.add 100k", fn -> Enum.reduce(moments, 0, fn moment, acc -> acc + DateTime.add(moment, 86399).day end) end)
-    Bench.run("date_time.compare 100k", fn -> Enum.zip_reduce(moments, Enum.reverse(moments), 0, fn left, right, acc -> acc + DateTime.compare(left, right) + 1 end) end)
+    Bench.run("date_time.compare 100k", fn -> Enum.zip_reduce(moments, Enum.reverse(moments), 0, fn left, right, acc -> if DateTime.compare(left, right) == :gt do acc + 1 else acc end end) end)
     Bench.run("date_time.to_iso8601 100k", fn -> Enum.reduce(moments, 0, fn moment, acc -> acc + byte_size(DateTime.to_iso8601(moment)) end) end)
     Bench.run("date_time.from_iso8601 with offset 100k", fn -> Enum.reduce(moment_text, 0, fn text, acc -> acc + minute(text) end) end)
   end
