@@ -405,7 +405,9 @@ func (c checker) construct(e *ast.Expr, ref variantRef, scope map[string]string,
 			bound, ok = "tuple[]", true
 		}
 		if !ok {
-			c.recordHint(decl, bindings)
+			if c.hintFor == e {
+				c.recordHint(decl, bindings)
+			}
 			return "", diagnostic(e.Line, e.Column, "cannot infer the type of %s here; annotate the binding it is assigned to", display(ref))
 		}
 		args = append(args, bound)
@@ -621,7 +623,7 @@ func Constructor(decl ast.TypeDecl, variant string) string {
 // recordHint adds what a constructor showed of its type, with "?" for the
 // parameters it left open, to the hint of the if or case value it ends.
 func (c checker) recordHint(decl *ast.TypeDecl, bindings map[string]string) {
-	if c.hint == nil || c.yield == nil || *c.yield != "" {
+	if c.hint == nil || c.yield == nil || *c.yield != "" || c.hintFor == nil {
 		return
 	}
 	known := make([]string, len(decl.Params))

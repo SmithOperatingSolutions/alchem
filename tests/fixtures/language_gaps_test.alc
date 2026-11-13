@@ -62,6 +62,20 @@ defmodule LanguageGapsTest do
     assert(Enum.find_value([5], 0, fn n -> if rem(n, 2) == 0, do: some(n), else: none end) == 0)
   end
 
+  def logged(fail: boolean): result[result[tuple[], string], string] do
+    if fail, do: ok(error("not logged")), else: ok(ok({}))
+  end
+
+  test "a constructor inside another does not decide the branch's type" do
+    nothing: list[string] = []
+    written = case nothing do
+      [] -> ok(ok({}))
+      _ -> logged(true)
+    end
+    assert(written == ok(ok({})))
+    assert(logged(true) == ok(error("not logged")))
+  end
+
   test "case arms settle each other's types" do
     case some("x") do
       some(text) -> send(text)

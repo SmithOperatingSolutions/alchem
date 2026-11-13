@@ -209,6 +209,9 @@ type checker struct {
 	// type before any branch settled it: ok(n) shows result[integer, ?] and
 	// error("x") result[?, string]. A hole is "?".
 	hint *string
+	// hintFor is the expression a branch of that value ends with; only it
+	// adds to the hint, not the constructors nested in its arguments.
+	hintFor *ast.Expr
 	// current names the function being checked. needs records which of each
 	// function's type variables are compared for equality, and uses records
 	// every instantiation of a generic function, so the requirement can be
@@ -278,13 +281,15 @@ func (c checker) block(body []ast.Statement, scope map[string]string, result str
 		if s.Kind == "return" && c.yield != nil {
 			return false, diagnostic(s.Line, s.Column, "return cannot be used inside an if or case that produces a value")
 		}
+		checking := c
 		if s.Kind == "yield" {
 			expected = *c.yield
 			if expected == "" && c.hint != nil {
 				expected = *c.hint
 			}
+			checking.hintFor = s.Expr
 		}
-		typ, err := c.expr(s.Expr, scope, expected)
+		typ, err := checking.expr(s.Expr, scope, expected)
 		if err != nil {
 			return false, err
 		}
