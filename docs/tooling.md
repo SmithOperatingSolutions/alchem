@@ -14,7 +14,7 @@ alchem build --race -o system-race examples/system
 alchem test --timeout 10s tests/fixtures
 ```
 
-`alchem check` reports compile errors without building, so its entry may also be a library: a module without `main` that other files import. `alchem build` and `alchem run` need a `main`.
+`alchem check` reports compile errors without building, so its entry may also be a library: a module without `main` that other files import. `alchem build` and `alchem run` need a `main`. `alchem run` passes an interrupt or a request to terminate on to the program it started and waits for it, so ending `alchem run` ends the program; one that has not gone five seconds later is killed.
 
 `alchem fmt` rewrites files into one layout: two-space indentation, one declaration group after another, and long collections split one item per line. Strings and sigils written as heredocs (`"""`, `~S"""`, `~s"""` and other sigil letters) stay heredocs, their lines indented to the code around them; whatever follows a heredoc in the same expression stays on the line of its closing quotes. A one-line sigil keeps the delimiters it was written with.
 

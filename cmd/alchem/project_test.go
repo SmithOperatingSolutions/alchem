@@ -1,12 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestNewProjectRunsAndTests(t *testing.T) {
@@ -76,6 +82,57 @@ func TestShellSession(t *testing.T) {
 	for _, want := range []string{"alx(1)> 2\n", "...(2)> ...(2)> :ok\n", "alx(3)> 4\n", "Enum.sum(enum[a]) -> a", "** line 1: undefined binding bogus"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in\n%s", want, text)
+		}
+	}
+}
+
+// Ending alchem run ends the program it started, and waits for it: the
+// program is not left running as an orphan.
+func TestRunEndsItsProgramWhenEnded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program")
+	}
+	path := filepath.Join(t.TempDir(), "waits.alc")
+	if err := os.WriteFile(path, []byte("defmodule Waits do\n  def main() do\n    IO.puts(System.pid())\n    Process.sleep(60000)\n  end\nend\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reader, writer := io.Pipe()
+	done := make(chan int, 1)
+	go func() {
+		var errOut bytes.Buffer
+		done <- run(ctx, []string{"run", path}, writer, &errOut)
+		writer.Close()
+	}()
+	line, err := bufio.NewReader(reader).ReadString('\n')
+	if err != nil {
+		t.Fatalf("the program did not start: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil {
+		t.Fatalf("the program printed %q", line)
+	}
+	go io.Copy(io.Discard, reader)
+	started := time.Now()
+	cancel()
+	select {
+	case code := <-done:
+		if code == 0 {
+			t.Fatalf("alchem run reported success after being ended")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("alchem run did not end")
+	}
+	if waited := time.Since(started); waited > 15*time.Second {
+		t.Fatalf("ending took %v", waited)
+	}
+	// The run returned only after the program was waited for, so the
+	// program is gone; on Unix a signal 0 confirms it.
+	if runtime.GOOS != "windows" {
+		if process, err := os.FindProcess(pid); err == nil && process.Signal(syscall.Signal(0)) == nil {
+			process.Kill()
+			t.Fatalf("the program (pid %d) is still running", pid)
 		}
 	}
 }
