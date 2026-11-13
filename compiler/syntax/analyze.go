@@ -62,7 +62,7 @@ func analyze(p *ast.Program) (result error) {
 		source = main.Source
 		return diagnostic(main.Line, main.Column, "a module with tests cannot define main; the test runner is the entry point")
 	}
-	if functions["main"] == nil && !tests {
+	if functions["main"] == nil && !tests && !p.Library {
 		source = p.Source
 		return diagnostic(1, 1, "missing main/0")
 	}
