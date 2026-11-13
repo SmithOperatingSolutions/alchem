@@ -1,6 +1,7 @@
 package lexer
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -120,5 +121,23 @@ func TestScanConcatenationOperator(t *testing.T) {
 	}
 	if tokens[1].Kind != Operator || tokens[1].Column != 3 {
 		t.Fatalf("unexpected concatenation token %+v", tokens[1])
+	}
+}
+
+// \u{...} names a code point of one to six hex digits; an escape a string
+// does not take is reported by name.
+func TestBracedCodePointsAndEscapeProblems(t *testing.T) {
+	for raw, want := range map[string]string{`"\u{E000}"`: "", `"\u{e9}x"`: "éx", `"\u{1F600}"`: "\U0001F600", `"a\\u{41}"`: `a\u{41}`} {
+		if got, err := strconv.Unquote(Unescape(raw)); err != nil || got != want {
+			t.Errorf("%s: %q %v", raw, got, err)
+		}
+	}
+	for raw, escape := range map[string]string{`"\q"`: `\q`, `"\u{110000}"`: `\u{110000}`, `"\u{D800}"`: `\u{D800}`, `"\u{}"`: `\u{}`, `"\u12"`: `\u12`, `"\xZ1"`: `\xZ1`, `"\u{1234567}"`: `\u{1234567}`} {
+		if problem := StringProblem(raw); !strings.HasPrefix(problem, "invalid escape "+escape+";") {
+			t.Errorf("%s: %q", raw, problem)
+		}
+	}
+	if problem := StringProblem(`"\u{263A} \x00 \n \#{"`); problem != "" {
+		t.Errorf("valid escapes reported: %s", problem)
 	}
 }

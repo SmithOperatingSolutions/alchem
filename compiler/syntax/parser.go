@@ -1300,6 +1300,9 @@ func (p *parser) template(t lexer.Token) (*ast.Expr, error) {
 		}
 		value, err := strconv.Unquote(lexer.Unescape(`"` + raw[from:to] + `"`))
 		if err != nil {
+			if problem := lexer.StringProblem(`"` + raw[from:to] + `"`); problem != "" {
+				return fmt.Errorf("%d:%d: %s", t.Line, t.Column, problem)
+			}
 			return fmt.Errorf("%d:%d: invalid string: %w", t.Line, t.Column, err)
 		}
 		// Op marks literal text, as opposed to an interpolated string literal.
