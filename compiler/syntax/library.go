@@ -322,7 +322,7 @@ func (c checker) library(e *ast.Expr, entry Library, scope map[string]string, wa
 		}
 	}
 	for _, name := range entry.Read {
-		if blocked := c.unread(bindings[name]); blocked != "" {
+		if blocked := c.readable(bindings[name]); blocked != "" {
 			return fail("%s cannot read %s: %s has no JSON form", entry.Name, bindings[name], blocked)
 		}
 	}

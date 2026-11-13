@@ -20,6 +20,8 @@ func TestMoreDiagnostics(t *testing.T) {
 		{"with unmatched", "x = with ok(n) <- Integer.parse(\"1\") do\n      n\n    end\n    y: string = x", "", ""},
 		{"try else value", "x = try do\n      1\n    rescue\n      _ -> 2\n    else\n      n -> IO.puts(\"x\")\n    end", "", ""},
 		{"in", `x = 1 in 5`, "", "in requires a list, map, set or stream"},
+		{"JSON read of a function", "x: result[fn[integer, integer], string] = JSON.decode_as(\"1\")", "", "fn[integer,integer] has no JSON form"},
+		{"JSON read through a caller's type", "step = fn(n: integer): integer do n end\n    x = twice(step, \"[]\")", "def like(_: a, text: string): result[a, string] do\n    JSON.decode_as(text)\n  end\n  def twice(sample: b, text: string): result[list[b], string] do\n    like([sample], text)\n  end\n", "twice reads b from JSON, and fn[integer,integer] cannot be read"},
 		{"elem index", `x = elem({1, 2}, "a")`, "", "integer literal for the index"},
 		{"elem arity", `x = elem({1, 2})`, "", "takes 2 arguments"},
 		{"put_elem tuple", `x = put_elem([1], 0, 2)`, "", "put_elem needs a tuple"},

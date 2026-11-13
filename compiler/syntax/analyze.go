@@ -66,7 +66,7 @@ func analyze(p *ast.Program) (result error) {
 		source = p.Source
 		return diagnostic(1, 1, "missing main/0")
 	}
-	c := checker{functions: functions, statements: map[*ast.Expr]bool{}, needs: map[string]map[string]bool{}, uses: &[]instantiation{}, counter: new(int)}
+	c := checker{functions: functions, statements: map[*ast.Expr]bool{}, needs: map[string]map[string]bool{}, reads: map[string]map[string]bool{}, uses: &[]instantiation{}, counter: new(int)}
 	if where, err := c.protocols(p); err != nil {
 		source = where
 		return err
@@ -157,7 +157,84 @@ func analyze(p *ast.Program) (result error) {
 			}
 		}
 	}
+	// Reading a type variable from JSON is a requirement of the same kind.
+	for changed := true; changed; {
+		changed = false
+		for _, use := range *c.uses {
+			for i, name := range use.vars {
+				if !c.reads[use.callee][name] {
+					continue
+				}
+				for _, outer := range ast.TypeVariables(use.types[i], map[string]bool{}, nil) {
+					if !c.reads[use.caller][outer] {
+						c.requireRead(use.caller, outer)
+						changed = true
+					}
+				}
+			}
+		}
+	}
+	for _, use := range *c.uses {
+		for i, name := range use.vars {
+			if !c.reads[use.callee][name] {
+				continue
+			}
+			if blocked := c.unreadable(use.types[i]); blocked != "" {
+				source = use.source
+				return diagnostic(use.line, use.column, "%s reads %s from JSON, and %s cannot be read: %s has no JSON form", functionLocalName(functions[use.callee]), name, use.types[i], blocked)
+			}
+		}
+	}
+	for name, f := range functions {
+		f.Reads = nil
+		for _, variable := range generic(f) {
+			if c.reads[name][variable] {
+				f.Reads = append(f.Reads, variable)
+			}
+		}
+	}
 	return nil
+}
+
+func (c checker) requireRead(function, variable string) {
+	if c.reads[function] == nil {
+		c.reads[function] = map[string]bool{}
+	}
+	c.reads[function][variable] = true
+}
+
+// unreadable returns the first part of a type that cannot be read from
+// JSON, or "", treating type variables as readable: their requirement
+// falls on the caller.
+func (c checker) unreadable(t string) string {
+	stand := map[string]string{}
+	for _, name := range ast.TypeVariables(t, map[string]bool{}, nil) {
+		stand[name] = "integer"
+	}
+	return c.unread(ast.Substitute(t, stand))
+}
+
+// readable checks that a type can be read from JSON and records the type
+// variables of the current function that must be. A type variable the
+// function is not given by its parameters has no one to say how it is read.
+func (c checker) readable(t string) string {
+	given := map[string]bool{}
+	if f := c.functions[c.current]; f != nil {
+		given = set(generic(f))
+	}
+	names := ast.TypeVariables(t, map[string]bool{}, nil)
+	for _, name := range names {
+		if !given[name] {
+			return name
+		}
+	}
+	if blocked := c.unreadable(t); blocked != "" {
+		return blocked
+	}
+	for _, name := range names {
+		c.requireRead(c.current, name)
+	}
+	return ""
 }
 
 func (c checker) require(function, variable string) {
@@ -221,7 +298,11 @@ type checker struct {
 	// checked against the types each caller chose.
 	current string
 	needs   map[string]map[string]bool
-	uses    *[]instantiation
+	// reads records, the same way, the type variables each function reads
+	// from JSON: the caller's type must have a JSON form, and the caller
+	// hands the function how to read it.
+	reads map[string]map[string]bool
+	uses  *[]instantiation
 	// infer is set while checking fn x -> ... end, whose result type comes
 	// from its body: it points at that type, empty until the first return.
 	infer *string

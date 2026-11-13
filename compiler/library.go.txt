@@ -11881,18 +11881,33 @@ var wsDeflaters = sync.Pool{New: func() any {
 	return writer
 }}
 
+// wsCoders only shorten the codes of the bytes a message uses, which is
+// what gains on text that does not repeat itself, such as a token.
+var wsCoders = sync.Pool{New: func() any {
+	writer, _ := flate.NewWriter(io.Discard, flate.HuffmanOnly)
+	return writer
+}}
+
 var wsInflaters = sync.Pool{New: func() any { return flate.NewReader(strings.NewReader("")) }}
 
-// wsDeflate compresses one message.
+// wsDeflate compresses one message: by its repetitions, or when it has
+// none worth having, by its bytes alone.
 func wsDeflate(payload []byte) []byte {
-	var out bytes.Buffer
-	out.Grow(len(payload)/4 + 64)
-	writer := wsDeflaters.Get().(*flate.Writer)
-	defer wsDeflaters.Put(writer)
-	writer.Reset(&out)
-	writer.Write(payload)
-	writer.Flush()
-	return bytes.TrimSuffix(out.Bytes(), []byte(wsDeflateTail))
+	pack := func(pool *sync.Pool) []byte {
+		var out bytes.Buffer
+		out.Grow(len(payload)/4 + 64)
+		writer := pool.Get().(*flate.Writer)
+		defer pool.Put(writer)
+		writer.Reset(&out)
+		writer.Write(payload)
+		writer.Flush()
+		return bytes.TrimSuffix(out.Bytes(), []byte(wsDeflateTail))
+	}
+	packed := pack(&wsDeflaters)
+	if len(packed) >= len(payload) {
+		packed = pack(&wsCoders)
+	}
+	return packed
 }
 
 // inflate gives back a compressed message, which may not grow past the
@@ -12143,9 +12158,7 @@ func (ws *wsConn) frame() (bool, byte, []byte, error) {
 	if head[0]&0x30 != 0 || head[0]&0x40 != 0 && !packed {
 		return false, 0, nil, wsFailure{1002, "protocol error: reserved bits are set"}
 	}
-	if packed {
-		op |= wsPacked
-	}
+	control := op >= 8
 	masked := head[1]&0x80 != 0
 	if masked == ws.client {
 		if ws.client {
@@ -12165,7 +12178,7 @@ func (ws *wsConn) frame() (bool, byte, []byte, error) {
 			size = size<<8 | uint64(b)
 		}
 	}
-	if op >= 8 && (!fin || size > 125) {
+	if control && (!fin || size > 125) {
 		return false, 0, nil, wsFailure{1002, "protocol error: a control frame is fragmented or too long"}
 	}
 	if size > uint64(ws.limit) {
@@ -12185,6 +12198,10 @@ func (ws *wsConn) frame() (bool, byte, []byte, error) {
 		for i := range payload {
 			payload[i] ^= mask[i%4]
 		}
+	}
+	if packed {
+		// Marked only once the frame has been read as the data frame it is.
+		op |= wsPacked
 	}
 	return fin, op, payload, nil
 }

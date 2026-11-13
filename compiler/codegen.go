@@ -122,6 +122,9 @@ func generateProgram(p ast.Program, options BuildOptions, plan *externPlan) stri
 			params = append(params, id+" "+goType(param.Type))
 			locals = append(locals, id)
 		}
+		for _, variable := range f.Reads {
+			params = append(params, readerName(variable)+" "+readerType(variable))
+		}
 		g.statementChecks = f.Name == "main"
 		g.leaf = f.Name != "main" && leafBody(f.Body)
 		g.inTest = f.Test != "" || f.Setup
@@ -743,6 +746,22 @@ func (g *generator) expr(e *ast.Expr, scope map[string]string) string {
 			}
 			return "func(" + strings.Join(params, ",") + ") " + goType(b.Result) + " {return " + g.simpleBuiltin(b, names, e) + "}"
 		}
+		if readers := g.readersFor(e.Name, e.TypeArgs); len(readers) > 0 {
+			// The value takes the function's own arguments; the readers
+			// for the types chosen here go with it.
+			parts, _, _ := ast.FunctionParts(e.Type)
+			params, names := []string{"ctx *actor.Context"}, []string{"ctx"}
+			for _, part := range parts {
+				id := g.id()
+				params, names = append(params, id+" "+goType(part)), append(names, id)
+			}
+			result, call := "", g.functions[e.Name]+typeArguments(e.TypeArgs)+"("+strings.Join(append(names, readers...), ",")+")"
+			if def := g.defs[e.Name]; def.Type != "void" {
+				_, returned, _ := ast.FunctionParts(e.Type)
+				result, call = " "+goType(returned), "return "+call
+			}
+			return "func(" + strings.Join(params, ",") + ")" + result + " {" + call + "}"
+		}
 		return g.functions[e.Name] + typeArguments(e.TypeArgs)
 	case "struct":
 		typ := goType(e.Type)
@@ -989,6 +1008,9 @@ func (g *generator) expr(e *ast.Expr, scope map[string]string) string {
 				comparison = "!a&&b"
 			}
 			args = append(args, "func(a,b "+goType(key)+")bool{return "+comparison+"}")
+		}
+		if _, local := scope[e.Name]; !local {
+			args = append(args, g.readersFor(e.Name, e.TypeArgs)...)
 		}
 		return target + "(" + strings.Join(args, ",") + ")"
 	case "unary":
@@ -1403,7 +1425,7 @@ func (g *generator) inlineLoop(e *ast.Expr, args []string) (string, bool) {
 		return "", false
 	}
 	callback := e.Args[len(e.Args)-1]
-	if callback.Kind != "funcref" || g.functions[callback.Name] == "" {
+	if callback.Kind != "funcref" || g.functions[callback.Name] == "" || len(g.readersFor(callback.Name, callback.TypeArgs)) > 0 {
 		return "", false
 	}
 	function := g.functions[callback.Name] + typeArguments(callback.TypeArgs)
