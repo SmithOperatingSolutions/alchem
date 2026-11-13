@@ -332,6 +332,9 @@ func (c checker) checkPatternIn(p *ast.Pattern, typ string, scope, outer map[str
 			return diagnostic(p.Line, p.Column, "pinned binding %q has a type without equality", p.Name)
 		}
 	case "name":
+		if builtinName(p.Name) {
+			return diagnostic(p.Line, p.Column, "%s is reserved for a builtin and cannot name a binding", p.Name)
+		}
 		if !generated(p.Name) && !bindingName(p.Name) {
 			return diagnostic(p.Line, p.Column, "invalid pattern binding %q", p.Name)
 		}

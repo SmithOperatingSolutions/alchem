@@ -262,6 +262,8 @@ func (c checker) lambda(e *ast.Expr, scope map[string]string, params []string, r
 			param.Name = fmt.Sprintf("arg$%d", c.fresh())
 			binds = append(binds, ast.Statement{Kind: "bind", Pattern: param.Pattern, Line: param.Line, Column: param.Column, Expr: &ast.Expr{Kind: "name", Name: param.Name, Line: param.Line, Column: param.Column}})
 			param.Pattern = nil
+		} else if builtinName(param.Name) {
+			return "", diagnostic(param.Line, param.Column, "%s is reserved for a builtin and cannot name a parameter", param.Name)
 		} else if !generated(param.Name) && !bindingName(param.Name) {
 			return "", diagnostic(param.Line, param.Column, "invalid parameter name %q", param.Name)
 		}

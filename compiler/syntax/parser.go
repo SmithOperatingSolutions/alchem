@@ -1213,6 +1213,12 @@ func memberName(name string) bool {
 	return bindingName(name)
 }
 
+// builtinName reports a name that only a field or a variant may have,
+// because a call written with it means one of the oldest builtins.
+func builtinName(name string) bool {
+	return name != "main" && memberName(name) && !bindingName(name)
+}
+
 func bindingName(name string) bool {
 	switch name {
 	case "true", "false", "def", "defmodule", "do", "end", "else", "if", "return", "and", "or", "not", "assert", "main", "case", "length", "when", "prepend", "concat", "map", "filter", "reduce", "put", "get", "has_key", "fn", "import", "extern", "require", "defp", "in", "cond", "raise", "with", "for", "unless", "defprotocol", "defimpl", "defmacro":
@@ -1356,7 +1362,8 @@ func parseInteger(text string) (int64, error) {
 // fieldChain applies field accesses, one per name, to an expression.
 func fieldChain(e *ast.Expr, at lexer.Token, names []string) (*ast.Expr, error) {
 	for _, name := range names {
-		if !bindingName(name) {
+		// A field may have any name a struct can declare it with.
+		if !memberName(name) {
 			return nil, diagnostic(at.Line, at.Column, "invalid field name %q", name)
 		}
 		e = &ast.Expr{Kind: "field", Left: e, Name: name, Line: at.Line, Column: at.Column}
