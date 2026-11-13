@@ -289,3 +289,102 @@ func TestMapSortedLargeIntegerKeys(t *testing.T) {
 		}
 	}
 }
+
+// The two map phases of the state benchmark: 50,000 new integer keys, and
+// 50,000 updates spread over 1,000 keys, each a get and a put.
+func BenchmarkMapBuildSequential(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		var m Map[int64, int64]
+		for n := int64(1); n <= 50000; n++ {
+			old, _ := MapGet(m, n)
+			m = MapPut(m, n, old+n)
+		}
+	}
+}
+
+func BenchmarkMapUpdateCounters(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		var m Map[int64, int64]
+		for n := int64(1); n <= 50000; n++ {
+			old, _ := MapGet(m, n%1000)
+			m = MapPut(m, n%1000, old+1)
+		}
+	}
+}
+
+// A fold's map is changed in place, yet the map it started from, the result
+// and every map derived from the result afterwards behave as values.
+func TestOwnedMapLeavesOtherMapsAlone(t *testing.T) {
+	for _, collide := range []bool{false, true} {
+		if collide {
+			testHash = func(key any) uint64 { return uint64(key.(int64) % 7) }
+		}
+		var start Map[int64, int64]
+		for i := int64(0); i < 300; i++ {
+			start = MapPut(start, i, i)
+		}
+		for _, from := range []Map[int64, int64]{{}, start} {
+			owned := MapOwned(from)
+			for i := int64(200); i < 2000; i++ {
+				old, _ := MapGet(owned, i)
+				owned = MapPut(owned, i, old+1000)
+			}
+			result := MapShared(owned)
+			if want := 1800 + min(MapLen(from), 200); MapLen(result) != want {
+				t.Fatalf("result has %d entries, want %d", MapLen(result), want)
+			}
+			for i := int64(0); i < 300; i++ {
+				if value, ok := MapGet(from, i); MapLen(from) > 0 && (!ok || value != i) {
+					t.Fatalf("the starting map changed at %d: %d %v", i, value, ok)
+				}
+			}
+			// The result is an ordinary map again: changing it copies.
+			changed := MapPut(result, 500, -1)
+			if value, _ := MapGet(result, 500); value != 1000 {
+				t.Fatalf("the result changed under a later put: %d", value)
+			}
+			if value, _ := MapGet(changed, 500); value != -1 {
+				t.Fatalf("the later put was lost: %d", value)
+			}
+			for i := int64(200); i < 2000; i++ {
+				want := int64(1000)
+				if i < 300 && MapLen(from) > 0 {
+					want = i + 1000
+				}
+				if value, ok := MapGet(result, i); !ok || value != want {
+					t.Fatalf("result[%d] = %d %v, want %d", i, value, ok, want)
+				}
+			}
+		}
+		if empty := MapShared(MapOwned(Map[int64, int64]{})); empty.root != nil || MapLen(empty) != 0 {
+			t.Fatal("an empty fold did not give the empty map")
+		}
+		testHash = nil
+	}
+}
+
+func BenchmarkMapBuildOwned(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		m := MapOwned(Map[int64, int64]{})
+		for n := int64(1); n <= 50000; n++ {
+			old, _ := MapGet(m, n)
+			m = MapPut(m, n, old+n)
+		}
+		MapShared(m)
+	}
+}
+
+func BenchmarkMapUpdateOwned(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		m := MapOwned(Map[int64, int64]{})
+		for n := int64(1); n <= 50000; n++ {
+			old, _ := MapGet(m, n%1000)
+			m = MapPut(m, n%1000, old+1)
+		}
+		MapShared(m)
+	}
+}

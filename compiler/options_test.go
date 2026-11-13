@@ -109,13 +109,13 @@ func TestCallDepthLimitIsRecoverable(t *testing.T) {
     if n == 0 do
       return 0
     end
-    return down(n - 1)
+    return 1 + down(n - 1)
   end
   def worker(self: pid[integer]): integer do
     return down(-1)
   end
   def main() do
-    assert(down(40) == 0)
+    assert(down(40) == 40)
     child = Process.spawn(&worker, 1)
     {done, reason} = Process.await(child, 5000)
     assert(done and reason == "call depth exceeded")

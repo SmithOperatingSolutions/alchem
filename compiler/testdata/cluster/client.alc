@@ -28,6 +28,13 @@ defmodule ClusterClient do
     IO.inspect(crashed)
     IO.inspect(Process.await(linked, 5000))
 
+    # A cast runs the served function without waiting, whatever it returns.
+    IO.inspect(Node.cast(server, :note, "one"))
+    IO.inspect(Node.cast(server, :missing, "nothing serves this"))
+    Process.sleep(500)
+    noted: result[list[string], string] = Node.call(server, :noted, 0)
+    IO.inspect(noted)
+
     # A dropped connection is made again.
     Node.disconnect(server)
     Process.sleep(100)

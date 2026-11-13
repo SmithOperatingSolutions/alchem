@@ -1,0 +1,154 @@
+defmodule FoldsAndTailCallsTest do
+  @moduletag area: "folds and tail calls"
+
+  def count_up(n: integer, limit: integer): integer do
+    if n >= limit do
+      n
+    else
+      count_up(n + 1, limit)
+    end
+  end
+
+  def walk(xs: list[integer], seen: integer): integer do
+    case xs do
+      [] -> seen
+      [_ | rest] -> walk(rest, seen + 1)
+    end
+  end
+
+  def swap(a: integer, b: integer, turns: integer): tuple[integer, integer] do
+    if turns == 0 do
+      {a, b}
+    else
+      swap(b, a, turns - 1)
+    end
+  end
+
+  def collect(n: integer, made: list[fn[integer]]): list[fn[integer]] do
+    if n == 0 do
+      made
+    else
+      collect(n - 1, [fn -> n end | made])
+    end
+  end
+
+  def factorial(n: integer): integer do
+    if n <= 1 do
+      1
+    else
+      n * factorial(n - 1)
+    end
+  end
+
+  def even?(n: integer): boolean do
+    if n == 0, do: true, else: odd?(n - 1)
+  end
+
+  def odd?(n: integer): boolean do
+    if n == 0, do: false, else: even?(n - 1)
+  end
+
+  def tally(counts: map[integer, integer], n: integer): map[integer, integer] do
+    put(counts, rem(n, 10), get(counts, rem(n, 10), 0) + 1)
+  end
+
+  test "a call to itself in return position is not held to the call depth" do
+    assert(count_up(0, 2000000) == 2000000)
+    assert(walk(Enum.to_list(1..300000), 0) == 300000)
+  end
+
+  test "a tail call's arguments are all evaluated before any is assigned" do
+    assert(swap(1, 2, 3) == {2, 1})
+    assert(swap(1, 2, 4) == {1, 2})
+  end
+
+  test "a function made in one turn keeps that turn's values" do
+    made = collect(5, [])
+    assert(Enum.map(made, fn f -> f() end) == [1, 2, 3, 4, 5])
+  end
+
+  test "other recursion is unchanged" do
+    assert(factorial(10) == 3628800)
+    assert(even?(1000) and odd?(999))
+    assert_raise("call depth exceeded", fn -> factorial(10000000) end)
+  end
+
+  test "a fold builds a map and leaves the map it started from alone" do
+    start = %{0 => 0}
+    built = Enum.reduce(1..5000, start, fn i, acc -> Map.put(acc, i, i * 2) end)
+    assert(map_size(built) == 5001 and built[5000] == 10000 and built[0] == 0)
+    assert(start == %{0 => 0})
+    again = Enum.reduce(1..3, start, fn i, acc -> Map.put(acc, i, 0 - i) end)
+    assert(again == %{0 => 0, 1 => -1, 2 => -2, 3 => -3})
+    assert(built[1] == 2)
+  end
+
+  test "the result of a fold is an ordinary value" do
+    none: map[integer, integer] = %{}
+    built = Enum.reduce(1..100, none, fn i, acc -> Map.put(acc, i, i) end)
+    changed = Map.put(built, 1, 100)
+    further = Enum.reduce(1..100, built, fn i, acc -> Map.update(acc, i, 0, fn v -> v + 1 end) end)
+    assert(built[1] == 1 and changed[1] == 100 and further[1] == 2 and further[100] == 101)
+    assert(Enum.sum(Map.values(built)) == 5050)
+    me: pid[map[integer, integer]] = Process.self(1)
+    Process.send(me, built, 100)
+    later = Map.put(built, 2, 200)
+    {true, received} = Process.receive(me, 100)
+    assert(received[2] == 2 and later[2] == 200)
+  end
+
+  test "counters, sets and a named function" do
+    none: map[integer, integer] = %{}
+    counts = Enum.reduce(1..1000, none, fn i, acc -> Map.update(acc, rem(i, 7), 1, fn n -> n + 1 end) end)
+    assert(map_size(counts) == 7 and Enum.sum(Map.values(counts)) == 1000)
+    no_members: set[integer] = MapSet.new()
+    seen = Enum.reduce([3, 1, 3, 2, 1], no_members, fn x, acc -> MapSet.put(acc, x) end)
+    assert(MapSet.size(seen) == 3 and MapSet.member?(seen, 2))
+    tallied = Enum.to_list(1..100) |> reduce(none, &tally)
+    assert(map_size(tallied) == 10 and tallied[3] == 10)
+    once = Enum.reduce([1, 2, 1], none, fn x, acc ->
+      if Map.has_key?(acc, x) do
+        acc
+      else
+        Map.put_new(acc, x, map_size(acc))
+      end
+    end)
+    assert(once == %{1 => 0, 2 => 1})
+    nothing: list[integer] = []
+    empty = Enum.reduce(nothing, none, fn x, acc -> Map.put(acc, x, x) end)
+    assert(empty == %{} and map_size(empty) == 0)
+  end
+
+  test "a function that keeps an older version still sees it" do
+    no_sizes: map[integer, fn[integer]] = %{}
+    sizes = Enum.reduce(1..4, no_sizes, fn i, acc ->
+      size: fn[integer] = fn -> map_size(acc) end
+      Map.put(acc, i, size)
+    end)
+    assert(Enum.map([1, 2, 3, 4], fn i ->
+      size = sizes[i]
+      size()
+    end) == [0, 1, 2, 3])
+    none: map[integer, integer] = %{}
+    no_versions: list[map[integer, integer]] = []
+    {last, versions} = Enum.reduce(1..3, {none, no_versions}, fn i, {acc, kept} -> {Map.put(acc, i, i), [acc | kept]} end)
+    assert(map_size(last) == 3 and Enum.map(versions, fn v -> map_size(v) end) == [2, 1, 0])
+    no_rows: map[integer, map[integer, integer]] = %{}
+    nested = Enum.reduce(1..3, no_rows, fn i, acc ->
+      inner = Enum.reduce(1..i, none, fn j, row -> Map.put(row, j, map_size(acc)) end)
+      Map.put(acc, i, inner)
+    end)
+    assert(nested[3] == %{1 => 2, 2 => 2, 3 => 2} and nested[1] == %{1 => 0})
+  end
+
+  test "a fold that fails leaves its starting map as it was" do
+    start = %{1 => 1}
+    assert_raise("stop", fn ->
+      Enum.reduce(2..10, start, fn i, acc ->
+        if i == 5, do: raise("stop")
+        Map.put(acc, i, i)
+      end)
+    end)
+    assert(start == %{1 => 1})
+  end
+end

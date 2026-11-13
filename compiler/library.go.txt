@@ -8270,6 +8270,18 @@ func nodeServe[A, B any](ctx *actor.Context, name actor.Atom, f func(*actor.Cont
 		actor.Stop(ctx, served, where)
 		return false
 	}
+	// A cast does not know the function's result type, so casts arrive under
+	// a name of their own whose messages are the argument alone.
+	cast := actor.Spawn(ctx, func(w *actor.Context, self *actor.PID[A]) int64 {
+		for {
+			argument := actor.Receive(w, self, -1, where).E1
+			actor.StartUnlinkedTask(w, func(c *actor.Context) B { return f(c, argument) }, where)
+		}
+	}, 1024, where)
+	if !node.Register(ctx, cast, "cast:"+string(name), codecA) {
+		actor.Stop(ctx, cast, where)
+		return false
+	}
 	return true
 }
 
@@ -8316,11 +8328,18 @@ func nodeCallDefault[A, B any](ctx *actor.Context, other string, name actor.Atom
 	return nodeCall(ctx, other, name, argument, 5000, codecA, codecB, where)
 }
 
-// nodeCast runs a served function without waiting for it.
+// nodeCast runs a served function without waiting for it, whatever the
+// function returns. The lookup on another node takes a round trip, so it and
+// the send happen in a process of their own.
 func nodeCast[A any](ctx *actor.Context, other string, name actor.Atom, argument A, codecA node.Codec[A], where string) bool {
-	result := make(chan bool, 1)
+	if other == node.Name(ctx) {
+		target, found := node.Whereis(ctx, "cast:"+string(name), codecA)
+		return found && actor.Send(ctx, target, argument, 0, where)
+	}
 	actor.Spawn(ctx, func(w *actor.Context, _ *actor.PID[struct{}]) int64 {
-		result <- isOk[struct{}, string](nodeCall(w, other, name, argument, 30000, codecA, node.Codec[struct{}]{Type: "tuple[]", Encode: func(*node.Encoder, struct{}) {}, Decode: func(*node.Decoder) struct{} { return struct{}{} }}, where))
+		if target, found := node.RemoteWhereis(w, other, "cast:"+string(name), 30000, codecA); found {
+			actor.Send(w, target, argument, 30000, where)
+		}
 		return 0
 	}, 1, where)
 	return true

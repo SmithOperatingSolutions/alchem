@@ -153,6 +153,19 @@ Reading these:
 - Walking a list and building and updating a map are where Elixir is still clearly ahead inside the program: `build`'s walk (9.1 against 1.2 ms), `state`'s build (27 against 17 ms) and update (11 against 6 ms). Summing the map in key order is faster in Alchem.
 - `restart` is a full supervisor against Go's hand-written recover-and-respawn loop; Elixir's median restart is 15 times Alchem's.
 
+### After v0.3.0: tail calls and folds that own their map
+
+Two changes address the phases where Elixir was ahead above. They were measured on the development machine (Apple M-series, 14 logical CPUs, Go 1.27, Elixir on the same machine, medians of 5 runs), so compare within this table; the hosted-runner tables above predate them.
+
+| Phase | Before | After | Elixir | Go |
+| --- | --- | --- | --- | --- |
+| `build`: walk | 3.46 ms | 0.09 ms | 0.77 ms | 1.4 ms |
+| `state`: build | 19.2 ms | 4.8 ms | 11.9 ms | 1.4 ms |
+| `state`: update | 7.6 ms | 1.45 ms | 3.9 ms | 0.3 ms |
+
+- **Walk.** `count(rest, seen + 1)` is a call to itself in return position, which now runs as a loop instead of 50,000 nested calls. Go's baseline recurses, so it is slower here.
+- **Build and update.** A profile showed the map code itself at under 4% of the time: the rest was the garbage collector, started every few hundred microseconds because each put copies a path of nodes while the live heap is a few MiB. A `reduce` whose function cannot let an older version of the map be seen now updates one map in place (see [architecture](architecture.md)); the allocation for the 50,000 updates fell from 28.6 MiB to 0.09 MiB. Puts outside such a fold are unchanged.
+
 ## Hosted runner at `ee4096d`
 
 The Benchmarks workflow at commit `ee4096d`, on a GitHub-hosted runner (AMD EPYC 7763, 2 logical CPUs, Go 1.23.12, Elixir 1.18.6 on OTP 27, medians of 7 runs), before the workloads timed their own phases.

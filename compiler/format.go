@@ -66,9 +66,10 @@ func Format(source string) (string, error) {
 		b.WriteString("  require " + strconv.Quote(require.Path) + " " + strconv.Quote(require.Version) + "\n")
 	}
 	for i, constant := range p.Constants {
-		if i == 0 && len(p.Imports)+len(p.Requires)+len(p.Uses)+len(p.Doctests)+len(p.GroupTags[""])+len(p.Constants)+len(p.ModuleDoc) > 0 {
+		if i == 0 && len(p.Imports)+len(p.Requires)+len(p.Uses)+len(p.Doctests)+len(p.GroupTags[""])+len(p.ModuleDoc) > 0 {
 			b.WriteString("\n")
 		}
+		remark(constant.Comments, 1)
 		b.WriteString("  @" + constant.Name + " " + formatExpr(constant.Value, 1) + "\n")
 	}
 	implementing := ""
