@@ -68,8 +68,9 @@ func init() {
 		serve, base, "alx> ok(response) = HTTP.get(base <> \"/a\", [{\"accept\", \"text/plain\"}])", "alx> response.body", "\"GET /a \"")
 	doc("HTTP.post", "Sends a POST request with a body and headers.",
 		serve, base, "alx> ok(response) = HTTP.post(base <> \"/items\", \"apple\", [{\"content-type\", \"text/plain\"}])", "alx> response.body", "\"POST /items apple\"")
-	doc("HTTP.request", "Sends a request with any method, headers and body, waiting up to 30 seconds or the given milliseconds; error(\"timeout\") when no response came in time. Options may take the place of the milliseconds: timeout: (as text), ca_file: a PEM file of certificates to trust, insecure: \"true\" to trust any, and stream: \"true\" for the body as chunks, as HTTP.stream gives it.",
+	doc("HTTP.request", "Sends a request with any method, headers and body, waiting up to 30 seconds or the given milliseconds; error(\"timeout\") when no response came in time. Options may take the place of the milliseconds: timeout: (as text), ca_file: a PEM file of certificates to trust, insecure: \"true\" to trust any, stream: \"true\" for the body as chunks, as HTTP.stream gives it, and redirect: \"false\" to return a redirect as it came, with its status and location header, instead of following it.",
 		serve, base, "alx> ok(response) = HTTP.request(\"PUT\", base <> \"/x\", [], \"v\")", "alx> response.body", "\"PUT /x v\"",
+		"alx> ok(kept) = HTTP.request(\"GET\", base <> \"/x\", [], \"\", [redirect: \"false\"])", "alx> kept.status", "200",
 		"alx> case HTTP.request(\"GET\", \"http://127.0.0.1:1/\", [], \"\", 1000) do", "...>   ok(_) -> \"answered\"", "...>   error(_) -> \"no response\"", "...> end", "\"no response\"")
 	doc("HTTP.stream", "Sends a request and returns once the head of the response has come, with the body as some(stream) in chunks, read as it arrives: for long or endless responses. HTTP.read reads it whole.",
 		serve, base, "alx> ok(response) = HTTP.stream(\"GET\", base <> \"/s\", [], \"\")", "alx> HTTP.read(response)", "\"GET /s \"")

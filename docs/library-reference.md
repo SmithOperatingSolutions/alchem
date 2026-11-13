@@ -10462,7 +10462,7 @@ HTTP.request(string, string, list[tuple[string,string]], string, integer) -> res
 HTTP.request(string, string, list[tuple[string,string]], string, list[tuple[atom,string]]) -> result[HTTP.Response,string]
 ```
 
-Sends a request with any method, headers and body, waiting up to 30 seconds or the given milliseconds; error("timeout") when no response came in time. Options may take the place of the milliseconds: timeout: (as text), ca_file: a PEM file of certificates to trust, insecure: "true" to trust any, and stream: "true" for the body as chunks, as HTTP.stream gives it.
+Sends a request with any method, headers and body, waiting up to 30 seconds or the given milliseconds; error("timeout") when no response came in time. Options may take the place of the milliseconds: timeout: (as text), ca_file: a PEM file of certificates to trust, insecure: "true" to trust any, stream: "true" for the body as chunks, as HTTP.stream gives it, and redirect: "false" to return a redirect as it came, with its status and location header, instead of following it.
 
 ```elixir
 alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
@@ -10472,6 +10472,9 @@ alx> base = "http://" <> HTTP.address(server)
 alx> ok(response) = HTTP.request("PUT", base <> "/x", [], "v")
 alx> response.body
 "PUT /x v"
+alx> ok(kept) = HTTP.request("GET", base <> "/x", [], "", [redirect: "false"])
+alx> kept.status
+200
 alx> case HTTP.request("GET", "http://127.0.0.1:1/", [], "", 1000) do
 ...>   ok(_) -> "answered"
 ...>   error(_) -> "no response"

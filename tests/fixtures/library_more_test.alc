@@ -52,6 +52,27 @@ defmodule LibraryMoreTest do
     assert(one == 1 and inspect("\x00") == "\"\\x00\"")
   end
 
+  test "a redirect is followed, or returned as it came" do
+    ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+      if request.path == "/old" do
+        %HTTP.Response{status: 302, headers: [{"location", "/new"}], body: "moved"}
+      else
+        HTTP.text(200, "at " <> request.path)
+      end
+    end)
+    old = "http://" <> HTTP.address(server) <> "/old"
+    ok(followed) = HTTP.get(old)
+    assert({followed.status, followed.body} == {200, "at /new"})
+    ok(also) = HTTP.request("GET", old, [], "", [redirect: "true"])
+    assert(also.status == 200)
+    ok(kept) = HTTP.request("GET", old, [], "", [redirect: "false"])
+    assert({kept.status, kept.body, HTTP.header(kept.headers, "location")} == {302, "moved", some("/new")})
+    ok(plain) = HTTP.request("GET", "http://" <> HTTP.address(server) <> "/new", [], "", [redirect: "false", timeout: "2000"])
+    assert({plain.status, plain.body} == {200, "at /new"})
+    assert_raise("redirect: is", fn -> HTTP.request("GET", old, [], "", [redirect: "no"]) end)
+    HTTP.stop(server)
+  end
+
   test "ports in each mode" do
     me: pid[PortEvent] = Process.self(64)
     ok(lines) = Port.open("cat", [], me, [mode: :line, stderr: :merge])

@@ -10292,6 +10292,17 @@ func httpRequest(ctx *actor.Context, method, address string, headers L[pair[stri
 // httpClientFor is the client a request with these options uses: one that
 // trusts the certificates in ca_file, or every certificate when insecure.
 func httpClientFor(options httpOptions) (*http.Client, error) {
+	client, err := httpTrusting(options)
+	if err != nil || !options.asItCame {
+		return client, err
+	}
+	// A redirect is returned as the response it is, not followed.
+	stopping := *client
+	stopping.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &stopping, nil
+}
+
+func httpTrusting(options httpOptions) (*http.Client, error) {
 	if options.caFile == "" && !options.insecure {
 		return http.DefaultClient, nil
 	}
@@ -10318,6 +10329,8 @@ type httpOptions struct {
 	insecure bool
 	ms       int64
 	stream   bool
+	// asItCame returns a redirect instead of following it.
+	asItCame bool
 }
 
 func httpRequestOptions(ctx *actor.Context, method, address string, headers L[pair[string, string]], body string, options L[pair[actor.Atom, string]], where string) Tresult[THTTP_oResponse, string] {
@@ -10336,8 +10349,13 @@ func httpRequestOptions(ctx *actor.Context, method, address string, headers L[pa
 			chosen.ms = ms
 		case "stream":
 			chosen.stream = option.E1 == "true"
+		case "redirect":
+			if option.E1 != "true" && option.E1 != "false" {
+				failAt(ctx, where, "HTTP.request: redirect: is \"true\" or \"false\"")
+			}
+			chosen.asItCame = option.E1 == "false"
 		default:
-			failAt(ctx, where, "HTTP.request: unknown option :"+string(option.E0)+"; the options are ca_file:, insecure:, timeout: and stream:")
+			failAt(ctx, where, "HTTP.request: unknown option :"+string(option.E0)+"; the options are ca_file:, insecure:, timeout:, stream: and redirect:")
 		}
 	}
 	return httpDo(ctx, method, address, headers, body, chosen)
