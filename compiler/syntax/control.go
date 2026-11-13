@@ -102,6 +102,8 @@ func (c checker) control(e *ast.Expr, scope map[string]string, want string) (str
 				return &node
 			}
 			switch e.Name {
+			case "h":
+				*e = *markupTemplate(template, at)
 			case "s":
 				*e = *template
 			case "w":
@@ -149,6 +151,13 @@ func (c checker) control(e *ast.Expr, scope map[string]string, want string) (str
 			return c.expr(e, scope, want)
 		case "s", "S":
 			e.Kind = "literal"
+			return c.expr(e, scope, want)
+		case "h", "H":
+			if e.Op != "" {
+				return fail("~%s takes no modifiers", e.Name)
+			}
+			*e = ast.Expr{Kind: "call", Name: "Markup.raw", Line: e.Line, Column: e.Column, Args: []*ast.Expr{
+				{Kind: "literal", Value: ast.Literal{Kind: "string", Text: text}, Line: e.Line, Column: e.Column}}}
 			return c.expr(e, scope, want)
 		case "D", "T", "N", "U":
 			if message := calendarSigil(e); message != "" {
@@ -619,4 +628,21 @@ func (c checker) thrownTypes(body []ast.Statement) []string {
 	}
 	block(body)
 	return out
+}
+
+// markupTemplate turns the template of ~h"..." into Markup values joined in
+// order: the template's text as it is written, and each interpolated value
+// through Markup.of, which escapes strings and keeps markup as it is.
+func markupTemplate(template *ast.Expr, at func(ast.Expr) *ast.Expr) *ast.Expr {
+	var pieces []*ast.Expr
+	for _, part := range template.Args {
+		if part.Op == "text" {
+			literal := *part
+			literal.Op = ""
+			pieces = append(pieces, at(ast.Expr{Kind: "call", Name: "Markup.raw", Args: []*ast.Expr{&literal}}))
+			continue
+		}
+		pieces = append(pieces, at(ast.Expr{Kind: "call", Name: "Markup.of", Args: []*ast.Expr{part}}))
+	}
+	return at(ast.Expr{Kind: "call", Name: "Markup.join", Args: []*ast.Expr{at(ast.Expr{Kind: "list", Args: pieces})}})
 }

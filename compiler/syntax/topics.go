@@ -327,6 +327,7 @@ func init() {
 			"~s, ~w and ~r interpolate #{expression}; ~S never does. A ~r that interpolates is compiled when it runs rather than checked at compile time.",
 			"String.replace and String.split accept a ~r in place of the text to look for.",
 			"~c(text) is the code points of the text as a list of integers; there are no charlists.",
+			"~h is an HTML template: it builds Markup, escaping every value it interpolates (see alchem syntax templates); ~H does not interpolate.",
 			"Any other letter is a sigil the program defines: ~x(text)mods calls sigil_x(text, \"mods\"), a function taking two strings. A lower-case one interpolates.",
 		}, []string{"Regex", "Date", "strings"},
 		Sample{Title: "sigils", Body: "assert(~w(red green blue) == [\"red\", \"green\", \"blue\"])\nassert(Regex.run(~r/(\\d+)-(\\d+)/, \"10-20\") == some([\"10-20\", \"10\", \"20\"]))\nassert(\"Hello\" =~ ~r/^hello$/i)\nassert(Date.add(~D[2026-12-31], 1) == ~D[2027-01-01])\nassert(~s(say \"hi\") == \"say \\\"hi\\\"\")"},
@@ -343,6 +344,15 @@ func init() {
 		}, []string{"program", "extern", "functions"},
 		Sample{Title: "two files", File: "defmodule ShapesTest do\n  import \"geometry.alc\"\n\n  test \"imported functions and types\" do\n    size = %Geometry.Size{width: 2, height: 3}\n    assert(Geometry.area(size) == 6)\n  end\nend\n",
 			Files: map[string]string{"geometry.alc": "defmodule Geometry do\n  struct Size do\n    width: integer\n    height: integer\n  end\n\n  def area(size: Size): integer do\n    size.width * size.height\n  end\nend\n"}})
+
+	topic("Text", "templates", "~h\"...\" and ~h\"\"\"...\"\"\" are HTML templates that escape what they interpolate.",
+		[]string{
+			"A template's own text is HTML as written. Each #{...} value is escaped by its type: a string is escaped, Markup (such as another template) goes in as it is, integers, floats and atoms are written as text, and a list of Markup is joined.",
+			"The result is a Markup value; Markup.to_string gives its text. Markup.raw makes Markup from trusted text, and Markup.escape escapes a string.",
+			"Quote attribute values, href=\"#{url}\": escaping makes a value safe inside quotes. It does not check what a URL points to.",
+			"Any other type in #{...}, such as a boolean or a map, is a compile error; convert it to a string first.",
+		}, []string{"sigils", "strings"},
+		Sample{Title: "a list page", File: "defmodule Example do\n  def item(name: string): Markup do\n    ~h\"<li>#{name}</li>\"\n  end\n\n  def page(names: list[string]): Markup do\n    ~h\"\"\"\n    <h1>#{length(names)} names</h1>\n    <ul>#{Enum.map(names, &item/1)}</ul>\n    \"\"\"\n  end\n\n  def main() do\n    html = Markup.to_string(page([\"ada\", \"<script>\"]))\n    assert(html == \"<h1>2 names</h1>\\n<ul><li>ada</li><li>&lt;script&gt;</li></ul>\\n\")\n  end\nend\n"})
 
 	topic("Modules", "constants", "@name value declares a module constant; @name anywhere in the module stands for the value.",
 		[]string{

@@ -3,6 +3,7 @@ package compiler
 import (
 	"fmt"
 	"github.com/SmithOperatingSolutions/alchem/compiler/ast"
+	"github.com/SmithOperatingSolutions/alchem/compiler/lexer"
 	"github.com/SmithOperatingSolutions/alchem/compiler/syntax"
 	"regexp"
 	"strconv"
@@ -481,6 +482,10 @@ func formatExpr(e *ast.Expr, n int) string {
 		}
 		if e.Name == "D" || e.Name == "T" || e.Name == "N" || e.Name == "U" {
 			open, shut = "[", "]"
+		}
+		// A sigil keeps the delimiters it was written with.
+		if closer := lexer.SigilCloser(e.Delimiter); closer != "" {
+			open, shut = e.Delimiter, closer
 		}
 		return "~" + e.Name + open + strings.ReplaceAll(e.Value.Text, shut, "\\"+shut) + shut + e.Op
 	case "try":

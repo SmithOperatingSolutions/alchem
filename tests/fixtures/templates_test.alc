@@ -1,0 +1,55 @@
+defmodule TemplatesTest do
+  @moduletag area: "html templates"
+
+  def row(name: string, score: integer): Markup do
+    ~h"<tr><td>#{name}</td><td>#{score}</td></tr>"
+  end
+
+  def table(rows: list[tuple[string, integer]]): Markup do
+    ~h"""
+    <table class="scores">
+      #{Enum.map(rows, fn {name, score} -> row(name, score) end)}
+    </table>
+    """
+  end
+
+  test "values are escaped and markup is kept" do
+    hostile = "<img src=x onerror=\"steal()\">"
+    html = Markup.to_string(~h(<p title="#{hostile}">#{hostile}</p>))
+    assert(html == "<p title=\"&lt;img src=x onerror=&#34;steal()&#34;&gt;\">&lt;img src=x onerror=&#34;steal()&#34;&gt;</p>")
+    inner = ~h"<i>kept</i>"
+    assert(Markup.to_string(~h"<b>#{inner}</b>") == "<b><i>kept</i></b>")
+  end
+
+  test "heredoc templates, lists and numbers" do
+    html = Markup.to_string(table([{"ada", 3}, {"<grace>", 10}]))
+    assert(html == "<table class=\"scores\">\n  <tr><td>ada</td><td>3</td></tr><tr><td>&lt;grace&gt;</td><td>10</td></tr>\n</table>\n")
+    assert(Markup.to_string(~h"#{2.5} #{:ok} #{-1}") == "2.5 ok -1")
+    empty: list[Markup] = []
+    assert(Markup.to_string(~h"<ul>#{empty}</ul>") == "<ul></ul>")
+  end
+
+  test "templates without interpolation and the Markup functions" do
+    assert(~h"<br>" == Markup.raw("<br>"))
+    assert(Markup.to_string(~H"<p>#{not interpolated}</p>") == "<p>\#{not interpolated}</p>")
+    rule = ~H"""
+    <hr>
+    """
+    assert(Markup.to_string(rule) == "<hr>\n")
+    assert(Markup.escape("'&'") == "&#39;&amp;&#39;")
+    assert(Markup.to_string(Markup.join([Markup.raw("a"), Markup.of("<"), Markup.of(1)])) == "a&lt;1")
+  end
+
+  test "interpolating sigil heredocs keep quotes and line breaks" do
+    who = "ada"
+    words = ~w"""
+    "#{who}" b
+    c
+    """
+    assert(words == ["\"ada\"", "b", "c"])
+    said = ~s"""
+    say "#{who}"
+    """
+    assert(said == "say \"ada\"\n")
+  end
+end

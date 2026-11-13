@@ -52,6 +52,7 @@ Status: **done** (implemented and covered by a fixture), **partial**, **todo**, 
 | multi-clause anonymous functions | done | clauses on the lines after `fn`; one argument, so match a tuple for several |
 | default arguments (`\\`) | done | trailing parameters; the value is a constant, filled in at each call |
 | module attributes as constants (`@name value`) | done | built from literals, operators and earlier constants; visible in the whole module, defined once; not readable from other modules |
+| HTML templates | done | `~h` interpolates with escaping into a `Markup` value, as a HEEx template escapes; no component syntax or compile-time HTML validation |
 
 ## Modules
 

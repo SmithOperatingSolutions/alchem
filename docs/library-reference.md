@@ -8,7 +8,7 @@ Every library function with its signatures, a description and examples; `alchem 
 
 **Collections**: [Enum](#enum), [Stream](#stream), [List](#list), [Map](#map), [Keyword](#keyword), [MapSet](#mapset), [Range](#range)
 
-**Text**: [String](#string), [Regex](#regex), [Integer](#integer), [Float](#float), [Base](#base), [JSON](#json), [URI](#uri), [Version](#version), [Crypto](#crypto)
+**Text**: [String](#string), [Regex](#regex), [Integer](#integer), [Float](#float), [Base](#base), [JSON](#json), [URI](#uri), [Version](#version), [Markup](#markup), [Crypto](#crypto)
 
 **Dates and times**: [Date](#date), [Time](#time), [NaiveDateTime](#naivedatetime), [DateTime](#datetime), [Calendar](#calendar), [Duration](#duration)
 
@@ -9667,6 +9667,86 @@ Tuples of two or three generators' values.
 ```elixir
 alx> Enum.all?(Gen.sample(Gen.tuple(Gen.integer(0, 1), Gen.constant("x")), 5), fn {n, s} -> n <= 1 and s == "x" end)
 true
+```
+
+## Markup
+
+HTML built by ~h templates, which escape every value they interpolate; see alchem syntax templates.
+
+### Markup.escape
+
+```
+Markup.escape(string) -> string
+```
+
+Text made safe inside an HTML element or a quoted attribute value: &, <, >, " and ' become character references.
+
+```elixir
+alx> Markup.escape("<a href='x'>&</a>")
+"&lt;a href=&#39;x&#39;&gt;&amp;&lt;/a&gt;"
+```
+
+### Markup.join
+
+```
+Markup.join(list[Markup]) -> Markup
+```
+
+Pieces of markup one after another.
+
+```elixir
+alx> items = Enum.map(["a", "b"], fn x -> ~h"<li>#{x}</li>" end)
+alx> Markup.to_string(Markup.join(items))
+"<li>a</li><li>b</li>"
+```
+
+### Markup.of
+
+```
+Markup.of(atom) -> Markup
+Markup.of(float) -> Markup
+Markup.of(Markup) -> Markup
+Markup.of(string) -> Markup
+Markup.of(integer) -> Markup
+Markup.of(list[Markup]) -> Markup
+```
+
+What a template does with a value it is given: a string is escaped, markup is kept, a number or atom is written as text and a list of markup is joined.
+
+```elixir
+alx> Markup.to_string(Markup.of("1 < 2"))
+"1 &lt; 2"
+alx> Markup.to_string(Markup.of(~h"<i>kept</i>"))
+"<i>kept</i>"
+alx> Markup.to_string(Markup.of(42))
+"42"
+```
+
+### Markup.raw
+
+```
+Markup.raw(string) -> Markup
+```
+
+Markup made from text exactly as given, for HTML the program trusts: never for text from users.
+
+```elixir
+alx> Markup.to_string(Markup.raw("<br>"))
+"<br>"
+```
+
+### Markup.to_string
+
+```
+Markup.to_string(Markup) -> string
+```
+
+The HTML text of markup, to send or store.
+
+```elixir
+alx> name = "<b>ada</b>"
+alx> Markup.to_string(~h"<p>#{name}</p>")
+"<p>&lt;b&gt;ada&lt;/b&gt;</p>"
 ```
 
 ## TCP

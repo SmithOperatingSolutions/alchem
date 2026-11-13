@@ -633,3 +633,12 @@ func Heredoc(source string, offset int) (written string, ok bool) {
 	}
 	return open + "\n" + text + `"""` + source[next:modifiers], true
 }
+
+// SigilCloser is the delimiter that closes a one-line sigil opened with
+// open, or "" when open is not a sigil delimiter.
+func SigilCloser(open string) string {
+	if len(open) != 1 || sigilClosers[open[0]] == 0 {
+		return ""
+	}
+	return string(sigilClosers[open[0]])
+}

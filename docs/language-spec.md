@@ -658,12 +658,15 @@ end
 | `~r/pattern/` | a `regex`, checked when the program is compiled; modifiers `i`, `m`, `s` and `u` may follow |
 | `~w(one two three)` | `list[string]` of the whitespace-separated words |
 | `~s(text)`, `~S(text)` | a `string` that may contain double quotes without escaping |
+| `~h"<p>#{name}</p>"`, `~H(<br>)` | `Markup`: HTML whose interpolated values are escaped; see below |
 | `~D[2026-01-05]` | a `Date` |
 | `~T[13:04:05]` | a `Time` |
 | `~N[2026-01-05 13:04:05]` | a `NaiveDateTime` |
 | `~U[2026-01-05T13:04:05Z]` | a `DateTime` |
 
-The delimiters may be `/ /`, `| |`, `" "`, `' '`, `( )`, `[ ]`, `{ }` or `< >`; a backslash escapes the closing one. `~s`, `~w` and `~r` interpolate `#{expression}`, and `~S` never does; a `~r` that interpolates is compiled when it runs instead of being checked when the program is compiled. Sigils cannot span lines. Calendar sigils are checked when the program is compiled.
+The delimiters may be `/ /`, `| |`, `" "`, `' '`, `( )`, `[ ]`, `{ }` or `< >`; a backslash escapes the closing one. `~s`, `~w`, `~r` and `~h` interpolate `#{expression}`, and `~S` and `~H` never do; a `~r` that interpolates is compiled when it runs instead of being checked when the program is compiled. A one-line sigil cannot span lines; a sigil heredoc (`~h"""`) can. Calendar sigils are checked when the program is compiled.
+
+`~h` is an HTML template. Its own text is markup as written, and each interpolated value is converted by its type: a `string` is escaped (`&`, `<`, `>`, `"` and `'` become character references), `Markup` goes in unchanged, so templates nest, an `integer`, `float` or `atom` is written as text, and a `list[Markup]` is joined. Any other type is a compile error. The result is a `Markup` value, a struct whose `html` field holds the text; `Markup.to_string` returns it. Escaping makes a value safe inside an element or a quoted attribute value, so attribute values belong in quotes.
 
 `~c(text)` is the code points of its text as a `list[integer]`; there are no charlists.
 
