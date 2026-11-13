@@ -249,7 +249,7 @@ func Format(source string) (string, error) {
 	closeTo(0)
 	remark(p.Trailing, 1)
 	b.WriteString("end\n")
-	return placeHeredocEnds(b.String()), nil
+	return b.String(), nil
 }
 func formatParams(params []ast.Parameter) string {
 	out := []string{}
@@ -781,14 +781,9 @@ func formatTag(tag string) string {
 	return name + ": " + strconv.Quote(value)
 }
 
-// heredocEnd follows the closing quotes of a heredoc, with the indentation
-// of its line. Format removes it at the end of a line, and elsewhere turns
-// it into a line break: the closing quotes must stand on a line of their
-// own, so whatever follows them in the expression goes on the next.
-const heredocEnd = "\x01"
-
 // formatHeredoc writes a heredoc as it was written, its lines and closing
-// quotes indented to depth n.
+// quotes indented to depth n. Whatever follows the closing quotes in the
+// expression stays on their line, as in """) or """, x).
 func formatHeredoc(written string, n int) string {
 	lines := strings.Split(written, "\n")
 	var b strings.Builder
@@ -799,20 +794,5 @@ func formatHeredoc(written string, n int) string {
 			b.WriteString(indent(n) + line)
 		}
 	}
-	return b.String() + heredocEnd + indent(n)
-}
-
-// heredocEnds matches the marker formatHeredoc leaves after closing
-// quotes, with its indentation and any line break after it.
-var heredocEnds = regexp.MustCompile(heredocEnd + `( *)(\n?)`)
-
-// placeHeredocEnds removes each marker at the end of a line and turns the
-// others into a line break and the indentation they carry.
-func placeHeredocEnds(text string) string {
-	return heredocEnds.ReplaceAllStringFunc(text, func(marker string) string {
-		if strings.HasSuffix(marker, "\n") {
-			return "\n"
-		}
-		return "\n" + strings.TrimPrefix(marker, heredocEnd)
-	})
+	return b.String()
 }

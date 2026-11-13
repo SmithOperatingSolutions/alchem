@@ -38,6 +38,14 @@ func CalendarTypes() []ast.TypeDecl {
 		// HTML a template made: its text was written by the program, and every
 		// value put into it was escaped. ~h"..." builds one.
 		{Kind: "struct", Name: "Markup", Local: "Markup", Fields: []ast.Parameter{{Name: "html", Type: "string"}}},
+		// Markup taken apart by Markup.parts: the text its template wrote,
+		// in the pieces around its values, and the values in order.
+		{Kind: "struct", Name: "Markup.Parts", Local: "Markup.Parts", Fields: []ast.Parameter{
+			{Name: "template", Type: "string"}, {Name: "fixed", Type: "list[string]"}, {Name: "values", Type: "list[Markup.Value]"}}},
+		{Kind: "sum", Name: "Markup.Value", Local: "Markup.Value", Variants: []ast.Variant{
+			{Name: "text", Fields: []ast.Parameter{{Name: "text", Type: "string"}}},
+			{Name: "markup", Fields: []ast.Parameter{{Name: "markup", Type: "Markup"}}},
+			{Name: "list", Fields: []ast.Parameter{{Name: "items", Type: "list[Markup]"}}}}},
 		// A range of integers, first..last//step. A range literal is a Range
 		// unless a stream is expected where it is written.
 		{Kind: "struct", Name: "Range", Local: "Range", Fields: []ast.Parameter{

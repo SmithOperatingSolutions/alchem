@@ -22,7 +22,7 @@ Every library function with its signatures, a description and examples; `alchem 
 
 ## Kernel
 
-Functions called without a module name: arithmetic helpers, list head and tail, conversion to text, and inspect.
+Functions called without a module name: arithmetic helpers, list head and tail, conversion to text, and inspect. A module that defines a function of the same name reaches the builtin as Kernel.name, as in Kernel.div(n, 2).
 
 ### abs
 
@@ -4276,13 +4276,19 @@ some(%{"key" => "a", "value" => "1"})
 
 ```
 Regex.replace(regex, string, string) -> string
+Regex.replace(regex, string, fn[string,string]) -> string
+Regex.replace(regex, string, fn[list[string],string]) -> string
 ```
 
-Replaces every match; \\1 in the replacement inserts a group.
+Replaces every match; \\1 in the replacement inserts a group. The replacement may instead be a function of the match, or, when its parameter is declared list[string], of the match followed by its groups as Regex.run gives them.
 
 ```elixir
 alx> Regex.replace(~r/\d/, "a1b2", "#")
 "a#b#"
+alx> Regex.replace(~r/\d+/, "a1b22", fn digits -> "<" <> digits <> ">" end)
+"a<1>b<22>"
+alx> Regex.replace(~r/(\w)=(\d)/, "a=1 b=2", fn(found: list[string]): string do Enum.at(found, 2, "") <> Enum.at(found, 1, "") end)
+"1a 2b"
 ```
 
 ### Regex.run
@@ -4306,11 +4312,13 @@ none
 Regex.scan(regex, string) -> list[list[string]]
 ```
 
-Every match, each followed by its groups.
+Every match, each followed by its groups, as Regex.run gives the first.
 
 ```elixir
 alx> Regex.scan(~r/\d+/, "1 and 22")
 [["1"], ["22"]]
+alx> Regex.scan(~r/(\w)(\d)/, "a1 b2")
+[["a1", "a", "1"], ["b2", "b", "2"]]
 ```
 
 ### Regex.source
@@ -6262,7 +6270,7 @@ Reading, writing and managing files; File.stream! reads lazily.
 File.append(string, string) -> result[tuple[],string]
 ```
 
-Appends text to a file, creating it when missing.
+Appends text, or any bytes, to a file, creating it when missing.
 
 ```elixir
 alx> File.write("doc_append.txt", "a")
@@ -6574,7 +6582,7 @@ alx> case File.open(Path.join(System.tmp_dir!(), "no/such/dir/x"), [:read]) do
 File.read(string) -> result[string,string]
 ```
 
-Reads a whole file, returning ok(contents) or error(reason).
+Reads a whole file of text, returning ok(contents) or error(reason); a file whose bytes are not UTF-8 is error("file is not valid UTF-8"), and File.read_binary reads it.
 
 ```elixir
 alx> File.write!("doc_read.txt", "hello")
@@ -6599,6 +6607,36 @@ Reads a whole file; fails when it cannot be read.
 alx> File.write!("doc_read_bang.txt", "hello")
 alx> File.read!("doc_read_bang.txt")
 "hello"
+```
+
+### File.read_binary
+
+```
+File.read_binary(string) -> result[string,string]
+```
+
+Reads a whole file as the bytes it holds, whether or not they are text: an image, an archive or an upload. File.read is for text and refuses bytes that are not UTF-8.
+
+```elixir
+alx> File.write!("doc_read_binary.bin", "a\x00\xff")
+alx> File.read_binary("doc_read_binary.bin")
+ok("a\x00\xff")
+alx> File.read("doc_read_binary.bin")
+error("file is not valid UTF-8")
+```
+
+### File.read_binary!
+
+```
+File.read_binary!(string) -> string
+```
+
+Reads a whole file as the bytes it holds; fails when it cannot be read.
+
+```elixir
+alx> File.write!("doc_read_binary_bang.bin", "\xfe\xff")
+alx> byte_size(File.read_binary!("doc_read_binary_bang.bin"))
+2
 ```
 
 ### File.regular?
@@ -6759,7 +6797,7 @@ File.write(string, string) -> result[tuple[],string]
 File.write(string, string, list[atom]) -> result[tuple[],string]
 ```
 
-Writes text to a file, replacing its contents.
+Writes text, or any bytes, to a file, replacing its contents.
 
 ```elixir
 alx> File.write("doc_write.txt", "hello")
@@ -7861,7 +7899,7 @@ Runs an external program and exchanges text with it: its output arrives as messa
 Port.close(port) -> boolean
 ```
 
-Closes the program's standard input, so a program that reads to the end can finish; false when it was already closed. Stopping the owning process ends the program.
+Closes the program's standard input, so a program that reads to the end can finish; false when it was already closed. The program is ended when its owner, the process its output goes to, ends, and when the Alchem program does; Port.kill ends it on request.
 
 ```elixir
 alx> me: pid[PortEvent] = Process.self(8)
@@ -7907,6 +7945,24 @@ alx> info.name
 "cat"
 alx> Port.close(port)
 true
+```
+
+### Port.kill
+
+```
+Port.kill(port) -> boolean
+```
+
+Ends the program and waits briefly until it has gone; false when it had already ended. The program is asked to stop first, with an interrupt where the system has one, so that a program which runs others can stop them, and is killed if it has not gone half a second later. The owner still receives PortEvent.exit.
+
+```elixir
+alx> me: pid[PortEvent] = Process.self(8)
+alx> case Port.open("cat", Enum.take([""], 0), me) do
+...>   ok(waiting) -> {Port.kill(waiting), Port.kill(waiting)}
+...>   error(_) -> {false, false}
+...> end
+{true, false}
+alx> assert_receive(me, PortEvent.exit(_), 5000)
 ```
 
 ### Port.monitor
@@ -9860,6 +9916,25 @@ alx> Markup.to_string(Markup.of(42))
 "42"
 ```
 
+### Markup.parts
+
+```
+Markup.parts(Markup) -> Markup.Parts
+```
+
+Takes markup apart, for a library that sends a page's fixed text once and afterwards only what changed. For markup a ~h template made: template names the template (the same for every value of one ~h, and for another only when its text is the same), fixed is the template's own text in the pieces around its values (one more piece than there are values), and values are the values in order: text already escaped, the Markup of a template inside it, or the list of Markup a list gave. Markup made by Markup.raw, Markup.of or Markup.join has nothing fixed: an empty name, two empty pieces and one value, its text or its list.
+
+```elixir
+alx> name = "<ada>"
+alx> parts = Markup.parts(~h"<p>#{name}</p>")
+alx> {parts.fixed, parts.values}
+{["<p>", "</p>"], [Markup.Value.text("&lt;ada&gt;")]}
+alx> parts.template == Markup.parts(~h"<p>#{name}</p>").template
+true
+alx> Markup.parts(Markup.raw("<br>")).values
+[Markup.Value.text("<br>")]
+```
+
 ### Markup.raw
 
 ```
@@ -9871,6 +9946,19 @@ Markup made from text exactly as given, for HTML the program trusts: never for t
 ```elixir
 alx> Markup.to_string(Markup.raw("<br>"))
 "<br>"
+```
+
+### Markup.template
+
+```
+Markup.template(string, list[string], list[Markup]) -> Markup
+```
+
+What ~h builds: markup from a template's name, its fixed text in pieces and the values that go between them. Written by the compiler; a program writes ~h.
+
+```elixir
+alx> Markup.to_string(Markup.template("greeting", ["<p>", "</p>"], [Markup.of("hi")]))
+"<p>hi</p>"
 ```
 
 ### Markup.to_string
@@ -10404,7 +10492,7 @@ HTTP.request(string, string, list[tuple[string,string]], string, integer) -> res
 HTTP.request(string, string, list[tuple[string,string]], string, list[tuple[atom,string]]) -> result[HTTP.Response,string]
 ```
 
-Sends a request with any method, headers and body, waiting up to 30 seconds or the given milliseconds; error("timeout") when no response came in time. Options may take the place of the milliseconds: timeout: (as text), ca_file: a PEM file of certificates to trust, insecure: "true" to trust any, and stream: "true" for the body as chunks, as HTTP.stream gives it.
+Sends a request with any method, headers and body, waiting up to 30 seconds or the given milliseconds; error("timeout") when no response came in time. Options may take the place of the milliseconds: timeout: (as text), ca_file: a PEM file of certificates to trust, insecure: "true" to trust any, stream: "true" for the body as chunks, as HTTP.stream gives it, and redirect: "false" to return a redirect as it came, with its status and location header, instead of following it.
 
 ```elixir
 alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
@@ -10414,6 +10502,9 @@ alx> base = "http://" <> HTTP.address(server)
 alx> ok(response) = HTTP.request("PUT", base <> "/x", [], "v")
 alx> response.body
 "PUT /x v"
+alx> ok(kept) = HTTP.request("GET", base <> "/x", [], "", [redirect: "false"])
+alx> kept.status
+200
 alx> case HTTP.request("GET", "http://127.0.0.1:1/", [], "", 1000) do
 ...>   ok(_) -> "answered"
 ...>   error(_) -> "no response"
@@ -11937,9 +12028,10 @@ error("closed")
 ```
 WebSocket.connect(string, integer) -> result[websocket,string]
 WebSocket.connect(string, integer, list[tuple[atom,string]]) -> result[websocket,string]
+WebSocket.connect(string, integer, list[tuple[atom,string]], list[tuple[string,string]]) -> result[websocket,string]
 ```
 
-Opens a WebSocket to a ws:// or wss:// address, waiting up to the given milliseconds for the connection and the handshake. Options, as text: ca_file: a PEM file of certificates to trust, insecure: "true" to trust any, and origin: the Origin header to send.
+Opens a WebSocket to a ws:// or wss:// address, waiting up to the given milliseconds for the connection and the handshake. Options, as text: ca_file: a PEM file of certificates to trust, insecure: "true" to trust any, and origin: the Origin header to send. A list of {name, value} headers after the options is sent with the handshake, such as a Cookie or Authorization; the headers the handshake sets itself are refused.
 
 ```elixir
 alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->

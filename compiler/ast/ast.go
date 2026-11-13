@@ -10,6 +10,9 @@ type Program struct {
 	Leading, Trailing, Doctests []string
 	// ModuleDoc is the text of the module's @moduledoc.
 	ModuleDoc string
+	// Library is set when the module is checked without being built: it
+	// may then be one that other files import, with no main.
+	Library bool
 	// Protocols are the protocols the module declares.
 	Protocols []Protocol
 	// Macros are the templates the module defines with defmacro, and Uses

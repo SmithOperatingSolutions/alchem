@@ -88,7 +88,7 @@ File.stream!("access.log")
 
 ## Other modules
 
-- **Kernel functions** are called without a module: `abs`, `min`, `max`, `div`, `rem`, `round`, `trunc`, `ceil`, `floor`, `hd`, `tl`, `to_string`, `inspect`, `then`, `tap`, `map_size`, `byte_size`. A function of the same name defined in a program takes precedence.
+- **Kernel functions** are called without a module: `abs`, `min`, `max`, `div`, `rem`, `round`, `trunc`, `ceil`, `floor`, `hd`, `tl`, `to_string`, `inspect`, `then`, `tap`, `map_size`, `byte_size`. A function of the same name defined in a program takes precedence. `Kernel.name` always means the builtin, so a module that defines its own `div` can still divide with `Kernel.div(n, 2)`.
 - **`inspect(value)`** renders any value as source would write it, `%Point{x: 1, y: 2}` or `[some(1), none]`; `IO.inspect(value)` prints that and returns the value.
 - **`MapSet`** provides sets of integers, strings or booleans.
 - **`Regex`** uses RE2 syntax: there are no backreferences or lookaround, and matching takes time linear in the input. Replacement text may use `\\1` for a capture group.
@@ -224,7 +224,7 @@ end
 
 ## WebSockets and cryptography
 
-A handler of `HTTP.serve` turns its request into a WebSocket with `WebSocket.upgrade(request)`; a request that is not a handshake gives `error(reason)`, and the handler answers it as usual. The response a handler returns after upgrading is not sent. `WebSocket.connect("ws://host:port/path", ms)` opens one from the client side, and `wss://` uses TLS with the same `ca_file:` and `insecure:` options as `HTTP.request`.
+A handler of `HTTP.serve` turns its request into a WebSocket with `WebSocket.upgrade(request)`; a request that is not a handshake gives `error(reason)`, and the handler answers it as usual. The response a handler returns after upgrading is not sent. `WebSocket.connect("ws://host:port/path", ms)` opens one from the client side, and `wss://` uses TLS with the same `ca_file:` and `insecure:` options as `HTTP.request`. A fourth argument is a list of headers to send with the handshake, as `HTTP.request` takes them: `WebSocket.connect(address, 2000, [origin: origin], [{"cookie", "session=..."}])`.
 
 Messages are text or binary. `WebSocket.recv(ws, ms)` gives the next `WebSocket.Event`: `text(text)`, `binary(data)`, `closed(code, reason)` when the other end closes, or `error(reason)` when the connection fails or breaks the protocol, which closes it with the matching code. Pings are answered and the closing handshake completed without the program's help. Like a TCP socket, a WebSocket belongs to the process that made it and closes, with code 1001, when that process ends; `WebSocket.controlling_process` hands it on, and `WebSocket.setopts(ws, [active: :true])` sends its events to that process as messages. Incoming messages are limited to 16 MB unless `WebSocket.upgrade(request, [max_message_bytes: n])` says otherwise.
 
@@ -252,7 +252,7 @@ end
 
 ## HTML templates
 
-`~h"<li>#{name}</li>"` and `~h"""` heredocs build `Markup`: the template's own text is kept, and every interpolated string is escaped, so text from users cannot become markup. A `Markup` value interpolated into another template goes in unchanged, a list of them is joined, and numbers and atoms are written as text. `Markup.to_string` gives the HTML, `Markup.raw` marks trusted text as markup, and `Markup.escape` escapes a string.
+`~h"<li>#{name}</li>"` and `~h"""` heredocs build `Markup`: the template's own text is kept, and every interpolated string is escaped, so text from users cannot become markup. A `Markup` value interpolated into another template goes in unchanged, a list of them is joined, and numbers and atoms are written as text. `Markup.to_string` gives the HTML, `Markup.raw` marks trusted text as markup, and `Markup.escape` escapes a string. `Markup.parts(markup)` takes markup apart for libraries that render pages: `template` names the `~h` that made it, `fixed` is the template's own text in the pieces around its values, and `values` are the values in order, each `Markup.Value.text` (already escaped), `Markup.Value.markup` (a template inside it) or `Markup.Value.list`. A library can send the fixed text of a template once and afterwards only the values that changed. How markup was made is no part of its value: it compares, prints and encodes by its text alone, and markup that has crossed to another node has nothing fixed.
 
 ```elixir
 def item(name: string): Markup do
@@ -273,4 +273,4 @@ HTTP.text(200, Markup.to_string(page(["ada", "<script>"])))
 
 `Atom.to_string` and `String.to_atom` convert between an atom and its name. The `Keyword` module works on keyword lists, `[name: value]`: `get`, `fetch`, `put`, `delete`, `merge`, `keys`, `values`, `update`, `pop`, `take`, `drop`, `get_values` and `to_map`.
 
-`Port.open(program, arguments, owner)` runs an external program. Each line it writes arrives in the owner's mailbox as `PortEvent.data(text)`, followed by `PortEvent.exit(status)` when it ends; `Port.command(port, text)` writes to its standard input and `Port.close(port)` closes it. Stopping the owner ends the program.
+`Port.open(program, arguments, owner)` runs an external program. Each line it writes arrives in the owner's mailbox as `PortEvent.data(text)`, followed by `PortEvent.exit(status)` when it ends; `Port.command(port, text)` writes to its standard input and `Port.close(port)` closes it. The program is ended when its owner ends, however that happens, and when the Alchem program exits; `Port.kill(port)` ends it on request. Ending a program asks it to stop first, with an interrupt, and kills it half a second later if it is still there, so a program that runs others, as `alchem run` does, can take them down with it.

@@ -126,7 +126,7 @@ See also: alchem syntax pipes, alchem syntax ranges, alchem syntax strings
 UTF-8 text with interpolation, heredocs and the String module.
 
 - "#{expression}" interpolates a string, integer, float or boolean; write \#{ for the literal characters.
-- A heredoc starts with """ at the end of a line and ends with """ on its own line; the closing line's indentation is removed from every line.
+- A heredoc starts with """ at the end of a line and ends at the next line that begins with """; the indentation of the closing quotes is removed from every line. What follows the closing quotes continues the expression, so a heredoc can be an argument, closed with """).
 - A heredoc has escapes and #{...} interpolation, as a string does; ~S""" starts one that is taken literally, as documentation with examples usually is.
 - inspect(value) renders any value as text; to_string renders the four primitive types.
 
@@ -1072,6 +1072,7 @@ See also: alchem syntax program, alchem syntax extern, alchem syntax functions
 
 - A template's own text is HTML as written. Each #{...} value is escaped by its type: a string is escaped, Markup (such as another template) goes in as it is, integers, floats and atoms are written as text, and a list of Markup is joined.
 - The result is a Markup value; Markup.to_string gives its text. Markup.raw makes Markup from trusted text, and Markup.escape escapes a string.
+- Markup.parts takes a template's Markup apart into its fixed text and its values, for a library that sends the fixed text once and then only the values that change.
 - Quote attribute values, href="#{url}": escaping makes a value safe inside quotes. It does not check what a URL points to.
 - Any other type in #{...}, such as a boolean or a map, is a compile error; convert it to a string first.
 

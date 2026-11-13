@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
+	"time"
 	"unicode"
 
 	"github.com/SmithOperatingSolutions/alchem/compiler"
@@ -36,7 +38,23 @@ func runProgram(ctx context.Context, entry string, arguments []string, options c
 	}
 	cmd := exec.CommandContext(ctx, options.Output, arguments...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, out, errOut
+	// When alchem run is interrupted or asked to terminate, so is the
+	// program, which is then waited for; one that has not gone a few seconds
+	// later is killed. Where a program cannot be signalled it is killed at
+	// once.
+	cmd.Cancel = func() error {
+		if err := cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return cmd.Process.Kill()
+		}
+		return nil
+	}
+	cmd.WaitDelay = 5 * time.Second
 	err = cmd.Run()
+	if ctx.Err() != nil {
+		// Ended on request: the status a shell gives a program ended by a
+		// signal.
+		return 130, nil
+	}
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
 		return exit.ExitCode(), nil

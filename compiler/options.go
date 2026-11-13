@@ -95,6 +95,7 @@ func BuildWithOptionsContext(parent context.Context, source string, options Buil
 }
 
 // Check resolves the complete import graph and type-checks every module.
+// The entry may be a library, a module without main.
 func Check(source string) error { return CheckContext(context.Background(), source) }
 
 // A program with extern declarations is also checked against the Go
@@ -106,7 +107,9 @@ func CheckContext(ctx context.Context, source string) error {
 // CheckLocked is CheckContext that, with locked set, fails instead of
 // updating alchem.lock.
 func CheckLocked(ctx context.Context, source string, locked bool) error {
-	program, err := loadProjectContext(ctx, source)
+	// Nothing is built, so the file may be a library: a module without main
+	// that other files import.
+	program, err := loadProjectAs(ctx, source, true)
 	if err != nil {
 		return err
 	}

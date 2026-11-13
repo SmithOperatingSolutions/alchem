@@ -4,7 +4,7 @@ An Alchem file contains one `defmodule UppercaseName do ... end`. The entry modu
 
 ## Values, bindings and expressions
 
-Primitive types are `integer` (signed 64-bit), `float` (64-bit IEEE 754), `boolean` (`true`/`false`) and `string` (decoded UTF-8 with Go-style quoted escapes). Invalid UTF-8, invalid escapes, embedded NUL and out-of-range integer literals are compilation errors. String equality compares decoded bytes without Unicode normalization.
+Primitive types are `integer` (signed 64-bit), `float` (64-bit IEEE 754), `boolean` (`true`/`false`) and `string` (decoded UTF-8 with Go-style quoted escapes). Invalid UTF-8, invalid escapes and out-of-range integer literals are compilation errors. A byte escape such as `\x00` or `\xff` writes a byte that cannot be typed, so a literal can hold binary data. String equality compares decoded bytes without Unicode normalization.
 
 Bindings use `name = expression`, with optional annotations such as `xs: list[integer] = []`. Destructuring bindings are described below. Names start with a lowercase Unicode letter or underscore and continue with letters, digits or underscores. Keywords and builtin names are reserved. Bindings are immutable: an existing name cannot be redefined or shadowed in a nested branch. Unused bindings are allowed. Names must be defined before use. Each function has its own scope; branch-local bindings do not escape their branch, and separate branches may use the same new name.
 
@@ -560,7 +560,7 @@ end
 
 `@moduledoc` documents the module, `@doc` the function that follows and `@typedoc` the struct or type that follows. Each takes a string, usually a heredoc, or `false`. The clauses of a function share the documentation of the first documented one. Documentation is kept by `alchem fmt`, printed by `alchem doc file.alc`, and its `alx>` examples are run by `doctest Module` (see [testing Alchem programs](unit-testing.md)). Documentation with nothing declared after it is an error; `@doc false` is allowed anywhere.
 
-A heredoc is a string that starts with `"""` at the end of a line and ends at a line holding only `"""`. The indentation of that closing line is removed from every line, and the text ends with a newline. As in a string, escapes apply and `#{...}` interpolates. `~S"""` starts a heredoc that is taken literally, as documentation whose examples contain backslashes is written; `~s"""` is the same as `"""`, and any other sigil letter applies that sigil to the heredoc's text. `alchem fmt` writes documentation as `~S"""` when its text holds a backslash or `#{`.
+A heredoc is a string that starts with `"""` at the end of a line and ends at the first later line that begins with `"""`. The expression it is part of may go on after the closing quotes, so a heredoc can be an argument: `String.trim("""` ... `""")`. The indentation of the closing quotes is removed from every line, and the text ends with a newline. As in a string, escapes apply and `#{...}` interpolates. `~S"""` starts a heredoc that is taken literally, as documentation whose examples contain backslashes is written; `~s"""` is the same as `"""`, and any other sigil letter applies that sigil to the heredoc's text. `alchem fmt` writes documentation as `~S"""` when its text holds a backslash or `#{`.
 
 ## try, rescue and after
 

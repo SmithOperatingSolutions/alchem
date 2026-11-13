@@ -1,0 +1,25 @@
+defmodule KernelNamesTest do
+  @moduletag area: "language gaps"
+
+  # A module may have functions of its own named as builtins are.
+  def div(a: string, b: string): string do
+    a <> "/" <> b
+  end
+
+  def to_string(n: integer): string do
+    "n" <> Kernel.to_string(n)
+  end
+
+  def half(n: integer): integer do
+    Kernel.div(n, 2)
+  end
+
+  test "Kernel.name is the builtin, whatever the module defines" do
+    assert(half(10) == 5)
+    assert(div("a", "b") == "a/b")
+    assert(to_string(3) == "n3")
+    assert(Kernel.length([1, 2]) + Kernel.rem(7, 4) == 5)
+    assert(Enum.map([-4, 9], &Kernel.abs/1) == [4, 9])
+    assert(Kernel.max(1, 2) == 2)
+  end
+end

@@ -213,8 +213,7 @@ end
   def size(): integer do
     String.length("""
     abc
-    """
-    )
+    """)
   end
 
   def main() do

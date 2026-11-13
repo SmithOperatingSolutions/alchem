@@ -531,7 +531,7 @@ func atomBefore(c byte) bool {
 }
 
 // heredoc reads a heredoc whose opening quotes are at start: its text, with
-// the closing line's indentation removed from every line, where the source
+// the indentation of the closing quotes removed from every line, where the source
 // goes on after it, how many lines it spans and the closing indentation.
 func heredoc(source string, start, line, col int) (string, int, int, string, error) {
 	body := strings.Index(source[start:], "\n")
@@ -542,7 +542,9 @@ func heredoc(source string, start, line, col int) (string, int, int, string, err
 			if stop < 0 {
 				stop = len(source) - at
 			}
-			if strings.TrimSpace(source[at:at+stop]) == `"""` {
+			// The closing quotes begin their line; the expression the
+			// heredoc is part of may go on after them, as in """) or """, x).
+			if strings.HasPrefix(strings.TrimLeft(source[at:at+stop], " \t"), `"""`) {
 				end = at
 				break
 			}
@@ -553,7 +555,7 @@ func heredoc(source string, start, line, col int) (string, int, int, string, err
 		}
 	}
 	if end < 0 {
-		return "", 0, 0, "", fmt.Errorf("%d:%d: a heredoc starts with \"\"\" at the end of a line and ends with \"\"\" on a line of its own", line, col)
+		return "", 0, 0, "", fmt.Errorf("%d:%d: a heredoc starts with \"\"\" at the end of a line and ends with \"\"\" at the start of a later line", line, col)
 	}
 	closing := source[end : end+strings.Index(source[end:], `"""`)]
 	var text strings.Builder

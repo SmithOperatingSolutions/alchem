@@ -11,6 +11,10 @@ defmodule AssertionsInPrograms do
     if 1 > 2 do
       flunk("unreachable")
     end
+    me: pid[string] = Process.self(4)
+    Process.send(me, "arrived", 100)
+    assert_receive(me, "arrived", 100)
+    refute_receive(me, "arrived", 10)
     IO.puts("assertions work in programs")
   end
 end

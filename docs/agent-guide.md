@@ -145,7 +145,7 @@ No import is needed. The number is how many functions the module has; run `alche
 
 **Core**
 
-- `Kernel` (29): Functions called without a module name: arithmetic helpers, list head and tail, conversion to text, and inspect.
+- `Kernel` (29): Functions called without a module name: arithmetic helpers, list head and tail, conversion to text, and inspect. A module that defines a function of the same name reaches the builtin as Kernel.name, as in Kernel.div(n, 2).
 - `Atom` (1): Names used as values, written :name. Atoms compare, sort, key maps and match in patterns.
 - `Function` (1): Helpers for working with functions as values.
 - `Bitwise` (6): Bitwise operations on integers.
@@ -193,7 +193,7 @@ alx> MapSet.new([3, 1, 3]) |> MapSet.to_list()
 - `JSON` (4): Converts between JSON text and the builtin JSON type.
 - `URI` (12): Percent-encoding and query strings.
 - `Version` (7): Parsing and comparing semantic versions.
-- `Markup` (5): HTML built by ~h templates, which escape every value they interpolate; see alchem syntax templates.
+- `Markup` (7): HTML built by ~h templates, which escape every value they interpolate; see alchem syntax templates.
 - `Crypto` (4): Cryptographic building blocks: random bytes from the operating system's secure source, hashes, HMAC signatures and a comparison that takes the same time however much of its input matches. Results are raw bytes; Base.encode16 or Base.encode64 makes them printable.
 
 ```elixir
@@ -225,13 +225,13 @@ ok({~U[2026-01-05T11:04:05Z], 7200})
 
 **Files and system**
 
-- `File` (33): Reading, writing and managing files; File.stream! reads lazily.
+- `File` (35): Reading, writing and managing files; File.stream! reads lazily.
 - `Path` (12): Manipulating file paths as text.
 - `IO` (10): Standard input, output and error.
 - `System` (17): Arguments, environment, external commands and exit.
 - `OptionParser` (4): Reads command-line switches into a map.
 - `Logger` (10): Leveled messages on standard error.
-- `Port` (6): Runs an external program and exchanges text with it: its output arrives as messages, a line at a time.
+- `Port` (7): Runs an external program and exchanges text with it: its output arrives as messages, a line at a time.
 
 ```elixir
 alx> File.write!("doc_read.txt", "hello")

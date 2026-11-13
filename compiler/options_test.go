@@ -213,3 +213,27 @@ end
 		t.Fatalf("%v\n%s", err, out)
 	}
 }
+
+// Check accepts a library, a module without main that other files import,
+// and still reports its errors; building one is refused.
+func TestCheckAcceptsALibraryFile(t *testing.T) {
+	d := t.TempDir()
+	library := filepath.Join(d, "shapes.alc")
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(library, []byte("defmodule Shapes do\n  def area(width: integer, height: integer): integer do\n    "+body+"\n  end\nend\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("width * height")
+	if err := Check(library); err != nil {
+		t.Fatalf("a library did not check: %v", err)
+	}
+	if err := BuildTo(library, filepath.Join(d, "shapes")); err == nil || !strings.Contains(err.Error(), "missing main/0") {
+		t.Fatalf("a library was built: %v", err)
+	}
+	write(`"wide"`)
+	if err := Check(library); err == nil || !strings.Contains(err.Error(), "expected integer, found string") {
+		t.Fatalf("an error in a library was not reported: %v", err)
+	}
+}

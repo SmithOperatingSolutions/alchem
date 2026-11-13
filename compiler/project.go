@@ -104,6 +104,12 @@ func loadProject(entry string) (ast.Program, error) {
 	return loadProjectContext(context.Background(), entry)
 }
 func loadProjectContext(ctx context.Context, entry string) (ast.Program, error) {
+	return loadProjectAs(ctx, entry, false)
+}
+
+// loadProjectAs loads the program an entry file makes with what it imports.
+// library allows the entry to have no main, for a file that is only checked.
+func loadProjectAs(ctx context.Context, entry string, library bool) (ast.Program, error) {
 	if info, err := os.Stat(entry); err == nil && info.IsDir() {
 		entry = filepath.Join(entry, "main.alc")
 	}
@@ -320,7 +326,11 @@ func loadProjectContext(ctx context.Context, entry string) (ast.Program, error) 
 					return nil
 				}
 				if e.Kind == "call" || e.Kind == "funcref" {
-					if name := locals[e.Name]; name != "" {
+					if builtin, ok := strings.CutPrefix(e.Name, "Kernel."); ok && !strings.Contains(builtin, ".") {
+						// Kernel.name is the builtin, whatever the module
+						// defines under that name itself.
+						e.Name = builtin
+					} else if name := locals[e.Name]; name != "" {
 						e.Name = name
 					} else if index := strings.LastIndex(e.Name, "."); index >= 0 {
 						// A name may be Module.function or Module.Type.variant.
@@ -380,6 +390,7 @@ func loadProjectContext(ctx context.Context, entry string) (ast.Program, error) 
 	if err := syntax.ResolveArities(&out); err != nil {
 		return out, err
 	}
+	out.Library = library
 	if err := syntax.Analyze(&out); err != nil {
 		return out, Describe(err)
 	}

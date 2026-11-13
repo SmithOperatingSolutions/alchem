@@ -4640,6 +4640,35 @@ func must(ctx *actor.Context, outcome Tresult[struct{}, string], where string) {
 	}
 }
 
+// fileReadBinary reads a whole file as the bytes it holds, which need not
+// be text: an image, an archive, an upload.
+func fileReadBinary(path string) Tresult[string, string] {
+	file, err := os.Open(path)
+	if err != nil {
+		return errOf[string](err.Error())
+	}
+	defer file.Close()
+	const limit = 16 << 20
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return errOf[string](err.Error())
+	}
+	if len(data) > limit {
+		return errOf[string]("file exceeds 16777216 bytes")
+	}
+	return okOf(string(data))
+}
+
+func fileReadBinaryBang(ctx *actor.Context, path string, where string) string {
+	switch outcome := fileReadBinary(path).(type) {
+	case Tresult_c0[string, string]:
+		return outcome.F0
+	case Tresult_c1[string, string]:
+		failAt(ctx, where, "could not read "+path+": "+outcome.F0)
+	}
+	return ""
+}
+
 func fileReadBang(ctx *actor.Context, path string, where string) string {
 	switch outcome := fileRead(path).(type) {
 	case Tresult_c0[string, string]:
@@ -5049,15 +5078,12 @@ func regexRun(pattern *regexp.Regexp, text string) Toption[L[string]] {
 	return someOf(mk(match))
 }
 
-// scan returns every match: its capture groups, or the whole match when the
-// pattern has none.
+// scan returns every match, each followed by its capture groups, as run
+// gives the first.
 func regexScan(pattern *regexp.Regexp, text string) L[L[string]] {
 	var out []L[string]
 	for _, match := range pattern.FindAllStringSubmatch(text, -1) {
-		if len(match) > 1 {
-			match = match[1:]
-		}
-		out = append(out, mk(append([]string{}, match...)))
+		out = append(out, mk(match))
 	}
 	return mk(out)
 }
@@ -5067,6 +5093,31 @@ var backReference = regexp.MustCompile(`\\(\d+)`)
 // replace accepts \1 for a capture group, as well as Go's ${1}.
 func regexReplace(pattern *regexp.Regexp, text, replacement string) string {
 	return pattern.ReplaceAllString(text, backReference.ReplaceAllString(replacement, "${$1}"))
+}
+
+// regexReplaceWith replaces every match with what the function makes of it.
+func regexReplaceWith(ctx *actor.Context, pattern *regexp.Regexp, text string, f func(*actor.Context, string) string) string {
+	return pattern.ReplaceAllStringFunc(text, func(match string) string { return f(ctx, match) })
+}
+
+// regexReplaceGroups replaces every match with what the function makes of
+// the match followed by its groups, as run gives them.
+func regexReplaceGroups(ctx *actor.Context, pattern *regexp.Regexp, text string, f func(*actor.Context, L[string]) string) string {
+	var b strings.Builder
+	last := 0
+	for _, at := range pattern.FindAllStringSubmatchIndex(text, -1) {
+		groups := make([]string, len(at)/2)
+		for i := range groups {
+			if at[2*i] >= 0 {
+				groups[i] = text[at[2*i]:at[2*i+1]]
+			}
+		}
+		b.WriteString(text[last:at[0]])
+		b.WriteString(f(ctx, mk(groups)))
+		last = at[1]
+	}
+	b.WriteString(text[last:])
+	return b.String()
 }
 
 func regexSplit(pattern *regexp.Regexp, text string) L[string] { return mk(pattern.Split(text, -1)) }
@@ -5289,7 +5340,7 @@ func jsonOf(b *strings.Builder, v reflect.Value) error {
 		return fmt.Errorf("%s cannot be written as JSON", inspectOf(v))
 	case reflect.Struct:
 		name, _, _ := strings.Cut(v.Type().Name(), "[")
-		fields := make([]reflect.Value, v.NumField())
+		fields := make([]reflect.Value, shownFields(v))
 		for i := range fields {
 			fields[i] = v.Field(i)
 		}
@@ -5598,13 +5649,6 @@ func writeCoverage() {
 	os.WriteFile(path, []byte(out.String()), 0600)
 }
 
-func testSetting(name string, fallback int64) int64 {
-	if value, err := strconv.ParseInt(os.Getenv(name), 10, 64); err == nil {
-		return value
-	}
-	return fallback
-}
-
 // runTests runs each test in its own process, so one failure cannot disturb
 // the next, in an order shuffled by the seed. It returns the exit status.
 func runTests(ctx *actor.Context, module string, tests []testCase) int {
@@ -5722,6 +5766,16 @@ func runTests(ctx *actor.Context, module string, tests []testCase) int {
 
 // The assertions also work in ordinary programs, which have none of the
 // coverage counters a test build adds.
+
+// testSetting reads a number the test runner passes in the environment. It
+// is here, not with the runner, because the receive assertions use it and
+// may be called from an ordinary program.
+func testSetting(name string, fallback int64) int64 {
+	if value, err := strconv.ParseInt(os.Getenv(name), 10, 64); err == nil {
+		return value
+	}
+	return fallback
+}
 
 // assertRaise passes when the function fails with a reason containing the
 // expected text.
@@ -7952,6 +8006,23 @@ type portHandle struct {
 	written, read atomic.Int64
 	exited        bool
 	watchers      []*actor.PID[TPortEvent]
+	// done is closed once the program has ended and been waited for.
+	done chan struct{}
+}
+
+// end ends the program: it is asked to stop first, with an interrupt, so
+// that a program which runs others can stop them, and killed if it has not
+// gone shortly after. Where a program cannot be interrupted it is killed at
+// once.
+func (port *portHandle) end() {
+	if port.command.Process.Signal(os.Interrupt) == nil {
+		select {
+		case <-port.done:
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	port.command.Process.Kill()
 }
 
 func portOpen(ctx *actor.Context, program string, arguments iter.Seq[string], owner *actor.PID[TPortEvent], where string) Tresult[*portHandle, string] {
@@ -8008,16 +8079,22 @@ func portStart(ctx *actor.Context, program string, arguments iter.Seq[string], o
 	if err := command.Start(); err != nil {
 		return errOf[*portHandle](err.Error())
 	}
-	port := &portHandle{command: command, input: input, name: program, header: header}
+	port := &portHandle{command: command, input: input, name: program, header: header, done: make(chan struct{})}
+	// The program ends with its owner: the process its output goes to.
+	var ownerEnded <-chan struct{}
+	if actor.ContextOf(owner) != nil {
+		ownerEnded = actor.Ended(owner)
+	}
 	actor.Spawn(ctx, func(reader *actor.Context, _ *actor.PID[struct{}]) int64 {
-		// A stop request ends the program, which ends the reading.
-		finished := make(chan struct{})
-		defer close(finished)
+		// A stop request, or the end of the owner, ends the program, which
+		// ends the reading.
 		go func() {
 			select {
 			case <-actor.Stopping(reader):
-				command.Process.Kill()
-			case <-finished:
+				port.end()
+			case <-ownerEnded:
+				port.end()
+			case <-port.done:
 			}
 		}()
 		send := func(text string) {
@@ -8076,6 +8153,7 @@ func portStart(ctx *actor.Context, program string, arguments iter.Seq[string], o
 		port.exited = true
 		watchers := port.watchers
 		port.lock.Unlock()
+		close(port.done)
 		actor.Send(reader, owner, TPortEvent(TPortEvent_c1{status}), -1, where)
 		for _, watcher := range watchers {
 			actor.Deliver(watcher, TPortEvent(TPortEvent_c1{status}), time.Second)
@@ -8139,6 +8217,23 @@ func portClose(port *portHandle) bool {
 	}
 	port.closed = true
 	port.input.Close()
+	return true
+}
+
+// portKill ends the program and waits, briefly, until it has gone; false
+// when it had already ended.
+func portKill(port *portHandle) bool {
+	port.lock.Lock()
+	exited := port.exited
+	port.lock.Unlock()
+	if exited {
+		return false
+	}
+	port.end()
+	select {
+	case <-port.done:
+	case <-time.After(2 * time.Second):
+	}
 	return true
 }
 
@@ -10226,6 +10321,17 @@ func httpRequest(ctx *actor.Context, method, address string, headers L[pair[stri
 // httpClientFor is the client a request with these options uses: one that
 // trusts the certificates in ca_file, or every certificate when insecure.
 func httpClientFor(options httpOptions) (*http.Client, error) {
+	client, err := httpTrusting(options)
+	if err != nil || !options.asItCame {
+		return client, err
+	}
+	// A redirect is returned as the response it is, not followed.
+	stopping := *client
+	stopping.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &stopping, nil
+}
+
+func httpTrusting(options httpOptions) (*http.Client, error) {
 	if options.caFile == "" && !options.insecure {
 		return http.DefaultClient, nil
 	}
@@ -10252,6 +10358,8 @@ type httpOptions struct {
 	insecure bool
 	ms       int64
 	stream   bool
+	// asItCame returns a redirect instead of following it.
+	asItCame bool
 }
 
 func httpRequestOptions(ctx *actor.Context, method, address string, headers L[pair[string, string]], body string, options L[pair[actor.Atom, string]], where string) Tresult[THTTP_oResponse, string] {
@@ -10270,8 +10378,13 @@ func httpRequestOptions(ctx *actor.Context, method, address string, headers L[pa
 			chosen.ms = ms
 		case "stream":
 			chosen.stream = option.E1 == "true"
+		case "redirect":
+			if option.E1 != "true" && option.E1 != "false" {
+				failAt(ctx, where, "HTTP.request: redirect: is \"true\" or \"false\"")
+			}
+			chosen.asItCame = option.E1 == "false"
 		default:
-			failAt(ctx, where, "HTTP.request: unknown option :"+string(option.E0)+"; the options are ca_file:, insecure:, timeout: and stream:")
+			failAt(ctx, where, "HTTP.request: unknown option :"+string(option.E0)+"; the options are ca_file:, insecure:, timeout:, stream: and redirect:")
 		}
 	}
 	return httpDo(ctx, method, address, headers, body, chosen)
@@ -10858,9 +10971,29 @@ func wsConnect(ctx *actor.Context, address string, ms int64, where string) Tresu
 	return wsConnectWith(ctx, address, ms, L[pair[actor.Atom, string]]{}, where)
 }
 
-// wsConnectWith opens a WebSocket to a ws:// or wss:// address. The options
-// are ca_file:, insecure: "true" and origin:, as text.
 func wsConnectWith(ctx *actor.Context, address string, ms int64, options L[pair[actor.Atom, string]], where string) Tresult[*wsConn, string] {
+	return wsConnectHeaders(ctx, address, ms, options, L[pair[string, string]]{}, where)
+}
+
+// wsHandshakeHeaders are the headers the handshake itself sets.
+var wsHandshakeHeaders = map[string]bool{"host": true, "upgrade": true, "connection": true, "sec-websocket-key": true, "sec-websocket-version": true}
+
+// wsConnectHeaders opens a WebSocket to a ws:// or wss:// address. The
+// options are ca_file:, insecure: "true" and origin:, as text; headers are
+// sent with the handshake, as a browser sends Cookie or a client
+// Authorization.
+func wsConnectHeaders(ctx *actor.Context, address string, ms int64, options L[pair[actor.Atom, string]], headers L[pair[string, string]], where string) Tresult[*wsConn, string] {
+	extra := ""
+	for _, header := range fwd(headers) {
+		name, value := header.E0, header.E1
+		if name == "" || strings.ContainsAny(name, " \t\r\n:") || strings.ContainsAny(value, "\r\n") {
+			return errOf[*wsConn]("invalid header " + strconv.Quote(name))
+		}
+		if wsHandshakeHeaders[strings.ToLower(name)] {
+			return errOf[*wsConn]("the header " + name + " is set by the WebSocket handshake")
+		}
+		extra += name + ": " + value + "\r\n"
+	}
 	caFile, insecure, origin := "", false, ""
 	for _, option := range fwd(options) {
 		switch option.E0 {
@@ -10928,6 +11061,7 @@ func wsConnectWith(ctx *actor.Context, address string, ms int64, options L[pair[
 	if origin != "" {
 		request += "Origin: " + origin + "\r\n"
 	}
+	request += extra
 	reader := bufio.NewReader(conn)
 	if _, err := io.WriteString(conn, request+"\r\n"); err != nil {
 		conn.Close()
@@ -11409,27 +11543,75 @@ func cryptoSecureCompare(a, b string) bool {
 // values: &, <, >, " and ' become character references.
 func markupEscape(text string) string { return html.EscapeString(text) }
 
-func markupRaw(text string) TMarkup { return TMarkup{text} }
+func markupRaw(text string) TMarkup { return TMarkup{F0: text} }
 
 func markupString(m TMarkup) string { return m.F0 }
 
 func markupOf(m TMarkup) TMarkup { return m }
 
-func markupOfString(text string) TMarkup { return TMarkup{markupEscape(text)} }
+func markupOfString(text string) TMarkup { return TMarkup{F0: markupEscape(text)} }
 
-func markupOfInteger(n int64) TMarkup { return TMarkup{strconv.FormatInt(n, 10)} }
+func markupOfInteger(n int64) TMarkup { return TMarkup{F0: strconv.FormatInt(n, 10)} }
 
-func markupOfFloat(f float64) TMarkup { return TMarkup{floatString(f)} }
+func markupOfFloat(f float64) TMarkup { return TMarkup{F0: floatString(f)} }
 
-func markupOfAtom(a actor.Atom) TMarkup { return TMarkup{markupEscape(string(a))} }
+func markupOfAtom(a actor.Atom) TMarkup { return TMarkup{F0: markupEscape(string(a))} }
 
-// markupJoin puts pieces of markup one after another.
+// markupJoin puts pieces of markup one after another, and remembers them.
 func markupJoin(pieces L[TMarkup]) TMarkup {
 	var b strings.Builder
-	for _, piece := range fwd(pieces) {
-		b.WriteString(piece.F0)
+	for i := len(pieces.S) - 1; i >= 0; i-- {
+		b.WriteString(pieces.S[i].F0)
 	}
-	return TMarkup{b.String()}
+	return TMarkup{b.String(), &markupShape{values: pieces, joined: true}}
+}
+
+// markupTemplate is what ~h builds: the template's own text, in the pieces
+// around its values, with each value between two of them. The pieces and
+// the values are kept beside the text they make, for markupParts.
+func markupTemplate(name string, fixed L[string], values L[TMarkup]) TMarkup {
+	size := 0
+	for _, piece := range fixed.S {
+		size += len(piece)
+	}
+	for _, value := range values.S {
+		size += len(value.F0)
+	}
+	var b strings.Builder
+	b.Grow(size)
+	last := len(values.S) - 1
+	for i := len(fixed.S) - 1; i >= 0; i-- {
+		b.WriteString(fixed.S[i])
+		if at := last - (len(fixed.S) - 1 - i); at >= 0 {
+			b.WriteString(values.S[at].F0)
+		}
+	}
+	return TMarkup{b.String(), &markupShape{template: name, fixed: fixed, values: values}}
+}
+
+// markupParts takes markup apart. A template gives its name, its own text
+// and its values; joined markup and markup made from text have nothing
+// fixed, and one value: the list of pieces, or the text.
+func markupParts(m TMarkup) TMarkup_oParts {
+	shape := m.P
+	if shape == nil {
+		return TMarkup_oParts{"", mk([]string{"", ""}), mk([]TMarkup_oValue{TMarkup_oValue_c0{m.F0}})}
+	}
+	if shape.joined {
+		return TMarkup_oParts{"", mk([]string{"", ""}), mk([]TMarkup_oValue{TMarkup_oValue_c2{shape.values}})}
+	}
+	values := make([]TMarkup_oValue, len(shape.values.S))
+	for i, value := range shape.values.S {
+		switch {
+		case value.P == nil:
+			values[i] = TMarkup_oValue_c0{value.F0}
+		case value.P.joined:
+			values[i] = TMarkup_oValue_c2{value.P.values}
+		default:
+			values[i] = TMarkup_oValue_c1{value}
+		}
+	}
+	return TMarkup_oParts{shape.template, shape.fixed, L[TMarkup_oValue]{S: values}}
 }
 
 // ---- Split options ----

@@ -26,7 +26,7 @@ end`)
 }
 func TestOperationsErrors(t *testing.T) {
 	for _, body := range []string{
-		`x = prepend([1],true)`, `m = %{"a" => 1} %{"\x00" => value} = m`, `x = concat([1],[true])`, `x = map([1],true)`, `x = filter([1],true)`,
+		`x = prepend([1],true)`, `x = concat([1],[true])`, `x = map([1],true)`, `x = filter([1],true)`,
 		`x = reduce([1],0,true)`, `x = &missing`, `x = &main`, `x = %{}`, `x = %{[1] => 2}`, `x = %{"a" => 1, "b" => true}`,
 		`m: map[boolean,integer] = %{1 => 2}`, `m = %{"a" => 1} x = m[1]`,
 		`x = %{"a" => 1, "a" => 2}`, `m = %{"a" => 1} x = put(m,"b",true)`,

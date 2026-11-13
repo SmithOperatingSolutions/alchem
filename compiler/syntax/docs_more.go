@@ -202,10 +202,14 @@ func init() {
 		"alx> me: pid[PortEvent] = Process.self(8)",
 		"alx> case Port.open(\"cat\", Enum.take([\"\"], 0), me) do", "...>   ok(echo) -> Port.command(echo, \"hello\\n\") and Port.close(echo)", "...>   error(_) -> false", "...> end", "true",
 		"alx> assert_receive(me, PortEvent.data(\"hello\"), 5000)")
-	doc("Port.close", "Closes the program's standard input, so a program that reads to the end can finish; false when it was already closed. Stopping the owning process ends the program.",
+	doc("Port.close", "Closes the program's standard input, so a program that reads to the end can finish; false when it was already closed. The program is ended when its owner, the process its output goes to, ends, and when the Alchem program does; Port.kill ends it on request.",
 		"alx> me: pid[PortEvent] = Process.self(8)",
 		"alx> case Port.open(\"cat\", Enum.take([\"\"], 0), me) do", "...>   ok(echo) -> {Port.close(echo), Port.close(echo)}", "...>   error(_) -> {false, false}", "...> end", "{true, false}",
 		"alx> assert_receive(me, PortEvent.exit(0), 5000)")
+	doc("Port.kill", "Ends the program and waits briefly until it has gone; false when it had already ended. The program is asked to stop first, with an interrupt where the system has one, so that a program which runs others can stop them, and is killed if it has not gone half a second later. The owner still receives PortEvent.exit.",
+		"alx> me: pid[PortEvent] = Process.self(8)",
+		"alx> case Port.open(\"cat\", Enum.take([\"\"], 0), me) do", "...>   ok(waiting) -> {Port.kill(waiting), Port.kill(waiting)}", "...>   error(_) -> {false, false}", "...> end", "{true, false}",
+		"alx> assert_receive(me, PortEvent.exit(_), 5000)")
 	doc("Port.os_pid", "The operating system's process identifier of the program.",
 		"alx> me: pid[PortEvent] = Process.self(8)",
 		"alx> case Port.open(\"cat\", Enum.take([\"\"], 0), me) do", "...>   ok(echo) -> Port.os_pid(echo) > 0 and Port.close(echo)", "...>   error(_) -> false", "...> end", "true")

@@ -62,7 +62,7 @@ func analyze(p *ast.Program) (result error) {
 		source = main.Source
 		return diagnostic(main.Line, main.Column, "a module with tests cannot define main; the test runner is the entry point")
 	}
-	if functions["main"] == nil && !tests {
+	if functions["main"] == nil && !tests && !p.Library {
 		source = p.Source
 		return diagnostic(1, 1, "missing main/0")
 	}
@@ -99,6 +99,9 @@ func analyze(p *ast.Program) (result error) {
 			}
 		}
 		for _, param := range f.Params {
+			if builtinName(param.Name) {
+				return diagnostic(param.Line, param.Column, "%s is reserved for a builtin and cannot name a parameter", param.Name)
+			}
 			if (!generatedName(param.Name) && !bindingName(param.Name)) || !validType(param.Type) {
 				return diagnostic(param.Line, param.Column, "invalid parameter name or type")
 			}
@@ -417,6 +420,9 @@ func (c checker) expr(e *ast.Expr, scope map[string]string, expected ...string) 
 		local := cloneScope(scope)
 		parts := []string{}
 		for _, param := range e.Params {
+			if builtinName(param.Name) {
+				return fail(param.Name + " is reserved for a builtin and cannot name a parameter")
+			}
 			if (!generated(param.Name) && !bindingName(param.Name)) || !validType(param.Type) || c.wellFormed(param.Type, c.vars) != "" {
 				return fail("invalid closure parameter")
 			}
@@ -520,9 +526,6 @@ func (c checker) expr(e *ast.Expr, scope map[string]string, expected ...string) 
 		e.Type = result
 	case "literal":
 		e.Type = e.Value.Kind
-		if e.Type == "string" && strings.ContainsRune(e.Value.Text, 0) {
-			return fail("string literal contains NUL")
-		}
 	case "template":
 		for _, part := range e.Args {
 			t, err := c.expr(part, scope)

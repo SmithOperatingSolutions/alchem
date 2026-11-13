@@ -40,6 +40,97 @@ defmodule TemplatesTest do
     assert(Markup.to_string(Markup.join([Markup.raw("a"), Markup.of("<"), Markup.of(1)])) == "a&lt;1")
   end
 
+  def row(name: string): Markup do
+    ~h"<li>#{name}</li>"
+  end
+
+  def board(title: string, names: list[string], count: integer): Markup do
+    first = row(title)
+    ~h"<h1>#{title}</h1><ul>#{Enum.map(names, &row/1)}</ul><p>#{count}#{first}</p>"
+  end
+
+  def rebuilt(markup: Markup): string do
+    parts = Markup.parts(markup)
+    values = Enum.map(parts.values, fn value ->
+      case value do
+        Markup.Value.text(text) -> text
+        Markup.Value.markup(inner) -> rebuilt(inner)
+        Markup.Value.list(items) -> Enum.join(Enum.map(items, &rebuilt/1), "")
+      end
+    end)
+    Enum.join(Enum.zip_with(parts.fixed, values ++ [""], fn fixed, value -> fixed <> value end), "")
+  end
+
+  test "a template's fixed text and its values, apart" do
+    page = board("A & B", ["<x>", "y"], 2)
+    parts = Markup.parts(page)
+    assert(parts.fixed == ["<h1>", "</h1><ul>", "</ul><p>", "", "</p>"])
+    assert(parts.values == [
+      Markup.Value.text("A &amp; B"),
+      Markup.Value.list([row("<x>"), row("y")]),
+      Markup.Value.text("2"),
+      Markup.Value.markup(row("A & B"))
+    ])
+    assert(rebuilt(page) == Markup.to_string(page))
+    other = Markup.parts(board("other", [], 3))
+    assert(other.template == parts.template and other.fixed == parts.fixed and parts.template != "")
+    assert(Markup.parts(row("q")).template != parts.template)
+    assert(Markup.parts(row("q")).fixed == ["<li>", "</li>"])
+    whole = Markup.parts(~h"<br>")
+    assert(whole.fixed == ["<br>"] and whole.values == [] and whole.template != "")
+    assert(Markup.parts(~H"<p>#{kept}</p>").fixed == ["<p>\#{kept}</p>"])
+    assert(Markup.parts(~h"#{1}#{2}").fixed == ["", "", ""])
+  end
+
+  test "markup that no template made has nothing fixed" do
+    assert(Markup.parts(Markup.raw("<br>")) == %Markup.Parts{template: "", fixed: ["", ""], values: [Markup.Value.text("<br>")]})
+    joined = Markup.parts(Markup.join([row("a"), row("b")]))
+    assert(joined == %Markup.Parts{template: "", fixed: ["", ""], values: [Markup.Value.list([row("a"), row("b")])]})
+    assert(Markup.parts(Markup.of("<")).values == [Markup.Value.text("&lt;")])
+    assert(rebuilt(Markup.join([row("a"), Markup.raw("<hr>")])) == "<li>a</li><hr>")
+  end
+
+  test "how markup was made is no part of its value" do
+    page = board("t", ["a"], 1)
+    same = Markup.raw(Markup.to_string(page))
+    assert(page == same and [page] == [same] and {page, 1} == {same, 1})
+    assert(inspect(row("a")) == "%Markup{html: \"<li>a</li>\"}")
+    assert(JSON.encode(row("a")) == JSON.encode(Markup.raw("<li>a</li>")))
+    assert(%Markup{html: "<i>"} == Markup.raw("<i>") and page.html == Markup.to_string(page))
+    me: pid[Markup] = Process.self(1)
+    Process.send(me, page, 100)
+    {true, received} = Process.receive(me, 100)
+    assert(Markup.parts(received) == Markup.parts(page))
+  end
+
+  def both(a: string, b: string): string do
+    a <> "|" <> b
+  end
+
+  test "a heredoc where an argument goes" do
+    assert(String.trim("""
+    hello
+    """) == "hello")
+    who = "ada"
+    assert(Markup.to_string(~h"""
+    <p>#{who}</p>
+    """) == "<p>ada</p>\n")
+    assert(both("""
+    first
+    """, "second") == "first\n|second")
+    assert(both("a", """
+    last
+    """) <> "!" == "a|last\n!")
+    words = ~w"""
+    a b
+    """ ++ ["c"]
+    assert(words == ["a", "b", "c"])
+    shouted = """
+    quiet
+    """ |> String.trim() |> String.upcase()
+    assert(shouted == "QUIET")
+  end
+
   test "interpolating sigil heredocs keep quotes and line breaks" do
     who = "ada"
     words = ~w"""
