@@ -97,6 +97,10 @@ type Expr struct {
 	// opening delimiter of a one-line sigil, also kept for the formatter.
 	Heredoc   string
 	Delimiter string
+	// Comments are the comments written on the lines before an element of
+	// a list, and Closing those before the list's closing bracket; both are
+	// kept only when parsing for the formatter.
+	Comments, Closing []string
 }
 
 // Parameter is a typed name. In a function clause as written it may instead

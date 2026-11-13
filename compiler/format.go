@@ -389,9 +389,23 @@ func formatExpr(e *ast.Expr, n int) string {
 		if e.Right != nil {
 			return "[" + strings.Join(args, ", ") + " | " + formatExpr(e.Right, n) + "]"
 		}
-		// A long list puts each element on a line of its own.
-		if one := "[" + strings.Join(args, ", ") + "]"; len(args) < 2 || len(one)+2*n <= 98 || strings.Contains(one, "\n") {
+		// A long list puts each element on a line of its own, as does a list
+		// with comments among its elements, which stay where they were, and
+		// one holding a heredoc among other elements.
+		remarked, heredoc := len(e.Closing) > 0, false
+		for _, item := range e.Args {
+			remarked = remarked || len(item.Comments) > 0
+			heredoc = heredoc || item.Heredoc != ""
+		}
+		if one := "[" + strings.Join(args, ", ") + "]"; !remarked && (len(args) < 2 || (len(one)+2*n <= 98 || strings.Contains(one, "\n")) && !heredoc) {
 			return one
+		}
+		remark := func(lines []string) string {
+			text := ""
+			for _, line := range lines {
+				text += strings.TrimRight(indent(n+1)+"# "+line, " ") + "\n"
+			}
+			return text
 		}
 		items := []string{}
 		for _, item := range e.Args {
@@ -399,9 +413,9 @@ func formatExpr(e *ast.Expr, n int) string {
 			if item.Kind == "tuple" && item.Op == "keyword" {
 				text = item.Args[0].Value.Text + ": " + formatExpr(item.Args[1], n+1)
 			}
-			items = append(items, indent(n+1)+text)
+			items = append(items, remark(item.Comments)+indent(n+1)+text)
 		}
-		return "[\n" + strings.Join(items, ",\n") + "\n" + indent(n) + "]"
+		return "[\n" + strings.Join(items, ",\n") + "\n" + remark(e.Closing) + indent(n) + "]"
 	case "tuple":
 		return "{" + strings.Join(args, ", ") + "}"
 	case "map":
