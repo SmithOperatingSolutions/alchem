@@ -52,11 +52,12 @@ func linkRemote[T any](c *Context, p *PID[T]) bool {
 	var active atomic.Bool
 	active.Store(true)
 	c.rt.mu.Lock()
-	if c.remoteLinks == nil {
-		c.remoteLinks = map[*Remote[T]]*atomic.Bool{}
+	x := c.cold()
+	if x.remoteLinks == nil {
+		x.remoteLinks = map[*Remote[T]]*atomic.Bool{}
 	}
-	c.remoteLinks.(map[*Remote[T]]*atomic.Bool)[remote] = &active
-	c.distant = append(c.distant, func(reason string) {
+	x.remoteLinks.(map[*Remote[T]]*atomic.Bool)[remote] = &active
+	x.distant = append(x.distant, func(reason string) {
 		if active.Load() && abnormal(reason) {
 			remote.Exit(reason)
 		}
@@ -92,7 +93,10 @@ func linkRemote[T any](c *Context, p *PID[T]) bool {
 func unlinkRemote[T any](c *Context, p *PID[T]) bool {
 	c.rt.mu.Lock()
 	defer c.rt.mu.Unlock()
-	links, _ := c.remoteLinks.(map[*Remote[T]]*atomic.Bool)
+	var links map[*Remote[T]]*atomic.Bool
+	if x := c.more.Load(); x != nil {
+		links, _ = x.remoteLinks.(map[*Remote[T]]*atomic.Bool)
+	}
 	active, ok := links[p.remote]
 	if ok {
 		active.Store(false)
@@ -161,7 +165,8 @@ func WatchExit[T any](p *PID[T], tell func(reason string)) (bool, string) {
 	if p.task.ended {
 		return true, p.task.reason
 	}
-	p.task.distant = append(p.task.distant, tell)
+	cold := p.task.cold()
+	cold.distant = append(cold.distant, tell)
 	return false, ""
 }
 
@@ -261,7 +266,8 @@ func OnEnd(c *Context, f func()) {
 		go f()
 		return
 	}
-	c.distant = append(c.distant, func(string) { f() })
+	cold := c.cold()
+	cold.distant = append(cold.distant, func(string) { f() })
 }
 
 // ContextOf is the process behind a handle of this program, or nil.

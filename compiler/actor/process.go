@@ -98,33 +98,23 @@ type Runtime struct {
 type Context struct {
 	// untyped marks a process started without a message type, such as a
 	// task, whose first Process.self may still choose one.
-	untyped bool
-	// serving is the server this process runs, for Server.self.
-	serving any
-	// continued holds the requests a handler asked to handle next, with
-	// Server.continue, ahead of any waiting in the mailbox.
-	continued []any
-	// remoteLinks are the links to processes of other programs, by their
-	// handles, so that Unlink can end one.
-	remoteLinks           any
-	rt                    *Runtime
-	id                    int64
-	stop, done            chan struct{}
-	stopping, ended, trap bool
-	finishing             bool
-	reason, stopReason    string
-	failure, stopFailure  *Failure
-	mailbox               any
-	watchers              map[int64]*Context
-	// distant are told the exit reason on behalf of processes of other
-	// nodes that monitor this one.
-	distant  []func(reason string)
-	monitors map[int64]*Context
-	links    map[int64]*Context
-	owned    map[int64]*Context
-	parent   *Context
-	events   []Event
-	notify   chan struct{}
+	untyped                          bool
+	stopping, ended, trap, finishing bool
+	// more holds what only some processes need; see cold.
+	more                 atomic.Pointer[coldState]
+	rt                   *Runtime
+	id                   int64
+	stop, done           chan struct{}
+	reason, stopReason   string
+	failure, stopFailure *Failure
+	mailbox              any
+	watchers             map[int64]*Context
+	monitors             map[int64]*Context
+	links                map[int64]*Context
+	owned                map[int64]*Context
+	parent               *Context
+	events               []Event
+	notify               chan struct{}
 	// depth counts active Alchem calls; only the owning goroutine touches it.
 	depth int64
 	// handled counts the enclosing try blocks that rescue every failure.
@@ -146,6 +136,36 @@ type Context struct {
 	// for". Senders, receivers freeing space and cancellation all post to it;
 	// only the owning goroutine takes from it, and always re-checks after.
 	wake chan struct{}
+}
+
+// coldState is the part of a process record that only some processes use:
+// servers, processes linked to other programs, and processes watched from
+// other nodes. It is created on first use, so the many processes that need
+// none of it keep a smaller record.
+type coldState struct {
+	// serving is the server this process runs, for Server.self.
+	serving any
+	// continued holds the requests a handler asked to handle next, with
+	// Server.continue, ahead of any waiting in the mailbox.
+	continued []any
+	// remoteLinks are the links to processes of other programs, by their
+	// handles, so that Unlink can end one.
+	remoteLinks any
+	// distant are told the exit reason on behalf of processes of other
+	// nodes that monitor this one.
+	distant []func(reason string)
+}
+
+// cold returns the process's cold state, creating it when it has none. Its
+// fields keep the locking rules they had: serving and continued belong to
+// the owning goroutine, and remoteLinks and distant are guarded by the
+// runtime lock.
+func (c *Context) cold() *coldState {
+	if x := c.more.Load(); x != nil {
+		return x
+	}
+	c.more.CompareAndSwap(nil, &coldState{})
+	return c.more.Load()
 }
 
 func (c *Context) signal() {
@@ -208,6 +228,21 @@ type PID[T any] struct {
 	capacity int
 	// waiters are senders parked until the mailbox has room or its owner stops.
 	waiters []*Context
+	// waiting is set, under mu, while the owner is parked in Receive with the
+	// mailbox empty. A sender that finds it hands its message over in slot
+	// and sets handed, and the owner takes it without locking mu again.
+	waiting bool
+	handed  atomic.Bool
+	slot    T
+}
+
+// takeHanded returns the message a sender handed to the parked owner.
+func (p *PID[T]) takeHanded() T {
+	value := p.slot
+	var zero T
+	p.slot = zero
+	p.handed.Store(false)
+	return value
 }
 
 func (*PID[T]) capability() {}
@@ -418,11 +453,13 @@ func (c *Context) finish(reason string, f *Failure) {
 	for ref, target := range c.monitors {
 		delete(target.watchers, ref)
 	}
-	for _, tell := range c.distant {
-		// Writing to a connection must not hold up the runtime's lock.
-		go tell(reason)
+	if x := c.more.Load(); x != nil {
+		for _, tell := range x.distant {
+			// Writing to a connection must not hold up the runtime's lock.
+			go tell(reason)
+		}
+		x.distant = nil
 	}
-	c.distant = nil
 	c.watchers = nil
 	c.monitors = nil
 	c.events = nil
@@ -711,6 +748,17 @@ func Send[T any](c *Context, p *PID[T], value T, ms int64, where string) bool {
 			p.mu.Unlock()
 			return false
 		}
+		if p.waiting && p.count == 0 {
+			// The owner is parked on an empty mailbox: hand the message
+			// over, so it need not take the lock again to get it.
+			p.slot = value
+			p.waiting = false
+			p.handed.Store(true)
+			p.forget(c)
+			p.mu.Unlock()
+			target.signal()
+			return true
+		}
 		if p.count < p.capacity {
 			p.push(value)
 			p.forget(c)
@@ -755,6 +803,11 @@ func Receive[T any](c *Context, p *PID[T], ms int64, where string) Received[T] {
 	var stop func()
 	for {
 		p.mu.Lock()
+		if p.handed.Load() {
+			value := p.takeHanded()
+			p.mu.Unlock()
+			return Received[T]{true, value}
+		}
 		if p.count > 0 {
 			value := p.pop()
 			waiters := p.takeWaiters()
@@ -764,17 +817,39 @@ func Receive[T any](c *Context, p *PID[T], ms int64, where string) Received[T] {
 			}
 			return Received[T]{true, value}
 		}
-		p.mu.Unlock()
 		if ms == 0 {
+			p.mu.Unlock()
 			return Received[T]{}
 		}
+		p.waiting = true
+		p.mu.Unlock()
 		if timer == nil && ms > 0 {
 			timer, stop = deadline(ms)
 			defer stop()
 		}
-		if c.park(timer) {
+		expired := c.park(timer)
+		// A message handed over was stored before handed was set, and only
+		// a sender that found waiting set stores one, so it is read here
+		// without the lock.
+		if p.handed.Load() {
+			return Received[T]{true, p.takeHanded()}
+		}
+		if expired {
+			p.mu.Lock()
+			if p.handed.Load() {
+				value := p.takeHanded()
+				p.mu.Unlock()
+				return Received[T]{true, value}
+			}
+			p.waiting = false
+			p.mu.Unlock()
 			return Received[T]{}
 		}
+		// A wake for any other reason, a stop or a message pushed without a
+		// handover, is looked at under the lock on the next round.
+		p.mu.Lock()
+		p.waiting = false
+		p.mu.Unlock()
 		Check(c)
 	}
 }

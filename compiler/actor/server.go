@@ -39,7 +39,8 @@ func serve[S, Q, R any](s *Server[Q, R], state S, handle func(*Context, S, Q) st
 		case <-c.stopSignal():
 			Check(c)
 		}
-		c.serving = s
+		cold := c.cold()
+		cold.serving = s
 		state := state
 		for {
 			message := Receive(c, self, -1, where).E1
@@ -54,9 +55,9 @@ func serve[S, Q, R any](s *Server[Q, R], state S, handle func(*Context, S, Q) st
 			}
 			// Work a handler continues runs before the next request, and
 			// its replies go nowhere.
-			for len(c.continued) > 0 {
-				value := c.continued[0].(Q)
-				c.continued = c.continued[1:]
+			for len(cold.continued) > 0 {
+				value := cold.continued[0].(Q)
+				cold.continued = cold.continued[1:]
 				state = handle(c, state, value).E0
 			}
 		}
@@ -69,13 +70,14 @@ func serve[S, Q, R any](s *Server[Q, R], state S, handle func(*Context, S, Q) st
 // one handler are handled in order.
 func ServerContinue[Q any](c *Context, value Q, where string) bool {
 	Check(c)
-	if c.serving == nil {
+	cold := c.more.Load()
+	if cold == nil || cold.serving == nil {
 		Fail(c, where, "Server.continue is called from a process that is not a server")
 	}
-	if accepts, ok := c.serving.(interface{ accepts(any) bool }); !ok || !accepts.accepts(value) {
+	if accepts, ok := cold.serving.(interface{ accepts(any) bool }); !ok || !accepts.accepts(value) {
 		Fail(c, where, "Server.continue is given a request of another type than its server's")
 	}
-	c.continued = append(c.continued, value)
+	cold.continued = append(cold.continued, value)
 	return true
 }
 

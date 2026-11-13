@@ -107,15 +107,15 @@ Now that `Time.monotonic()` exists, the workloads can time their own phases inst
 
 Ratios on the hosted runner are 1.5 for processes, 1.7 for messaging, 1.6 for computation and 1.5 for list building. What is left is mostly the cost of guarantees, so each of these needs a measurement first.
 
-- [ ] Messaging: a receive that parks takes the mailbox lock twice; look for a single-lock path.
-- [ ] Processes: 309 MiB against 270 MiB for 100,000; check the size of the process record and whether the wake channel can be created on first park.
-- [ ] Computation: skip call-depth tracking for functions that cannot be part of a call cycle, with the soundness argument written down.
+- [x] Messaging: a sender that finds the owner parked on an empty mailbox hands the message over directly, so the owner takes it without locking the mailbox again. Round trip 265 → 252 ns on the development machine (Apple M-series, Go 1.27), about 5% less.
+- [x] Processes: the fields only servers and remotely linked or watched processes use moved behind one pointer created on first use, and the flags were packed together: the record is 280 bytes instead of 360, and 100,000 live processes take 322 MiB instead of 330 MiB. The wake channel stays created with the process, because every process that waits needs one, so creating it on first park would save nothing for processes that wait.
+- [x] Computation, considered and not taken: skipping call-depth tracking for functions outside any call cycle. Leaf functions already skip it, and a recursive function such as `fib` must keep it, which leaves functions that call others without recursing; those are rarely the hot ones, and none is in the benchmarks. Doing it soundly would also need every call visible (a call through a function value can close a cycle) and a bound on untracked chains, since the depth limit is what keeps Go's own stack from overflowing.
 
 ### 5. Housekeeping
 
 - [x] Shorter CI: the race detector on the concurrent packages for pull requests and on every package nightly, Go's build cache kept between runs, and the slowest tests run in parallel.
 - [x] Delete the merged working branches on GitHub.
-- [ ] Decide whether `native-extended` should join the required CI gate now that it has passed on every pull request since #14.
+- [x] `native-extended` (Linux ARM, Windows ARM and Intel macOS) is part of the required checks on `main`.
 
 ## Working locally
 
