@@ -1,6 +1,8 @@
 package actor
 
 import (
+	"reflect"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -118,13 +120,34 @@ func (s *Supervisor[T]) run(ready chan struct{}, where string) {
 		s.task.finish(reason, failure)
 	}()
 	start := func(i int) {
-		pid := Spawn(s.task, s.children[i].spec.E2, s.capacity, where)
+		body := s.children[i].spec.E2
+		var started chan struct{}
+		if waitsToStart(body) {
+			// The child says when it has started, as a server child does
+			// once its name is registered; the next child starts after it.
+			started = make(chan struct{})
+			inner := body
+			body = func(c *Context, p *PID[T]) int64 {
+				startups.Store(c, started)
+				defer startups.Delete(c)
+				return inner(c, p)
+			}
+		}
+		pid := Spawn(s.task, body, s.capacity, where)
 		s.task.rt.mu.Lock()
 		s.children[i].pid = pid
 		s.published[i].Store(pid)
 		s.children[i].handled = false
 		s.task.rt.wake()
 		s.task.rt.mu.Unlock()
+		if started != nil {
+			select {
+			case <-started:
+			case <-pid.task.doneSignal():
+			case <-s.task.stopSignal():
+				Check(s.task)
+			}
+		}
 	}
 	for i := range s.children {
 		start(i)
@@ -282,4 +305,31 @@ func Children[T any](c *Context, s *Supervisor[T], where string) []struct {
 		}
 	}
 	return out
+}
+
+// startupBodies holds the code addresses of child bodies whose supervisor
+// waits for them to call Started.
+var startupBodies sync.Map
+
+// waitsToStart reports whether a child body says when it has started.
+func waitsToStart(body any) bool {
+	_, ok := startupBodies.Load(reflect.ValueOf(body).Pointer())
+	return ok
+}
+
+// announcesStart marks a child body as one that calls Started.
+func announcesStart(body any) {
+	startupBodies.Store(reflect.ValueOf(body).Pointer(), true)
+}
+
+// startups holds, for each child whose supervisor waits for it to start, the
+// channel Started closes. It is kept beside the process record rather than
+// in it, since few processes are such children.
+var startups sync.Map
+
+// Started tells the supervisor waiting for this child that it has started.
+func Started(c *Context) {
+	if started, ok := startups.LoadAndDelete(c); ok {
+		close(started.(chan struct{}))
+	}
 }

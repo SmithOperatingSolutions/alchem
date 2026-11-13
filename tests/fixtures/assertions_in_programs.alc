@@ -1,0 +1,16 @@
+defmodule AssertionsInPrograms do
+  # Assertions are ordinary functions that a program, not only a test file,
+  # may call.
+  def main() do
+    refute(1 > 2)
+    assert_in_delta(1.0, 1.05, 0.1)
+    assert_raise("boom", fn -> raise("boom") end)
+    assert_raise("nonnegative", fn -> Integer.pow(2, -1) end)
+    text = capture_io(fn -> IO.puts("captured") end)
+    assert(text == "captured\n")
+    if 1 > 2 do
+      flunk("unreachable")
+    end
+    IO.puts("assertions work in programs")
+  end
+end
