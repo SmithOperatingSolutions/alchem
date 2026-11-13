@@ -11,7 +11,6 @@ set -eu
 
 repository="SmithOperatingSolutions/alchem"
 base="${ALCHEM_RELEASES_URL:-https://github.com/$repository/releases}"
-api="${ALCHEM_API_URL:-https://api.github.com/repos/$repository/releases/latest}"
 install_dir="${ALCHEM_INSTALL_DIR:-$HOME/.local/bin}"
 
 fail() {
@@ -41,8 +40,14 @@ esac
 
 version="${ALCHEM_VERSION:-}"
 if [ -z "$version" ]; then
-	version=$(curl -fsSL "$api" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
-	[ -n "$version" ] || fail "could not find the latest release"
+	# releases/latest redirects to the latest release's tag, which avoids the
+	# API and its limit on requests from shared addresses.
+	latest=$(curl -fsSL -o /dev/null -w '%{url_effective}' "$base/latest") || fail "could not find the latest release"
+	version=${latest##*/}
+	case "$version" in
+	v[0-9]*) ;;
+	*) fail "could not find the latest release" ;;
+	esac
 fi
 case "$version" in
 v*) ;;

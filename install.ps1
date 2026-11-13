@@ -12,7 +12,6 @@ $ErrorActionPreference = 'Stop'
 
 $repository = 'SmithOperatingSolutions/alchem'
 $base = if ($env:ALCHEM_RELEASES_URL) { $env:ALCHEM_RELEASES_URL } else { "https://github.com/$repository/releases" }
-$api = if ($env:ALCHEM_API_URL) { $env:ALCHEM_API_URL } else { "https://api.github.com/repos/$repository/releases/latest" }
 $installDir = if ($env:ALCHEM_INSTALL_DIR) { $env:ALCHEM_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\alchem' }
 
 $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
@@ -23,8 +22,12 @@ $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
 
 $version = $env:ALCHEM_VERSION
 if (-not $version) {
-    $version = (Invoke-RestMethod -Uri $api).tag_name
-    if (-not $version) { throw 'alchem install: could not find the latest release' }
+    # releases/latest redirects to the latest release's tag, which avoids the
+    # API and its limit on requests from shared addresses.
+    $response = Invoke-WebRequest -UseBasicParsing -Uri "$base/latest"
+    $final = if ($response.BaseResponse.ResponseUri) { $response.BaseResponse.ResponseUri.AbsoluteUri } else { $response.BaseResponse.RequestMessage.RequestUri.AbsoluteUri }
+    $version = ($final -split '/')[-1]
+    if ($version -notmatch '^v[0-9]') { throw 'alchem install: could not find the latest release' }
 }
 if (-not $version.StartsWith('v')) { $version = "v$version" }
 
