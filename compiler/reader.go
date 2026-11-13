@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/SmithOperatingSolutions/alchem/compiler/ast"
+	"github.com/SmithOperatingSolutions/alchem/compiler/syntax"
 )
 
 // JSON.decode_as builds a value of the type its result is annotated with.
@@ -49,16 +50,54 @@ func (g *generator) reader(t string) string {
 		}
 		return "func(v TJSON,path string)(" + target + ",error){var out " + target + ";items,err:=jsonItems(v,path," + strconv.Itoa(len(args)) + ");_=items;if err!=nil{return out,err};" + body + "return out,nil}"
 	}
+	if ast.TypeVariable(t) {
+		// A type the function was called with: its caller supplied this.
+		return readerName(t)
+	}
 	if g.readers == nil {
 		g.readers = map[string]int{}
 	}
-	index, known := g.readers[t]
+	index, known := g.readers[head]
 	if !known {
 		index = len(g.readerOrder)
-		g.readers[t] = index
-		g.readerOrder = append(g.readerOrder, t)
+		g.readers[head] = index
+		g.readerOrder = append(g.readerOrder, head)
 	}
-	return fmt.Sprintf("jsonAs%d", index)
+	if len(args) == 0 {
+		return fmt.Sprintf("jsonAs%d", index)
+	}
+	// A generic type has one function for all its uses, which takes how
+	// each of its parameters is read.
+	call := fmt.Sprintf("jsonAs%d(v,path", index)
+	for _, arg := range args {
+		call += "," + g.reader(arg)
+	}
+	return "func(v TJSON,path string)(" + goType(t) + ",error){return " + call + ")}"
+}
+
+// readerName is the parameter that reads a type variable.
+func readerName(variable string) string { return "jsonRead_" + variable }
+
+// readerType is the Go type of a function reading a type.
+func readerType(t string) string { return "func(TJSON,string)(" + goType(t) + ",error)" }
+
+// readersFor gives the readers a call or reference to a function passes
+// after its arguments: one for each type variable the function reads, for
+// the type chosen here.
+func (g *generator) readersFor(name string, typeArgs []string) []string {
+	def := g.defs[name]
+	if def == nil || len(def.Reads) == 0 {
+		return nil
+	}
+	var out []string
+	for i, variable := range syntax.Generic(def) {
+		for _, read := range def.Reads {
+			if read == variable && i < len(typeArgs) {
+				out = append(out, g.reader(typeArgs[i]))
+			}
+		}
+	}
+	return out
 }
 
 // readerFunctions emits the function of every struct and sum type read
@@ -67,16 +106,20 @@ func (g *generator) reader(t string) string {
 func (g *generator) readerFunctions() string {
 	var out strings.Builder
 	for index := 0; index < len(g.readerOrder); index++ {
-		t := g.readerOrder[index]
-		head, args := ast.Split(t)
+		head := g.readerOrder[index]
 		decl, known := g.decls[head]
-		target := goType(t)
 		if !known {
 			// The checker lets only types with a JSON form through.
-			panic("no JSON form for " + t)
+			panic("no JSON form for " + head)
 		}
-		field := func(parameter ast.Parameter) string { return substitute(parameter.Type, decl.Params, args) }
-		fmt.Fprintf(&out, "func jsonAs%d(v TJSON,path string)(%s,error){\n", index, target)
+		t := ast.Join(head, decl.Params)
+		target := goType(t)
+		field := func(parameter ast.Parameter) string { return parameter.Type }
+		extra := ""
+		for _, parameter := range decl.Params {
+			extra += "," + readerName(parameter) + " " + readerType(parameter)
+		}
+		fmt.Fprintf(&out, "func jsonAs%d%s(v TJSON,path string%s)(%s,error){\n", index, typeParameters(decl.Params), extra, target)
 		if decl.Kind == "struct" {
 			fmt.Fprintf(&out, "var out %s\nfields,err:=jsonFields(v,path,%s)\nif err!=nil{return out,err}\n", target, strconv.Quote(decl.Local))
 			for i, parameter := range decl.Fields {

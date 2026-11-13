@@ -104,6 +104,57 @@ defmodule StorageTest do
     assert(fraction == error("expected an integer, found a float"))
   end
 
+  struct Kind[p] do
+    read: fn[string, result[p, string]]
+    write: fn[p, string]
+  end
+
+  struct Nest[a] do
+    held: a
+    inner: list[Nest[a]]
+  end
+
+  # A library's function, reading the type its caller chose.
+  def kind(_: fn[p, string]): Kind[p] do
+    %Kind{read: fn text ->
+      found: result[p, string] = JSON.decode_as(text)
+      found
+    end, write: fn props -> JSON.encode!(props) end}
+  end
+
+  def read_like(_: a, text: string): result[a, string] do
+    JSON.decode_as(text)
+  end
+
+  def nests(_: a, text: string): result[list[Nest[a]], string] do
+    JSON.decode_as(text)
+  end
+
+  def both(sample: b, text: string): result[tuple[b, b], string] do
+    read_like({sample, sample}, text)
+  end
+
+  test "JSON read as a type the caller chose" do
+    items = kind(fn(item: Item): string do item.id end)
+    assert(items.read(items.write(item())) == ok(item()))
+    assert(items.read("{}") == error("id: missing"))
+    shapes = kind(fn(_: list[Shape]): string do "" end)
+    assert(shapes.read("[\"point\"]") == ok([Shape.point]))
+    assert(read_like(1, "5") == ok(5))
+    assert(read_like("", "5") == error("expected a string, found an integer"))
+    assert(read_like(item(), "{\"id\": 3}") == error("id: expected a string, found an integer"))
+    # Through a generic type, a generic caller and a reference.
+    nested = [%Nest{held: "a", inner: [%Nest{held: "b", inner: []}]}]
+    assert(nests("", JSON.encode!(nested)) == ok(nested))
+    assert(nests(0, JSON.encode!(nested)) == error("[0].held: expected an integer, found a string"))
+    assert(both(1.5, "[1, 2.5]") == ok({1.0, 2.5}))
+    reader: fn[Item, string, result[Item, string]] = &read_like/2
+    assert(reader(item(), JSON.encode!(item())) == ok(item()))
+    assert(Enum.map(["1", "true"], fn text -> read_like(0, text) end) == [ok(1), error("expected an integer, found a boolean")])
+    direct: result[Nest[integer], string] = JSON.decode_as("{\"held\": 1, \"inner\": [{\"held\": true, \"inner\": []}]}")
+    assert(direct == error("inner[0].held: expected an integer, found a boolean"))
+  end
+
   test "passwords" do
     assert(Base.encode16(Crypto.pbkdf2(:sha256, "password", "salt", 4096, 32), [case: :lower]) == "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a")
     assert(Base.encode16(Crypto.pbkdf2(:sha1, "password", "salt", 2, 20), [case: :lower]) == "ea6c014dc72d6f8ccd1ed92ace1d41f0d8de8957")

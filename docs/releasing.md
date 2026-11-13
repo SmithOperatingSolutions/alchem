@@ -26,7 +26,7 @@ Running the workflow by hand (`workflow_dispatch`) does steps 3 and 4 and upload
 The tap and the bucket are `Formula/alchem.rb` and `bucket/alchem.json` in this repository, so they move to a new release by pull request:
 
 ```bash
-go run ./tools/packaging -version v0.3.5
+go run ./tools/packaging -version v0.3.6
 ```
 
 The tool downloads the release's `checksums.txt` and rewrites both files. The Packaging workflow checks the pull request by installing from them. Scoop can also find a newer release on its own through the manifest's `checkver` and `autoupdate`.

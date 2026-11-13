@@ -234,6 +234,10 @@ type Function struct {
 	Guard                     *Expr
 	Body                      []Statement
 	Line, Column              int
+	// Reads names the function's type variables that it reads from JSON,
+	// in the order of its type variables. Whoever chooses those types
+	// supplies how each is read.
+	Reads []string
 }
 
 type Pattern struct {
