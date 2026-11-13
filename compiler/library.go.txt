@@ -10858,9 +10858,29 @@ func wsConnect(ctx *actor.Context, address string, ms int64, where string) Tresu
 	return wsConnectWith(ctx, address, ms, L[pair[actor.Atom, string]]{}, where)
 }
 
-// wsConnectWith opens a WebSocket to a ws:// or wss:// address. The options
-// are ca_file:, insecure: "true" and origin:, as text.
 func wsConnectWith(ctx *actor.Context, address string, ms int64, options L[pair[actor.Atom, string]], where string) Tresult[*wsConn, string] {
+	return wsConnectHeaders(ctx, address, ms, options, L[pair[string, string]]{}, where)
+}
+
+// wsHandshakeHeaders are the headers the handshake itself sets.
+var wsHandshakeHeaders = map[string]bool{"host": true, "upgrade": true, "connection": true, "sec-websocket-key": true, "sec-websocket-version": true}
+
+// wsConnectHeaders opens a WebSocket to a ws:// or wss:// address. The
+// options are ca_file:, insecure: "true" and origin:, as text; headers are
+// sent with the handshake, as a browser sends Cookie or a client
+// Authorization.
+func wsConnectHeaders(ctx *actor.Context, address string, ms int64, options L[pair[actor.Atom, string]], headers L[pair[string, string]], where string) Tresult[*wsConn, string] {
+	extra := ""
+	for _, header := range fwd(headers) {
+		name, value := header.E0, header.E1
+		if name == "" || strings.ContainsAny(name, " \t\r\n:") || strings.ContainsAny(value, "\r\n") {
+			return errOf[*wsConn]("invalid header " + strconv.Quote(name))
+		}
+		if wsHandshakeHeaders[strings.ToLower(name)] {
+			return errOf[*wsConn]("the header " + name + " is set by the WebSocket handshake")
+		}
+		extra += name + ": " + value + "\r\n"
+	}
 	caFile, insecure, origin := "", false, ""
 	for _, option := range fwd(options) {
 		switch option.E0 {
@@ -10928,6 +10948,7 @@ func wsConnectWith(ctx *actor.Context, address string, ms int64, options L[pair[
 	if origin != "" {
 		request += "Origin: " + origin + "\r\n"
 	}
+	request += extra
 	reader := bufio.NewReader(conn)
 	if _, err := io.WriteString(conn, request+"\r\n"); err != nil {
 		conn.Close()

@@ -534,6 +534,7 @@ func init() {
 	lib("WebSocket.upgrade", "HTTP.Request, list[tuple[atom,integer]] -> result[websocket,string]", "wsUpgradeWith ctx where")
 	lib("WebSocket.connect", "string, integer -> result[websocket,string]", "wsConnect ctx where")
 	lib("WebSocket.connect", "string, integer, list[tuple[atom,string]] -> result[websocket,string]", "wsConnectWith ctx where")
+	lib("WebSocket.connect", "string, integer, list[tuple[atom,string]], list[tuple[string,string]] -> result[websocket,string]", "wsConnectHeaders ctx where")
 	lib("WebSocket.send", "websocket, string -> result[tuple[],string]", "wsSendText ctx")
 	lib("WebSocket.send_binary", "websocket, string -> result[tuple[],string]", "wsSendBinary ctx")
 	lib("WebSocket.recv", "websocket, integer -> result[WebSocket.Event,string]", "wsRecv ctx")

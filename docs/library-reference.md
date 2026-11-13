@@ -11937,9 +11937,10 @@ error("closed")
 ```
 WebSocket.connect(string, integer) -> result[websocket,string]
 WebSocket.connect(string, integer, list[tuple[atom,string]]) -> result[websocket,string]
+WebSocket.connect(string, integer, list[tuple[atom,string]], list[tuple[string,string]]) -> result[websocket,string]
 ```
 
-Opens a WebSocket to a ws:// or wss:// address, waiting up to the given milliseconds for the connection and the handshake. Options, as text: ca_file: a PEM file of certificates to trust, insecure: "true" to trust any, and origin: the Origin header to send.
+Opens a WebSocket to a ws:// or wss:// address, waiting up to the given milliseconds for the connection and the handshake. Options, as text: ca_file: a PEM file of certificates to trust, insecure: "true" to trust any, and origin: the Origin header to send. A list of {name, value} headers after the options is sent with the handshake, such as a Cookie or Authorization; the headers the handshake sets itself are refused.
 
 ```elixir
 alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->

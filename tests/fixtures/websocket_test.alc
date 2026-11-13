@@ -233,6 +233,48 @@ defmodule WebSocketTest do
     HTTP.stop(elsewhere)
   end
 
+  def refusal(connected: result[websocket, string]): string do
+    case connected do
+      ok(_) -> "connected"
+      error(reason) -> reason
+    end
+  end
+
+  def sent(request: HTTP.Request, name: string): string do
+    case HTTP.header(request.headers, name) do
+      some(value) -> value
+      none -> "none"
+    end
+  end
+
+  test "headers sent with the handshake" do
+    ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+      case WebSocket.upgrade(request) do
+        ok(ws) ->
+          cookie = sent(request, "cookie")
+          authorization = sent(request, "authorization")
+          origin = sent(request, "origin")
+          WebSocket.send(ws, cookie <> "|" <> authorization <> "|" <> origin)
+          WebSocket.recv(ws, 5000)
+          HTTP.text(200, "")
+        error(reason) -> HTTP.text(400, reason)
+      end
+    end)
+    address = "ws://" <> HTTP.address(server)
+    ok(signed_in) = WebSocket.connect(address, 1000, [origin: "http://example.test"], [{"Cookie", "session=abc; theme=dark"}, {"Authorization", "Bearer t0ken"}])
+    assert(WebSocket.recv(signed_in, 1000) == ok(WebSocket.Event.text("session=abc; theme=dark|Bearer t0ken|http://example.test")))
+    WebSocket.close(signed_in)
+    ok(plain) = WebSocket.connect(address, 1000, [], [])
+    assert(WebSocket.recv(plain, 1000) == ok(WebSocket.Event.text("none|none|none")))
+    WebSocket.close(plain)
+    assert(refusal(WebSocket.connect(address, 1000, [], [{"Host", "elsewhere"}])) == "the header Host is set by the WebSocket handshake")
+    assert(WebSocket.connect(address, 1000, [], [{"sec-websocket-key", "x"}]) |> is_error())
+    assert(refusal(WebSocket.connect(address, 1000, [], [{"X-Bad", "a\r\nInjected: yes"}])) == "invalid header \"X-Bad\"")
+    assert(WebSocket.connect(address, 1000, [], [{"Bad Name", "a"}]) |> is_error())
+    assert(WebSocket.connect(address, 1000, [], [{"", "a"}]) |> is_error())
+    HTTP.stop(server)
+  end
+
   test "option and argument failures" do
     ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
       text = try do
@@ -258,7 +300,8 @@ defmodule WebSocketTest do
     assert(WebSocket.connect("ws://%zz", 500) |> is_error())
     ok(plain) = HTTP.serve("127.0.0.1:0", fn _ -> HTTP.text(200, "no") end)
     case WebSocket.connect("ws://" <> HTTP.address(plain), 1000) do
-      error(reason) -> assert(reason == "the server did not accept the WebSocket: 200 OK")
+      error(reason) ->
+        assert(reason == "the server did not accept the WebSocket: 200 OK")
       ok(_) -> flunk("connected")
     end
     ok(echo) = HTTP.serve("127.0.0.1:0", fn request ->
