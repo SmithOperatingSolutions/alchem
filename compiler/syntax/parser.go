@@ -27,6 +27,13 @@ type parser struct {
 	tokens         []lexer.Token
 	pos, depth     int
 	inArm, probing bool
+	// noted collects Program.Notes, and carry holds the comments written
+	// before a describe block until its name is known.
+	noted map[string][]string
+	carry []string
+	// armColumn is the column of the arm whose body is about to be parsed:
+	// a comment after the body indented no further belongs to what follows.
+	armColumn int
 	// condArms is set inside a cond, whose arms begin with a condition
 	// rather than a pattern. capture counts the &N placeholders of the
 	// enclosing &(...) and is -1 outside one.
@@ -97,6 +104,46 @@ func (p *parser) notes(t lexer.Token) []string {
 	return out
 }
 
+// noteAs keeps comments for the formatter under the name of the part of
+// the module they were written before.
+func (p *parser) noteAs(key string, lines []string) {
+	if !p.keep || len(lines) == 0 {
+		return
+	}
+	if p.noted == nil {
+		p.noted = map[string][]string{}
+	}
+	p.noted[key] = append(p.noted[key], lines...)
+}
+
+// remarksIndented takes, as comment statements, the comments before a token
+// that are indented further than a column.
+func (p *parser) remarksIndented(t lexer.Token, column int) []ast.Statement {
+	if p.probing {
+		return nil
+	}
+	var out []ast.Statement
+	for p.consumed < len(p.comments) {
+		c := p.comments[p.consumed]
+		if c.Line > t.Line || (c.Line == t.Line && c.Column > t.Column) || c.Column <= column {
+			break
+		}
+		if p.keep {
+			out = append(out, ast.Statement{Kind: "comment", Name: c.Text, Line: c.Line, Column: c.Column})
+		}
+		p.consumed++
+	}
+	return out
+}
+
+// closing gives the last arm the comments written after it, before the
+// token that ends the arms.
+func (p *parser) closing(arms []ast.Arm) {
+	if len(arms) > 0 {
+		arms[len(arms)-1].Closing = p.notes(p.peek())
+	}
+}
+
 // descend records one level of grammar recursion; callers defer p.ascend().
 func (p *parser) descend() error {
 	p.depth++
@@ -159,12 +206,28 @@ func parse(source string, check bool, raw ...bool) (ast.Program, error) {
 		doc              []string
 	}
 	var docs, docstrings []pending
+	afterDoc := false
 	for {
 		keyword := p.peek()
 		// The comments above a declaration document the first thing it adds.
 		doc := p.commentsBefore(keyword)
+		// Those between a docstring and what it documents stay there.
+		if afterDoc {
+			p.noteAs(fmt.Sprintf("documented:%d", keyword.Line), doc)
+			doc = nil
+		}
+		afterDoc = false
 		if len(doc) > 0 {
 			docs = append(docs, pending{len(result.Types), len(result.Functions), doc})
+		}
+		// attach gives the comments to a part that is not a type or a
+		// function, so that they stay above it.
+		attach := func(key string) {
+			if len(doc) > 0 {
+				docs = docs[:len(docs)-1]
+				p.noteAs(key, doc)
+				doc = nil
+			}
 		}
 		// An import may stand anywhere among the module's declarations.
 		if keyword.Text == "import" && p.tokens[p.pos+1].Kind == lexer.String {
@@ -174,6 +237,7 @@ func parse(source string, check bool, raw ...bool) (ast.Program, error) {
 			if err != nil {
 				return result, err
 			}
+			attach("import:" + value)
 			result.Imports = append(result.Imports, value)
 			result.ImportPositions = append(result.ImportPositions, ast.Position{Line: keyword.Line, Column: keyword.Column})
 			continue
@@ -184,6 +248,7 @@ func parse(source string, check bool, raw ...bool) (ast.Program, error) {
 			if err != nil {
 				return ast.Program{}, err
 			}
+			attach("require:" + require.Path)
 			result.Requires = append(result.Requires, require)
 			continue
 		}
@@ -231,8 +296,10 @@ func parse(source string, check bool, raw ...bool) (ast.Program, error) {
 					p.pos++
 				}
 				if kind.Text == "moduledoc" {
+					attach("moduledoc")
 					result.ModuleDoc = text
 				} else {
+					afterDoc = true
 					docstrings = append(docstrings, pending{len(result.Types), len(result.Functions), []string{text, kind.Text, strconv.Itoa(kind.Line), strconv.Itoa(kind.Column)}})
 				}
 				continue
@@ -249,6 +316,9 @@ func parse(source string, check bool, raw ...bool) (ast.Program, error) {
 				result.Constants = append(result.Constants, constant)
 				continue
 			}
+			if p.tokens[p.pos+1].Text == "moduletag" {
+				attach("moduletag")
+			}
 			if err := p.tag(&result); err != nil {
 				return ast.Program{}, err
 			}
@@ -256,11 +326,15 @@ func parse(source string, check bool, raw ...bool) (ast.Program, error) {
 		}
 		if keyword.Kind == lexer.Ident && keyword.Text == "doctest" && p.tokens[p.pos+1].Kind == lexer.Ident {
 			p.pos += 2
+			attach("doctest:" + p.tokens[p.pos-1].Text)
 			result.Doctests = append(result.Doctests, p.tokens[p.pos-1].Text)
 			continue
 		}
 		if keyword.Kind == lexer.Ident && (keyword.Text == "test" || keyword.Text == "describe" || keyword.Text == "setup" || keyword.Text == "setup_all") {
 			if next := p.tokens[p.pos+1]; next.Kind == lexer.String || keyword.Text == "setup" || keyword.Text == "setup_all" {
+				if keyword.Text == "describe" && len(doc) > 0 {
+					p.carry, docs = doc, docs[:len(docs)-1]
+				}
 				if err := p.tests(&result, ""); err != nil {
 					return ast.Program{}, err
 				}
@@ -272,6 +346,7 @@ func parse(source string, check bool, raw ...bool) (ast.Program, error) {
 			if err != nil {
 				return ast.Program{}, err
 			}
+			attach("use:" + use.Module)
 			result.Uses = append(result.Uses, use)
 			continue
 		}
@@ -285,6 +360,7 @@ func parse(source string, check bool, raw ...bool) (ast.Program, error) {
 					return ast.Program{}, diagnostic(macro.Line, macro.Column, "macro %s is defined twice", macro.Name)
 				}
 			}
+			attach("macro:" + macro.Name)
 			result.Macros = append(result.Macros, macro)
 			continue
 		}
@@ -298,6 +374,7 @@ func parse(source string, check bool, raw ...bool) (ast.Program, error) {
 					return ast.Program{}, diagnostic(protocol.Line, protocol.Column, "protocol %s is declared twice", protocol.Name)
 				}
 			}
+			attach("protocol:" + protocol.Name)
 			result.Protocols = append(result.Protocols, protocol)
 			continue
 		}
@@ -306,6 +383,7 @@ func parse(source string, check bool, raw ...bool) (ast.Program, error) {
 			if err != nil {
 				return ast.Program{}, err
 			}
+			attach("impl:" + implemented[0].Name[strings.Index(implemented[0].Name, "$"):])
 			result.Functions = append(result.Functions, implemented...)
 			continue
 		}
@@ -347,6 +425,7 @@ func parse(source string, check bool, raw ...bool) (ast.Program, error) {
 			return ast.Program{}, diagnostic(line, column, "@%s is not followed by anything to document", entry.doc[1])
 		}
 	}
+	result.Notes = p.noted
 	result.Trailing = append(result.Trailing, p.commentsBefore(p.peek())...)
 	if _, err = p.expect(lexer.Ident, "end"); err != nil {
 		return ast.Program{}, err
@@ -565,12 +644,14 @@ func (p *parser) block(inCase ...bool) ([]ast.Statement, error) {
 	}
 	old := p.inArm
 	defer func() { p.inArm = old }()
-	if len(inCase) > 0 && inCase[0] {
+	arm := len(inCase) > 0 && inCase[0]
+	armColumn := p.armColumn
+	if arm {
 		p.inArm = true
 	}
 	var body []ast.Statement
 	for !p.ends() {
-		if len(inCase) > 0 && inCase[0] && p.armStart() {
+		if arm && p.armStart() {
 			break
 		}
 		t := p.peek()
@@ -676,7 +757,13 @@ func (p *parser) block(inCase ...bool) ([]ast.Statement, error) {
 		}
 		body = append(body, s)
 	}
-	body = append(body, p.remarks(p.peek())...)
+	// After an arm's body, the comments indented no further than the arm
+	// belong to the next arm, or come before the end.
+	if arm {
+		body = append(body, p.remarksIndented(p.peek(), armColumn)...)
+	} else {
+		body = append(body, p.remarks(p.peek())...)
+	}
 	if len(body) == 0 {
 		t := p.peek()
 		return nil, fmt.Errorf("%d:%d: block requires a statement", t.Line, t.Column)
@@ -730,6 +817,11 @@ func (p *parser) expr(min int) (*ast.Expr, error) {
 		if prec == 3 && compared {
 			return nil, fmt.Errorf("%d:%d: chained comparisons are unsupported", t.Line, t.Column)
 		}
+		// The comments before a |> that starts a line stay with its stage.
+		var notes []string
+		if t.Text == "|>" {
+			notes = p.notes(t)
+		}
 		p.pos++
 		next := prec + 1
 		if t.Text == "**" {
@@ -767,6 +859,9 @@ func (p *parser) expr(min int) (*ast.Expr, error) {
 				return nil, diagnostic(t.Line, t.Column, "pipe target must be a function call")
 			}
 			right.Pipe = true
+			if len(notes) > 0 {
+				right.Comments = notes
+			}
 			right.Args = append([]*ast.Expr{left}, right.Args...)
 			left = right
 			continue
@@ -1468,6 +1563,7 @@ func (p *parser) typeDecl() (ast.TypeDecl, error) {
 	}
 	seen := map[string]bool{}
 	for p.peek().Text != "end" && p.peek().Kind != lexer.EOF {
+		p.noteAs("field:"+decl.Name+"."+p.peek().Text, p.notes(p.peek()))
 		if decl.Kind == "struct" {
 			f, err := field(seen)
 			if err != nil {
@@ -1524,6 +1620,7 @@ func (p *parser) typeDecl() (ast.TypeDecl, error) {
 			return decl, diagnostic(name.Line, name.Column, "an exception has a message: string field and no type parameters")
 		}
 	}
+	p.noteAs("ends:type:"+decl.Name, p.notes(p.peek()))
 	_, err := p.expect(lexer.Ident, "end")
 	return decl, err
 }
@@ -1544,6 +1641,8 @@ func (p *parser) compound(s *ast.Statement) error {
 		defer func() { p.condArms, p.inArm = old, oldArm }()
 		for p.peek().Text != "end" && p.peek().Kind != lexer.EOF {
 			p.condArms = false
+			comments := p.notes(p.peek())
+			column := p.peek().Column
 			condition, err := p.expr(0)
 			if err != nil {
 				return err
@@ -1552,12 +1651,14 @@ func (p *parser) compound(s *ast.Statement) error {
 				return err
 			}
 			p.condArms = true
+			p.armColumn = column
 			body, err := p.block(true)
 			if err != nil {
 				return err
 			}
-			s.Arms = append(s.Arms, ast.Arm{Guard: condition, Body: body})
+			s.Arms = append(s.Arms, ast.Arm{Guard: condition, Body: body, Comments: comments})
 		}
+		p.closing(s.Arms)
 		if len(s.Arms) == 0 {
 			return diagnostic(t.Line, t.Column, "cond requires branches")
 		}
@@ -1571,6 +1672,11 @@ func (p *parser) compound(s *ast.Statement) error {
 		p.pos++
 		s.Kind = "with"
 		for {
+			// The comments before a later clause stay above it.
+			var comments []string
+			if len(s.Arms) > 0 {
+				comments = p.notes(p.peek())
+			}
 			pattern, err := p.pattern()
 			if err != nil {
 				return err
@@ -1582,7 +1688,7 @@ func (p *parser) compound(s *ast.Statement) error {
 			if err != nil {
 				return err
 			}
-			s.Arms = append(s.Arms, ast.Arm{Pattern: pattern, Guard: value})
+			s.Arms = append(s.Arms, ast.Arm{Pattern: pattern, Guard: value, Comments: comments})
 			if p.peek().Kind != lexer.Comma {
 				break
 			}
@@ -1684,6 +1790,8 @@ func (p *parser) compound(s *ast.Statement) error {
 		return err
 	}
 	for p.peek().Text != "end" && p.peek().Kind != lexer.EOF {
+		comments := p.notes(p.peek())
+		column := p.peek().Column
 		pat, err := p.pattern()
 		if err != nil {
 			return err
@@ -1699,12 +1807,14 @@ func (p *parser) compound(s *ast.Statement) error {
 		if _, err = p.expect(lexer.Arrow, ""); err != nil {
 			return err
 		}
+		p.armColumn = column
 		body, err := p.block(true)
 		if err != nil {
 			return err
 		}
-		s.Arms = append(s.Arms, ast.Arm{Pattern: pat, Guard: guard, Body: body})
+		s.Arms = append(s.Arms, ast.Arm{Pattern: pat, Guard: guard, Body: body, Comments: comments})
 	}
+	p.closing(s.Arms)
 	if len(s.Arms) == 0 {
 		return diagnostic(t.Line, t.Column, "case requires branches")
 	}
@@ -1773,8 +1883,10 @@ func (p *parser) lambda() (*ast.Expr, error) {
 // with source names.
 func (p *parser) tests(program *ast.Program, group string) error {
 	keyword := p.peek()
+	comments := append(p.carry, p.notes(keyword)...)
+	p.carry = nil
 	p.pos++
-	f := ast.Function{Type: "void", Group: group, Line: keyword.Line, Column: keyword.Column}
+	f := ast.Function{Type: "void", Group: group, Line: keyword.Line, Column: keyword.Column, Comments: comments}
 	tags := p.tags
 	p.tags = nil
 	setup := keyword.Text == "setup" || keyword.Text == "setup_all"
@@ -1822,6 +1934,7 @@ func (p *parser) tests(program *ast.Program, group string) error {
 		if len(ast.Groups(inside)) > 16 {
 			return diagnostic(keyword.Line, keyword.Column, "describe blocks nest at most 16 deep")
 		}
+		p.noteAs("describe:"+inside, comments)
 		if len(tags) > 0 {
 			if program.GroupTags == nil {
 				program.GroupTags = map[string][]string{}
@@ -1842,6 +1955,7 @@ func (p *parser) tests(program *ast.Program, group string) error {
 				return err
 			}
 		}
+		p.noteAs("ends:describe:"+inside, p.notes(p.peek()))
 		_, err := p.expect(lexer.Ident, "end")
 		return err
 	}
@@ -1864,6 +1978,8 @@ func (p *parser) arms() ([]ast.Arm, error) {
 	defer func() { p.condArms = old }()
 	var arms []ast.Arm
 	for !p.ends() {
+		comments := p.notes(p.peek())
+		column := p.peek().Column
 		pattern, err := p.pattern()
 		if err != nil {
 			return nil, err
@@ -1878,12 +1994,14 @@ func (p *parser) arms() ([]ast.Arm, error) {
 		if _, err = p.expect(lexer.Arrow, ""); err != nil {
 			return nil, err
 		}
+		p.armColumn = column
 		body, err := p.block(true)
 		if err != nil {
 			return nil, err
 		}
-		arms = append(arms, ast.Arm{Pattern: pattern, Guard: guard, Body: body})
+		arms = append(arms, ast.Arm{Pattern: pattern, Guard: guard, Body: body, Comments: comments})
 	}
+	p.closing(arms)
 	if len(arms) == 0 {
 		t := p.peek()
 		return nil, diagnostic(t.Line, t.Column, "expected at least one pattern -> body arm")
@@ -1910,6 +2028,7 @@ func (p *parser) handlerArms(rescue bool) ([]ast.Arm, error) {
 	defer func() { p.condArms = old }()
 	var arms []ast.Arm
 	for !p.ends() {
+		comments := p.notes(p.peek())
 		t := p.peek()
 		next := p.tokens[p.pos+1]
 		var pattern *ast.Pattern
@@ -1937,7 +2056,7 @@ func (p *parser) handlerArms(rescue bool) ([]ast.Arm, error) {
 				return nil, err
 			}
 		}
-		arm := ast.Arm{Pattern: pattern}
+		arm := ast.Arm{Pattern: pattern, Comments: comments}
 		var err error
 		if p.peek().Text == "when" {
 			p.pos++
@@ -1948,11 +2067,13 @@ func (p *parser) handlerArms(rescue bool) ([]ast.Arm, error) {
 		if _, err = p.expect(lexer.Arrow, ""); err != nil {
 			return nil, err
 		}
+		p.armColumn = t.Column
 		if arm.Body, err = p.block(true); err != nil {
 			return nil, err
 		}
 		arms = append(arms, arm)
 	}
+	p.closing(arms)
 	if len(arms) == 0 {
 		t := p.peek()
 		return nil, diagnostic(t.Line, t.Column, "expected at least one pattern -> body arm")
@@ -2146,12 +2267,16 @@ func (p *parser) checkAll(s *ast.Statement) error {
 			}
 			s.Expr = value
 		} else {
+			var comments []string
+			if len(s.Arms) > 0 {
+				comments = p.notes(p.peek())
+			}
 			start := p.pos
 			probing := p.probing
 			p.probing = true
 			pattern, err := p.pattern()
 			p.probing = probing
-			arm := ast.Arm{}
+			arm := ast.Arm{Comments: comments}
 			if err == nil && p.peek().Kind == lexer.Operator && p.peek().Text == "<-" {
 				p.pos++
 				arm.Pattern = pattern
@@ -2395,11 +2520,13 @@ func (p *parser) protocol() (ast.Protocol, error) {
 		return protocol, err
 	}
 	for p.peek().Text == "def" {
+		comments := p.notes(p.peek())
 		p.pos++
 		function, err := p.expect(lexer.Ident, "")
 		if err != nil {
 			return protocol, err
 		}
+		p.noteAs("declares:"+name.Text+"."+function.Text, comments)
 		declared := ast.ProtocolFunction{Name: function.Text, Type: "void"}
 		if _, err = p.expect(lexer.LParen, ""); err != nil {
 			return protocol, err
@@ -2440,6 +2567,7 @@ func (p *parser) protocol() (ast.Protocol, error) {
 	if len(protocol.Functions) == 0 {
 		return protocol, diagnostic(name.Line, name.Column, "protocol %s declares no functions", name.Text)
 	}
+	p.noteAs("ends:protocol:"+name.Text, p.notes(p.peek()))
 	_, err = p.expect(lexer.Ident, "end")
 	return protocol, err
 }
@@ -2470,10 +2598,12 @@ func (p *parser) implementation(index int) ([]ast.Function, error) {
 	}
 	var out []ast.Function
 	for p.peek().Text == "def" || p.peek().Text == "defp" {
+		comments := p.notes(p.peek())
 		f, err := p.function()
 		if err != nil {
 			return nil, err
 		}
+		f.Comments = comments
 		if len(f.Params) == 0 {
 			return nil, diagnostic(f.Line, f.Column, "%s.%s takes at least the %s it is called on", protocol.Text, f.Name, target)
 		}
@@ -2490,6 +2620,7 @@ func (p *parser) implementation(index int) ([]ast.Function, error) {
 	if len(out) == 0 {
 		return nil, diagnostic(start.Line, start.Column, "defimpl %s, for: %s defines no functions", protocol.Text, target)
 	}
+	p.noteAs(fmt.Sprintf("ends:impl:$%s$%d", protocol.Text, index), p.notes(p.peek()))
 	_, err = p.expect(lexer.Ident, "end")
 	return out, err
 }
@@ -2590,6 +2721,9 @@ func (p *parser) macro() (ast.Macro, error) {
 		return macro, diagnostic(name.Line, name.Column, "the parameters of a macro are names, the last of which may be do: name for a block")
 	}
 	for _, word := range []string{"do", "quote", "do"} {
+		if word == "quote" {
+			p.noteAs("quote:"+macro.Name, p.notes(p.peek()))
+		}
 		if _, err = p.expect(lexer.Ident, word); err != nil {
 			return macro, diagnostic(name.Line, name.Column, "the body of a macro is one quote do ... end")
 		}
@@ -2597,10 +2731,12 @@ func (p *parser) macro() (ast.Macro, error) {
 	if macro.Name == "__using__" {
 		macro.Definitions = []ast.Function{}
 		for p.peek().Text == "def" || p.peek().Text == "defp" {
+			comments := p.notes(p.peek())
 			f, err := p.function()
 			if err != nil {
 				return macro, err
 			}
+			f.Comments = comments
 			macro.Definitions = append(macro.Definitions, f)
 		}
 		if len(macro.Definitions) == 0 {
@@ -2609,7 +2745,8 @@ func (p *parser) macro() (ast.Macro, error) {
 	} else if macro.Body, err = p.block(); err != nil {
 		return macro, err
 	}
-	for range 2 {
+	for _, key := range []string{"ends:macro:", "ends:defmacro:"} {
+		p.noteAs(key+macro.Name, p.notes(p.peek()))
 		if _, err = p.expect(lexer.Ident, "end"); err != nil {
 			return macro, err
 		}

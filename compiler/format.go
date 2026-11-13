@@ -45,11 +45,14 @@ func Format(source string) (string, error) {
 		}
 		b.WriteString(indent(depth) + "\"\"\"\n")
 	}
+	remark(p.Notes["moduledoc"], 1)
 	docstring("moduledoc", p.ModuleDoc, 1)
 	for _, path := range p.Imports {
+		remark(p.Notes["import:"+path], 1)
 		b.WriteString("  import " + strconv.Quote(path) + "\n")
 	}
 	for _, use := range p.Uses {
+		remark(p.Notes["use:"+use.Module], 1)
 		line := "  use " + use.Module
 		for i, name := range use.Names {
 			line += ", " + name + ": " + formatExpr(use.Values[i], 1)
@@ -57,12 +60,15 @@ func Format(source string) (string, error) {
 		b.WriteString(line + "\n")
 	}
 	for _, name := range p.Doctests {
+		remark(p.Notes["doctest:"+name], 1)
 		b.WriteString("  doctest " + name + "\n")
 	}
+	remark(p.Notes["moduletag"], 1)
 	for _, tag := range p.GroupTags[""] {
 		b.WriteString("  @moduletag " + formatTag(tag) + "\n")
 	}
 	for _, require := range p.Requires {
+		remark(p.Notes["require:"+require.Path], 1)
 		b.WriteString("  require " + strconv.Quote(require.Path) + " " + strconv.Quote(require.Version) + "\n")
 	}
 	for i, constant := range p.Constants {
@@ -79,6 +85,7 @@ func Format(source string) (string, error) {
 		}
 		remark(decl.Comments, 1)
 		docstring("typedoc", decl.Doc, 1)
+		remark(p.Notes[fmt.Sprintf("documented:%d", decl.Line)], 1)
 		if decl.Kind == "extern" {
 			b.WriteString("  extern type " + decl.Local + " = " + strconv.Quote(decl.Extern) + "\n")
 			continue
@@ -96,6 +103,7 @@ func Format(source string) (string, error) {
 		}
 		b.WriteString(" do\n")
 		for _, field := range decl.Fields {
+			remark(p.Notes["field:"+decl.Name+"."+field.Name], 2)
 			b.WriteString("    " + field.Name + ": " + spaced(field.Type))
 			if field.Default != nil {
 				b.WriteString(" = " + formatExpr(field.Default, 2))
@@ -103,18 +111,21 @@ func Format(source string) (string, error) {
 			b.WriteString("\n")
 		}
 		for _, variant := range decl.Variants {
+			remark(p.Notes["field:"+decl.Name+"."+variant.Name], 2)
 			b.WriteString("    " + variant.Name)
 			if len(variant.Fields) > 0 {
 				b.WriteString("(" + formatParams(variant.Fields) + ")")
 			}
 			b.WriteString("\n")
 		}
+		remark(p.Notes["ends:type:"+decl.Name], 2)
 		b.WriteString("  end\n")
 	}
 	// open holds the describe blocks the next declaration would sit in.
 	var open []string
 	closeTo := func(depth int) {
 		for len(open) > depth {
+			remark(p.Notes["ends:describe:"+strings.Join(open, ast.GroupSeparator)], len(open)+1)
 			open = open[:len(open)-1]
 			b.WriteString(indent(len(open)+1) + "end\n")
 		}
@@ -123,14 +134,17 @@ func Format(source string) (string, error) {
 		if i > 0 || len(p.Imports)+len(p.Requires)+len(p.Types)+len(p.Doctests)+len(p.GroupTags[""])+len(p.Constants)+len(p.ModuleDoc) > 0 {
 			b.WriteString("\n")
 		}
+		remark(p.Notes["protocol:"+protocol.Name], 1)
 		b.WriteString("  defprotocol " + protocol.Name + " do\n")
 		for _, function := range protocol.Functions {
+			remark(p.Notes["declares:"+protocol.Name+"."+function.Name], 2)
 			b.WriteString("    def " + function.Name + "(" + strings.Join(function.Params, ", ") + ")")
 			if function.Type != "void" {
 				b.WriteString(": " + spaced(function.Type))
 			}
 			b.WriteString("\n")
 		}
+		remark(p.Notes["ends:protocol:"+protocol.Name], 2)
 		b.WriteString("  end\n")
 	}
 	for i, macro := range p.Macros {
@@ -141,7 +155,10 @@ func Format(source string) (string, error) {
 		if macro.Block != "" {
 			parameters = append(parameters, "do: "+macro.Block)
 		}
-		b.WriteString("  defmacro " + macro.Name + "(" + strings.Join(parameters, ", ") + ") do\n    quote do\n")
+		remark(p.Notes["macro:"+macro.Name], 1)
+		b.WriteString("  defmacro " + macro.Name + "(" + strings.Join(parameters, ", ") + ") do\n")
+		remark(p.Notes["quote:"+macro.Name], 2)
+		b.WriteString("    quote do\n")
 		for j, f := range macro.Definitions {
 			if j > 0 {
 				b.WriteString("\n")
@@ -150,6 +167,7 @@ func Format(source string) (string, error) {
 			if f.Private {
 				keyword = "defp"
 			}
+			remark(f.Comments, 3)
 			b.WriteString(indent(3) + keyword + " " + f.Name + "(" + formatParams(f.Params) + ")")
 			if f.Type != "void" {
 				b.WriteString(": " + spaced(f.Type))
@@ -159,7 +177,11 @@ func Format(source string) (string, error) {
 			}
 			b.WriteString(" do\n" + formatBlock(f.Body, 4) + indent(3) + "end\n")
 		}
-		b.WriteString(formatBlock(macro.Body, 3) + "    end\n  end\n")
+		b.WriteString(formatBlock(macro.Body, 3))
+		remark(p.Notes["ends:macro:"+macro.Name], 3)
+		b.WriteString("    end\n")
+		remark(p.Notes["ends:defmacro:"+macro.Name], 2)
+		b.WriteString("  end\n")
 	}
 	for i, f := range p.Functions {
 		path := ast.Groups(f.Group)
@@ -174,12 +196,14 @@ func Format(source string) (string, error) {
 			block = f.Name[strings.Index(f.Name, "$"):]
 		}
 		if block != implementing && implementing != "" {
+			remark(p.Notes["ends:impl:"+implementing], 2)
 			b.WriteString("  end\n")
 		}
 		if i > 0 || len(p.Imports)+len(p.Requires)+len(p.Types)+len(p.Protocols)+len(p.Macros)+len(p.Doctests)+len(p.GroupTags[""])+len(p.Constants)+len(p.ModuleDoc) > 0 {
 			b.WriteString("\n")
 		}
 		if block != implementing && block != "" {
+			remark(p.Notes["impl:"+block], 1)
 			b.WriteString("  defimpl " + f.Protocol + ", for: " + f.For + " do\n")
 		}
 		implementing = block
@@ -189,6 +213,7 @@ func Format(source string) (string, error) {
 		}
 		for _, name := range path[shared:] {
 			inside := strings.Join(append(append([]string{}, open...), name), ast.GroupSeparator)
+			remark(p.Notes["describe:"+inside], len(open)+1)
 			for _, tag := range p.GroupTags[inside] {
 				b.WriteString(indent(len(open)+1) + "@tag " + formatTag(tag) + "\n")
 			}
@@ -197,6 +222,7 @@ func Format(source string) (string, error) {
 		}
 		remark(f.Comments, len(open)+1+inner)
 		docstring("doc", f.Doc, len(open)+1+inner)
+		remark(p.Notes[fmt.Sprintf("documented:%d", f.Line)], len(open)+1+inner)
 		if f.Test != "" || f.Setup {
 			depth := len(open) + 1
 			head := "setup"
@@ -244,6 +270,7 @@ func Format(source string) (string, error) {
 		b.WriteString(" do\n" + formatBlock(f.Body, depth+1) + indent(depth) + "end\n")
 	}
 	if implementing != "" {
+		remark(p.Notes["ends:impl:"+implementing], 2)
 		b.WriteString("  end\n")
 	}
 	closeTo(0)
@@ -400,22 +427,15 @@ func formatExpr(e *ast.Expr, n int) string {
 		if one := "[" + strings.Join(args, ", ") + "]"; !remarked && (len(args) < 2 || (len(one)+2*n <= 98 || strings.Contains(one, "\n")) && !heredoc) {
 			return one
 		}
-		remark := func(lines []string) string {
-			text := ""
-			for _, line := range lines {
-				text += strings.TrimRight(indent(n+1)+"# "+line, " ") + "\n"
-			}
-			return text
-		}
 		items := []string{}
 		for _, item := range e.Args {
 			text := formatExpr(item, n+1)
 			if item.Kind == "tuple" && item.Op == "keyword" {
 				text = item.Args[0].Value.Text + ": " + formatExpr(item.Args[1], n+1)
 			}
-			items = append(items, remark(item.Comments)+indent(n+1)+text)
+			items = append(items, remarkLines(item.Comments, n+1)+indent(n+1)+text)
 		}
-		return "[\n" + strings.Join(items, ",\n") + "\n" + remark(e.Closing) + indent(n) + "]"
+		return "[\n" + strings.Join(items, ",\n") + "\n" + remarkLines(e.Closing, n+1) + indent(n) + "]"
 	case "tuple":
 		return "{" + strings.Join(args, ", ") + "}"
 	case "map":
@@ -425,6 +445,9 @@ func formatExpr(e *ast.Expr, n int) string {
 		return "%{" + strings.Join(args, ", ") + "}"
 	case "call":
 		if e.Pipe && len(args) > 0 {
+			if pipeRemarked(e) {
+				return formatPipeline(e, n)
+			}
 			pipe := syntax.Precedence("|>")
 			return formatWithin(e.Args[0], n, pipe) + " |> " + e.Name + "(" + strings.Join(args[1:], ", ") + ")"
 		}
@@ -649,7 +672,7 @@ func formatPipeline(e *ast.Expr, n int) string {
 		stages = append([]*ast.Expr{first}, stages...)
 		first = first.Args[0]
 	}
-	if len(stages) < 2 {
+	if len(stages) < 2 && !pipeRemarked(e) {
 		return formatExpr(e, n)
 	}
 	text := formatWithin(first, n, syntax.Precedence("|>"))
@@ -658,9 +681,20 @@ func formatPipeline(e *ast.Expr, n int) string {
 		for _, arg := range stage.Args[1:] {
 			args = append(args, formatExpr(arg, n))
 		}
-		text += "\n" + indent(n) + "|> " + stage.Name + "(" + strings.Join(args, ", ") + ")"
+		text += "\n" + remarkLines(stage.Comments, n) + indent(n) + "|> " + stage.Name + "(" + strings.Join(args, ", ") + ")"
 	}
 	return text
+}
+
+// pipeRemarked reports whether a comment is written before a stage of a
+// chain of pipes, which then keeps one stage to a line.
+func pipeRemarked(e *ast.Expr) bool {
+	for ; e != nil && e.Kind == "call" && e.Pipe && len(e.Args) > 0; e = e.Args[0] {
+		if len(e.Comments) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func formatBlock(body []ast.Statement, n int) string {
@@ -719,20 +753,21 @@ func formatBlock(body []ast.Statement, n int) string {
 		case "cond":
 			b.WriteString(pad + "cond do\n")
 			for _, arm := range s.Arms {
+				b.WriteString(remarkLines(arm.Comments, n+1))
 				head := indent(n+1) + formatExpr(arm.Guard, n+1) + " ->"
 				body := formatBlock(arm.Body, n+2)
 				if line := strings.TrimSpace(body); len(arm.Body) == 1 && (arm.Body[0].Kind == "call" || arm.Body[0].Kind == "output") &&
 					strings.Count(body, "\n") == 1 && len(head)+1+len(line) <= 98 {
-					b.WriteString(head + " " + line + "\n")
+					b.WriteString(head + " " + line + "\n" + remarkLines(arm.Closing, n+1))
 					continue
 				}
-				b.WriteString(head + "\n" + body)
+				b.WriteString(head + "\n" + body + remarkLines(arm.Closing, n+1))
 			}
 			b.WriteString(pad + "end\n")
 		case "with":
 			clauses := []string{}
 			for _, arm := range s.Arms {
-				clauses = append(clauses, formatPattern(arm.Pattern)+" <- "+formatExpr(arm.Guard, n))
+				clauses = append(clauses, clauseRemarks(arm.Comments, pad+"     ")+formatPattern(arm.Pattern)+" <- "+formatExpr(arm.Guard, n))
 			}
 			b.WriteString(pad + "with " + strings.Join(clauses, ",\n"+pad+"     ") + " do\n" + formatBlock(s.Then, n+1))
 			if len(s.Else) > 0 {
@@ -744,10 +779,11 @@ func formatBlock(body []ast.Statement, n int) string {
 		case "check":
 			clauses := []string{}
 			for _, arm := range s.Arms {
+				note := clauseRemarks(arm.Comments, pad+"          ")
 				if arm.Pattern == nil {
-					clauses = append(clauses, formatExpr(arm.Guard, n))
+					clauses = append(clauses, note+formatExpr(arm.Guard, n))
 				} else {
-					clauses = append(clauses, formatPattern(arm.Pattern)+" <- "+formatExpr(arm.Guard, n))
+					clauses = append(clauses, note+formatPattern(arm.Pattern)+" <- "+formatExpr(arm.Guard, n))
 				}
 			}
 			if s.Expr != nil {
@@ -761,10 +797,30 @@ func formatBlock(body []ast.Statement, n int) string {
 	return b.String()
 }
 
+// clauseRemarks writes the comments above a clause that starts a line after
+// pad, leaving the clause to follow at the same place.
+func clauseRemarks(lines []string, pad string) string {
+	text := ""
+	for _, line := range lines {
+		text += strings.TrimRight("# "+line, " ") + "\n" + pad
+	}
+	return text
+}
+
+// remarkLines writes comments, one to a line, at depth n.
+func remarkLines(lines []string, n int) string {
+	text := ""
+	for _, line := range lines {
+		text += strings.TrimRight(indent(n)+"# "+line, " ") + "\n"
+	}
+	return text
+}
+
 // formatArms renders pattern [when guard] -> body arms at the given depth.
 func formatArms(arms []ast.Arm, n int) string {
 	var b strings.Builder
 	for _, arm := range arms {
+		b.WriteString(remarkLines(arm.Comments, n))
 		guard := ""
 		if arm.Guard != nil {
 			guard = " when " + formatExpr(arm.Guard, n)
@@ -775,10 +831,10 @@ func formatArms(arms []ast.Arm, n int) string {
 		// pattern.
 		if line := strings.TrimSpace(body); len(arm.Body) == 1 && (arm.Body[0].Kind == "call" || arm.Body[0].Kind == "output") &&
 			strings.Count(body, "\n") == 1 && len(head)+1+len(line) <= 98 {
-			b.WriteString(head + " " + line + "\n")
+			b.WriteString(head + " " + line + "\n" + remarkLines(arm.Closing, n))
 			continue
 		}
-		b.WriteString(head + "\n" + body)
+		b.WriteString(head + "\n" + body + remarkLines(arm.Closing, n))
 	}
 	return b.String()
 }

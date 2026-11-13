@@ -357,3 +357,121 @@ func TestFormatSplitsListsHoldingHeredocs(t *testing.T) {
 		t.Fatalf("not stable: err=%v\n%s", err, again)
 	}
 }
+
+// A comment before a clause stays above that clause, at its indentation, and
+// the clause above stays on its line (issue #42). One indented as the body
+// above it ends that body.
+func TestFormatKeepsCommentsBetweenClauses(t *testing.T) {
+	source := `defmodule Probe do
+  def name(n: integer): string do
+    case n do
+      0 -> "zero"
+      # One is the only odd one here.
+      1 -> "one"
+      2 ->
+        text = "two"
+        text
+        # The body above ends here.
+      _ -> "many"
+      # Nothing else is left.
+    end
+  end
+
+  def sign(n: integer): string do
+    cond do
+      n < 0 -> "negative"
+      # Zero is neither.
+      n == 0 -> "zero"
+      true -> "positive"
+    end
+  end
+
+  def both(a: string, b: string): result[integer, string] do
+    with ok(x) <- Integer.parse(a),
+         # The second number.
+         ok(y) <- Integer.parse(b) do
+      ok(x + y)
+    end
+  end
+
+  def total(items: list[integer]): integer do
+    items
+    # Only the even ones.
+    |> Enum.filter(fn x -> rem(x, 2) == 0 end)
+    |> Enum.sum()
+  end
+end
+`
+	formatted, err := Format(source)
+	if err != nil || formatted != source {
+		t.Fatalf("err=%v\n%s", err, formatted)
+	}
+}
+
+// Comments stay above the parts of a module that are not functions or types.
+func TestFormatKeepsCommentsAboveDeclarations(t *testing.T) {
+	source := `defmodule Probe do
+  # Why this is here.
+  @moduledoc """
+  A module.
+  """
+  # The helpers.
+  import "helpers.alc"
+
+  # A point on the plane.
+  struct Point do
+    # Across.
+    x: integer
+    # Up.
+    y: integer
+    # Nothing more.
+  end
+
+  type Shape do
+    # Round.
+    circle(radius: integer)
+    square(side: integer)
+  end
+
+  # Anything with an area.
+  defprotocol Sized do
+    # In square units.
+    def area(shape): integer
+  end
+
+  # Squares are easy.
+  defimpl Sized, for: Point do
+    # Always nothing.
+    def area(point: Point): integer do
+      0
+    end
+  end
+
+  @doc """
+  The origin.
+  """
+  # Kept under the documentation.
+  def origin(): Point do
+    %Point{x: 0, y: 0}
+  end
+end
+`
+	formatted, err := Format(source)
+	if err != nil || formatted != source {
+		t.Fatalf("err=%v\n%s", err, formatted)
+	}
+	tests := `defmodule ProbeTest do
+  # The sums.
+  describe "adding" do
+    # The simplest one.
+    test "one and one" do
+      assert(1 + 1 == 2)
+    end
+    # No more sums.
+  end
+end
+`
+	if formatted, err = Format(tests); err != nil || formatted != tests {
+		t.Fatalf("err=%v\n%s", err, formatted)
+	}
+}
