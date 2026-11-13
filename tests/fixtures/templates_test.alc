@@ -127,8 +127,25 @@ defmodule TemplatesTest do
     assert(words == ["a", "b", "c"])
     shouted = """
     quiet
-    """ |> String.trim() |> String.upcase()
+    """
+    |> String.trim()
+    |> String.upcase()
     assert(shouted == "QUIET")
+  end
+
+  def link(name: string): string do
+    "/p/" <> name
+  end
+
+  test "strings inside the interpolations of a one-line sigil" do
+    assert(Markup.to_string(~h"<p>#{String.upcase("hi")}</p>") == "<p>HI</p>")
+    assert(Markup.to_string(~h"<a href=#{link("x")}>#{~h"<b>#{"in"}</b>"}</a>") == "<a href=/p/x><b>in</b></a>")
+    assert(~s"a #{"b" <> "c"} d" == "a bc d")
+    assert(~w"x #{"y"}" == ["x", "y"])
+    assert(Markup.to_string(~h(<i>#{")"}</i>)) == "<i>)</i>")
+    assert(Markup.to_string(~h"<p title=\"t\">#{"a\"b"}</p>") == "<p title=\"t\">a&#34;b</p>")
+    assert(~s"a \" b" == "a \" b")
+    assert(~S"no #{interp}" == "no \#{interp}")
   end
 
   test "interpolating sigil heredocs keep quotes and line breaks" do

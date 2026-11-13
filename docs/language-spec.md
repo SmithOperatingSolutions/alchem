@@ -664,7 +664,7 @@ end
 | `~N[2026-01-05 13:04:05]` | a `NaiveDateTime` |
 | `~U[2026-01-05T13:04:05Z]` | a `DateTime` |
 
-The delimiters may be `/ /`, `| |`, `" "`, `' '`, `( )`, `[ ]`, `{ }` or `< >`; a backslash escapes the closing one. `~s`, `~w`, `~r` and `~h` interpolate `#{expression}`, and `~S` and `~H` never do; a `~r` that interpolates is compiled when it runs instead of being checked when the program is compiled. A one-line sigil cannot span lines; a sigil heredoc (`~h"""`) can. Calendar sigils are checked when the program is compiled.
+The delimiters may be `/ /`, `| |`, `" "`, `' '`, `( )`, `[ ]`, `{ }` or `< >`; a backslash escapes the closing one. `~s`, `~w`, `~r` and `~h` interpolate `#{expression}`, and `~S` and `~H` never do; an interpolation is an expression like any other, so strings in it may hold the delimiter, as in `~h"<a href=#{path("x")}>"`; a `~r` that interpolates is compiled when it runs instead of being checked when the program is compiled. A one-line sigil cannot span lines; a sigil heredoc (`~h"""`) can. Calendar sigils are checked when the program is compiled.
 
 `~h` is an HTML template. Its own text is markup as written, and each interpolated value is converted by its type: a `string` is escaped (`&`, `<`, `>`, `"` and `'` become character references), `Markup` goes in unchanged, so templates nest, an `integer`, `float` or `atom` is written as text, and a `list[Markup]` is joined. Any other type is a compile error. The result is a `Markup` value, a struct whose `html` field holds the text; `Markup.to_string` returns it. Escaping makes a value safe inside an element or a quoted attribute value, so attribute values belong in quotes.
 

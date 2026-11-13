@@ -137,6 +137,9 @@ func scan(source string) ([]Token, []Token, error) {
 			if r == '~' && i+2 < len(source) && unicode.IsLetter(rune(source[i+1])) && sigilClosers[source[i+2]] != 0 {
 				// ~r/.../i: a letter, delimited text, then optional modifier letters.
 				closer := sigilClosers[source[i+2]]
+				// A lower-case sigil interpolates, and an interpolation is an
+				// expression: its strings and braces may hold the closer.
+				interpolates := source[i+1] >= 'a' && source[i+1] <= 'z'
 				end := i + 3
 				for ; end < len(source) && source[end] != closer; end++ {
 					if source[end] == '\n' {
@@ -144,6 +147,14 @@ func scan(source string) ([]Token, []Token, error) {
 					}
 					if source[end] == '\\' && end+1 < len(source) {
 						end++
+						continue
+					}
+					if interpolates && source[end] == '#' && end+1 < len(source) && source[end+1] == '{' {
+						inner, problem := InterpolationEnd(source, end)
+						if problem != "" {
+							return nil, fmt.Errorf("%d:%d: sigil interpolation: %s", line, col, problem)
+						}
+						end = inner
 					}
 				}
 				if end >= len(source) {
@@ -153,7 +164,7 @@ func scan(source string) ([]Token, []Token, error) {
 				for modifiers < len(source) && (source[modifiers] >= 'a' && source[modifiers] <= 'z' || source[modifiers] == 'U') {
 					modifiers++
 				}
-				content := strings.ReplaceAll(source[i+3:end], "\\"+string(closer), string(closer))
+				content := sigilUnescape(source[i+3:end], closer, interpolates)
 				tokens = append(tokens, Token{Sigil, source[i+1:i+2] + "\x00" + content + "\x00" + source[end+1:modifiers], line, col})
 				col += utf8.RuneCountInString(source[i:modifiers])
 				i = modifiers
@@ -721,6 +732,49 @@ func Heredoc(source string, offset int) (written string, ok bool) {
 		}
 	}
 	return open + "\n" + text + `"""` + source[next:modifiers], true
+}
+
+// sigilUnescape takes the backslash off each escaped closer in a one-line
+// sigil's text, outside the #{...} of a sigil that interpolates: there the
+// text is an expression, whose strings have escapes of their own.
+func sigilUnescape(text string, closer byte, interpolates bool) string {
+	var out strings.Builder
+	for i := 0; i < len(text); i++ {
+		switch {
+		case interpolates && text[i] == '#' && i+1 < len(text) && text[i+1] == '{':
+			if end, problem := InterpolationEnd(text, i); problem == "" {
+				out.WriteString(text[i : end+1])
+				i = end
+				continue
+			}
+		case text[i] == '\\' && i+1 < len(text) && text[i+1] == closer:
+			out.WriteByte(closer)
+			i++
+			continue
+		}
+		out.WriteByte(text[i])
+	}
+	return out.String()
+}
+
+// SigilEscape is sigilUnescape undone: the text of a one-line sigil with
+// each closer outside an interpolation escaped, as the formatter writes it.
+func SigilEscape(text string, closer byte, interpolates bool) string {
+	var out strings.Builder
+	for i := 0; i < len(text); i++ {
+		switch {
+		case interpolates && text[i] == '#' && i+1 < len(text) && text[i+1] == '{':
+			if end, problem := InterpolationEnd(text, i); problem == "" {
+				out.WriteString(text[i : end+1])
+				i = end
+				continue
+			}
+		case text[i] == closer:
+			out.WriteByte('\\')
+		}
+		out.WriteByte(text[i])
+	}
+	return out.String()
 }
 
 // SigilCloser is the delimiter that closes a one-line sigil opened with
