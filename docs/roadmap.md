@@ -113,7 +113,7 @@ Ratios on the hosted runner are 1.5 for processes, 1.7 for messaging, 1.6 for co
 
 ### 5. Housekeeping
 
-- [ ] Shorten the compiler test package under the race detector (about 40 s), which builds several programs with race instrumentation.
+- [x] Shorter CI: the race detector on the concurrent packages for pull requests and on every package nightly, Go's build cache kept between runs, and the slowest tests run in parallel.
 - [x] Delete the merged working branches on GitHub.
 - [ ] Decide whether `native-extended` should join the required CI gate now that it has passed on every pull request since #14.
 
