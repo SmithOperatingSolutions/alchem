@@ -652,22 +652,8 @@ func (p *parser) block(inCase ...bool) ([]ast.Statement, error) {
 			if e.Op == "do" && (e.Name == "IO.puts" || e.Name == "assert") {
 				return nil, diagnostic(t.Line, t.Column, "only a macro takes a do ... end block, and %s is not one", e.Name)
 			}
-			s.Expr = e
-			s.Kind = "call"
-			if e.Kind == "call" {
-				// IO.puts(device, text) is a library call.
-				if e.Name == "IO.puts" && len(e.Args) != 2 {
-					s.Kind = "output"
-				}
-				if e.Name == "assert" {
-					s.Kind = "assert"
-				}
-				if s.Kind != "call" {
-					if len(e.Args) != 1 {
-						return nil, fmt.Errorf("%d:%d: %s requires one argument", t.Line, t.Column, e.Name)
-					}
-					s.Expr = e.Args[0]
-				}
+			if err := callStatement(&s, e); err != nil {
+				return nil, err
 			}
 		}
 		body = append(body, s)
@@ -954,6 +940,11 @@ func (p *parser) atom() (*ast.Expr, error) {
 		e.Name = t.Text
 		if _, err := p.expect(lexer.LBrace, ""); err != nil {
 			return nil, err
+		}
+		// %Name{} gives every field its default.
+		if p.peek().Kind == lexer.RBrace {
+			p.pos++
+			return e, nil
 		}
 		if !(p.peek().Kind == lexer.Ident && p.tokens[p.pos+1].Kind == lexer.Colon) {
 			base, err := p.expr(0)
@@ -1596,6 +1587,35 @@ func (p *parser) compound(s *ast.Statement) error {
 			return err
 		}
 		s.Expr = e
+		// The one-line form: if condition, do: value, else: value.
+		if p.keywordAhead("do") {
+			p.pos += 3
+			then, err := p.expr(0)
+			if err != nil {
+				return err
+			}
+			s.Then = []ast.Statement{{Line: then.Line, Column: then.Column}}
+			if err := callStatement(&s.Then[0], then); err != nil {
+				return err
+			}
+			if p.keywordAhead("else") {
+				p.pos += 3
+				otherwise, err := p.expr(0)
+				if err != nil {
+					return err
+				}
+				s.Else = []ast.Statement{{Line: otherwise.Line, Column: otherwise.Column}}
+				if err := callStatement(&s.Else[0], otherwise); err != nil {
+					return err
+				}
+			}
+			// Declared marks the one-line form for the formatter; analysis
+			// reads Declared as a type, so it is set only when formatting.
+			if p.keep {
+				s.Declared = "do:"
+			}
+			return nil
+		}
 		if _, err = p.expect(lexer.Ident, "do"); err != nil {
 			return err
 		}
@@ -2749,4 +2769,36 @@ func (p *parser) heredoc(t lexer.Token) string {
 	}
 	written, _ := lexer.Heredoc(p.source, offset)
 	return written
+}
+
+// keywordAhead reports whether the next tokens are ", name:", as in the
+// one-line forms ", do: value" and ", else: value".
+func (p *parser) keywordAhead(name string) bool {
+	return p.pos+2 < len(p.tokens) && p.peek().Kind == lexer.Comma && p.tokens[p.pos+1].Kind == lexer.Ident &&
+		p.tokens[p.pos+1].Text == name && p.tokens[p.pos+2].Kind == lexer.Colon
+}
+
+// callStatement makes an expression written as a statement into one:
+// IO.puts(text) is output and assert(condition) an assertion, and any
+// other expression is evaluated for its value or effect.
+func callStatement(s *ast.Statement, e *ast.Expr) error {
+	s.Expr = e
+	s.Kind = "call"
+	if e.Kind != "call" {
+		return nil
+	}
+	// IO.puts(device, text) is a library call.
+	if e.Name == "IO.puts" && len(e.Args) != 2 {
+		s.Kind = "output"
+	}
+	if e.Name == "assert" {
+		s.Kind = "assert"
+	}
+	if s.Kind != "call" {
+		if len(e.Args) != 1 {
+			return fmt.Errorf("%d:%d: %s requires one argument", e.Line, e.Column, e.Name)
+		}
+		s.Expr = e.Args[0]
+	}
+	return nil
 }

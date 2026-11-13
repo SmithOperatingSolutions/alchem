@@ -875,14 +875,17 @@ some(1)
 ### Enum.find_value
 
 ```
+Enum.find_value(enum[a], b, fn[a,option[b]]) -> b
 Enum.find_value(enum[a], fn[a,option[b]]) -> option[b]
 ```
 
-Returns the first some(...) the function produces.
+Returns the first some(...) the function produces, or with a default, the value inside it or the default when there is none.
 
 ```elixir
-alx> Enum.find_value([1, 2, 3], fn n -> if n > 1 do some(n * 10) else none end end)
+alx> Enum.find_value([1, 2, 3], fn n -> if n > 1, do: some(n * 10), else: none end)
 some(20)
+alx> Enum.find_value([1, 3], 0, fn n -> if rem(n, 2) == 0, do: some(n), else: none end)
+0
 ```
 
 ### Enum.flat_map
@@ -2350,6 +2353,113 @@ alx> List.insert_at([1, 3], 1, 2)
 [1, 2, 3]
 alx> List.insert_at([1, 2], -1, 3)
 [1, 2, 3]
+```
+
+### List.keydelete
+
+```
+List.keydelete(list[tuple[k,v]], k) -> list[tuple[k,v]]
+```
+
+The list without the first pair that has the key.
+
+Requires: k supports equality.
+
+```elixir
+alx> List.keydelete([{"red", 4}, {"blue", 5}, {"red", 6}], "red")
+[{"blue", 5}, {"red", 6}]
+```
+
+### List.keyfind
+
+```
+List.keyfind(list[tuple[k,v]], k) -> option[tuple[k,v]]
+```
+
+The first pair whose key, its first element, equals the given one. The List.key functions treat a list of pairs as a table keyed on the first element, as Elixir's do at position 0.
+
+Requires: k supports equality.
+
+```elixir
+alx> List.keyfind([{"a", 1}, {"b", 2}], "b")
+some({"b", 2})
+alx> List.keyfind([{"a", 1}], "z")
+none
+```
+
+### List.keymember?
+
+```
+List.keymember?(list[tuple[k,v]], k) -> boolean
+```
+
+Reports whether a pair has the key.
+
+Requires: k supports equality.
+
+```elixir
+alx> List.keymember?([{:x, 1}], :x)
+true
+```
+
+### List.keyreplace
+
+```
+List.keyreplace(list[tuple[k,v]], k, tuple[k,v]) -> list[tuple[k,v]]
+```
+
+The list with the first pair that has the key replaced; unchanged when no pair has it.
+
+Requires: k supports equality.
+
+```elixir
+alx> List.keyreplace([{"a", 1}, {"b", 2}], "b", {"b", 20})
+[{"a", 1}, {"b", 20}]
+```
+
+### List.keysort
+
+```
+List.keysort(list[tuple[k,v]]) -> list[tuple[k,v]]
+```
+
+The pairs sorted by key; pairs with equal keys keep their order.
+
+Requires: k has an order.
+
+```elixir
+alx> List.keysort([{3, "c"}, {1, "a"}, {3, "b"}])
+[{1, "a"}, {3, "c"}, {3, "b"}]
+```
+
+### List.keystore
+
+```
+List.keystore(list[tuple[k,v]], k, tuple[k,v]) -> list[tuple[k,v]]
+```
+
+As keyreplace, but adds the pair at the end when no pair has the key.
+
+Requires: k supports equality.
+
+```elixir
+alx> List.keystore([{"a", 1}], "c", {"c", 3})
+[{"a", 1}, {"c", 3}]
+```
+
+### List.keytake
+
+```
+List.keytake(list[tuple[k,v]], k) -> option[tuple[tuple[k,v],list[tuple[k,v]]]]
+```
+
+The first pair with the key and the list without it, or none.
+
+Requires: k supports equality.
+
+```elixir
+alx> List.keytake([{"a", 1}, {"b", 2}], "a")
+some({{"a", 1}, [{"b", 2}]})
 ```
 
 ### List.last
@@ -3911,11 +4021,19 @@ alx> String.slice("héllo", 1, 9)
 ```
 String.split(string) -> list[string]
 String.split(string, string) -> list[string]
+String.split(string, regex, list[tuple[atom,boolean]]) -> list[string]
+String.split(string, regex, list[tuple[atom,integer]]) -> list[string]
+String.split(string, string, list[tuple[atom,boolean]]) -> list[string]
+String.split(string, string, list[tuple[atom,integer]]) -> list[string]
 ```
 
-Splits on whitespace, on a separator, or wherever a regular expression matches.
+Splits on whitespace, on a separator, or wherever a regular expression matches. [parts: n] stops after n pieces, the last holding the rest; [trim: true] leaves out empty pieces.
 
 ```elixir
+alx> String.split("k=v=w", "=", [parts: 2])
+["k", "v=w"]
+alx> String.split(",a,,b", ",", [trim: true])
+["a", "b"]
 alx> String.split(" a  b ")
 ["a", "b"]
 alx> String.split("a,b,,c", ",")

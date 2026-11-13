@@ -159,9 +159,11 @@ func init() {
 			"As a value both branches must end in the same type, and else is required.",
 			"There is no else if: nest, or use cond.",
 			"unless condition do ... end runs its body when the condition is false; it may have an else and be used as a value.",
+			"On one line: if condition, do: value, else: value, and the same for unless.",
 		}, []string{"cond", "case"},
 		Sample{Title: "statement and value", Body: "count = 3\nlabel = if count > 0 do \"some\" else \"none\" end\nassert(label == \"some\")\nif count > 2 do\n  IO.puts(\"many\")\nelse\n  IO.puts(\"few\")\nend"},
-		Sample{Title: "unless", Body: "items = [1, 2]\nunless items == [] do\n  IO.puts(\"has items\")\nend\nstate = unless length(items) > 5 do \"short\" else \"long\" end\nassert(state == \"short\")"})
+		Sample{Title: "unless", Body: "items = [1, 2]\nunless items == [] do\n  IO.puts(\"has items\")\nend\nstate = unless length(items) > 5 do \"short\" else \"long\" end\nassert(state == \"short\")"},
+		Sample{Title: "one line", Body: "n = 1\nnoun = if n == 1, do: \"item\", else: \"items\"\nassert(noun == \"item\")\nif n > 0, do: IO.puts(\"positive\")"})
 
 	topic("Control flow", "case", "Matches a value against patterns, with optional guards.",
 		[]string{
@@ -262,7 +264,7 @@ func init() {
 
 	topic("Data", "structs", "struct Name do field: type ... end: a named record.",
 		[]string{
-			"Declared inside a module. A field may have a default, field: type = value, which %Name{...} fills in when it leaves the field out; every other field must be given.",
+			"Declared inside a module. A field may have a default, field: type = value, which %Name{...} fills in when it leaves the field out; every other field must be given, and %Name{} gives every field its default.",
 			"value.field reads; %Name{value | field: new} copies with fields replaced.",
 			"%Name{field: pattern} is a pattern; unlisted fields are ignored.",
 			"From another module the type is Module.Name and the literal %Module.Name{...}.",

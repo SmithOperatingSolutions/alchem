@@ -390,6 +390,7 @@ if condition do ... else ... end, as a statement or a value.
 - As a value both branches must end in the same type, and else is required.
 - There is no else if: nest, or use cond.
 - unless condition do ... end runs its body when the condition is false; it may have an else and be used as a value.
+- On one line: if condition, do: value, else: value, and the same for unless.
 
 Example: statement and value
 
@@ -413,6 +414,15 @@ unless items == [] do
 end
 state = unless length(items) > 5 do "short" else "long" end
 assert(state == "short")
+```
+
+Example: one line
+
+```elixir
+n = 1
+noun = if n == 1, do: "item", else: "items"
+assert(noun == "item")
+if n > 0, do: IO.puts("positive")
 ```
 
 See also: alchem syntax cond, alchem syntax case
@@ -766,7 +776,7 @@ See also: alchem syntax structs, alchem doc Map, alchem doc MapSet
 
 struct Name do field: type ... end: a named record.
 
-- Declared inside a module. A field may have a default, field: type = value, which %Name{...} fills in when it leaves the field out; every other field must be given.
+- Declared inside a module. A field may have a default, field: type = value, which %Name{...} fills in when it leaves the field out; every other field must be given, and %Name{} gives every field its default.
 - value.field reads; %Name{value | field: new} copies with fields replaced.
 - %Name{field: pattern} is a pattern; unlisted fields are ignored.
 - From another module the type is Module.Name and the literal %Module.Name{...}.

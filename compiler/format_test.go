@@ -259,3 +259,30 @@ end
 		t.Fatalf("formatted:\n%s\nwant it unchanged:\n%s", got, source)
 	}
 }
+
+// The one-line if and unless and the empty struct literal are written back
+// as they were.
+func TestFormatKeepsOneLineIfAndEmptyStructs(t *testing.T) {
+	source := `defmodule Main do
+  struct Options do
+    retries: integer = 3
+  end
+
+  def main() do
+    n = 2
+    word = if n == 1, do: "item", else: "items"
+    unless n == 1, do: IO.puts(word)
+    if n > 0, do: assert(true)
+    options = %Options{}
+    IO.inspect(options)
+  end
+end
+`
+	got, err := Format(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != source {
+		t.Fatalf("formatted:\n%s\nwant it unchanged:\n%s", got, source)
+	}
+}

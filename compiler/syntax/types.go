@@ -383,7 +383,9 @@ func (c checker) construct(e *ast.Expr, ref variantRef, scope map[string]string,
 	vars, bindings := set(decl.Params), map[string]string{}
 	if head, args := ast.Split(want); head == decl.Name && len(args) == len(decl.Params) {
 		for i, param := range decl.Params {
-			bindings[param] = args[i]
+			if args[i] != "?" {
+				bindings[param] = args[i]
+			}
 		}
 	}
 	params := []string{}
@@ -396,7 +398,16 @@ func (c checker) construct(e *ast.Expr, ref variantRef, scope map[string]string,
 	args := []string{}
 	for _, param := range decl.Params {
 		bound, ok := bindings[param]
+		if !ok && c.statements[e] {
+			// A value written as a statement is discarded, as the last line
+			// of a case arm whose case is a statement is: what it would have
+			// held does not matter.
+			bound, ok = "tuple[]", true
+		}
 		if !ok {
+			if c.hintFor == e {
+				c.recordHint(decl, bindings)
+			}
 			return "", diagnostic(e.Line, e.Column, "cannot infer the type of %s here; annotate the binding it is assigned to", display(ref))
 		}
 		args = append(args, bound)
@@ -607,4 +618,29 @@ func Constructor(decl ast.TypeDecl, variant string) string {
 		return variant
 	}
 	return decl.Name + "." + variant
+}
+
+// recordHint adds what a constructor showed of its type, with "?" for the
+// parameters it left open, to the hint of the if or case value it ends.
+func (c checker) recordHint(decl *ast.TypeDecl, bindings map[string]string) {
+	if c.hint == nil || c.yield == nil || *c.yield != "" || c.hintFor == nil {
+		return
+	}
+	known := make([]string, len(decl.Params))
+	for i, param := range decl.Params {
+		known[i] = "?"
+		if bound, ok := bindings[param]; ok {
+			known[i] = bound
+		}
+	}
+	if head, previous := ast.Split(*c.hint); head == decl.Name && len(previous) == len(known) {
+		for i := range known {
+			if known[i] == "?" {
+				known[i] = previous[i]
+			}
+		}
+	} else if *c.hint != "" {
+		return
+	}
+	*c.hint = ast.Join(decl.Name, known)
 }
