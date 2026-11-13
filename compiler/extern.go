@@ -231,6 +231,9 @@ type binder struct {
 	decls   map[string]*ast.TypeDecl
 	where   string // quoted source position of the declaration being bound
 	next    int
+	// lends is set when the call being bound hands Go an Alchem function,
+	// so the process lends out its context while it waits in Go.
+	lends bool
 }
 
 func (b *binder) id() string { b.next++; return fmt.Sprintf("e%d", b.next) }
@@ -601,19 +604,22 @@ func (b *binder) interfaceToGo(t string, target types.Type, iface *types.Interfa
 		code.WriteString(body)
 	}
 	b.plan.adapters = append(b.plan.adapters, code.String())
+	b.lends = true
 	return adapter + "{ctx," + value + "}", nil
 }
 
 // adapterMethod is one method of an adapter: it converts the Go arguments,
 // calls the Alchem function and converts what it returns. A Go error result
-// comes from result[T, string], several results from a tuple.
+// comes from result[T, string], several results from a tuple. The call runs
+// through actor.CallIn, so Go may make it from any goroutine at any time; a
+// failure becomes the error result, or a panic when there is none.
 func (b *binder) adapterMethod(adapter string, method *types.Func, fn, access string) (string, error) {
 	signature := method.Type().(*types.Signature)
 	params, result, _ := ast.FunctionParts(fn)
 	if signature.Variadic() || signature.Params().Len() != len(params) {
 		return "", fmt.Errorf("Go takes %d parameters, %s has %d", signature.Params().Len(), fn, len(params))
 	}
-	declared, arguments := []string{}, []string{"a.ctx"}
+	declared, arguments := []string{}, []string{"ctx"}
 	for i, param := range params {
 		id := b.id()
 		paramType, err := b.name(signature.Params().At(i).Type())
@@ -693,7 +699,39 @@ func (b *binder) adapterMethod(adapter string, method *types.Func, fn, access st
 	} else if len(resultTypes) > 1 {
 		returns = " (" + strings.Join(resultTypes, ",") + ")"
 	}
-	return "func (a " + adapter + ") " + method.Name() + "(" + strings.Join(declared, ",") + ")" + returns + " {\nctx := a.ctx; _ = ctx\n" + body + "\n}\n", nil
+	names := []string{}
+	for range resultTypes {
+		names = append(names, b.id())
+	}
+	assign, onFailure := body, "panic(actor.GoFailure(m))"
+	if len(names) > 0 {
+		assign = strings.Join(names, ",") + " = func()" + returns + " {\n" + body + "\n}()"
+		if isError(results.At(last).Type()) {
+			zeros := []string{}
+			for _, name := range resultTypes[:last] {
+				zeros = append(zeros, "*new("+name+")")
+			}
+			onFailure = "return " + strings.Join(append(zeros, "actor.GoFailure(m)"), ",")
+		}
+	}
+	declare := ""
+	if len(names) > 0 {
+		declare = "var " + strings.Join(names, ",")
+		if len(resultTypes) == 1 {
+			declare += " " + resultTypes[0]
+		} else {
+			// Several results have their own types: declare each.
+			declare = ""
+			for i, name := range names {
+				declare += "var " + name + " " + resultTypes[i] + "\n"
+			}
+		}
+	}
+	tail := ""
+	if len(names) > 0 {
+		tail = "return " + strings.Join(names, ",")
+	}
+	return "func (a " + adapter + ") " + method.Name() + "(" + strings.Join(declared, ",") + ")" + returns + " {\n" + declare + "\nif m, failed := actor.CallIn(a.ctx, func(ctx *actor.Context) {\n" + assign + "\n}); failed {" + onFailure + "}\n" + tail + "\n}\n", nil
 }
 
 func (b *binder) structToGo(t string, target *types.Struct, name, value string, pointer bool) (string, error) {
@@ -717,8 +755,9 @@ func (b *binder) structToGo(t string, target *types.Struct, name, value string, 
 	return "func() " + result + " {" + s + " := " + value + ";_ = " + s + ";return " + address + name + "{" + strings.Join(parts, ",") + "}}()", nil
 }
 
-// callbackToGo wraps an Alchem function value as a Go function. The Go side
-// must call it on the calling goroutine, before the extern call returns.
+// callbackToGo wraps an Alchem function value as a Go function. Go may call it
+// from any goroutine at any time: each call runs through actor.CallIn, and a
+// failure there becomes a Go panic.
 func (b *binder) callbackToGo(t string, target *types.Signature, name, value string) (string, error) {
 	params, result, ok := ast.FunctionParts(t)
 	if !ok || target.Variadic() || target.Params().Len() != len(params) || target.Results().Len() > 1 {
@@ -740,20 +779,22 @@ func (b *binder) callbackToGo(t string, target *types.Signature, name, value str
 		arguments = append(arguments, inner)
 	}
 	call := f + "(" + strings.Join(arguments, ",") + ")"
-	body, returns := "_ = "+call, ""
+	owner := b.id()
+	body, declare, returns, tail := "_ = "+call, "", "", ""
 	if target.Results().Len() == 1 {
 		resultType, err := b.name(target.Results().At(0).Type())
 		if err != nil {
 			return "", err
 		}
-		out := b.id()
+		out, r := b.id(), b.id()
 		inner, err := b.toGo(result, target.Results().At(0).Type(), out)
 		if err != nil {
 			return "", fmt.Errorf("callback result: %w", err)
 		}
-		body, returns = out+" := "+call+";return "+inner, " "+resultType
+		body, declare, returns, tail = out+" := "+call+";"+r+" = "+inner, "var "+r+" "+resultType+";", " "+resultType, ";return "+r
 	}
-	return "func() " + name + " {" + f + " := " + value + ";return func(" + strings.Join(declared, ",") + ")" + returns + " {" + body + "}}()", nil
+	b.lends = true
+	return "func() " + name + " {" + f + ", " + owner + " := " + value + ", ctx;return func(" + strings.Join(declared, ",") + ")" + returns + " {" + declare + "if m, failed := actor.CallIn(" + owner + ", func(ctx *actor.Context) {" + body + "}); failed {panic(actor.GoFailure(m))}" + tail + "}}()", nil
 }
 
 // fromGo converts the Go expression value of type source to the Alchem type t.
@@ -865,6 +906,7 @@ func (b *binder) callbackFromGo(t string, source *types.Signature, value string)
 // function generates the Alchem-callable Go function for one extern.
 func (b *binder) function(f ast.Function, name string) (string, error) {
 	b.where = strconv.Quote(fmt.Sprintf("%s:%d:%d", f.Source, f.Line, f.Column))
+	b.lends = false
 	pkg, symbol := b.target(f.Extern, f.ExternDir)
 	typeName, method, isMethod := strings.Cut(symbol, ".")
 	var signature *types.Signature
@@ -949,10 +991,45 @@ func (b *binder) function(f ast.Function, name string) (string, error) {
 		arguments = append(arguments, argument)
 	}
 	call := callee + "(" + strings.Join(arguments, ",") + ")"
+	prepare := ""
+	if b.lends {
+		// The arguments are converted first, as the process; only then is
+		// its context lent out, for the call alone.
+		for i, argument := range arguments {
+			spread := strings.HasSuffix(argument, "...")
+			x := b.id()
+			prepare += x + " := " + strings.TrimSuffix(argument, "...") + ";"
+			arguments[i] = x
+			if spread {
+				arguments[i] += "..."
+			}
+		}
+		if isMethod {
+			m := b.id()
+			prepare += m + " := " + callee + ";"
+			callee = m
+		}
+		resultTypes := []string{}
+		for i := 0; i < signature.Results().Len(); i++ {
+			name, err := b.name(signature.Results().At(i).Type())
+			if err != nil {
+				return "", err
+			}
+			resultTypes = append(resultTypes, name)
+		}
+		returns, give := "", ""
+		if len(resultTypes) == 1 {
+			returns, give = " "+resultTypes[0], "return "
+		} else if len(resultTypes) > 1 {
+			returns, give = " ("+strings.Join(resultTypes, ",")+")", "return "
+		}
+		call = "func()" + returns + " {defer actor.Lend(ctx)();" + give + callee + "(" + strings.Join(arguments, ",") + ")}()"
+	}
 	body, err := b.results(f, signature.Results(), call)
 	if err != nil {
 		return "", err
 	}
+	body = prepare + body
 	returns := ""
 	if f.Type != "void" {
 		returns = " " + goType(f.Type)

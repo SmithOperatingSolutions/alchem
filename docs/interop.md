@@ -69,7 +69,14 @@ extern text(builder: Builder): string = "strings.Builder.String"
 
 An Alchem struct maps to a Go struct, or a pointer to one, field by field. Each Alchem field needs an exported Go field with the same name, ignoring case and underscores (`user_id` matches `UserID`); extra Go fields are left at their zero value when passing in and ignored when coming back. A `nil` struct pointer coming back fails the process with `Go returned a nil *pkg.Type`, unless the result is declared `option[...]`.
 
-An Alchem function passed to Go arrives as an ordinary Go function; Go may call it any number of times, on the calling goroutine, before the extern returns. It must not keep it for later or call it from another goroutine. A Go function returned to Alchem becomes an ordinary function value.
+An Alchem function passed to Go arrives as an ordinary Go function. Go may call it any number of times, from any goroutine, during the extern or after it has returned. A Go function returned to Alchem becomes an ordinary function value.
+
+Alchem code always runs in a process, so each call from Go needs one:
+
+- While the process that passed the function waits in that extern, it lends its context to calls from Go, one at a time. A callback Go makes during the call, such as the test given to `slices.IndexFunc`, runs this way, as the process.
+- Any other call runs in a new process of its own, as each request of `HTTP.serve` does. That covers a call made while the context is already lent to another call, and a call made after the extern has returned, for example by a Go server that kept the function.
+
+A failure in a call Go makes on the process's own goroutine fails the process, as it would without Go in between. A failure in any other call is returned to Go: as the `error` result of an interface method that has one, and otherwise as a Go panic whose value is an `error`. The message is the failure's, after `alchem: `. Once the process that passed the function has ended, calls fail with `the Alchem process that made this function has ended`.
 
 ### Generic Go functions
 
@@ -97,7 +104,21 @@ extern write(w: fn[string, result[integer, string]], text: string): result[integ
 extern describe(shape: Shape, side: float): string = "./native.Describe"
 ```
 
-As with callbacks, Go must call the methods on the calling goroutine before the extern returns: an implementation kept by Go and called later, such as an `http.Handler` given to a server, is not supported.
+As with callbacks, Go may keep an implementation and call its methods later from its own goroutines. Here an Alchem `http.Handler` is served by Go's `net/http`, each request running in a process of its own:
+
+```elixir
+extern type Writer = "net/http.ResponseWriter"
+extern type Request = "*net/http.Request"
+
+struct Handler do
+  serve_http: fn[Writer, Request, tuple[]]
+end
+
+extern listen(address: string, handler: Handler): result[tuple[], string] = "net/http.ListenAndServe"
+extern reply(w: Writer, text: string): result[integer, string] = "io.WriteString"
+```
+
+For most web servers, Alchem's own `HTTP.serve` is simpler.
 
 ## Dependencies
 

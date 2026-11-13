@@ -86,7 +86,7 @@ Programs can read input, write to standard output with or without a newline, wri
 
 ### 2. Faster map updates
 
-On the hosted runner the `state` workload takes 119 ms in Alchem against 78 ms in Elixir once Elixir's startup is subtracted. Go, mutating in place, takes 17 ms.
+On the hosted runner at v0.3.0, building `state`'s 50,000-entry map takes 27 ms in Alchem against 17 ms in Elixir, and its 50,000 counter updates 11 ms against 6 ms. Go, mutating in place, takes 3 ms and 0.5 ms.
 
 - [x] Profile `MapPut` on the `state` workload before changing anything: garbage collection of copied slots dominated.
 - [x] Store entries and children in separate arrays (a CHAMP trie), so a path copy moves subtree pointers and shares unchanged entries: inserts 34% faster with 61% less allocated, the `state` program 45% faster. Recorded in `benchmarks.md`.
@@ -100,12 +100,12 @@ Now that `Time.monotonic()` exists, the workloads can time their own phases inst
 - [x] Report per-phase times from inside each workload, so startup no longer has to be subtracted and Elixir comparisons are direct.
 - [x] Replace the polling in the `restart` workload's Elixir baseline: each new worker announces itself, with a monitor on the one crashing.
 - [x] Report a distribution (minimum, median, 99th percentile) for round-trip and restart latency.
-- [ ] Re-record the hosted-runner table with the Benchmarks workflow.
+- [x] Re-record the hosted-runner table with the Benchmarks workflow: recorded at v0.3.0 in `benchmarks.md`.
 - Done when: the harness prints phase times for all three languages and the hosted-runner table is re-recorded.
 
 ### 4. Remaining gaps against Go
 
-Ratios on the hosted runner are 1.5 for processes, 1.7 for messaging, 1.6 for computation and 1.5 for list building. What is left is mostly the cost of guarantees, so each of these needs a measurement first.
+Ratios on the hosted runner at v0.3.0 are 1.7 for processes, 1.5 for messaging, 1.5 for computation and 2.3 for list building. What is left is mostly the cost of guarantees, so each of these needs a measurement first.
 
 - [x] Messaging: a sender that finds the owner parked on an empty mailbox hands the message over directly, so the owner takes it without locking the mailbox again. Round trip 265 → 252 ns on the development machine (Apple M-series, Go 1.27), about 5% less.
 - [x] Processes: the fields only servers and remotely linked or watched processes use moved behind one pointer created on first use, and the flags were packed together: the record is 280 bytes instead of 360, and 100,000 live processes take 322 MiB instead of 330 MiB. The wake channel stays created with the process, because every process that waits needs one, so creating it on first park would save nothing for processes that wait.
@@ -148,6 +148,7 @@ Run the harness before and after a performance change on the same machine and re
 - [x] `alchem.lock` and `--locked`.
 - [x] Servers as named children of a user `Supervisor` (`Supervisor.server`), registered before `Supervisor.start` returns.
 - [x] Bindings to generic Go functions, with inferred type arguments, and Go interfaces implemented by Alchem functions and structs of functions.
+- [x] Go may keep Alchem callbacks and interface implementations and call them later from its own goroutines, such as an `http.Handler` served by `net/http`: each call runs in the lending process during the extern, or in a process of its own.
 
 ## M8 — Elixir-style library and testing
 

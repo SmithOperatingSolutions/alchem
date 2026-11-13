@@ -123,6 +123,16 @@ jobs:
               test -s "system$target_exe"
             )
           done
+      - name: Benchmark programs check
+        shell: bash
+        run: |
+          # The Benchmarks workflow is run by hand, so a benchmark program the
+          # language has outgrown would otherwise go unnoticed until then.
+          # bench.alc is the suite's shared module, not a program.
+          for program in benchmarks/alchem/*.alc benchmarks/alchem/suite/*.alc; do
+            if [[ "$program" == */bench.alc ]]; then continue; fi
+            artifacts/alchem-host check "$program"
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cross-compiled-binaries
