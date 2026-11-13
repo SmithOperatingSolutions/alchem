@@ -35,6 +35,9 @@ main.alc:2:10: extern repeat: parameter count: cannot pass string as Go int
 | a struct | a Go struct, or a pointer to one |
 | `fn[A,R]` | a Go function value, in either direction |
 | an `extern type` | exactly that Go type, or an interface it implements |
+| `fn[...]` | a Go interface of one method, which the function implements |
+| a struct of functions | a Go interface whose methods its fields implement |
+| `string` | `error`, made with that message |
 | any of the first six | `any` (an empty interface) parameter, as its natural Go value |
 
 Results follow the Go result list:
@@ -68,7 +71,33 @@ An Alchem struct maps to a Go struct, or a pointer to one, field by field. Each 
 
 An Alchem function passed to Go arrives as an ordinary Go function; Go may call it any number of times, on the calling goroutine, before the extern returns. It must not keep it for later or call it from another goroutine. A Go function returned to Alchem becomes an ordinary function value.
 
-Go functions that are generic, or that need an interface implemented in Alchem, cannot be bound directly; wrap them in a local Go package.
+### Generic Go functions
+
+A generic Go function is bound like any other, and its type arguments are inferred from the declaration: each Alchem type is taken in its natural Go form (`integer` as `int64`, `float` as `float64`, `list[T]` as a slice, `map[K,V]` as a map, `fn[...]` as a Go function, an `extern type` as its Go type), and constraints with one underlying type, such as `S ~[]E`, give the parameters inside them. Go then checks the constraints, so binding `slices.Max` to `list[boolean]` reports that `bool does not satisfy cmp.Ordered`.
+
+```elixir
+extern largest(xs: list[integer]): integer = "slices.Max"
+extern first(xs: list[integer], test: fn[integer, boolean]): integer = "slices.IndexFunc"
+extern same(a: map[string, integer], b: map[string, integer]): boolean = "maps.Equal"
+```
+
+A type parameter that no declared parameter or result shows cannot be inferred, and is reported. Functions over iterators (`iter.Seq`), such as `slices.Sorted` and `maps.Keys`, have no Alchem form yet; generic types and methods of them are not bound.
+
+### Implementing Go interfaces
+
+An Alchem function implements a Go interface of one method, and an Alchem struct whose fields are functions implements an interface of several: each method is matched to the field with the same name, ignoring case and underscores (`split_pair` matches `SplitPair`). The binder generates a Go type whose methods convert their arguments, call the Alchem function and convert what it returns. A Go `error` result comes from `result[T, string]`, `error(message)` becoming an error with that message, and several results come from a tuple.
+
+```elixir
+struct Shape do
+  area: fn[float, float]
+  name: fn[string]
+end
+
+extern write(w: fn[string, result[integer, string]], text: string): result[integer, string] = "io.WriteString"
+extern describe(shape: Shape, side: float): string = "./native.Describe"
+```
+
+As with callbacks, Go must call the methods on the calling goroutine before the extern returns: an implementation kept by Go and called later, such as an `http.Handler` given to a server, is not supported.
 
 ## Dependencies
 

@@ -101,6 +101,9 @@ type externPlan struct {
 	imports   []string          // "alias \"import/path\""
 	functions map[string]string // Alchem function name -> Go function
 	types     map[string]string // extern type name -> Go type expression
+	// adapters are the Go types, with their methods, through which Alchem
+	// functions implement Go interfaces.
+	adapters []string
 }
 
 // prepareModule writes the Go module a program is built in: go.mod with the
@@ -526,8 +529,171 @@ func (b *binder) toGo(t string, target types.Type, value string) (string, error)
 		}
 	case *types.Signature:
 		return b.callbackToGo(t, under, name, value)
+	case *types.Interface:
+		if isError(target) && t == "string" {
+			return "fmt.Errorf(\"%s\"," + value + ")", nil
+		}
+		adapter, err := b.interfaceToGo(t, target, under, value)
+		if err != nil {
+			return "", err
+		}
+		// Converting to the interface type also has Go check the adapter.
+		return "(" + name + ")(" + adapter + ")", nil
 	}
 	return "", mismatch("to", t, target)
+}
+
+// interfaceToGo makes an Alchem value implement a Go interface: a function
+// for an interface of one method, or a struct whose fields are functions
+// named after the methods (ignoring case and underscores) for any other. A
+// generated adapter type holds the value and the calling process; like a
+// callback, Go must call its methods on the calling goroutine, before the
+// extern call returns.
+func (b *binder) interfaceToGo(t string, target types.Type, iface *types.Interface, value string) (string, error) {
+	if !iface.IsMethodSet() || iface.NumMethods() == 0 {
+		return "", mismatch("to", t, target)
+	}
+	// field gives, for each method, the Alchem function type and how the
+	// adapter reaches the function.
+	type field struct{ fn, access string }
+	fields := make([]field, iface.NumMethods())
+	if _, _, isFunction := ast.FunctionParts(t); isFunction {
+		if iface.NumMethods() != 1 {
+			return "", fmt.Errorf("cannot pass %s as Go %s: a function implements an interface of one method, and it has %d; use a struct of functions", t, show(target), iface.NumMethods())
+		}
+		fields[0] = field{t, "a.v"}
+	} else {
+		head, _ := ast.Split(t)
+		decl := b.decls[head]
+		if decl == nil || decl.Kind != "struct" {
+			return "", mismatch("to", t, target)
+		}
+		key := func(name string) string { return strings.ToLower(strings.ReplaceAll(name, "_", "")) }
+		for i := 0; i < iface.NumMethods(); i++ {
+			method := iface.Method(i)
+			found := false
+			for j, f := range decl.Fields {
+				if key(f.Name) == key(method.Name()) {
+					if _, _, ok := ast.FunctionParts(f.Type); !ok {
+						return "", fmt.Errorf("cannot pass %s as Go %s: field %s is not a function", t, show(target), f.Name)
+					}
+					fields[i] = field{f.Type, fmt.Sprintf("a.v.F%d", j)}
+					found = true
+				}
+			}
+			if !found {
+				return "", fmt.Errorf("cannot pass %s as Go %s: it has no field for the method %s", t, show(target), method.Name())
+			}
+		}
+	}
+	adapter := "a" + b.id()
+	var code strings.Builder
+	code.WriteString("type " + adapter + " struct{ctx *actor.Context; v " + goType(t) + "}\n")
+	for i := 0; i < iface.NumMethods(); i++ {
+		method := iface.Method(i)
+		if !method.Exported() {
+			return "", fmt.Errorf("cannot pass %s as Go %s: its method %s is not exported", t, show(target), method.Name())
+		}
+		body, err := b.adapterMethod(adapter, method, fields[i].fn, fields[i].access)
+		if err != nil {
+			return "", fmt.Errorf("method %s: %w", method.Name(), err)
+		}
+		code.WriteString(body)
+	}
+	b.plan.adapters = append(b.plan.adapters, code.String())
+	return adapter + "{ctx," + value + "}", nil
+}
+
+// adapterMethod is one method of an adapter: it converts the Go arguments,
+// calls the Alchem function and converts what it returns. A Go error result
+// comes from result[T, string], several results from a tuple.
+func (b *binder) adapterMethod(adapter string, method *types.Func, fn, access string) (string, error) {
+	signature := method.Type().(*types.Signature)
+	params, result, _ := ast.FunctionParts(fn)
+	if signature.Variadic() || signature.Params().Len() != len(params) {
+		return "", fmt.Errorf("Go takes %d parameters, %s has %d", signature.Params().Len(), fn, len(params))
+	}
+	declared, arguments := []string{}, []string{"a.ctx"}
+	for i, param := range params {
+		id := b.id()
+		paramType, err := b.name(signature.Params().At(i).Type())
+		if err != nil {
+			return "", err
+		}
+		declared = append(declared, id+" "+paramType)
+		inner, err := b.fromGo(param, signature.Params().At(i).Type(), id)
+		if err != nil {
+			return "", fmt.Errorf("parameter %d: %w", i+1, err)
+		}
+		arguments = append(arguments, inner)
+	}
+	results := signature.Results()
+	resultTypes := []string{}
+	for i := 0; i < results.Len(); i++ {
+		name, err := b.name(results.At(i).Type())
+		if err != nil {
+			return "", err
+		}
+		resultTypes = append(resultTypes, name)
+	}
+	call, out := access+"("+strings.Join(arguments, ",")+")", b.id()
+	var body string
+	last := results.Len() - 1
+	switch {
+	case results.Len() == 0:
+		body = "_ = " + call
+	case last >= 0 && isError(results.At(last).Type()):
+		head, args := ast.Split(result)
+		if head != "result" || len(args) != 2 || args[1] != "string" {
+			return "", fmt.Errorf("Go returns an error, so %s must return result[T, string]", fn)
+		}
+		failed, value := b.id(), b.id()
+		zeros := []string{}
+		for _, name := range resultTypes[:last] {
+			zeros = append(zeros, "*new("+name+")")
+		}
+		body = out + " := " + call + "\nif " + failed + ", ok := " + out + ".(Tresult_c1[" + goType(args[0]) + ",string]); ok {return " + strings.Join(append(zeros, "fmt.Errorf(\"%s\","+failed+".F0)"), ",") + "}\n"
+		okValue := out + ".(Tresult_c0[" + goType(args[0]) + ",string]).F0"
+		switch last {
+		case 0:
+			body += "return nil"
+		case 1:
+			inner, err := b.toGo(args[0], results.At(0).Type(), value)
+			if err != nil {
+				return "", fmt.Errorf("result: %w", err)
+			}
+			body += value + " := " + okValue + "\nreturn " + inner + ", nil"
+		default:
+			return "", fmt.Errorf("Go returns %d values and an error; Alchem has no form for that", last)
+		}
+	case results.Len() == 1:
+		inner, err := b.toGo(result, results.At(0).Type(), out)
+		if err != nil {
+			return "", fmt.Errorf("result: %w", err)
+		}
+		body = out + " := " + call + "\nreturn " + inner
+	default:
+		parts, ok := ast.TupleElements(result)
+		if !ok || len(parts) != results.Len() {
+			return "", fmt.Errorf("Go returns %d values, so %s must return a tuple of %d", results.Len(), fn, results.Len())
+		}
+		converted := []string{}
+		for i, part := range parts {
+			inner, err := b.toGo(part, results.At(i).Type(), fmt.Sprintf("%s.E%d", out, i))
+			if err != nil {
+				return "", fmt.Errorf("result %d: %w", i+1, err)
+			}
+			converted = append(converted, inner)
+		}
+		body = out + " := " + call + "\nreturn " + strings.Join(converted, ",")
+	}
+	returns := ""
+	if len(resultTypes) == 1 {
+		returns = " " + resultTypes[0]
+	} else if len(resultTypes) > 1 {
+		returns = " (" + strings.Join(resultTypes, ",") + ")"
+	}
+	return "func (a " + adapter + ") " + method.Name() + "(" + strings.Join(declared, ",") + ")" + returns + " {\nctx := a.ctx; _ = ctx\n" + body + "\n}\n", nil
 }
 
 func (b *binder) structToGo(t string, target *types.Struct, name, value string, pointer bool) (string, error) {
@@ -729,9 +895,20 @@ func (b *binder) function(f ast.Function, name string) (string, error) {
 		}
 		signature = object.Type().(*types.Signature)
 		callee = b.qualify(pkg) + "." + symbol
+		if signature.TypeParams().Len() > 0 {
+			if signature.Params().Len() != len(f.Params) {
+				return "", fmt.Errorf("Go %s takes %d parameters, the declaration has %d", f.Extern, signature.Params().Len(), len(f.Params))
+			}
+			instance, arguments, err := b.instantiate(object, signature, f)
+			if err != nil {
+				return "", err
+			}
+			signature = instance
+			callee += "[" + strings.Join(arguments, ",") + "]"
+		}
 	}
 	if signature.TypeParams().Len() > 0 {
-		return "", fmt.Errorf("generic Go functions cannot be bound; wrap %s in a local Go package", f.Extern)
+		return "", fmt.Errorf("generic Go methods cannot be bound; wrap %s in a local Go package", f.Extern)
 	}
 	header, values := []string{"ctx *actor.Context"}, []string{}
 	for _, param := range f.Params {
@@ -872,3 +1049,138 @@ type xint interface{~int|~int8|~int16|~int32|~int64|~uint|~uint8|~uint16|~uint32
 func toInt[T xint](ctx *actor.Context,v int64,where string)T{r:=T(v);if int64(r)!=v||(r<0)!=(v<0){failAt(ctx,where,fmt.Sprintf("integer out of range for Go %T",r))};return r}
 func fromInt[T xint](ctx *actor.Context,v T,where string)int64{r:=int64(v);if T(r)!=v||(r<0)!=(v<0){failAt(ctx,where,fmt.Sprintf("Go %T result out of integer range",v))};return r}
 `
+
+// instantiate infers the type arguments of a generic Go function from the
+// declared Alchem types, each taken in its natural Go form (integer as
+// int64, list[t] as a slice, fn as a function), and from the constraints of
+// the type parameters (S ~[]E gives E once S is known). Go then checks the
+// constraints. It returns the instantiated signature and the type arguments
+// as generated code writes them.
+func (b *binder) instantiate(object *types.Func, signature *types.Signature, f ast.Function) (*types.Signature, []string, error) {
+	params := signature.TypeParams()
+	bound := map[*types.TypeParam]types.Type{}
+	var unify func(p types.Type, c types.Type)
+	unify = func(p types.Type, c types.Type) {
+		if c == nil {
+			return
+		}
+		switch p := p.(type) {
+		case *types.TypeParam:
+			if _, done := bound[p]; done {
+				return
+			}
+			bound[p] = c
+			// A constraint with one underlying type, such as ~[]E, says what
+			// the parameters inside it are.
+			if core := coreType(p); core != nil {
+				unify(core, c.Underlying())
+			}
+		case *types.Slice:
+			if c, ok := c.Underlying().(*types.Slice); ok {
+				unify(p.Elem(), c.Elem())
+			}
+		case *types.Map:
+			if c, ok := c.Underlying().(*types.Map); ok {
+				unify(p.Key(), c.Key())
+				unify(p.Elem(), c.Elem())
+			}
+		case *types.Pointer:
+			if c, ok := c.Underlying().(*types.Pointer); ok {
+				unify(p.Elem(), c.Elem())
+			}
+		case *types.Signature:
+			if c, ok := c.Underlying().(*types.Signature); ok && p.Params().Len() == c.Params().Len() && p.Results().Len() == c.Results().Len() {
+				for i := 0; i < p.Params().Len(); i++ {
+					unify(p.Params().At(i).Type(), c.Params().At(i).Type())
+				}
+				for i := 0; i < p.Results().Len(); i++ {
+					unify(p.Results().At(i).Type(), c.Results().At(i).Type())
+				}
+			}
+		}
+	}
+	if signature.Params().Len() == len(f.Params) {
+		for i, param := range f.Params {
+			unify(signature.Params().At(i).Type(), b.goForm(param.Type))
+		}
+	}
+	if signature.Results().Len() >= 1 && f.Type != "void" {
+		result := f.Type
+		// result[T, string] stands for (T, error).
+		if head, args := ast.Split(f.Type); head == "result" && len(args) == 2 && args[1] == "string" {
+			result = args[0]
+		}
+		unify(signature.Results().At(0).Type(), b.goForm(result))
+	}
+	arguments := make([]types.Type, params.Len())
+	names := make([]string, params.Len())
+	for i := 0; i < params.Len(); i++ {
+		param := params.At(i)
+		argument, ok := bound[param]
+		if !ok {
+			return nil, nil, fmt.Errorf("cannot infer the Go type parameter %s of %s from the declaration; declare the parameter or result that uses it", param.Obj().Name(), f.Extern)
+		}
+		name, err := b.name(argument)
+		if err != nil {
+			return nil, nil, err
+		}
+		arguments[i], names[i] = argument, name
+	}
+	instance, err := types.Instantiate(nil, object.Type(), arguments, true)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Go %s cannot take these types: %v", f.Extern, err)
+	}
+	return instance.(*types.Signature), names, nil
+}
+
+// goForm is the Go type an Alchem type is given as when Go leaves the type
+// open: natural for values, the declared Go type of an extern type, and Go
+// functions of those for function values. It is nil when there is none.
+func (b *binder) goForm(t string) types.Type {
+	if declared, ok := b.opaque[t]; ok {
+		return declared
+	}
+	if plain, ok := natural(t); ok {
+		return plain
+	}
+	if params, result, ok := ast.FunctionParts(t); ok {
+		var vars []*types.Var
+		for _, param := range params {
+			form := b.goForm(param)
+			if form == nil {
+				return nil
+			}
+			vars = append(vars, types.NewVar(0, nil, "", form))
+		}
+		var results []*types.Var
+		if result != "tuple[]" && result != "void" {
+			form := b.goForm(result)
+			if form == nil {
+				return nil
+			}
+			results = append(results, types.NewVar(0, nil, "", form))
+		}
+		return types.NewSignatureType(nil, nil, nil, types.NewTuple(vars...), types.NewTuple(results...), false)
+	}
+	return nil
+}
+
+// coreType is the single underlying type a type parameter's constraint
+// allows, such as []E for ~[]E, or nil.
+func coreType(p *types.TypeParam) types.Type {
+	constraint, ok := p.Constraint().Underlying().(*types.Interface)
+	if !ok || constraint.NumEmbeddeds() != 1 {
+		return nil
+	}
+	switch embedded := constraint.EmbeddedType(0).(type) {
+	case *types.Union:
+		if embedded.Len() == 1 {
+			return embedded.Term(0).Type().Underlying()
+		}
+	default:
+		if _, isInterface := embedded.Underlying().(*types.Interface); !isInterface {
+			return embedded.Underlying()
+		}
+	}
+	return nil
+}

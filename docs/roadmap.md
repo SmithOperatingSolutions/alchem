@@ -147,7 +147,7 @@ Run the harness before and after a performance change on the same machine and re
 - [x] Equality on type variables as an inferred requirement on callers.
 - [x] `alchem.lock` and `--locked`.
 - [ ] Servers as named children of a user `Supervisor`.
-- [ ] Bindings to generic Go functions and to Go interfaces implemented in Alchem.
+- [x] Bindings to generic Go functions, with inferred type arguments, and Go interfaces implemented by Alchem functions and structs of functions.
 
 ## M8 — Elixir-style library and testing
 
