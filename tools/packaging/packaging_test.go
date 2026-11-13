@@ -153,8 +153,10 @@ func TestInstallScript(t *testing.T) {
 	corrupt := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/latest":
-			fmt.Fprint(w, `{"url": "x", "tag_name": "v9.9.9", "name": "Alchem v9.9.9"}`)
+		case "/releases/latest":
+			http.Redirect(w, r, "/releases/tag/v9.9.9", http.StatusFound)
+		case "/releases/tag/v9.9.9":
+			fmt.Fprint(w, "<html>Alchem v9.9.9</html>")
 		case "/releases/download/v9.9.9/" + name + ".tar.gz":
 			data := archive.Bytes()
 			if corrupt {
@@ -173,7 +175,6 @@ func TestInstallScript(t *testing.T) {
 		cmd := exec.Command("sh", "../../install.sh")
 		cmd.Env = append(os.Environ(), append([]string{
 			"ALCHEM_RELEASES_URL=" + server.URL + "/releases",
-			"ALCHEM_API_URL=" + server.URL + "/api/latest",
 			"ALCHEM_INSTALL_DIR=" + dir,
 			"ALCHEM_VERSION=",
 		}, env...)...)
