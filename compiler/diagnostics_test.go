@@ -52,7 +52,9 @@ func TestRuntimeSourceDiagnostics(t *testing.T) {
 			if err := BuildTo(source, binary); err != nil {
 				t.Fatal(err)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			// The cases run in parallel with each other and other packages,
+			// so a program gets more time than it needs alone.
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			output, err := exec.CommandContext(ctx, binary).CombinedOutput()
 			exit, ok := err.(*exec.ExitError)

@@ -266,11 +266,15 @@ func ServerChild[S, Q, R, T any](name string, state S, handle func(*Context, S, 
 	body := func(c *Context, _ *PID[T]) int64 {
 		s := StartServer(c, state, handle, where)
 		task := s.pid.task
-		OnEnd(c, func() {
+		// However the child ends, its server ends first, so that a
+		// supervisor that has stopped its children has stopped their servers
+		// and freed their names.
+		defer func() {
 			c.rt.mu.Lock()
-			defer c.rt.mu.Unlock()
 			task.cancel("shutdown", nil)
-		})
+			c.rt.mu.Unlock()
+			<-task.doneSignal()
+		}()
 		if !RegisterServer(c, s, name, where) {
 			Fail(c, where, "Supervisor.server: the name "+name+" is already registered")
 		}
