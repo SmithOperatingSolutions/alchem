@@ -223,7 +223,7 @@ func init() {
 		"alx> Node.start(\"docs\", \"127.0.0.1:0\", \"secret\")", "alx> Node.self()", "\"docs\"")
 	doc("Node.address", "The address this node listens at, with the port that was picked.",
 		"alx> Node.start(\"docs\", \"127.0.0.1:0\", \"secret\")", "alx> String.starts_with?(Node.address(), \"127.0.0.1:\")", "true")
-	doc("Node.connect", "Connects to the node listening at an address and returns its name. Both nodes must have the same cookie. Messages to its processes are then copied over the connection.",
+	doc("Node.connect", "Connects to the node listening at an address and returns its name. Both nodes must have the same cookie. Messages to its processes are then copied over the connection. With reconnect: true the connection is kept: when it is lost it is made again, a second later at first and up to 30 seconds apart while that keeps failing, until the program ends. With reconnect: n it is given up after n failed attempts in a row, which Node.monitor_nodes reports as \"noreconnect\" and the node's name.",
 		"alx> Node.start(\"docs\", \"127.0.0.1:0\", \"secret\")",
 		"alx> case Node.connect(\"127.0.0.1:1\") do", "...>   ok(name) -> name", "...>   error(_) -> \"not reachable\"", "...> end", "\"not reachable\"")
 	doc("Node.list", "The names of the nodes this one is connected to, in order.",
@@ -234,6 +234,11 @@ func init() {
 		"alx> reference = Node.monitor(\"elsewhere\")",
 		"alx> {arrived, noticed, _, reason} = Process.event(1000)",
 		"alx> arrived and noticed == reference and reason == \"nodedown elsewhere\"", "true")
+	doc("Node.monitor_nodes", "Subscribes the calling process to an event, read with Process.event, for every connection to another node from now on: its reason is \"nodeup\" and the node's name when one is made, \"nodedown\" when one is lost, and \"noreconnect\" when a connection kept with reconnect: n is given up. Every event carries the reference returned. The program must be a node.",
+		"alx> Node.start(\"docs\", \"127.0.0.1:0\", \"secret\")",
+		"alx> reference = Node.monitor_nodes()",
+		"alx> {arrived, _, _, _} = Process.event(10)",
+		"alx> arrived or reference == 0", "false")
 	doc("Node.whereis", "Finds a process another node has registered under a name, waiting up to 5 seconds or the given milliseconds. The message type comes from the annotation and must be the type the name was registered with. The handle can be sent to and put in messages; receiving, monitoring and linking need a process of this node.",
 		"alx> Node.start(\"docs\", \"127.0.0.1:0\", \"secret\")",
 		"alx> found: option[pid[string]] = Node.whereis(\"elsewhere\", :logger, 100)",

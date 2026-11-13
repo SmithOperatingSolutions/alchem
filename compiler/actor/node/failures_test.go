@@ -19,7 +19,7 @@ func TestBeforeAndWhileStarting(t *testing.T) {
 	if _, problem := Connect(c, "127.0.0.1:1"); !strings.Contains(problem, "start this node first") {
 		t.Fatalf("connect before start: %q", problem)
 	}
-	if _, problem := Reconnect(c, "127.0.0.1:1"); problem == "" {
+	if _, problem := Reconnect(c, "127.0.0.1:1", 0); problem == "" {
 		t.Fatal("reconnect before start succeeded")
 	}
 	if _, problem := RemoteStream[string](c, "other", "feed", textCodec, "test"); !strings.Contains(problem, "start this node first") {

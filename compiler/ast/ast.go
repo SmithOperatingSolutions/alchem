@@ -37,6 +37,11 @@ type Program struct {
 	Output                   string
 	Comparison               *Comparison
 	Assertion                *bool // nil for IO.puts, non-nil for assert(true|false)
+	// Notes holds, when parsing for the formatter, the comments written
+	// before the parts of a module that have no place of their own for
+	// them: an import, a use, a field, a describe block and so on, each
+	// under a key naming the part.
+	Notes map[string][]string
 }
 
 // Constant is a module constant, @name value: every @name in the module
@@ -252,6 +257,10 @@ type Arm struct {
 	// thrown value and "else" the body's value. Type is the type the arm
 	// matches, set by analysis.
 	Kind, Type string
+	// Comments are the comments written before the arm, and Closing those
+	// after the last arm, before the end; both are kept only when parsing
+	// for the formatter.
+	Comments, Closing []string
 }
 
 type Position struct{ Line, Column int }

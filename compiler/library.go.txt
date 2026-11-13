@@ -8351,7 +8351,30 @@ func nodeConnectOptions(ctx *actor.Context, address string, options L[pair[actor
 	if !keep {
 		return nodeConnect(ctx, address)
 	}
-	name, problem := node.Reconnect(ctx, address)
+	name, problem := node.Reconnect(ctx, address, 0)
+	if problem != "" {
+		return errOf[string](problem)
+	}
+	return okOf(name)
+}
+
+// nodeConnectAttempts takes reconnect: n to keep the connection but give up
+// after n failed attempts in a row; reconnect: 0 does not keep it.
+func nodeConnectAttempts(ctx *actor.Context, address string, options L[pair[actor.Atom, int64]], where string) Tresult[string, string] {
+	attempts := int64(0)
+	for _, option := range fwd(options) {
+		if option.E0 != "reconnect" {
+			failAt(ctx, where, "Node.connect takes reconnect:")
+		}
+		if option.E1 < 0 {
+			failAt(ctx, where, "reconnect: takes true, false or a number of attempts, not a negative number")
+		}
+		attempts = option.E1
+	}
+	if attempts == 0 {
+		return nodeConnect(ctx, address)
+	}
+	name, problem := node.Reconnect(ctx, address, int(attempts))
 	if problem != "" {
 		return errOf[string](problem)
 	}
@@ -8528,6 +8551,14 @@ func nodeList(ctx *actor.Context) L[string] {
 
 func nodeDisconnect(ctx *actor.Context, name string) bool { return node.Disconnect(ctx, name) }
 func nodeMonitor(ctx *actor.Context, name string) int64   { return node.Monitor(ctx, name) }
+
+func nodeMonitorNodes(ctx *actor.Context, where string) int64 {
+	reference, started := node.MonitorNodes(ctx)
+	if !started {
+		failAt(ctx, where, "Node.monitor_nodes needs this program to be a node; call Node.start first")
+	}
+	return reference
+}
 
 func nodeWhereis[A any](ctx *actor.Context, other string, name actor.Atom, codec node.Codec[A]) Toption[*actor.PID[A]] {
 	return nodeWhereisWithin(ctx, other, name, 5000, codec)

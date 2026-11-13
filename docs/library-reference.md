@@ -8473,9 +8473,10 @@ true
 ```
 Node.connect(string) -> result[string,string]
 Node.connect(string, list[tuple[atom,boolean]]) -> result[string,string]
+Node.connect(string, list[tuple[atom,integer]]) -> result[string,string]
 ```
 
-Connects to the node listening at an address and returns its name. Both nodes must have the same cookie. Messages to its processes are then copied over the connection.
+Connects to the node listening at an address and returns its name. Both nodes must have the same cookie. Messages to its processes are then copied over the connection. With reconnect: true the connection is kept: when it is lost it is made again, a second later at first and up to 30 seconds apart while that keeps failing, until the program ends. With reconnect: n it is given up after n failed attempts in a row, which Node.monitor_nodes reports as "noreconnect" and the node's name.
 
 ```elixir
 alx> Node.start("docs", "127.0.0.1:0", "secret")
@@ -8525,6 +8526,22 @@ alx> reference = Node.monitor("elsewhere")
 alx> {arrived, noticed, _, reason} = Process.event(1000)
 alx> arrived and noticed == reference and reason == "nodedown elsewhere"
 true
+```
+
+### Node.monitor_nodes
+
+```
+Node.monitor_nodes() -> integer
+```
+
+Subscribes the calling process to an event, read with Process.event, for every connection to another node from now on: its reason is "nodeup" and the node's name when one is made, "nodedown" when one is lost, and "noreconnect" when a connection kept with reconnect: n is given up. Every event carries the reference returned. The program must be a node.
+
+```elixir
+alx> Node.start("docs", "127.0.0.1:0", "secret")
+alx> reference = Node.monitor_nodes()
+alx> {arrived, _, _, _} = Process.event(10)
+alx> arrived or reference == 0
+false
 ```
 
 ### Node.register_global

@@ -249,7 +249,7 @@ alx> System.cmd("echo", ["hello"])
 **Concurrency**
 
 - `Process` (23): Lightweight processes with typed mailboxes, links and monitors.
-- `Node` (14): Connects this program to others so that their processes can exchange messages, which are copied between them.
+- `Node` (15): Connects this program to others so that their processes can exchange messages, which are copied between them.
 - `Supervisor` (9): Restarts child processes according to a strategy.
 - `Server` (15): A process owning a state that answers typed requests in order.
 - `Task` (8): Runs a function in its own process and collects its result.

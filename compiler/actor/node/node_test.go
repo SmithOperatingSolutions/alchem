@@ -422,29 +422,65 @@ func TestEncryptionSettingsMustMatch(t *testing.T) {
 	}
 }
 
-// A kept connection is made again a second after it is lost, however the
-// loss falls against the loop that watches it.
+// A kept connection is made again a second after it is lost, whenever the
+// loss comes, and the subscribers of MonitorNodes hear of each change.
 func TestReconnectWaitsFromTheLoss(t *testing.T) {
 	one, two := root(t), root(t)
 	Start(one, "keeper", "127.0.0.1:0", "secret", true)
 	Start(two, "kept", "127.0.0.1:0", "secret", true)
-	name, problem := Reconnect(one, Address(two))
-	if problem != "" {
-		t.Fatal(problem)
+	watch, started := MonitorNodes(one)
+	if _, plain := MonitorNodes(root(t)); !started || plain {
+		t.Fatalf("subscribed: %v, without a node: %v", started, plain)
 	}
-	connected := func() bool { return slices.Contains(List(one), name) }
-	for _, pause := range []time.Duration{0, 330 * time.Millisecond, 670 * time.Millisecond} {
+	name, problem := Reconnect(one, Address(two), 0)
+	if again, _ := Reconnect(one, Address(two), 0); problem != "" || again != name {
+		t.Fatal(problem, again)
+	}
+	next := func(want string, within int64) {
+		t.Helper()
+		if event := actor.NextEvent(one, within); !event.E0 || event.E1 != watch || event.E3 != want {
+			t.Fatalf("wanted %q, got %+v", want, event)
+		}
+	}
+	next("nodeup kept", 1000)
+	for _, pause := range []time.Duration{0, 330 * time.Millisecond} {
 		time.Sleep(pause)
 		Disconnect(one, name)
 		lost := time.Now()
-		for !connected() {
-			if time.Since(lost) > 5*time.Second {
-				t.Fatal("the connection was not made again")
-			}
-			time.Sleep(10 * time.Millisecond)
+		next("nodedown kept", 1000)
+		if slices.Contains(List(one), name) {
+			t.Fatal("still connected after the loss")
 		}
-		if again := time.Since(lost); again < 900*time.Millisecond {
-			t.Fatalf("made again %v after the loss", again)
+		next("nodeup kept", 5000)
+		if again := time.Since(lost); again < 900*time.Millisecond || !slices.Contains(List(one), name) {
+			t.Fatalf("made again %v after the loss, connected: %v", again, List(one))
 		}
+	}
+}
+
+// A connection kept for a number of attempts is given up after that many
+// fail in a row, and the subscribers are told.
+func TestReconnectGivesUpAfterItsAttempts(t *testing.T) {
+	one, two := root(t), root(t)
+	Start(one, "keeper", "127.0.0.1:0", "secret", true)
+	Start(two, "kept", "127.0.0.1:0", "secret", true)
+	name, problem := Reconnect(one, Address(two), 2)
+	if problem != "" {
+		t.Fatal(problem)
+	}
+	watch, _ := MonitorNodes(one)
+	current(two).shutdown()
+	lost := time.Now()
+	for _, want := range []string{"nodedown " + name, "noreconnect " + name} {
+		if event := actor.NextEvent(one, 10000); !event.E0 || event.E1 != watch || event.E3 != want {
+			t.Fatalf("wanted %q, got %+v", want, event)
+		}
+	}
+	// One second before the first attempt and two before the second.
+	if took := time.Since(lost); took < 2900*time.Millisecond {
+		t.Fatalf("gave up after %v", took)
+	}
+	if extra := actor.NextEvent(one, 300); extra.E0 {
+		t.Fatalf("an event after giving up: %+v", extra)
 	}
 }

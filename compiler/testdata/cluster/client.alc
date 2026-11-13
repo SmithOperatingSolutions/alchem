@@ -35,11 +35,14 @@ defmodule ClusterClient do
     noted: result[list[string], string] = Node.call(server, :noted, 0)
     IO.inspect(noted)
 
-    # A dropped connection is made again.
+    # A dropped connection is made again: the events say when.
+    watch = Node.monitor_nodes()
     Node.disconnect(server)
-    Process.sleep(100)
+    {_, down, _, lost} = Process.event(5000)
+    IO.inspect(down == watch and lost == "nodedown " <> server)
     IO.inspect(Enum.member?(Node.list(), server))
-    Process.sleep(2500)
+    {_, up, _, made} = Process.event(10000)
+    IO.inspect(up == watch and made == "nodeup " <> server)
     IO.inspect(Enum.member?(Node.list(), server))
     again: result[integer, string] = Node.call(server, :square, 3)
     IO.inspect(again)
