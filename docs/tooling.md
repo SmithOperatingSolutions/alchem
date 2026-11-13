@@ -27,6 +27,7 @@ alchem agent-guide                 # overview: commands, syntax topics, library 
 alchem syntax                      # list syntax topics
 alchem syntax with                 # rules and a working example for one construct
 alchem doc                         # list library modules
+alchem doc --group network         # one group's modules, what each is for, and examples
 alchem doc Enum                    # a module's functions, one line each
 alchem doc Enum.chunk_every        # signatures and examples
 alchem doc --search chunk          # search functions, modules and topics

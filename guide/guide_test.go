@@ -18,12 +18,12 @@ func TestAgentGuideCoversEverything(t *testing.T) {
 		}
 	}
 	for _, topic := range syntax.Topics {
-		if !strings.Contains(text, "- `"+topic.Name+"`: ") {
+		if !strings.Contains(text, "`"+topic.Name+"`") {
 			t.Errorf("guide omits topic %s", topic.Name)
 		}
 	}
 	for _, module := range syntax.Modules {
-		if !strings.Contains(text, "- `"+module.Name+"` (") {
+		if !strings.Contains(text, "`"+module.Name+"`") {
 			t.Errorf("guide omits module %s", module.Name)
 		}
 		if len(functionsOf(module.Name)) == 0 {
@@ -45,9 +45,45 @@ func TestAgentGuideCoversEverything(t *testing.T) {
 			}
 		}
 	}
-	// The overview stays small enough to read in one go.
-	if len(text) > 16500 {
-		t.Errorf("agent guide is %d bytes; keep the overview short and move detail into topics", len(text))
+	// The overview stays small enough to read in one go: it names the
+	// topics and modules, and the groups say what each is.
+	if len(text) > 8000 {
+		t.Errorf("agent guide is %d bytes; keep the overview short and move detail into topics and groups", len(text))
+	}
+	for group := range groups {
+		shown, err := DocGroup(GroupName(group), false)
+		if err != nil || !strings.Contains(text, "(`"+GroupName(group)+"`)") {
+			t.Errorf("group %s: %v", group, err)
+		}
+		for _, module := range syntax.Modules {
+			if module.Group == group && !strings.Contains(shown, module.Summary) {
+				t.Errorf("alchem doc --group %s omits %s", GroupName(group), module.Name)
+			}
+		}
+		for _, name := range featured[group] {
+			if !strings.Contains(shown, indented(firstExample(known[name]))) {
+				t.Errorf("alchem doc --group %s omits the example of %s", GroupName(group), name)
+			}
+		}
+	}
+	for _, topic := range syntax.Topics {
+		shown, err := SyntaxGroup(topic.Group, false)
+		if err != nil || !strings.Contains(shown, topic.Summary) || !strings.Contains(text, "(`"+GroupName(topic.Group)+"`)") {
+			t.Errorf("alchem syntax --group %s omits %s: %v", GroupName(topic.Group), topic.Name, err)
+		}
+	}
+	if _, err := DocGroup("networks", false); err == nil || !strings.Contains(err.Error(), "did you mean") && !strings.Contains(err.Error(), "network") {
+		t.Errorf("an unknown group: %v", err)
+	}
+	if _, err := SyntaxGroup("nothing", true); err == nil {
+		t.Error("an unknown group of topics was accepted")
+	}
+	var listed []map[string]any
+	if text, err := DocGroup("Files and system", true); err != nil || json.Unmarshal([]byte(text), &listed) != nil || len(listed) == 0 || listed[0]["functions"] == nil {
+		t.Errorf("a group as JSON: %v", err)
+	}
+	if text, err := SyntaxGroup("control-flow", true); err != nil || json.Unmarshal([]byte(text), &listed) != nil || len(listed) == 0 || listed[0]["notes"] == nil {
+		t.Errorf("a group of topics as JSON: %v", err)
 	}
 	var data map[string]any
 	if err := json.Unmarshal([]byte(AgentGuideJSON()), &data); err != nil || data["commands"] == nil || data["topics"] == nil || data["modules"] == nil {

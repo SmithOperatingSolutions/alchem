@@ -14,8 +14,8 @@ Alchem is a statically typed, Elixir-inspired language compiled to native execut
 - `alchem check [options] <entry.alc>`: Report compile errors without building.
 - `alchem fmt [--check] <path>...`: Format .alc files in place.
 - `alchem test [options] <path>...`: Run *_test.alc files, with seeds, tags and coverage.
-- `alchem syntax [--all] [--json] [topic]`: Explain a language construct, with a working example; without a topic, list them.
-- `alchem doc [--all] [--search text] [--json] [Module | Module.function | file.alc]`: Show library documentation, or the documentation written in a file.
+- `alchem syntax [--all] [--group name] [--json] [topic]`: Explain a language construct, with a working example; without a topic, list them.
+- `alchem doc [--all] [--group name] [--search text] [--json] [Module | Module.function | file.alc]`: Show library documentation, or the documentation written in a file.
 - `alchem agent-guide [--json]`: Print the guide for coding agents: commands, topics, modules and how to learn more.
 - `alchem agent-install [--scope project|user] [--dir path] [--force] [--json] <agent> | --list`: Install a short instruction file that points a coding agent at agent-guide.
 - `alchem docs [--check] [--dir path]`: Write the generated reference files; --check fails if they are out of date.
@@ -23,9 +23,11 @@ Alchem is a statically typed, Elixir-inspired language compiled to native execut
 
 ## Looking things up
 
-Ask for one thing at a time; each answer is short.
+This guide is an index. Ask for one thing at a time; each answer is short.
 
-- `alchem syntax <topic>`: the rules of one construct and a working example. Topics are listed below.
+- `alchem syntax <topic>`: the rules of one construct and a working example.
+- `alchem syntax --group <group>`: the topics of one group, each with a line saying what it covers.
+- `alchem doc --group <group>`: the library modules of one group, what each is for, and examples.
 - `alchem doc <Module>`: every function of a library module with a one-line description.
 - `alchem doc <Module.function>`: signatures and examples, such as `alchem doc Enum.chunk_every`.
 - `alchem doc --search <text>`: functions and topics whose name or description contains the text.
@@ -74,216 +76,26 @@ Save it as `hello.alc`, then `alchem build hello.alc && ./hello`.
 
 ## Syntax topics
 
-Run `alchem syntax <topic>`.
+By group; `alchem syntax --group <group>` describes a group's topics and `alchem syntax <topic>` explains one.
 
-**Basics**
-
-- `program`: A file is one module; the entry module has a main function.
-- `values`: Integers, floats, booleans and strings.
-- `bindings`: name = expression binds a name once; bindings are immutable.
-- `operators`: Arithmetic, comparison, boolean, string and list operators.
-- `strings`: UTF-8 text with interpolation, heredocs and the String module.
-- `comments`: # comments, and @moduledoc, @doc and @typedoc documentation.
-
-**Functions**
-
-- `functions`: def name(parameter: type): result do ... end.
-- `clauses`: Several definitions of one function, chosen by pattern and guard.
-- `anonymous-functions`: fn x -> body end, captures with &, and closures.
-- `generics`: Lowercase type names are type variables.
-
-**Control flow**
-
-- `if`: if condition do ... else ... end, as a statement or a value.
-- `case`: Matches a value against patterns, with optional guards.
-- `cond`: Runs the first branch whose condition is true.
-- `patterns`: Destructuring in bindings, case arms, function parameters, fn parameters, with and for.
-- `pipes`: value |> function(arguments) passes the value as the first argument.
-- `with`: Chains pattern matches, stopping at the first that fails.
-- `for`: Comprehensions: generators and filters producing a list.
-- `try`: try / rescue / catch / else / after, raise, throw and defexception.
-
-**Data**
-
-- `lists`: list[T]: immutable, written [1, 2, 3].
-- `tuples`: tuple[A, B]: a fixed group of values, written {a, b}.
-- `maps`: map[K, V]: immutable, written %{key => value}.
-- `structs`: struct Name do field: type ... end: a named record.
-- `sum-types`: type Name do variant(fields) ... end: a value that is one of several shapes.
-- `option-result`: option[T] is some(value) or none; result[T, E] is ok(value) or error(reason).
-- `atoms`: :name is an atom; [name: value] is a keyword list.
-- `ranges`: first..last: the integers from first to last inclusive.
-- `streams`: stream[T]: a lazy sequence, consumed by Enum.
-- `sigils`: ~r regex, ~w words, ~s strings, ~D ~T ~N ~U dates and times.
-
-**Modules**
-
-- `modules`: import "file.alc" brings another module's public functions and types.
-- `constants`: @name value declares a module constant; @name anywhere in the module stands for the value.
-- `protocols`: defprotocol declares functions; defimpl supplies them for one type.
-- `macros`: defmacro defines a template; a call is replaced by the template with its arguments filled in.
-- `extern`: extern name(params): result = "package.Function" calls a Go function.
-
-**Text**
-
-- `templates`: ~h"..." and ~h"""...""" are HTML templates that escape what they interpolate.
-
-**Concurrency**
-
-- `nodes`: Programs connect as nodes and their processes exchange messages, which are copied.
-- `processes`: Lightweight processes with typed mailboxes.
-
-**Testing**
-
-- `tests`: Test files end in _test.alc and are run by alchem test.
-- `properties`: check all pattern <- generator, ... do ... end checks a property on generated values.
-- `doctests`: doctest Module runs the alx> examples in a module's @doc strings.
+- **Basics** (`basics`): `program`, `values`, `bindings`, `operators`, `strings`, `comments`
+- **Functions** (`functions`): `functions`, `clauses`, `anonymous-functions`, `generics`
+- **Control flow** (`control-flow`): `if`, `case`, `cond`, `patterns`, `pipes`, `with`, `for`, `try`
+- **Data** (`data`): `lists`, `tuples`, `maps`, `structs`, `sum-types`, `option-result`, `atoms`, `ranges`, `streams`, `sigils`
+- **Modules** (`modules`): `modules`, `constants`, `protocols`, `macros`, `extern`
+- **Text** (`text`): `templates`
+- **Concurrency** (`concurrency`): `nodes`, `processes`
+- **Testing** (`testing`): `tests`, `properties`, `doctests`
 
 ## Library modules
 
-No import is needed. The number is how many functions the module has; run `alchem doc <Module>` to list them.
+No import is needed. By group; `alchem doc --group <group>` describes a group's modules and `alchem doc <Module>` lists one's functions.
 
-**Core**
-
-- `Kernel` (29): Functions called without a module name: arithmetic helpers, list head and tail, conversion to text, and inspect. A module that defines a function of the same name reaches the builtin as Kernel.name, as in Kernel.div(n, 2).
-- `Atom` (1): Names used as values, written :name. Atoms compare, sort, key maps and match in patterns.
-- `Function` (1): Helpers for working with functions as values.
-- `Bitwise` (6): Bitwise operations on integers.
-- `IO.ANSI` (59): Escape sequences that color and move text on a terminal. Each name, such as IO.ANSI.red(), gives its sequence; IO.ANSI.format joins text and names.
-
-```elixir
-alx> inspect([some(1), none])
-"[some(1), none]"
-alx> 5 |> then(fn n -> n * 2 end)
-10
-```
-
-**Collections**
-
-- `Enum` (73): Eager operations over any enumerable: lists, maps, sets, ranges and streams. Results are finished values.
-- `Stream` (38): Lazy operations over any enumerable. Nothing runs until the stream is consumed by an Enum function, so streams may be infinite.
-- `List` (31): Operations specific to lists, such as positional updates.
-- `Map` (32): Immutable maps with integer, string or boolean keys.
-- `Keyword` (21): Keyword lists: lists of {atom, value} pairs written [name: value], kept in order and allowing a key more than once.
-- `MapSet` (16): Immutable sets of integers, strings or booleans; the type is set[T].
-- `Range` (6): Ranges of integers, first..last//step: a Range struct with first, last and step, and an enumerable of its integers. A range written where a stream is expected is that stream.
-
-```elixir
-alx> Enum.map([1, 2, 3], fn n -> n * 2 end)
-[2, 4, 6]
-alx> Enum.reduce([1, 2, 3], 0, fn n, acc -> acc + n end)
-6
-alx> Enum.group_by([1, 2, 3, 4], &rem(&1, 2))
-%{0 => [2, 4], 1 => [1, 3]}
-alx> Stream.chunk_every(11..18, 3) |> Enum.to_list()
-[[11, 12, 13], [14, 15, 16], [17, 18]]
-alx> Map.update(%{"a" => 1}, "a", 0, &(&1 + 1))
-%{"a" => 2}
-alx> MapSet.new([3, 1, 3]) |> MapSet.to_list()
-[1, 3]
-```
-
-**Text**
-
-- `String` (44): UTF-8 strings. Lengths and positions count Unicode code points.
-- `Regex` (9): Regular expressions in RE2 syntax: no backreferences or lookaround. Written ~r/pattern/ or compiled from text.
-- `Integer` (12): Integer parsing, formatting and number theory.
-- `Float` (10): Float parsing, formatting and rounding.
-- `Base` (14): Base 16, 32 and 64 encoding.
-- `JSON` (5): Converts between JSON text, the builtin JSON type and declared types.
-- `URI` (12): Percent-encoding and query strings.
-- `Version` (7): Parsing and comparing semantic versions.
-- `Markup` (7): HTML built by ~h templates, which escape every value they interpolate; see alchem syntax templates.
-- `Crypto` (7): Cryptographic building blocks: random bytes from the operating system's secure source, hashes, HMAC signatures, password storage and a comparison that takes the same time however much of its input matches. Results are raw bytes; Base.encode16 or Base.encode64 makes them printable.
-
-```elixir
-alx> String.split("k=v=w", "=", [parts: 2])
-["k", "v=w"]
-alx> Regex.run(~r/(\w+)@(\w+)/, "mail joe@example now")
-some(["joe@example", "joe", "example"])
-alx> Integer.parse("42")
-ok(42)
-alx> JSON.decode("[1, true]")
-ok(JSON.list([JSON.integer(1), JSON.boolean(true)]))
-```
-
-**Dates and times**
-
-- `Date` (24): Calendar dates, written ~D[2026-01-05].
-- `Time` (16): Times of day, written ~T[13:04:05], and the program clock.
-- `NaiveDateTime` (16): A date and time without a time zone, written ~N[2026-01-05 13:04:05].
-- `DateTime` (22): A date and time in a time zone: UTC when written ~U[2026-01-05T13:04:05Z], another zone after DateTime.shift_zone.
-- `Calendar` (1): Formatting shared by the four date and time types.
-- `Duration` (15): An amount of time per unit, for shifting dates and times: Duration.months(1), Duration.add(...).
-
-```elixir
-alx> Date.add(~D[2026-02-27], 2)
-~D[2026-03-01]
-alx> DateTime.from_iso8601("2026-01-05T13:04:05+02:00")
-ok({~U[2026-01-05T11:04:05Z], 7200})
-```
-
-**Files and system**
-
-- `File` (35): Reading, writing and managing files; File.stream! reads lazily.
-- `Path` (12): Manipulating file paths as text.
-- `IO` (10): Standard input, output and error.
-- `System` (17): Arguments, environment, external commands and exit.
-- `OptionParser` (4): Reads command-line switches into a map.
-- `Logger` (10): Leveled messages on standard error.
-- `Port` (7): Runs an external program and exchanges text with it: its output arrives as messages, a line at a time.
-- `DiskStore` (13): A table of text under text keys, kept in one file so that it outlasts the program: a write is on the disk when it returns, keys are read in order by range or prefix, and any process may use it.
-
-```elixir
-alx> File.write!("doc_read.txt", "hello")
-alx> File.read("doc_read.txt")
-ok("hello")
-alx> File.write!("doc_stream.txt", "one\ntwo\nthree\n")
-alx> File.stream!("doc_stream.txt") |> Stream.map(&String.trim(&1)) |> Enum.take(2)
-["one", "two"]
-alx> Path.join("src", "main.alc")
-"src/main.alc"
-alx> System.cmd("echo", ["hello"])
-{"hello\n", 0}
-```
-
-**Concurrency**
-
-- `Process` (23): Lightweight processes with typed mailboxes, links and monitors.
-- `Node` (15): Connects this program to others so that their processes can exchange messages, which are copied between them.
-- `Supervisor` (9): Restarts child processes according to a strategy.
-- `Server` (15): A process owning a state that answers typed requests in order.
-- `Task` (8): Runs a function in its own process and collects its result.
-- `Task.Supervisor` (6): Runs tasks as temporary children of a supervisor: a task supervisor is a dynamic_supervisor, so DynamicSupervisor's functions apply to it too.
-- `Agent` (8): A process holding a state that functions read and update.
-- `Registry` (17): Finds processes by key. Each entry belongs to the process that registered it, holds a value, and goes away when that process ends.
-- `DynamicSupervisor` (9): A supervisor that starts children while it runs, of any message type, and restarts the ones that fail.
-
-```elixir
-alx> Task.async_stream([1, 2, 3], fn n -> n * n end) |> Enum.to_list()
-[1, 4, 9]
-alx> counter = Server.start(0, fn(total: integer, amount: integer): tuple[integer, integer] do {total + amount, total + amount} end)
-alx> Server.call(counter, 5, 1000)
-ok(5)
-alx> counter = Agent.start(fn -> 10 end)
-alx> Agent.get_and_update(counter, fn n -> {n, n + 1} end)
-10
-```
-
-**Testing**
-
-- `Testing` (11): Assertions for test files, called without a module name.
-- `Gen` (17): Generators of random values for check all properties. Values grow with each run, and a failing value shrinks to the smallest that still fails.
-
-```elixir
-alx> assert(1 + 1 == 2)
-alx> assert("a" in ["a", "b"])
-alx> assert_raise("division by zero", fn -> div(1, 0) end)
-```
-
-**Network**
-
-- `TCP` (12): TCP connections: listen, accept, connect, send and receive text. Calls that wait take milliseconds (negative waits indefinitely) and give error("timeout") or error("closed"); a process waiting in one still stops when asked. A socket belongs to the process that opened it and closes when that process ends.
-- `UDP` (7): UDP sockets: datagrams sent to and received from host:port addresses, passively with UDP.recv or actively as UDP.Event messages. UDP sockets close as TCP sockets do.
-- `HTTP` (16): An HTTP client, and a server that answers each request in a process of its own. Requests and responses are the HTTP.Request and HTTP.Response structs; header names are lower case.
-- `WebSocket` (10): WebSockets, RFC 6455: a handler of HTTP.serve upgrades its request into a socket, and WebSocket.connect opens one to a server. Messages are text or binary; pings and the closing handshake are answered without the program's help. Calls that wait take milliseconds and give error("timeout") or error("closed"). A socket belongs to the process that made it and closes when that process ends, so a handler that upgrades either keeps the socket or hands it on with controlling_process.
+- **Core** (`core`): `Kernel`, `Atom`, `Function`, `Bitwise`, `IO.ANSI`
+- **Collections** (`collections`): `Enum`, `Stream`, `List`, `Map`, `Keyword`, `MapSet`, `Range`
+- **Text** (`text`): `String`, `Regex`, `Integer`, `Float`, `Base`, `JSON`, `URI`, `Version`, `Markup`, `Crypto`
+- **Dates and times** (`dates-and-times`): `Date`, `Time`, `NaiveDateTime`, `DateTime`, `Calendar`, `Duration`
+- **Files and system** (`files-and-system`): `File`, `Path`, `IO`, `System`, `OptionParser`, `Logger`, `Port`, `DiskStore`
+- **Concurrency** (`concurrency`): `Process`, `Node`, `Supervisor`, `Server`, `Task`, `Task.Supervisor`, `Agent`, `Registry`, `DynamicSupervisor`
+- **Testing** (`testing`): `Testing`, `Gen`
+- **Network** (`network`): `TCP`, `UDP`, `HTTP`, `WebSocket`

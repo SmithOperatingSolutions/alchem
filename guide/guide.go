@@ -39,8 +39,8 @@ var Commands = []Command{
 	{Name: "check", Usage: "alchem check [options] <entry.alc>", Summary: "Report compile errors without building."},
 	{Name: "fmt", Usage: "alchem fmt [--check] <path>...", Summary: "Format .alc files in place."},
 	{Name: "test", Usage: "alchem test [options] <path>...", Summary: "Run *_test.alc files, with seeds, tags and coverage."},
-	{Name: "syntax", Usage: "alchem syntax [--all] [--json] [topic]", Summary: "Explain a language construct, with a working example; without a topic, list them."},
-	{Name: "doc", Usage: "alchem doc [--all] [--search text] [--json] [Module | Module.function | file.alc]", Summary: "Show library documentation, or the documentation written in a file."},
+	{Name: "syntax", Usage: "alchem syntax [--all] [--group name] [--json] [topic]", Summary: "Explain a language construct, with a working example; without a topic, list them."},
+	{Name: "doc", Usage: "alchem doc [--all] [--group name] [--search text] [--json] [Module | Module.function | file.alc]", Summary: "Show library documentation, or the documentation written in a file."},
 	{Name: "agent-guide", Usage: "alchem agent-guide [--json]", Summary: "Print the guide for coding agents: commands, topics, modules and how to learn more."},
 	{Name: "agent-install", Usage: "alchem agent-install [--scope project|user] [--dir path] [--force] [--json] <agent> | --list", Summary: "Install a short instruction file that points a coding agent at agent-guide."},
 	{Name: "docs", Usage: "alchem docs [--check] [--dir path]", Summary: "Write the generated reference files; --check fails if they are out of date."},
@@ -75,7 +75,7 @@ var differences = []string{
 }
 
 // featured names the functions whose first example introduces each group of
-// library modules in the agent guide.
+// library modules when the group is shown.
 var featured = map[string][]string{
 	"Core":             {"inspect", "then"},
 	"Collections":      {"Enum.map", "Enum.reduce", "Enum.group_by", "Stream.chunk_every", "Map.update", "MapSet.new"},
@@ -97,6 +97,24 @@ func groups[T any](items []T, group func(T) string) ([]string, map[string][]T) {
 		by[name] = append(by[name], item)
 	}
 	return order, by
+}
+
+// GroupName is a group as the command line takes it: "Files and system" is
+// files-and-system.
+func GroupName(group string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(group)), " ", "-")
+}
+
+// groupNamed finds a group among those in order, by either spelling.
+func groupNamed(name string, order []string, kind, command string) (string, error) {
+	var names []string
+	for _, group := range order {
+		if GroupName(group) == GroupName(name) {
+			return group, nil
+		}
+		names = append(names, GroupName(group))
+	}
+	return "", fmt.Errorf("no group of %s %q%s; the groups are %s (%s lists them)", kind, name, suggest(GroupName(name), names), strings.Join(names, ", "), command)
 }
 
 func functionsByName() map[string]syntax.Function {
@@ -140,8 +158,10 @@ func AgentGuide() string {
 		fmt.Fprintf(&b, "- `%s`: %s\n", command.Usage, command.Summary)
 	}
 	b.WriteString("\n## Looking things up\n\n")
-	b.WriteString("Ask for one thing at a time; each answer is short.\n\n")
-	b.WriteString("- `alchem syntax <topic>`: the rules of one construct and a working example. Topics are listed below.\n")
+	b.WriteString("This guide is an index. Ask for one thing at a time; each answer is short.\n\n")
+	b.WriteString("- `alchem syntax <topic>`: the rules of one construct and a working example.\n")
+	b.WriteString("- `alchem syntax --group <group>`: the topics of one group, each with a line saying what it covers.\n")
+	b.WriteString("- `alchem doc --group <group>`: the library modules of one group, what each is for, and examples.\n")
 	b.WriteString("- `alchem doc <Module>`: every function of a library module with a one-line description.\n")
 	b.WriteString("- `alchem doc <Module.function>`: signatures and examples, such as `alchem doc Enum.chunk_every`.\n")
 	b.WriteString("- `alchem doc --search <text>`: functions and topics whose name or description contains the text.\n")
@@ -163,29 +183,23 @@ func AgentGuide() string {
 	for _, line := range differences {
 		b.WriteString("- " + line + "\n")
 	}
-	b.WriteString("\n## Syntax topics\n\nRun `alchem syntax <topic>`.\n")
+	b.WriteString("\n## Syntax topics\n\nBy group; `alchem syntax --group <group>` describes a group's topics and `alchem syntax <topic>` explains one.\n\n")
 	order, topics := groups(syntax.Topics, func(t syntax.Topic) string { return t.Group })
 	for _, group := range order {
-		b.WriteString("\n**" + group + "**\n\n")
+		names := []string{}
 		for _, topic := range topics[group] {
-			fmt.Fprintf(&b, "- `%s`: %s\n", topic.Name, topic.Summary)
+			names = append(names, "`"+topic.Name+"`")
 		}
+		fmt.Fprintf(&b, "- **%s** (`%s`): %s\n", group, GroupName(group), strings.Join(names, ", "))
 	}
-	b.WriteString("\n## Library modules\n\nNo import is needed. The number is how many functions the module has; run `alchem doc <Module>` to list them.\n")
-	byName := functionsByName()
+	b.WriteString("\n## Library modules\n\nNo import is needed. By group; `alchem doc --group <group>` describes a group's modules and `alchem doc <Module>` lists one's functions.\n\n")
 	moduleOrder, modules := groups(syntax.Modules, func(m syntax.Module) string { return m.Group })
 	for _, group := range moduleOrder {
-		b.WriteString("\n**" + group + "**\n\n")
+		names := []string{}
 		for _, module := range modules[group] {
-			fmt.Fprintf(&b, "- `%s` (%d): %s\n", module.Name, len(functionsOf(module.Name)), module.Summary)
+			names = append(names, "`"+module.Name+"`")
 		}
-		if names := featured[group]; len(names) > 0 {
-			b.WriteString("\n```elixir\n")
-			for _, name := range names {
-				b.WriteString(firstExample(byName[name]) + "\n")
-			}
-			b.WriteString("```\n")
-		}
+		fmt.Fprintf(&b, "- **%s** (`%s`): %s\n", group, GroupName(group), strings.Join(names, ", "))
 	}
 	return b.String()
 }

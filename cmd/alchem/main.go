@@ -38,6 +38,7 @@ type settings struct {
 	timeout, shutdown time.Duration
 	target, tags      string
 	exclude, search   string
+	group             string
 	scope, dir        string
 	tests             testrunner.Options
 }
@@ -85,10 +86,12 @@ func flagsFor(name string, s *settings, errOut io.Writer) *flag.FlagSet {
 		flags.DurationVar(&s.tests.ReceiveTimeout, "receive-timeout", 100*time.Millisecond, "how long assert_receive and refute_receive wait by default")
 	case "syntax":
 		flags.BoolVar(&s.all, "all", false, "print every topic")
+		flags.StringVar(&s.group, "group", "", "list the topics of one group, such as data or control-flow")
 		flags.BoolVar(&s.jsonOutput, "json", false, "emit structured output")
 	case "doc":
 		flags.BoolVar(&s.all, "all", false, "print every function of the module in full")
 		flags.StringVar(&s.search, "search", "", "find functions, modules and topics containing this text")
+		flags.StringVar(&s.group, "group", "", "show the modules of one group, such as text or files-and-system")
 		flags.BoolVar(&s.jsonOutput, "json", false, "emit structured output")
 	case "agent-guide":
 		flags.BoolVar(&s.jsonOutput, "json", false, "emit structured output")
@@ -268,6 +271,10 @@ func help(command string, s *settings, arguments []string) (text string, err err
 		switch {
 		case err != nil:
 			return "", err, true
+		case s.group != "" && name != "":
+			err = fmt.Errorf("alchem syntax takes a group or a topic, not both")
+		case s.group != "":
+			text, err = guide.SyntaxGroup(s.group, s.jsonOutput)
 		case s.jsonOutput:
 			text, err = guide.SyntaxJSON(name)
 		case name != "":
@@ -285,6 +292,10 @@ func help(command string, s *settings, arguments []string) (text string, err err
 			return "", err, true
 		case s.search != "":
 			text, err = guide.Search(s.search, s.jsonOutput)
+		case s.group != "" && name != "":
+			err = fmt.Errorf("alchem doc takes a group or a name, not both")
+		case s.group != "":
+			text, err = guide.DocGroup(s.group, s.jsonOutput)
 		default:
 			text, err = guide.Doc(name, s.all, s.jsonOutput)
 		}

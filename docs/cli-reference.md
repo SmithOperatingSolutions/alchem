@@ -114,12 +114,13 @@ alchem test [options] <path>...
 Explain a language construct, with a working example; without a topic, list them.
 
 ```
-alchem syntax [--all] [--json] [topic]
+alchem syntax [--all] [--group name] [--json] [topic]
 ```
 
 | Option | Meaning | Default |
 | --- | --- | --- |
 | `--all` | print every topic |  |
+| `--group` | list the topics of one group, such as data or control-flow |  |
 | `--json` | emit structured output |  |
 
 ## alchem doc
@@ -127,12 +128,13 @@ alchem syntax [--all] [--json] [topic]
 Show library documentation, or the documentation written in a file.
 
 ```
-alchem doc [--all] [--search text] [--json] [Module | Module.function | file.alc]
+alchem doc [--all] [--group name] [--search text] [--json] [Module | Module.function | file.alc]
 ```
 
 | Option | Meaning | Default |
 | --- | --- | --- |
 | `--all` | print every function of the module in full |  |
+| `--group` | show the modules of one group, such as text or files-and-system |  |
 | `--json` | emit structured output |  |
 | `--search` | find functions, modules and topics containing this text |  |
 
