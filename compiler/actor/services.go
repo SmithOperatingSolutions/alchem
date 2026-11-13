@@ -147,9 +147,13 @@ func ServerSendAfter[Q, R any](c *Context, s *Server[Q, R], value Q, ms int64, w
 // ServerSelf is the server whose handler is running.
 func ServerSelf[Q, R any](c *Context, where string) *Server[Q, R] {
 	Check(c)
-	s, ok := c.serving.(*Server[Q, R])
+	var serving any
+	if cold := c.more.Load(); cold != nil {
+		serving = cold.serving
+	}
+	s, ok := serving.(*Server[Q, R])
 	if !ok {
-		if c.serving == nil {
+		if serving == nil {
 			Fail(c, where, "Server.self is called from a process that is not a server")
 		}
 		Fail(c, where, "Server.self is called by a server of other request and reply types")
@@ -344,7 +348,8 @@ func (g *Registry[K, V]) Register(c *Context, key K, value V) bool {
 	}
 	part.entries[key] = append(kept, registryEntry[V]{c, value, g.serial.Add(1)})
 	c.rt.mu.Lock()
-	c.distant = append(c.distant, func(string) { g.forget(c) })
+	cold := c.cold()
+	cold.distant = append(cold.distant, func(string) { g.forget(c) })
 	c.rt.mu.Unlock()
 	return true
 }
