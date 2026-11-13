@@ -66,7 +66,7 @@ Negative semantic tests cover callback types/arity/results, function-containing 
 
 ## Platform CI
 
-Pull requests and pushes to `main` run native race/integration tests, `go vet`, and an actual CLI build/run smoke test on Ubuntu, Windows and macOS using Go 1.27.x. Ubuntu also runs current stable Go. Runner architecture and exact Go version are printed in job logs; the matrix does not claim every architecture is executed natively. The Unix shell fake-toolchain test remains skipped on Windows.
+Pull requests and pushes to `main` run the unit and integration tests, `go vet`, and an actual CLI build/run smoke test on Ubuntu, Windows and macOS using Go 1.27.x, with the race detector on the packages whose Go code is concurrent (`compiler/actor`, its `node` package and `lsp`). Ubuntu also runs current stable Go, without the race detector. The race detector over every package, including the compiler and the test runner, runs nightly and can be started by hand (`workflow_dispatch`). Jobs keep Go's build cache between runs, keyed on `go.mod`. The program fixtures and the slowest compiler tests run several programs at a time. Runner architecture and exact Go version are printed in job logs; the matrix does not claim every architecture is executed natively. The Unix shell fake-toolchain test remains skipped on Windows.
 
 A separate Ubuntu job cross-compiles the CLI and `examples/closures.alc` for Linux, Windows and Darwin on AMD64 and ARM64 with `CGO_ENABLED=0`. Its artifact contains target binaries retained for seven days. Cross-build success verifies compilation, not execution or race behavior on those targets. Native Go tests keep their normal CGO configuration for race support.
 

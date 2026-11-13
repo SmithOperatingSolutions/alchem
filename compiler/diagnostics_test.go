@@ -38,6 +38,8 @@ func TestRuntimeSourceDiagnostics(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Each case builds and runs a program of its own.
+			t.Parallel()
 			source := filepath.Join(t.TempDir(), "source with spaces.alc")
 			binary := filepath.Join(t.TempDir(), "program")
 			if runtime.GOOS == "windows" {
