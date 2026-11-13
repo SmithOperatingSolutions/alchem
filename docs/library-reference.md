@@ -22,7 +22,7 @@ Every library function with its signatures, a description and examples; `alchem 
 
 ## Kernel
 
-Functions called without a module name: arithmetic helpers, list head and tail, conversion to text, and inspect.
+Functions called without a module name: arithmetic helpers, list head and tail, conversion to text, and inspect. A module that defines a function of the same name reaches the builtin as Kernel.name, as in Kernel.div(n, 2).
 
 ### abs
 

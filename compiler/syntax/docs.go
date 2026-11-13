@@ -137,7 +137,7 @@ func Functions() []Function {
 }
 
 func init() {
-	module("Kernel", "Core", "Functions called without a module name: arithmetic helpers, list head and tail, conversion to text, and inspect.")
+	module("Kernel", "Core", "Functions called without a module name: arithmetic helpers, list head and tail, conversion to text, and inspect. A module that defines a function of the same name reaches the builtin as Kernel.name, as in Kernel.div(n, 2).")
 	module("Atom", "Core", "Names used as values, written :name. Atoms compare, sort, key maps and match in patterns.")
 	module("Function", "Core", "Helpers for working with functions as values.")
 	module("Bitwise", "Core", "Bitwise operations on integers.")

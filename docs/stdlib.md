@@ -88,7 +88,7 @@ File.stream!("access.log")
 
 ## Other modules
 
-- **Kernel functions** are called without a module: `abs`, `min`, `max`, `div`, `rem`, `round`, `trunc`, `ceil`, `floor`, `hd`, `tl`, `to_string`, `inspect`, `then`, `tap`, `map_size`, `byte_size`. A function of the same name defined in a program takes precedence.
+- **Kernel functions** are called without a module: `abs`, `min`, `max`, `div`, `rem`, `round`, `trunc`, `ceil`, `floor`, `hd`, `tl`, `to_string`, `inspect`, `then`, `tap`, `map_size`, `byte_size`. A function of the same name defined in a program takes precedence. `Kernel.name` always means the builtin, so a module that defines its own `div` can still divide with `Kernel.div(n, 2)`.
 - **`inspect(value)`** renders any value as source would write it, `%Point{x: 1, y: 2}` or `[some(1), none]`; `IO.inspect(value)` prints that and returns the value.
 - **`MapSet`** provides sets of integers, strings or booleans.
 - **`Regex`** uses RE2 syntax: there are no backreferences or lookaround, and matching takes time linear in the input. Replacement text may use `\\1` for a capture group.

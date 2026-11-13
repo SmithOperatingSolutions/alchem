@@ -145,7 +145,7 @@ No import is needed. The number is how many functions the module has; run `alche
 
 **Core**
 
-- `Kernel` (29): Functions called without a module name: arithmetic helpers, list head and tail, conversion to text, and inspect.
+- `Kernel` (29): Functions called without a module name: arithmetic helpers, list head and tail, conversion to text, and inspect. A module that defines a function of the same name reaches the builtin as Kernel.name, as in Kernel.div(n, 2).
 - `Atom` (1): Names used as values, written :name. Atoms compare, sort, key maps and match in patterns.
 - `Function` (1): Helpers for working with functions as values.
 - `Bitwise` (6): Bitwise operations on integers.

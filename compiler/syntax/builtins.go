@@ -308,7 +308,7 @@ var SimpleBuiltins = map[string]SimpleBuiltin{
 func ReservedModule(name string) bool {
 	switch name {
 	case "IO", "List", "Map", "Process", "Supervisor", "Server", "String", "Integer", "Float", "File", "System", "Time",
-		"Enum", "Stream", "MapSet", "Path", "Base", "Bitwise", "Regex", "Task", "Agent", "Function", "JSON", "Date", "DateTime", "NaiveDateTime", "Calendar", "URI", "Version", "Duration", "Logger", "OptionParser", "Atom", "Keyword", "Port", "Node", "Registry", "DynamicSupervisor", "TCP", "HTTP", "Task.Supervisor", "TCP.Event", "UDP", "UDP.Event", "Gen", "IO.ANSI", "Port.Info", "File.Stat", "Version.Requirement", "PortEvent", "Range", "WebSocket", "WebSocket.Event", "Markup.Value", "Markup.Parts", "Crypto", "Markup":
+		"Kernel", "Enum", "Stream", "MapSet", "Path", "Base", "Bitwise", "Regex", "Task", "Agent", "Function", "JSON", "Date", "DateTime", "NaiveDateTime", "Calendar", "URI", "Version", "Duration", "Logger", "OptionParser", "Atom", "Keyword", "Port", "Node", "Registry", "DynamicSupervisor", "TCP", "HTTP", "Task.Supervisor", "TCP.Event", "UDP", "UDP.Event", "Gen", "IO.ANSI", "Port.Info", "File.Stat", "Version.Requirement", "PortEvent", "Range", "WebSocket", "WebSocket.Event", "Markup.Value", "Markup.Parts", "Crypto", "Markup":
 		return true
 	}
 	return false

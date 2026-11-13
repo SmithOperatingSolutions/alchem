@@ -326,7 +326,11 @@ func loadProjectAs(ctx context.Context, entry string, library bool) (ast.Program
 					return nil
 				}
 				if e.Kind == "call" || e.Kind == "funcref" {
-					if name := locals[e.Name]; name != "" {
+					if builtin, ok := strings.CutPrefix(e.Name, "Kernel."); ok && !strings.Contains(builtin, ".") {
+						// Kernel.name is the builtin, whatever the module
+						// defines under that name itself.
+						e.Name = builtin
+					} else if name := locals[e.Name]; name != "" {
 						e.Name = name
 					} else if index := strings.LastIndex(e.Name, "."); index >= 0 {
 						// A name may be Module.function or Module.Type.variant.
