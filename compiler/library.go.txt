@@ -5289,7 +5289,7 @@ func jsonOf(b *strings.Builder, v reflect.Value) error {
 		return fmt.Errorf("%s cannot be written as JSON", inspectOf(v))
 	case reflect.Struct:
 		name, _, _ := strings.Cut(v.Type().Name(), "[")
-		fields := make([]reflect.Value, v.NumField())
+		fields := make([]reflect.Value, shownFields(v))
 		for i := range fields {
 			fields[i] = v.Field(i)
 		}
@@ -11471,27 +11471,75 @@ func cryptoSecureCompare(a, b string) bool {
 // values: &, <, >, " and ' become character references.
 func markupEscape(text string) string { return html.EscapeString(text) }
 
-func markupRaw(text string) TMarkup { return TMarkup{text} }
+func markupRaw(text string) TMarkup { return TMarkup{F0: text} }
 
 func markupString(m TMarkup) string { return m.F0 }
 
 func markupOf(m TMarkup) TMarkup { return m }
 
-func markupOfString(text string) TMarkup { return TMarkup{markupEscape(text)} }
+func markupOfString(text string) TMarkup { return TMarkup{F0: markupEscape(text)} }
 
-func markupOfInteger(n int64) TMarkup { return TMarkup{strconv.FormatInt(n, 10)} }
+func markupOfInteger(n int64) TMarkup { return TMarkup{F0: strconv.FormatInt(n, 10)} }
 
-func markupOfFloat(f float64) TMarkup { return TMarkup{floatString(f)} }
+func markupOfFloat(f float64) TMarkup { return TMarkup{F0: floatString(f)} }
 
-func markupOfAtom(a actor.Atom) TMarkup { return TMarkup{markupEscape(string(a))} }
+func markupOfAtom(a actor.Atom) TMarkup { return TMarkup{F0: markupEscape(string(a))} }
 
-// markupJoin puts pieces of markup one after another.
+// markupJoin puts pieces of markup one after another, and remembers them.
 func markupJoin(pieces L[TMarkup]) TMarkup {
 	var b strings.Builder
-	for _, piece := range fwd(pieces) {
-		b.WriteString(piece.F0)
+	for i := len(pieces.S) - 1; i >= 0; i-- {
+		b.WriteString(pieces.S[i].F0)
 	}
-	return TMarkup{b.String()}
+	return TMarkup{b.String(), &markupShape{values: pieces, joined: true}}
+}
+
+// markupTemplate is what ~h builds: the template's own text, in the pieces
+// around its values, with each value between two of them. The pieces and
+// the values are kept beside the text they make, for markupParts.
+func markupTemplate(name string, fixed L[string], values L[TMarkup]) TMarkup {
+	size := 0
+	for _, piece := range fixed.S {
+		size += len(piece)
+	}
+	for _, value := range values.S {
+		size += len(value.F0)
+	}
+	var b strings.Builder
+	b.Grow(size)
+	last := len(values.S) - 1
+	for i := len(fixed.S) - 1; i >= 0; i-- {
+		b.WriteString(fixed.S[i])
+		if at := last - (len(fixed.S) - 1 - i); at >= 0 {
+			b.WriteString(values.S[at].F0)
+		}
+	}
+	return TMarkup{b.String(), &markupShape{template: name, fixed: fixed, values: values}}
+}
+
+// markupParts takes markup apart. A template gives its name, its own text
+// and its values; joined markup and markup made from text have nothing
+// fixed, and one value: the list of pieces, or the text.
+func markupParts(m TMarkup) TMarkup_oParts {
+	shape := m.P
+	if shape == nil {
+		return TMarkup_oParts{"", mk([]string{"", ""}), mk([]TMarkup_oValue{TMarkup_oValue_c0{m.F0}})}
+	}
+	if shape.joined {
+		return TMarkup_oParts{"", mk([]string{"", ""}), mk([]TMarkup_oValue{TMarkup_oValue_c2{shape.values}})}
+	}
+	values := make([]TMarkup_oValue, len(shape.values.S))
+	for i, value := range shape.values.S {
+		switch {
+		case value.P == nil:
+			values[i] = TMarkup_oValue_c0{value.F0}
+		case value.P.joined:
+			values[i] = TMarkup_oValue_c2{value.P.values}
+		default:
+			values[i] = TMarkup_oValue_c1{value}
+		}
+	}
+	return TMarkup_oParts{shape.template, shape.fixed, L[TMarkup_oValue]{S: values}}
 }
 
 // ---- Split options ----

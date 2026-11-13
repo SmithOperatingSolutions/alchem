@@ -9878,6 +9878,25 @@ alx> Markup.to_string(Markup.of(42))
 "42"
 ```
 
+### Markup.parts
+
+```
+Markup.parts(Markup) -> Markup.Parts
+```
+
+Takes markup apart, for a library that sends a page's fixed text once and afterwards only what changed. For markup a ~h template made: template names the template (the same for every value of one ~h, and for another only when its text is the same), fixed is the template's own text in the pieces around its values (one more piece than there are values), and values are the values in order: text already escaped, the Markup of a template inside it, or the list of Markup a list gave. Markup made by Markup.raw, Markup.of or Markup.join has nothing fixed: an empty name, two empty pieces and one value, its text or its list.
+
+```elixir
+alx> name = "<ada>"
+alx> parts = Markup.parts(~h"<p>#{name}</p>")
+alx> {parts.fixed, parts.values}
+{["<p>", "</p>"], [Markup.Value.text("&lt;ada&gt;")]}
+alx> parts.template == Markup.parts(~h"<p>#{name}</p>").template
+true
+alx> Markup.parts(Markup.raw("<br>")).values
+[Markup.Value.text("<br>")]
+```
+
 ### Markup.raw
 
 ```
@@ -9889,6 +9908,19 @@ Markup made from text exactly as given, for HTML the program trusts: never for t
 ```elixir
 alx> Markup.to_string(Markup.raw("<br>"))
 "<br>"
+```
+
+### Markup.template
+
+```
+Markup.template(string, list[string], list[Markup]) -> Markup
+```
+
+What ~h builds: markup from a template's name, its fixed text in pieces and the values that go between them. Written by the compiler; a program writes ~h.
+
+```elixir
+alx> Markup.to_string(Markup.template("greeting", ["<p>", "</p>"], [Markup.of("hi")]))
+"<p>hi</p>"
 ```
 
 ### Markup.to_string

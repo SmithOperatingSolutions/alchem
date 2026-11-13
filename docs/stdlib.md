@@ -252,7 +252,7 @@ end
 
 ## HTML templates
 
-`~h"<li>#{name}</li>"` and `~h"""` heredocs build `Markup`: the template's own text is kept, and every interpolated string is escaped, so text from users cannot become markup. A `Markup` value interpolated into another template goes in unchanged, a list of them is joined, and numbers and atoms are written as text. `Markup.to_string` gives the HTML, `Markup.raw` marks trusted text as markup, and `Markup.escape` escapes a string.
+`~h"<li>#{name}</li>"` and `~h"""` heredocs build `Markup`: the template's own text is kept, and every interpolated string is escaped, so text from users cannot become markup. A `Markup` value interpolated into another template goes in unchanged, a list of them is joined, and numbers and atoms are written as text. `Markup.to_string` gives the HTML, `Markup.raw` marks trusted text as markup, and `Markup.escape` escapes a string. `Markup.parts(markup)` takes markup apart for libraries that render pages: `template` names the `~h` that made it, `fixed` is the template's own text in the pieces around its values, and `values` are the values in order, each `Markup.Value.text` (already escaped), `Markup.Value.markup` (a template inside it) or `Markup.Value.list`. A library can send the fixed text of a template once and afterwards only the values that changed. How markup was made is no part of its value: it compares, prints and encodes by its text alone, and markup that has crossed to another node has nothing fixed.
 
 ```elixir
 def item(name: string): Markup do

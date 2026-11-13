@@ -1,6 +1,8 @@
 package syntax
 
 import (
+	"fmt"
+	"hash/fnv"
 	"regexp"
 	"strings"
 
@@ -164,8 +166,12 @@ func (c checker) control(e *ast.Expr, scope map[string]string, want string) (str
 			if e.Op != "" {
 				return fail("~%s takes no modifiers", e.Name)
 			}
-			*e = ast.Expr{Kind: "call", Name: "Markup.raw", Line: e.Line, Column: e.Column, Args: []*ast.Expr{
-				{Kind: "literal", Value: ast.Literal{Kind: "string", Text: text}, Line: e.Line, Column: e.Column}}}
+			// A template without values is all fixed text.
+			line, column := e.Line, e.Column
+			*e = *markupTemplate(&ast.Expr{Args: []*ast.Expr{{Kind: "literal", Op: "text", Value: ast.Literal{Kind: "string", Text: text}}}}, func(node ast.Expr) *ast.Expr {
+				node.Line, node.Column = line, column
+				return &node
+			})
 			return c.expr(e, scope, want)
 		case "D", "T", "N", "U":
 			if message := calendarSigil(e); message != "" {
@@ -638,21 +644,41 @@ func (c checker) thrownTypes(body []ast.Statement) []string {
 	return out
 }
 
-// markupTemplate turns the template of ~h"..." into Markup values joined in
-// order: the template's text as it is written, and each interpolated value
-// through Markup.of, which escapes strings and keeps markup as it is.
+// markupTemplate turns the template of ~h"..." into a call that builds its
+// Markup from the template's text as it is written and each interpolated
+// value through Markup.of, which escapes strings and keeps markup as it is.
+// The text and the values stay apart in the result, for Markup.parts.
 func markupTemplate(template *ast.Expr, at func(ast.Expr) *ast.Expr) *ast.Expr {
-	var pieces []*ast.Expr
+	// fixed are the pieces of the template's own text around its values:
+	// one before each value and one after the last, empty where two values
+	// touch or the template starts or ends with one.
+	fixed := []string{""}
+	var values []*ast.Expr
 	for _, part := range template.Args {
 		if part.Op == "text" {
-			literal := *part
-			literal.Op = ""
-			pieces = append(pieces, at(ast.Expr{Kind: "call", Name: "Markup.raw", Args: []*ast.Expr{&literal}}))
+			fixed[len(fixed)-1] += part.Value.Text
 			continue
 		}
-		pieces = append(pieces, at(ast.Expr{Kind: "call", Name: "Markup.of", Args: []*ast.Expr{part}}))
+		values = append(values, at(ast.Expr{Kind: "call", Name: "Markup.of", Args: []*ast.Expr{part}}))
+		fixed = append(fixed, "")
 	}
-	return at(ast.Expr{Kind: "call", Name: "Markup.join", Args: []*ast.Expr{at(ast.Expr{Kind: "list", Args: pieces})}})
+	text := func(s string) *ast.Expr {
+		return at(ast.Expr{Kind: "literal", Value: ast.Literal{Kind: "string", Text: s}})
+	}
+	// The template's name is made from its own text, so every value of one
+	// ~h has the same name, and another has it only with the same text.
+	name := fnv.New64a()
+	var pieces []*ast.Expr
+	for _, piece := range fixed {
+		name.Write([]byte(piece))
+		name.Write([]byte{0})
+		pieces = append(pieces, text(piece))
+	}
+	return at(ast.Expr{Kind: "call", Name: "Markup.template", Args: []*ast.Expr{
+		text(fmt.Sprintf("%016x", name.Sum64())),
+		at(ast.Expr{Kind: "list", Args: pieces}),
+		at(ast.Expr{Kind: "list", Args: values}),
+	}})
 }
 
 // markupMismatch is the failure of Markup.of for a value a template cannot

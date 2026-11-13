@@ -547,6 +547,8 @@ func init() {
 	lib("Markup.escape", "string -> string", "markupEscape")
 	lib("Markup.to_string", "Markup -> string", "markupString")
 	lib("Markup.join", "list[Markup] -> Markup", "markupJoin")
+	lib("Markup.template", "string, list[string], list[Markup] -> Markup", "markupTemplate")
+	lib("Markup.parts", "Markup -> Markup.Parts", "markupParts")
 	lib("Markup.of", "Markup -> Markup", "markupOf")
 	libAlso("Markup.of", "string -> Markup", "markupOfString")
 	libAlso("Markup.of", "integer -> Markup", "markupOfInteger")

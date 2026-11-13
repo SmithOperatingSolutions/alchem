@@ -351,6 +351,7 @@ func init() {
 		[]string{
 			"A template's own text is HTML as written. Each #{...} value is escaped by its type: a string is escaped, Markup (such as another template) goes in as it is, integers, floats and atoms are written as text, and a list of Markup is joined.",
 			"The result is a Markup value; Markup.to_string gives its text. Markup.raw makes Markup from trusted text, and Markup.escape escapes a string.",
+			"Markup.parts takes a template's Markup apart into its fixed text and its values, for a library that sends the fixed text once and then only the values that change.",
 			"Quote attribute values, href=\"#{url}\": escaping makes a value safe inside quotes. It does not check what a URL points to.",
 			"Any other type in #{...}, such as a boolean or a map, is a compile error; convert it to a string first.",
 		}, []string{"sigils", "strings"},

@@ -40,6 +40,9 @@ type generator struct {
 	// patterns are the regular expressions of ~r sigils, compiled once as
 	// package variables.
 	patterns []string
+	// fixed are the texts of ~h templates, each made once as a package
+	// variable.
+	fixed []string
 	// decls are the program's struct and sum types by name. codecs numbers
 	// those that cross to another node, in the order their functions are
 	// generated.
@@ -174,6 +177,9 @@ func generateProgram(p ast.Program, options BuildOptions, plan *externPlan) stri
 	}
 	for i, source := range g.patterns {
 		out.WriteString(fmt.Sprintf("var pattern%d = regexp.MustCompile(%s)\n", i, strconv.Quote(source)))
+	}
+	for i, pieces := range g.fixed {
+		out.WriteString(fmt.Sprintf("var fixed%d = %s\n", i, pieces))
 	}
 	out.WriteString(g.codecFunctions())
 	usesNodes := strings.Contains(out.String(), "node.Codec[")
@@ -370,6 +376,9 @@ const inspectRuntime = `
 type typeName struct{name string;fields []string;record bool}
 func ioInspect[A any](x A)A{fmt.Println(inspectValue(x));return x}
 func inspectValue(x any)string{return inspectOf(reflect.ValueOf(x))}
+// shownFields counts the fields of a struct that are part of its value:
+// Markup's last field, P, is bookkeeping.
+func shownFields(v reflect.Value)int{n:=v.NumField();if n>0&&v.Type().Field(n-1).Name=="P"{return n-1};return n}
 func inspectAll(values []reflect.Value)string{parts:=make([]string,len(values));for i,v:=range values{parts[i]=inspectOf(v)};return strings.Join(parts,", ")}
 func inspectOf(v reflect.Value)string{
 	if !v.IsValid(){return "nil"}
@@ -383,7 +392,7 @@ func inspectOf(v reflect.Value)string{
 	case reflect.Pointer:name,_,_:=strings.Cut(v.Type().Elem().Name(),"[");return "#"+name+"<>"
 	case reflect.Struct:
 		name,_,_:=strings.Cut(v.Type().Name(),"[")
-		fields:=make([]reflect.Value,v.NumField())
+		fields:=make([]reflect.Value,shownFields(v))
 		for i:=range fields{fields[i]=v.Field(i)}
 		if pairs,ok:=v.Interface().(interface{Pairs()[][2]any});ok{
 			entries:=pairs.Pairs()
@@ -444,7 +453,7 @@ func inspectLess(a,b any)bool{
 	// Tuples order element by element.
 	va,vb:=reflect.ValueOf(a),reflect.ValueOf(b)
 	if va.Kind()==reflect.Struct&&vb.Kind()==reflect.Struct{
-		for i:=0;i<va.NumField()&&i<vb.NumField();i++{
+		for i:=0;i<shownFields(va)&&i<shownFields(vb);i++{
 			x,y:=va.Field(i).Interface(),vb.Field(i).Interface()
 			if inspectLess(x,y){return true}
 			if inspectLess(y,x){return false}
@@ -508,6 +517,12 @@ func typeDeclaration(decl ast.TypeDecl) string {
 			parts = append(parts, fmt.Sprintf("F%d %s", i, goType(field.Type)))
 		}
 		return "struct{" + strings.Join(parts, ";") + "}"
+	}
+	if decl.Name == "Markup" {
+		// Markup also carries, out of the program's sight, how a template
+		// or a join made it; see markupParts. P is no part of its value:
+		// comparing, printing and encoding go by the declared fields.
+		return "type TMarkup struct{F0 string;P *markupShape}\ntype markupShape struct{template string;fixed L[string];values L[TMarkup];joined bool}\n"
 	}
 	if decl.Kind == "struct" {
 		return "type " + name + params + " " + fields(decl.Fields) + "\n"
@@ -842,7 +857,24 @@ func (g *generator) expr(e *ast.Expr, scope map[string]string) string {
 		return "enumMember(" + sequence(e.Right.Type, g.expr(e.Right, scope)) + "," + g.expr(e.Left, scope) + "," + equalityFunc(e.Left.Type) + ")"
 	case "owned":
 		return "actor.MapOwned(" + g.expr(e.Left, scope) + ")"
+	case "fixed":
+		// A template's own text is the same every time it is rendered: it
+		// is made once, as a package variable.
+		pieces := make([]string, len(e.Args))
+		for i, piece := range e.Args {
+			pieces[i] = strconv.Quote(piece.Value.Text)
+		}
+		g.fixed = append(g.fixed, "mk([]string{"+strings.Join(pieces, ",")+"})")
+		return fmt.Sprintf("fixed%d", len(g.fixed)-1)
 	case "call":
+		if e.Name == "Markup.template" && len(e.Args) == 3 && e.Args[1].Kind == "list" {
+			built := *e
+			built.Args = append([]*ast.Expr(nil), e.Args...)
+			pieces := *e.Args[1]
+			pieces.Kind = "fixed"
+			built.Args[1] = &pieces
+			e = &built
+		}
 		if at := g.ownedFold(e); at >= 0 {
 			// The fold's map is its own until the fold is over.
 			fold := *e
@@ -1838,7 +1870,9 @@ func same(a,b reflect.Value)bool{
 	case reflect.Struct:
 		// A list is its elements; the claim counter is bookkeeping.
 		if a.NumField()==2&&a.Type().Field(1).Type==reflect.TypeOf((*lh)(nil)){return same(a.Field(0),b.Field(0))}
-		for i:=0;i<a.NumField();i++{if !same(a.Field(i),b.Field(i)){return false}}
+		// Markup's last field, P, is bookkeeping too.
+		n:=a.NumField();if n>0&&a.Type().Field(n-1).Name=="P"{n--}
+		for i:=0;i<n;i++{if !same(a.Field(i),b.Field(i)){return false}}
 		return true
 	case reflect.Int64:
 		return a.Int()==b.Int()
