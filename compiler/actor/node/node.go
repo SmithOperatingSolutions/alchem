@@ -822,6 +822,9 @@ func (n *Node) dial(address string) (string, string) {
 	return name, ""
 }
 
+// reconnectPoll is how often a kept connection is checked.
+const reconnectPoll = 50 * time.Millisecond
+
 // Reconnect connects to the node at an address, as Connect does, and keeps
 // the connection: when it is lost it is made again, after a second at first
 // and up to 30 seconds apart while it keeps failing, until this node stops.
@@ -832,9 +835,12 @@ func Reconnect(c *actor.Context, address string) (string, string) {
 	}
 	n := current(c)
 	go func() {
-		wait := time.Second
+		// The wait is counted from when the connection was found lost, or
+		// from the last failed attempt, not from a fixed tick: a connection
+		// lost just before a tick would otherwise be made again at once.
+		wait, lost := time.Second, time.Time{}
 		for {
-			time.Sleep(wait)
+			time.Sleep(reconnectPoll)
 			n.mu.Lock()
 			closed, connected := n.closed, n.peers[name] != nil
 			n.mu.Unlock()
@@ -842,10 +848,12 @@ func Reconnect(c *actor.Context, address string) (string, string) {
 			case closed:
 				return
 			case connected:
-				wait = time.Second
-			default:
+				wait, lost = time.Second, time.Time{}
+			case lost.IsZero():
+				lost = time.Now()
+			case time.Since(lost) >= wait:
 				if _, problem := n.dial(address); problem != "" {
-					wait = min(wait*2, 30*time.Second)
+					wait, lost = min(wait*2, 30*time.Second), time.Now()
 				}
 			}
 		}

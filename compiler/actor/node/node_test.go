@@ -6,9 +6,11 @@ import (
 	"io"
 	"iter"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/SmithOperatingSolutions/alchem/compiler/actor"
 )
@@ -417,5 +419,32 @@ func TestEncryptionSettingsMustMatch(t *testing.T) {
 	}
 	if len(List(secure)) != 0 || len(List(plain)) != 0 {
 		t.Fatalf("a refused connection was kept: %v %v", List(secure), List(plain))
+	}
+}
+
+// A kept connection is made again a second after it is lost, however the
+// loss falls against the loop that watches it.
+func TestReconnectWaitsFromTheLoss(t *testing.T) {
+	one, two := root(t), root(t)
+	Start(one, "keeper", "127.0.0.1:0", "secret", true)
+	Start(two, "kept", "127.0.0.1:0", "secret", true)
+	name, problem := Reconnect(one, Address(two))
+	if problem != "" {
+		t.Fatal(problem)
+	}
+	connected := func() bool { return slices.Contains(List(one), name) }
+	for _, pause := range []time.Duration{0, 330 * time.Millisecond, 670 * time.Millisecond} {
+		time.Sleep(pause)
+		Disconnect(one, name)
+		lost := time.Now()
+		for !connected() {
+			if time.Since(lost) > 5*time.Second {
+				t.Fatal("the connection was not made again")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if again := time.Since(lost); again < 900*time.Millisecond {
+			t.Fatalf("made again %v after the loss", again)
+		}
 	}
 }
