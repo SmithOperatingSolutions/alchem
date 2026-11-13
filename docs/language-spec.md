@@ -4,7 +4,7 @@ An Alchem file contains one `defmodule UppercaseName do ... end`. The entry modu
 
 ## Values, bindings and expressions
 
-Primitive types are `integer` (signed 64-bit), `float` (64-bit IEEE 754), `boolean` (`true`/`false`) and `string` (decoded UTF-8 with Go-style quoted escapes). Invalid UTF-8, invalid escapes, embedded NUL and out-of-range integer literals are compilation errors. String equality compares decoded bytes without Unicode normalization.
+Primitive types are `integer` (signed 64-bit), `float` (64-bit IEEE 754), `boolean` (`true`/`false`) and `string` (decoded UTF-8 with Go-style quoted escapes). Invalid UTF-8, invalid escapes and out-of-range integer literals are compilation errors. A byte escape such as `\x00` or `\xff` writes a byte that cannot be typed, so a literal can hold binary data. String equality compares decoded bytes without Unicode normalization.
 
 Bindings use `name = expression`, with optional annotations such as `xs: list[integer] = []`. Destructuring bindings are described below. Names start with a lowercase Unicode letter or underscore and continue with letters, digits or underscores. Keywords and builtin names are reserved. Bindings are immutable: an existing name cannot be redefined or shadowed in a nested branch. Unused bindings are allowed. Names must be defined before use. Each function has its own scope; branch-local bindings do not escape their branch, and separate branches may use the same new name.
 

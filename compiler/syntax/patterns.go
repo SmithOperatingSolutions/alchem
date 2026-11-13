@@ -343,9 +343,6 @@ func (c checker) checkPatternIn(p *ast.Pattern, typ string, scope, outer map[str
 		if p.Value.Kind != typ {
 			return diagnostic(p.Line, p.Column, "pattern type does not match %s", typ)
 		}
-		if p.Value.Kind == "string" && strings.ContainsRune(p.Value.Text, 0) {
-			return diagnostic(p.Line, p.Column, "string literal contains NUL")
-		}
 	case "list":
 		elem, ok := ast.ListElement(typ)
 		if !ok {
@@ -366,9 +363,6 @@ func (c checker) checkPatternIn(p *ast.Pattern, typ string, scope, outer map[str
 		}
 		seen := map[ast.Literal]bool{}
 		for i, k := range p.Keys {
-			if k.Kind == "string" && strings.ContainsRune(k.Text, 0) {
-				return diagnostic(p.Line, p.Column, "string literal contains NUL")
-			}
 			if k.Kind != key {
 				return diagnostic(p.Line, p.Column, "map pattern key type mismatch")
 			}
@@ -376,9 +370,6 @@ func (c checker) checkPatternIn(p *ast.Pattern, typ string, scope, outer map[str
 				return diagnostic(p.Line, p.Column, "duplicate map pattern key")
 			}
 			seen[k] = true
-			if k.Kind == "string" && strings.ContainsRune(k.Text, 0) {
-				return diagnostic(p.Line, p.Column, "string literal contains NUL")
-			}
 			if err := c.checkPatternIn(p.Children[i], value, scope, outer); err != nil {
 				return err
 			}

@@ -37,6 +37,21 @@ defmodule LibraryMoreTest do
     assert(Regex.replace(~r/(\w)(\d)/, "a1", "\\2\\1") == "1a")
   end
 
+  test "a string literal may hold any byte" do
+    bytes = "a\x00b\xff"
+    assert(byte_size(bytes) == 4)
+    assert(Base.encode16(bytes) == "610062FF")
+    assert(some(bytes) == Base.decode64("YQBi/w=="))
+    assert(String.split("k\x00v", "\x00") == ["k", "v"])
+    case "\x00" do
+      "\x00" -> assert(true)
+      _ -> flunk("a NUL did not match itself")
+    end
+    held = %{"\x00" => 1}
+    %{"\x00" => one} = held
+    assert(one == 1 and inspect("\x00") == "\"\\x00\"")
+  end
+
   test "ports in each mode" do
     me: pid[PortEvent] = Process.self(64)
     ok(lines) = Port.open("cat", [], me, [mode: :line, stderr: :merge])

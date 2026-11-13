@@ -520,9 +520,6 @@ func (c checker) expr(e *ast.Expr, scope map[string]string, expected ...string) 
 		e.Type = result
 	case "literal":
 		e.Type = e.Value.Kind
-		if e.Type == "string" && strings.ContainsRune(e.Value.Text, 0) {
-			return fail("string literal contains NUL")
-		}
 	case "template":
 		for _, part := range e.Args {
 			t, err := c.expr(part, scope)
