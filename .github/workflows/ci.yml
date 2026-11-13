@@ -19,8 +19,42 @@ concurrency:
 # Actions are pinned to full commit SHAs so a moved tag cannot change what
 # runs here; the trailing comment records the release each SHA belongs to.
 jobs:
+  # A squash merge puts on main the same tree the pull request's checks ran
+  # on. When that is so, and those checks passed, the jobs below are skipped
+  # for the push to main: they could only repeat the result.
+  verified:
+    name: Already verified
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/scripts
+      - id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          skip=false
+          if [[ "$EVENT" == push ]]; then
+            skip=$(.github/scripts/already-verified.sh "$REPOSITORY" "$COMMIT")
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+          echo "skip the checks: $skip"
+
   native:
     name: Native (${{ matrix.os }}, Go ${{ matrix.go }})
+    needs: verified
+    if: needs.verified.outputs.skip != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -86,6 +120,8 @@ jobs:
 
   cross:
     name: Cross-compile six targets
+    needs: verified
+    if: needs.verified.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -146,6 +182,8 @@ jobs:
   # would otherwise leave the gate waiting.
   native-extended:
     name: Native extended (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: verified
+    if: needs.verified.outputs.skip != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -213,6 +251,8 @@ jobs:
 
   coverage:
     name: Coverage
+    needs: verified
+    if: needs.verified.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -238,12 +278,19 @@ jobs:
   test:
     name: test
     if: always()
-    needs: [native, cross, coverage]
+    needs: [verified, native, cross, coverage]
     runs-on: ubuntu-latest
     steps:
       - name: Require every platform check to pass
         env:
+          VERIFIED_RESULT: ${{ needs.verified.result }}
+          ALREADY_VERIFIED: ${{ needs.verified.outputs.skip }}
           NATIVE_RESULT: ${{ needs.native.result }}
           CROSS_RESULT: ${{ needs.cross.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
-        run: test "$NATIVE_RESULT" = success && test "$CROSS_RESULT" = success && test "$COVERAGE_RESULT" = success
+        run: |
+          if [[ "$VERIFIED_RESULT" == success && "$ALREADY_VERIFIED" == true ]]; then
+            echo "the pull request's checks passed on this exact tree"
+            exit 0
+          fi
+          test "$NATIVE_RESULT" = success && test "$CROSS_RESULT" = success && test "$COVERAGE_RESULT" = success
