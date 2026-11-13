@@ -112,7 +112,50 @@ In this run Alchem was ahead of Elixir on every workload, including per round tr
 
 ## Current hosted-runner results
 
-The Benchmarks workflow at commit `ee4096d`, with every change described on this page merged, on a GitHub-hosted runner (AMD EPYC 7763, 2 logical CPUs, Go 1.23.12, Elixir 1.18.6 on OTP 27, medians of 7 runs). This is the reference comparison; the earlier recordings above are kept as history.
+The Benchmarks workflow at commit `3f075a7` (v0.3.0), on a GitHub-hosted runner (AMD EPYC 9V74, 4 logical CPUs, Go 1.27.4, Elixir 1.20.5 on OTP 29, medians of 7 runs). This is the reference comparison. The runner is a different machine from the recordings below, so compare the three implementations within this section rather than across sections.
+
+Whole programs, timed from outside:
+
+| Workload | Alchem | Go | Elixir | Alchem / Go |
+| --- | --- | --- | --- | --- |
+| `hello` | 1.41 ms | 1.31 ms | 264.0 ms | 1.1 |
+| `spawn` | 346.5 ms | 202.6 ms | 693.4 ms | 1.7 |
+| `echo` | 102.1 ms | 66.5 ms | 447.5 ms | 1.5 |
+| `compute` | 29.9 ms | 20.0 ms | 430.9 ms | 1.5 |
+| `build` | 12.3 ms | 5.5 ms | 332.6 ms | 2.3 |
+| `state` | 43.4 ms | 11.4 ms | 334.5 ms | 3.8 |
+| `restart` | 144.4 ms | 37.4 ms | 2054.9 ms | 3.9 |
+
+Each workload also times its own phases, so the virtual machine's startup no longer has to be subtracted from Elixir's figures:
+
+| Phase | Alchem | Go | Elixir |
+| --- | --- | --- | --- |
+| `spawn`: start 100,000 processes | 220.1 ms | 167.0 ms | 184.6 ms |
+| `spawn`: release and join them | 101.6 ms | 13.4 ms | 212.1 ms |
+| `echo`: 200,000 round trips | 92.0 ms | 59.3 ms | 84.2 ms |
+| `compute`: fib(32) | 17.7 ms | 10.2 ms | 19.0 ms |
+| `compute`: squares of 1..1,000,000 | 9.4 ms | 7.2 ms | 79.2 ms |
+| `build`: grow | 0.71 ms | 0.85 ms | 1.59 ms |
+| `build`: walk | 9.09 ms | 2.94 ms | 1.22 ms |
+| `state`: build | 27.3 ms | 3.1 ms | 17.0 ms |
+| `state`: sum | 3.3 ms | 6.1 ms | 25.6 ms |
+| `state`: update | 10.9 ms | 0.5 ms | 6.2 ms |
+| `restart`: 20,000 cycles | 141.8 ms | 35.5 ms | 1705.6 ms |
+
+Latency distributions (fastest, median, 99th percentile): a round trip takes 350, 391 and 1302 ns in Alchem, 230, 250 and 611 ns in Go, and 340, 370 and 872 ns in Elixir; a crash-and-restart cycle 4, 5 and 22 µs, 1, 1 and 8 µs, and 3, 77 and 307 µs.
+
+Peak memory: 100,000 processes take 325.5 MiB in Alchem, 278.3 MiB in Go and 362.2 MiB in Elixir; `state` takes 12.8, 7.6 and 91.1 MiB; an idle program 4.1, 4.4 and 71.5 MiB.
+
+Reading these:
+
+- Alchem is within 1.5 to 1.7 times Go on processes, messaging and computation, and starts as fast.
+- Against Elixir, Alchem is faster as a whole program on every workload, and ahead or close phase by phase except where noted here. Round trips are about 9% slower than Elixir's (92 against 84 ms), and starting processes about 19% slower (220 against 185 ms), though Alchem releases and joins them in half the time.
+- Walking a list and building and updating a map are where Elixir is still clearly ahead inside the program: `build`'s walk (9.1 against 1.2 ms), `state`'s build (27 against 17 ms) and update (11 against 6 ms). Summing the map in key order is faster in Alchem.
+- `restart` is a full supervisor against Go's hand-written recover-and-respawn loop; Elixir's median restart is 15 times Alchem's.
+
+## Hosted runner at `ee4096d`
+
+The Benchmarks workflow at commit `ee4096d`, on a GitHub-hosted runner (AMD EPYC 7763, 2 logical CPUs, Go 1.23.12, Elixir 1.18.6 on OTP 27, medians of 7 runs), before the workloads timed their own phases.
 
 Elixir starts a virtual machine in about 383 ms, which dominates its short runs, so its column is shown both whole and with that startup subtracted. Alchem and Go start in about 1.5 ms and are shown whole.
 
@@ -139,7 +182,7 @@ Reading these:
 
 ## Restart latency
 
-How the restart path was improved, measured on the development container (4 logical CPUs, Intel Xeon 2.10GHz, Go 1.24.7, medians of 9 runs). The hosted-runner table above has the current three-way figures.
+How the restart path was improved, measured on the development container (4 logical CPUs, Intel Xeon 2.10GHz, Go 1.24.7, medians of 9 runs). The current hosted-runner results above have the three-way figures.
 
 | Stage | Alchem per cycle | Go per cycle |
 | --- | --- | --- |

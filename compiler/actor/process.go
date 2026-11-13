@@ -154,6 +154,11 @@ type coldState struct {
 	// distant are told the exit reason on behalf of processes of other
 	// nodes that monitor this one.
 	distant []func(reason string)
+	// lease says whether a call Go makes into an Alchem function of this
+	// process may run in its context now; see Lend. goroutine is the
+	// process's goroutine, recorded by the first Lend.
+	lease     atomic.Int32
+	goroutine atomic.Uint64
 }
 
 // cold returns the process's cold state, creating it when it has none. Its

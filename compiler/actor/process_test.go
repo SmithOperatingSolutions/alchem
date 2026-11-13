@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func root(t *testing.T) *Context {
+func root(t testing.TB) *Context {
 	t.Helper()
 	c := NewRoot()
 	t.Cleanup(func() {

@@ -11,7 +11,7 @@ import (
 
 // Runtime source is bundled so generated projects never fetch an Alchem module.
 //
-//go:embed actor/process.go actor/supervisor.go actor/server.go actor/hamt.go actor/task.go actor/rescue.go actor/concat.go actor/remote.go actor/services.go actor/node/node.go
+//go:embed actor/process.go actor/supervisor.go actor/server.go actor/hamt.go actor/task.go actor/rescue.go actor/foreign.go actor/concat.go actor/remote.go actor/services.go actor/node/node.go
 var runtimeSources embed.FS
 
 // librarySource is the standard library runtime: Go that joins the generated
