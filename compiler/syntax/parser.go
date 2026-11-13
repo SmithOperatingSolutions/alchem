@@ -149,7 +149,8 @@ func parse(source string, check bool, raw ...bool) (ast.Program, error) {
 	for {
 		keyword := p.peek()
 		// The comments above a declaration document the first thing it adds.
-		if doc := p.commentsBefore(keyword); len(doc) > 0 {
+		doc := p.commentsBefore(keyword)
+		if len(doc) > 0 {
 			docs = append(docs, pending{len(result.Types), len(result.Functions), doc})
 		}
 		// An import may stand anywhere among the module's declarations.
@@ -227,6 +228,10 @@ func parse(source string, check bool, raw ...bool) (ast.Program, error) {
 				constant, err := p.constant(result.Constants)
 				if err != nil {
 					return ast.Program{}, err
+				}
+				if len(doc) > 0 {
+					// The comments above a constant stay with it.
+					constant.Comments, docs = doc, docs[:len(docs)-1]
 				}
 				result.Constants = append(result.Constants, constant)
 				continue

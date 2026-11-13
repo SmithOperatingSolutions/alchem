@@ -8403,7 +8403,7 @@ ok(49)
 Node.cast(string, atom, a) -> boolean
 ```
 
-Runs a function a node serves without waiting for it.
+Runs a function a node serves without waiting for it, whatever the function returns. On this node it reports whether the name is served; a cast to another node is true once it is on its way, and is dropped if that node serves nothing under the name.
 
 ```elixir
 alx> Node.serve(:noted_doc, fn(n: integer): integer do n end)

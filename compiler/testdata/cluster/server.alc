@@ -13,6 +13,12 @@ defmodule ClusterServer do
     target: pid[string] = Process.spawn(fn(self: pid[string]): integer do victim(self) end, 4)
     Process.register(target, :victim)
     Node.serve(:crash, fn(_: integer): boolean do Process.send(target, "crash", 1000) end)
+    heard: agent[list[string]] = Agent.start(fn -> [] end)
+    Node.serve(:note, fn(text: string): boolean do
+      Agent.update(heard, fn all -> all ++ [text] end)
+      true
+    end)
+    Node.serve(:noted, fn(_: integer): list[string] do Agent.get(heard, fn all -> all end) end)
     worker: pid[string] = Process.spawn(fn(self: pid[string]): integer do
       Process.receive(self, 30000)
       0

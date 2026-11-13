@@ -157,7 +157,7 @@ func init() {
 	doc("Node.call", "Runs a function a node serves and returns its result: ok(value), or error(reason) when it failed, nothing is served under the name, or no answer came within 5 seconds or the given milliseconds. The result's type comes from the annotation.",
 		"alx> Node.serve(:square_doc, fn(n: integer): integer do n * n end)", "true",
 		"alx> squared: result[integer, string] = Node.call(Node.self(), :square_doc, 7)", "alx> squared", "ok(49)")
-	doc("Node.cast", "Runs a function a node serves without waiting for it.",
+	doc("Node.cast", "Runs a function a node serves without waiting for it, whatever the function returns. On this node it reports whether the name is served; a cast to another node is true once it is on its way, and is dropped if that node serves nothing under the name.",
 		"alx> Node.serve(:noted_doc, fn(n: integer): integer do n end)", "true", "alx> Node.cast(Node.self(), :noted_doc, 1)", "true")
 	doc("Node.register_global", "Registers a process under a name that no connected node has for the same message type, so that any of them finds it with whereis_global; false when one has.",
 		"alx> me: pid[string] = Process.self(4)", "alx> Node.register_global(me, :global_doc)", "true", "alx> Node.register_global(me, :global_doc)", "false")

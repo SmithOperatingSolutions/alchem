@@ -36,10 +36,15 @@ type mapNode[K comparable, V any] struct {
 	datamap, nodemap uint32
 	entries          []mapEntry[K, V]
 	children         []*mapNode[K, V]
-	// edit names the builder that created the node and may still change it
-	// in place; nodes of a finished map have an edit no builder holds.
-	edit *byte
+	// edit names the builder or the fold that created the node and may
+	// still change it in place; nodes of a finished map have an edit that
+	// nothing holds any more.
+	edit *mapEdit
 }
+
+// mapEdit is the right to change nodes in place. owned is set while the
+// root of a map carrying it belongs to a fold; see MapOwned.
+type mapEdit struct{ owned bool }
 
 func (n *mapNode[K, V]) bucket() bool { return n.datamap|n.nodemap == 0 }
 
@@ -150,6 +155,15 @@ func MapGet[K comparable, V any](m Map[K, V], key K) (V, bool) {
 // MapPut returns a map that also holds key with value, replacing any value
 // already stored for key. m is unchanged.
 func MapPut[K comparable, V any](m Map[K, V], key K, value V) Map[K, V] {
+	if r := m.root; r != nil && r.edit != nil && r.edit.owned {
+		// The map belongs to a fold that hands on only its newest version,
+		// so the nodes the fold made are changed where they are.
+		root, added := putOwned(r.edit, r, 0, hashOf(key), key, value)
+		if added {
+			return Map[K, V]{root, m.size + 1}
+		}
+		return Map[K, V]{root, m.size}
+	}
 	root, added := putNode(m.root, 0, hashOf(key), key, value)
 	if added {
 		return Map[K, V]{root, m.size + 1}
@@ -327,6 +341,31 @@ func (m Map[K, V]) Pairs() [][2]any {
 	return out
 }
 
+// MapOwned returns m as the starting value of a fold: a reduce whose
+// function only reads its accumulator and returns it changed by one put, so
+// that no version but the newest can be seen. Puts to the map, and to what
+// they return, then change the fold's own nodes in place instead of copying
+// a path each time. m itself is not touched. MapShared ends the fold.
+func MapOwned[K comparable, V any](m Map[K, V]) Map[K, V] {
+	edit := &mapEdit{owned: true}
+	if m.root == nil {
+		return Map[K, V]{&mapNode[K, V]{edit: edit}, 0}
+	}
+	return Map[K, V]{ownNode(edit, m.root), m.size}
+}
+
+// MapShared returns the result of a fold as an ordinary map: its nodes are
+// never changed again.
+func MapShared[K comparable, V any](m Map[K, V]) Map[K, V] {
+	if m.root != nil && m.root.edit != nil {
+		m.root.edit.owned = false
+	}
+	if m.size == 0 {
+		return Map[K, V]{}
+	}
+	return m
+}
+
 // MapBuilder builds a map from many insertions without copying a path of
 // nodes for each one: nodes the builder created itself are changed in place.
 // Nodes of the map it started from, and of every map it has handed out, are
@@ -334,12 +373,12 @@ func (m Map[K, V]) Pairs() [][2]any {
 type MapBuilder[K comparable, V any] struct {
 	root *mapNode[K, V]
 	size int
-	edit *byte
+	edit *mapEdit
 }
 
 // NewMapBuilder starts from m, which may be the zero Map.
 func NewMapBuilder[K comparable, V any](m Map[K, V]) *MapBuilder[K, V] {
-	return &MapBuilder[K, V]{root: m.root, size: m.size, edit: new(byte)}
+	return &MapBuilder[K, V]{root: m.root, size: m.size, edit: new(mapEdit)}
 }
 
 // Get returns the value currently stored for key.
@@ -349,7 +388,7 @@ func (b *MapBuilder[K, V]) Get(key K) (V, bool) {
 
 // Put stores value for key, replacing any value already there.
 func (b *MapBuilder[K, V]) Put(key K, value V) {
-	root, added := b.put(b.root, 0, hashOf(key), key, value)
+	root, added := putOwned(b.edit, b.root, 0, hashOf(key), key, value)
 	b.root = root
 	if added {
 		b.size++
@@ -359,32 +398,32 @@ func (b *MapBuilder[K, V]) Put(key K, value V) {
 // Map returns what has been built. The builder may go on being used: nodes
 // of the returned map are from then on copied before they change.
 func (b *MapBuilder[K, V]) Map() Map[K, V] {
-	b.edit = new(byte)
+	b.edit = new(mapEdit)
 	return Map[K, V]{b.root, b.size}
 }
 
-// own returns node itself when this builder created it, and otherwise a
-// copy the builder may change.
-func (b *MapBuilder[K, V]) own(node *mapNode[K, V]) *mapNode[K, V] {
-	if node.edit == b.edit {
+// ownNode returns node itself when edit created it, and otherwise a copy
+// that edit may change.
+func ownNode[K comparable, V any](edit *mapEdit, node *mapNode[K, V]) *mapNode[K, V] {
+	if node.edit == edit {
 		return node
 	}
 	return &mapNode[K, V]{
 		datamap: node.datamap, nodemap: node.nodemap,
 		entries:  append(make([]mapEntry[K, V], 0, len(node.entries)+1), node.entries...),
 		children: append([]*mapNode[K, V](nil), node.children...),
-		edit:     b.edit,
+		edit:     edit,
 	}
 }
 
-func (b *MapBuilder[K, V]) put(node *mapNode[K, V], shift uint, hash uint64, key K, value V) (*mapNode[K, V], bool) {
+func putOwned[K comparable, V any](edit *mapEdit, node *mapNode[K, V], shift uint, hash uint64, key K, value V) (*mapNode[K, V], bool) {
 	entry := mapEntry[K, V]{key, value}
 	if shift >= hashBits {
 		// Hash digits are exhausted: keep colliding entries in a bucket.
 		if node == nil {
-			return &mapNode[K, V]{entries: []mapEntry[K, V]{entry}, edit: b.edit}, true
+			return &mapNode[K, V]{entries: []mapEntry[K, V]{entry}, edit: edit}, true
 		}
-		node = b.own(node)
+		node = ownNode(edit, node)
 		for i := range node.entries {
 			if node.entries[i].key == key {
 				node.entries[i] = entry
@@ -396,9 +435,9 @@ func (b *MapBuilder[K, V]) put(node *mapNode[K, V], shift uint, hash uint64, key
 	}
 	bit := uint32(1) << (hash >> shift & mapMask)
 	if node == nil {
-		return &mapNode[K, V]{datamap: bit, entries: []mapEntry[K, V]{entry}, edit: b.edit}, true
+		return &mapNode[K, V]{datamap: bit, entries: []mapEntry[K, V]{entry}, edit: edit}, true
 	}
-	node = b.own(node)
+	node = ownNode(edit, node)
 	switch {
 	case node.datamap&bit != 0:
 		index := entryIndex(node.datamap, bit)
@@ -416,7 +455,7 @@ func (b *MapBuilder[K, V]) put(node *mapNode[K, V], shift uint, hash uint64, key
 		return node, true
 	case node.nodemap&bit != 0:
 		index := entryIndex(node.nodemap, bit)
-		child, added := b.put(node.children[index], shift+mapBits, hash, key, value)
+		child, added := putOwned(edit, node.children[index], shift+mapBits, hash, key, value)
 		node.children[index] = child
 		return node, added
 	}

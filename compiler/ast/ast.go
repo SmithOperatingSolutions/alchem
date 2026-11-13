@@ -42,6 +42,8 @@ type Constant struct {
 	Name         string
 	Value        *Expr
 	Line, Column int
+	// Comments are the comment lines written directly above it.
+	Comments []string
 }
 
 // Literal holds a validated value; integers use signed 64-bit semantics.

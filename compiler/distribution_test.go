@@ -59,6 +59,7 @@ func TestTwoProgramsExchangeMessages(t *testing.T) {
 // Two nodes from testdata/cluster: the client calls functions the server
 // serves, finds a process by a global name and cannot take the name again,
 // links a process to one on the server and sees it end when that one fails,
+// casts to a served function that returns a value,
 // and gets its connection back after dropping it.
 func TestClusterCallsLinksAndReconnects(t *testing.T) {
 	if testing.Short() {
@@ -101,7 +102,7 @@ func TestClusterCallsLinksAndReconnects(t *testing.T) {
 		t.Fatalf("the server did not start: %q %q %v", registered, address, err)
 	}
 	got, err := exec.CommandContext(ctx, client, strings.TrimSpace(address)).CombinedOutput()
-	want := "ok(49)\nerror(\"division by zero\")\n\"worker found\"\nfalse\nok(true)\n{true, \"linked: victim crashed\"}\nfalse\ntrue\nok(9)\n"
+	want := "ok(49)\nerror(\"division by zero\")\n\"worker found\"\nfalse\nok(true)\n{true, \"linked: victim crashed\"}\ntrue\ntrue\nok([\"one\"])\nfalse\ntrue\nok(9)\n"
 	if err != nil || strings.ReplaceAll(string(got), "\r\n", "\n") != want {
 		t.Fatalf("err=%v\ngot:\n%s\nwant:\n%s", err, got, want)
 	}

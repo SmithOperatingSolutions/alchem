@@ -286,3 +286,27 @@ end
 		t.Fatalf("formatted:\n%s\nwant it unchanged:\n%s", got, source)
 	}
 }
+
+// A comment above a module attribute stays above it, and a module that
+// starts with attributes gets no blank first line.
+func TestFormatKeepsCommentsAboveConstants(t *testing.T) {
+	source := `defmodule Limits do
+  # How many times to try.
+  @tries 3
+  # How long to wait,
+  # in milliseconds.
+  @wait_ms 500
+  @plain 1
+
+  # The total wait.
+  def total(): integer do
+    @tries * @wait_ms
+  end
+  # Nothing follows this.
+end
+`
+	formatted, err := Format(source)
+	if err != nil || formatted != source {
+		t.Fatalf("err=%v\n%s", err, formatted)
+	}
+}

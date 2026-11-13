@@ -14,13 +14,20 @@ import (
 type generator struct {
 	next      int
 	functions map[string]string
-	source    string
+	// defs are the program's functions by name, for looking into the one a
+	// reduce is given.
+	defs   map[string]*ast.Function
+	source string
 	// statementChecks is set only for the entry body. Functions and closures
 	// check for cancellation once on entry, in actor.Enter.
 	statementChecks bool
 	// leaf is set while generating a function or closure that calls no other
 	// function; see leafBody.
 	leaf bool
+	// tail describes the function being generated when a call to itself in
+	// return position may become a jump back to its start; see tailCall. It
+	// is nil inside anything generated as a Go function of its own.
+	tail *tailTarget
 	// testing is set for a test file: assertions then report the values they
 	// compared. entry is that file, and points collects the statements
 	// counted for coverage, which leaves the test file itself out.
@@ -63,8 +70,10 @@ func generateProgram(p ast.Program, options BuildOptions, plan *externPlan) stri
 	if g.source == "" {
 		g.source = "<source>"
 	}
+	g.defs = map[string]*ast.Function{}
 	for i, f := range p.Functions {
 		g.functions[f.Name] = fmt.Sprintf("f%d", i)
+		g.defs[f.Name] = &p.Functions[i]
 	}
 	g.functions["main"] = "main"
 	var out strings.Builder
@@ -101,10 +110,12 @@ func generateProgram(p ast.Program, options BuildOptions, plan *externPlan) stri
 		out.WriteString("\n//line alchem_generated.go:1\n")
 		scope := map[string]string{}
 		params := []string{"ctx *actor.Context"}
+		var locals, slots []string
 		for _, param := range f.Params {
 			id := g.id()
 			scope[param.Name] = id
 			params = append(params, id+" "+goType(param.Type))
+			locals = append(locals, id)
 		}
 		g.statementChecks = f.Name == "main"
 		g.leaf = f.Name != "main" && leafBody(f.Body)
@@ -112,6 +123,28 @@ func generateProgram(p ast.Program, options BuildOptions, plan *externPlan) stri
 		if f.Name == "main" {
 			out.WriteString("func main(){os.Exit(actor.Run(func(ctx *actor.Context){\n" + g.block(f.Body, scope) + "}," + g.runtime(p, options) + "))}\n")
 			continue
+		}
+		// A function that may call itself in return position is generated
+		// once with that in mind; only if it does is the loop written.
+		var target *tailTarget
+		if f.Test == "" && !f.Setup && len(f.Params) > 0 && len(syntax.Generic(&f)) == 0 {
+			for range f.Params {
+				slots = append(slots, g.id())
+			}
+			target = &tailTarget{name: f.Name, slots: slots, label: "tail" + g.id()}
+		}
+		g.tail = target
+		body := g.block(f.Body, scope)
+		g.tail = nil
+		looped := target != nil && target.used
+		if looped {
+			// The parameters live in slots a tail call assigns; each turn of
+			// the loop copies them to variables of its own, so a closure
+			// made in one turn keeps that turn's values.
+			params = []string{"ctx *actor.Context"}
+			for i, param := range f.Params {
+				params = append(params, slots[i]+" "+goType(param.Type))
+			}
 		}
 		out.WriteString("func " + g.functions[f.Name] + typeParameters(syntax.Generic(&f)) + "(" + strings.Join(params, ",") + ")")
 		if f.Type != "void" {
@@ -121,7 +154,19 @@ func generateProgram(p ast.Program, options BuildOptions, plan *externPlan) stri
 		if !g.leaf {
 			out.WriteString(g.enter(f.Line, f.Column))
 		}
-		out.WriteString(g.block(f.Body, scope))
+		if looped {
+			out.WriteString(target.label + ":\nfor {\n" + strings.Join(locals, ",") + " := " + strings.Join(slots, ",") + "\n")
+			for _, local := range locals {
+				out.WriteString("_ = " + local + "\n")
+			}
+			out.WriteString(body)
+			if f.Type == "void" {
+				out.WriteString("return\n")
+			}
+			out.WriteString("}\n")
+		} else {
+			out.WriteString(body)
+		}
 		out.WriteString("}\n")
 	}
 	if g.testing {
@@ -567,7 +612,17 @@ func (g *generator) block(body []ast.Statement, scope map[string]string) string 
 			g.points = append(g.points, fmt.Sprintf("{%s,%d}", strconv.Quote(g.source), s.Line))
 		}
 		out.WriteString(mark)
+		// Expressions that are Go functions of their own cannot jump to the
+		// start of this one.
+		tail := g.tail
+		g.tail = nil
+		if jump, ok := g.tailCall(tail, s, scope); ok {
+			g.tail = tail
+			out.WriteString(jump)
+			continue
+		}
 		expr := g.expr(s.Expr, scope)
+		g.tail = tail
 		switch s.Kind {
 		case "bind":
 			subject := g.id()
@@ -785,7 +840,16 @@ func (g *generator) expr(e *ast.Expr, scope map[string]string) string {
 		return "rangeSeq(" + bounds + ")"
 	case "in":
 		return "enumMember(" + sequence(e.Right.Type, g.expr(e.Right, scope)) + "," + g.expr(e.Left, scope) + "," + equalityFunc(e.Left.Type) + ")"
+	case "owned":
+		return "actor.MapOwned(" + g.expr(e.Left, scope) + ")"
 	case "call":
+		if at := g.ownedFold(e); at >= 0 {
+			// The fold's map is its own until the fold is over.
+			fold := *e
+			fold.Args = append([]*ast.Expr(nil), e.Args...)
+			fold.Args[at] = &ast.Expr{Kind: "owned", Type: e.Args[at].Type, Left: e.Args[at], Line: e.Line, Column: e.Column}
+			return "actor.MapShared(" + g.expr(&fold, scope) + ")"
+		}
 		if entry, ok := syntax.Libraries[e.Op]; ok {
 			return g.libraryCall(e, entry, scope)
 		}
@@ -1345,6 +1409,34 @@ func (g *generator) simpleBuiltin(b syntax.SimpleBuiltin, args []string, e *ast.
 		args = append(append([]string{"ctx"}, args...), g.location(e.Line, e.Column))
 	}
 	return b.Go + "(" + strings.Join(args, ",") + ")"
+}
+
+// tailTarget is a function whose calls to itself in return position become
+// jumps: slots are the Go variables holding its parameters between turns.
+type tailTarget struct {
+	name, label string
+	slots       []string
+	used        bool
+}
+
+// tailCall generates "return f(...)" inside f as an assignment to f's
+// parameters and a jump to its start, so recursion in return position runs
+// as a loop: it uses no stack and is not held to the call-depth limit. Each
+// turn checks for cancellation, as each call would have.
+func (g *generator) tailCall(target *tailTarget, s ast.Statement, scope map[string]string) (string, bool) {
+	e := s.Expr
+	if target == nil || s.Kind != "return" || e == nil || e.Kind != "call" || e.Name != target.name || len(e.Args) != len(target.slots) || len(e.TypeArgs) > 0 {
+		return "", false
+	}
+	if _, shadowed := scope[e.Name]; shadowed || g.functions[e.Name] == "" {
+		return "", false
+	}
+	args := make([]string, len(e.Args))
+	for i, arg := range e.Args {
+		args[i] = g.expr(arg, scope)
+	}
+	target.used = true
+	return strings.Join(target.slots, ",") + " = " + strings.Join(args, ",") + "\nactor.Check(ctx)\ncontinue " + target.label + "\n", true
 }
 
 // leafBody reports whether a function or closure body calls no other function:

@@ -90,7 +90,9 @@ On the hosted runner at v0.3.0, building `state`'s 50,000-entry map takes 27 ms 
 
 - [x] Profile `MapPut` on the `state` workload before changing anything: garbage collection of copied slots dominated.
 - [x] Store entries and children in separate arrays (a CHAMP trie), so a path copy moves subtree pointers and shares unchanged entries: inserts 34% faster with 61% less allocated, the `state` program 45% faster. Recorded in `benchmarks.md`.
-- [ ] Not taken yet: a flat array form for maps of up to about eight entries, and a single allocation per node.
+- [x] A `reduce` that builds a map updates it in place when its function cannot let an older version be seen: on the development machine `state`'s build went from 19.2 to 4.8 ms and its update from 7.6 to 1.45 ms (Elixir: 11.9 and 3.9 ms).
+- [x] A function's call to itself in return position runs as a loop: `build`'s walk went from 3.46 to 0.09 ms (Elixir: 0.77 ms).
+- [ ] Not taken yet: a flat array form for maps of up to about eight entries, and a single allocation per node. Puts outside a fold still copy a path each, and most of their cost is the garbage collector running often on a small heap.
 - Done when: `BenchmarkMapPutGrowing` and the `state` workload improve, `hamt_test.go` still passes including the forced-collision runs, and the result is recorded in `benchmarks.md`.
 
 ### 3. Benchmarks that measure themselves
