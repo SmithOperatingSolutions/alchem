@@ -7861,7 +7861,7 @@ Runs an external program and exchanges text with it: its output arrives as messa
 Port.close(port) -> boolean
 ```
 
-Closes the program's standard input, so a program that reads to the end can finish; false when it was already closed. Stopping the owning process ends the program.
+Closes the program's standard input, so a program that reads to the end can finish; false when it was already closed. The program is ended when its owner, the process its output goes to, ends, and when the Alchem program does; Port.kill ends it on request.
 
 ```elixir
 alx> me: pid[PortEvent] = Process.self(8)
@@ -7907,6 +7907,24 @@ alx> info.name
 "cat"
 alx> Port.close(port)
 true
+```
+
+### Port.kill
+
+```
+Port.kill(port) -> boolean
+```
+
+Ends the program and waits briefly until it has gone; false when it had already ended. The program is asked to stop first, with an interrupt where the system has one, so that a program which runs others can stop them, and is killed if it has not gone half a second later. The owner still receives PortEvent.exit.
+
+```elixir
+alx> me: pid[PortEvent] = Process.self(8)
+alx> case Port.open("cat", Enum.take([""], 0), me) do
+...>   ok(waiting) -> {Port.kill(waiting), Port.kill(waiting)}
+...>   error(_) -> {false, false}
+...> end
+{true, false}
+alx> assert_receive(me, PortEvent.exit(_), 5000)
 ```
 
 ### Port.monitor

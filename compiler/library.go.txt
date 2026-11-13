@@ -7952,6 +7952,23 @@ type portHandle struct {
 	written, read atomic.Int64
 	exited        bool
 	watchers      []*actor.PID[TPortEvent]
+	// done is closed once the program has ended and been waited for.
+	done chan struct{}
+}
+
+// end ends the program: it is asked to stop first, with an interrupt, so
+// that a program which runs others can stop them, and killed if it has not
+// gone shortly after. Where a program cannot be interrupted it is killed at
+// once.
+func (port *portHandle) end() {
+	if port.command.Process.Signal(os.Interrupt) == nil {
+		select {
+		case <-port.done:
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	port.command.Process.Kill()
 }
 
 func portOpen(ctx *actor.Context, program string, arguments iter.Seq[string], owner *actor.PID[TPortEvent], where string) Tresult[*portHandle, string] {
@@ -8008,16 +8025,22 @@ func portStart(ctx *actor.Context, program string, arguments iter.Seq[string], o
 	if err := command.Start(); err != nil {
 		return errOf[*portHandle](err.Error())
 	}
-	port := &portHandle{command: command, input: input, name: program, header: header}
+	port := &portHandle{command: command, input: input, name: program, header: header, done: make(chan struct{})}
+	// The program ends with its owner: the process its output goes to.
+	var ownerEnded <-chan struct{}
+	if actor.ContextOf(owner) != nil {
+		ownerEnded = actor.Ended(owner)
+	}
 	actor.Spawn(ctx, func(reader *actor.Context, _ *actor.PID[struct{}]) int64 {
-		// A stop request ends the program, which ends the reading.
-		finished := make(chan struct{})
-		defer close(finished)
+		// A stop request, or the end of the owner, ends the program, which
+		// ends the reading.
 		go func() {
 			select {
 			case <-actor.Stopping(reader):
-				command.Process.Kill()
-			case <-finished:
+				port.end()
+			case <-ownerEnded:
+				port.end()
+			case <-port.done:
 			}
 		}()
 		send := func(text string) {
@@ -8076,6 +8099,7 @@ func portStart(ctx *actor.Context, program string, arguments iter.Seq[string], o
 		port.exited = true
 		watchers := port.watchers
 		port.lock.Unlock()
+		close(port.done)
 		actor.Send(reader, owner, TPortEvent(TPortEvent_c1{status}), -1, where)
 		for _, watcher := range watchers {
 			actor.Deliver(watcher, TPortEvent(TPortEvent_c1{status}), time.Second)
@@ -8139,6 +8163,23 @@ func portClose(port *portHandle) bool {
 	}
 	port.closed = true
 	port.input.Close()
+	return true
+}
+
+// portKill ends the program and waits, briefly, until it has gone; false
+// when it had already ended.
+func portKill(port *portHandle) bool {
+	port.lock.Lock()
+	exited := port.exited
+	port.lock.Unlock()
+	if exited {
+		return false
+	}
+	port.end()
+	select {
+	case <-port.done:
+	case <-time.After(2 * time.Second):
+	}
 	return true
 }
 

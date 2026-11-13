@@ -1,6 +1,26 @@
 defmodule LibraryMoreTest do
   @moduletag area: "library edges"
 
+  test "a port's program ends with its owner, or when it is killed" do
+    me: pid[PortEvent] = Process.self(64)
+    owner: pid[PortEvent] = Process.spawn(fn(self: pid[PortEvent]): integer do
+      Process.receive(self, 60000)
+      0
+    end, 16)
+    ok(owned) = Port.open("sleep", ["30"], owner)
+    assert(Port.monitor(owned, me))
+    assert(Port.info(owned) != none)
+    assert(Process.stop(owner))
+    assert_receive(me, PortEvent.exit(_), 5000)
+    assert(Port.info(owned) == none)
+    assert(not Port.kill(owned))
+    ok(waiting) = Port.open("sleep", ["30"], me)
+    assert(Port.kill(waiting))
+    assert(Port.info(waiting) == none)
+    assert_receive(me, PortEvent.exit(_), 5000)
+    assert(not Port.kill(waiting))
+  end
+
   test "ports in each mode" do
     me: pid[PortEvent] = Process.self(64)
     ok(lines) = Port.open("cat", [], me, [mode: :line, stderr: :merge])

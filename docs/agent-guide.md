@@ -231,7 +231,7 @@ ok({~U[2026-01-05T11:04:05Z], 7200})
 - `System` (17): Arguments, environment, external commands and exit.
 - `OptionParser` (4): Reads command-line switches into a map.
 - `Logger` (10): Leveled messages on standard error.
-- `Port` (6): Runs an external program and exchanges text with it: its output arrives as messages, a line at a time.
+- `Port` (7): Runs an external program and exchanges text with it: its output arrives as messages, a line at a time.
 
 ```elixir
 alx> File.write!("doc_read.txt", "hello")

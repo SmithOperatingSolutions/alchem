@@ -578,6 +578,7 @@ func init() {
 	lib("Port.open", "string, enum[string], pid[PortEvent] -> result[port,string]", "portOpen ctx where")
 	lib("Port.command", "port, string -> boolean", "portCommand")
 	lib("Port.close", "port -> boolean", "portClose")
+	lib("Port.kill", "port -> boolean", "portKill")
 	lib("Port.os_pid", "port -> integer", "portPid")
 	lib("Port.open", "string, enum[string], pid[PortEvent], list[tuple[atom,atom]] -> result[port,string]", "portOpenWith ctx where")
 	libAlso("Port.open", "string, enum[string], pid[PortEvent], list[tuple[atom,integer]] -> result[port,string]", "portOpenPacket ctx where")
