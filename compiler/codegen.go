@@ -77,6 +77,9 @@ func generateProgram(p ast.Program, options BuildOptions, plan *externPlan) stri
 	out.WriteString("var _ = fmt.Println\nvar _ = math.Floor\nvar _ iter.Seq[int64]\n")
 	out.WriteString(arithmeticRuntime)
 	out.WriteString(externRuntime)
+	for _, adapter := range plan.adapters {
+		out.WriteString(adapter)
+	}
 	for _, decl := range append(syntax.BuiltinTypes(), p.Types...) {
 		if decl.Kind == "extern" {
 			out.WriteString("type " + mangle(decl.Name) + " = " + plan.types[decl.Name] + "\n")
