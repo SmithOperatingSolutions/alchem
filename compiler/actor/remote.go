@@ -147,13 +147,15 @@ func NextReference(c *Context) int64 {
 	return c.rt.next
 }
 
-// Notify queues an event for a process, unless it has ended.
-func Notify(c *Context, e Event) {
+// Notify queues an event for a process, unless it has ended, and reports
+// whether it had not.
+func Notify(c *Context, e Event) bool {
 	c.rt.mu.Lock()
 	defer c.rt.mu.Unlock()
 	if !c.ended {
 		c.enqueue(e)
 	}
+	return !c.ended
 }
 
 // WatchExit arranges for tell to be called with a process's exit reason. If

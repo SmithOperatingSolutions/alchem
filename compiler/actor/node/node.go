@@ -32,6 +32,7 @@ import (
 	"math"
 	"math/big"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -293,7 +294,12 @@ type Node struct {
 	peers     map[string]*peer
 	exports   map[int64]reach
 	watchers  map[string][]watcher
-	closed    bool
+	// kept holds, for each connection kept with Reconnect, the channel that
+	// wakes its keeper when the connection is lost or the node stops.
+	kept map[string]chan struct{}
+	// subscribers hear of every connection made or lost; see MonitorNodes.
+	subscribers []watcher
+	closed      bool
 }
 
 type watcher struct {
@@ -401,14 +407,54 @@ func (p *peer) shut() {
 	}
 	n := p.node
 	n.mu.Lock()
-	if n.peers[p.name] == p {
+	lost := n.peers[p.name] == p
+	var keeper chan struct{}
+	if lost {
 		delete(n.peers, p.name)
+		keeper = n.kept[p.name]
 	}
 	watchers := n.watchers[p.name]
 	delete(n.watchers, p.name)
 	n.mu.Unlock()
 	for _, w := range watchers {
 		actor.Notify(w.c, actor.Event{Ref: w.ref, Reason: "nodedown " + p.name})
+	}
+	if lost {
+		n.announce("nodedown " + p.name)
+		wake(keeper)
+	}
+}
+
+// wake tells a keeper to look at its connection, without waiting for it.
+func wake(keeper chan struct{}) {
+	if keeper == nil {
+		return
+	}
+	select {
+	case keeper <- struct{}{}:
+	default:
+	}
+}
+
+// announce tells the subscribers of MonitorNodes of a connection made or
+// lost, dropping those whose processes have ended.
+func (n *Node) announce(reason string) {
+	n.mu.Lock()
+	subscribers := append([]watcher(nil), n.subscribers...)
+	n.mu.Unlock()
+	var gone map[watcher]bool
+	for _, s := range subscribers {
+		if !actor.Notify(s.c, actor.Event{Ref: s.ref, Reason: reason}) {
+			if gone == nil {
+				gone = map[watcher]bool{}
+			}
+			gone[s] = true
+		}
+	}
+	if gone != nil {
+		n.mu.Lock()
+		n.subscribers = slices.DeleteFunc(n.subscribers, func(s watcher) bool { return gone[s] })
+		n.mu.Unlock()
 	}
 }
 
@@ -599,6 +645,7 @@ func (n *Node) attach(conn net.Conn, name string) error {
 	n.peers[name] = p
 	n.mu.Unlock()
 	go p.read()
+	n.announce("nodeup " + name)
 	return nil
 }
 
@@ -822,43 +869,99 @@ func (n *Node) dial(address string) (string, string) {
 	return name, ""
 }
 
-// reconnectPoll is how often a kept connection is checked.
-const reconnectPoll = 50 * time.Millisecond
-
 // Reconnect connects to the node at an address, as Connect does, and keeps
-// the connection: when it is lost it is made again, after a second at first
-// and up to 30 seconds apart while it keeps failing, until this node stops.
-func Reconnect(c *actor.Context, address string) (string, string) {
+// the connection: when it is lost it is made again, a second later at first
+// and up to 30 seconds apart while it keeps failing. With attempts above
+// zero it gives up after that many failures in a row, telling the
+// subscribers of MonitorNodes "noreconnect" and the node's name; otherwise
+// it keeps trying until this node stops.
+func Reconnect(c *actor.Context, address string, attempts int) (string, string) {
 	name, problem := Connect(c, address)
 	if problem != "" {
 		return "", problem
 	}
 	n := current(c)
-	go func() {
-		// The wait is counted from when the connection was found lost, or
-		// from the last failed attempt, not from a fixed tick: a connection
-		// lost just before a tick would otherwise be made again at once.
-		wait, lost := time.Second, time.Time{}
-		for {
-			time.Sleep(reconnectPoll)
-			n.mu.Lock()
-			closed, connected := n.closed, n.peers[name] != nil
-			n.mu.Unlock()
-			switch {
-			case closed:
-				return
-			case connected:
-				wait, lost = time.Second, time.Time{}
-			case lost.IsZero():
-				lost = time.Now()
-			case time.Since(lost) >= wait:
-				if _, problem := n.dial(address); problem != "" {
-					wait, lost = min(wait*2, 30*time.Second), time.Now()
+	n.mu.Lock()
+	if n.kept[name] != nil {
+		n.mu.Unlock()
+		return name, ""
+	}
+	keeper := make(chan struct{}, 1)
+	if n.kept == nil {
+		n.kept = map[string]chan struct{}{}
+	}
+	n.kept[name] = keeper
+	// A connection lost before the keeper was in place is noticed now.
+	if n.peers[name] == nil {
+		wake(keeper)
+	}
+	n.mu.Unlock()
+	go n.keep(name, address, attempts, keeper)
+	return name, ""
+}
+
+// keep makes a kept connection again each time its loss wakes it.
+func (n *Node) keep(name, address string, attempts int, keeper chan struct{}) {
+	state := func() (closed, connected bool) {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		return n.closed, n.peers[name] != nil
+	}
+	for range keeper {
+		wait := time.Second
+		for failures := 0; ; {
+			timer := time.NewTimer(wait)
+			select {
+			case <-timer.C:
+			case <-keeper:
+				// The node stopped, or a connection the other node made was
+				// lost again: the wait starts over from now.
+				timer.Stop()
+				if closed, _ := state(); !closed {
+					continue
 				}
 			}
+			closed, connected := state()
+			if closed {
+				return
+			}
+			if connected {
+				break
+			}
+			if _, problem := n.dial(address); problem == "" {
+				break
+			}
+			if failures++; attempts > 0 && failures >= attempts {
+				n.mu.Lock()
+				delete(n.kept, name)
+				n.mu.Unlock()
+				n.announce("noreconnect " + name)
+				return
+			}
+			wait = min(wait*2, 30*time.Second)
 		}
-	}()
-	return name, ""
+		if closed, _ := state(); closed {
+			return
+		}
+	}
+}
+
+// MonitorNodes subscribes a process to an event, with the reference it
+// returns, for every connection to another node that is made ("nodeup" and
+// the node's name), lost ("nodedown") or given up by Reconnect
+// ("noreconnect"), for as long as the process runs. It reports false when
+// this program is not a node.
+func MonitorNodes(c *actor.Context) (int64, bool) {
+	actor.Check(c)
+	n := current(c)
+	if n == nil {
+		return 0, false
+	}
+	ref := actor.NextReference(c)
+	n.mu.Lock()
+	n.subscribers = append(n.subscribers, watcher{c, ref})
+	n.mu.Unlock()
+	return ref, true
 }
 
 // List names the nodes this one is connected to.
@@ -1009,7 +1112,14 @@ func (n *Node) shutdown() {
 	for _, p := range n.peers {
 		peers = append(peers, p)
 	}
+	keepers := make([]chan struct{}, 0, len(n.kept))
+	for _, keeper := range n.kept {
+		keepers = append(keepers, keeper)
+	}
 	n.mu.Unlock()
+	for _, keeper := range keepers {
+		wake(keeper)
+	}
 	n.listener.Close()
 	for _, p := range peers {
 		p.shut()

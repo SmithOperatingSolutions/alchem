@@ -117,5 +117,7 @@ A handle to a process of another node supports `Process.send`, `Process.id`, `Pr
 
 A stream does not cross in a message, because it is code rather than data. Instead `Stream.publish(:name, fn -> stream end)` offers one to other nodes, and `Node.stream(node, :name)` returns a stream that pulls from it. The publishing node builds the stream once for each reader, in a process of its own, and advances it only when a reader asks for the next chunk of up to 256 elements or 64 KiB. So an endless stream, or one larger than memory, can be read from another node, and a reader that stops early causes no further work. Reading fails if the other node stops answering.
 
-Not provided: starting a process on another node, links between nodes, names known to every node, certificates signed by an authority, and automatic reconnection.
+`Node.connect(address, reconnect: true)` keeps a connection. Its loss wakes the part of the runtime that keeps it, which dials again a second later, then two, four and so on up to 30 seconds apart while the attempts fail, until the program ends. `reconnect: n` gives up after `n` failed attempts in a row. `Node.monitor_nodes()` subscribes a process to an event for every connection made (`nodeup` and the node's name), lost (`nodedown`) or given up (`noreconnect`), so a program waits for the connection to return rather than sleeping.
+
+Not provided: starting a process on another node, certificates signed by an authority, and a limit on how long a kept connection is retried other than a number of attempts.
 
