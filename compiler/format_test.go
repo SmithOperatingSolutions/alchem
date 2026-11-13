@@ -309,3 +309,51 @@ end
 		t.Fatalf("err=%v\n%s", err, formatted)
 	}
 }
+
+// A comment among a list's elements stays above the element it came before,
+// and the list keeps one element to a line (issue #40).
+func TestFormatKeepsCommentsInsideLists(t *testing.T) {
+	source := `defmodule Probe do
+  def items(a: string): list[string] do
+    [
+      a,
+      # The last one is odd.
+      a <> "y"
+      # Nothing follows this.
+    ]
+  end
+
+  def pairs(): list[tuple[atom, integer]] do
+    [
+      # The first pair.
+      one: 1,
+      two: 2
+    ]
+  end
+
+  def short(): list[integer] do
+    [1, 2]
+  end
+end
+`
+	formatted, err := Format(source)
+	if err != nil || formatted != source {
+		t.Fatalf("err=%v\n%s", err, formatted)
+	}
+	if joined, err := Format(strings.Replace(source, "[1, 2]", "[\n      1,\n      2\n    ]", 1)); err != nil || joined != source {
+		t.Fatalf("a list without comments should still be joined: err=%v\n%s", err, joined)
+	}
+}
+
+// A heredoc among other elements puts each element on a line of its own.
+func TestFormatSplitsListsHoldingHeredocs(t *testing.T) {
+	source := "defmodule Probe do\n  def docs(a: string): list[string] do\n    [a, a, ~s\"\"\"\n    hello\n    \"\"\"]\n  end\nend\n"
+	want := "defmodule Probe do\n  def docs(a: string): list[string] do\n    [\n      a,\n      a,\n      ~s\"\"\"\n      hello\n      \"\"\"\n    ]\n  end\nend\n"
+	formatted, err := Format(source)
+	if err != nil || formatted != want {
+		t.Fatalf("err=%v\n%s", err, formatted)
+	}
+	if again, err := Format(formatted); err != nil || again != want {
+		t.Fatalf("not stable: err=%v\n%s", err, again)
+	}
+}

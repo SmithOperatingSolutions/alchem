@@ -84,6 +84,19 @@ func (p *parser) remarks(t lexer.Token) []ast.Statement {
 	return out
 }
 
+// notes takes the comments written before a token when parsing for the
+// formatter, which writes them back in place.
+func (p *parser) notes(t lexer.Token) []string {
+	if p.probing {
+		return nil
+	}
+	out := p.commentsBefore(t)
+	if !p.keep {
+		return nil
+	}
+	return out
+}
+
 // descend records one level of grammar recursion; callers defer p.ascend().
 func (p *parser) descend() error {
 	p.depth++
@@ -1076,6 +1089,10 @@ func (p *parser) atom() (*ast.Expr, error) {
 		}
 		if p.peek().Kind != end {
 			for {
+				var notes []string
+				if t.Kind == lexer.LBracket {
+					notes = p.notes(p.peek())
+				}
 				// [name: value] is a keyword list: each pair is the tuple
 				// {:name, value}.
 				if key := p.peek(); t.Kind == lexer.LBracket && key.Kind == lexer.Ident && p.tokens[p.pos+1].Kind == lexer.Colon {
@@ -1085,7 +1102,7 @@ func (p *parser) atom() (*ast.Expr, error) {
 						return nil, err
 					}
 					name := &ast.Expr{Kind: "literal", Value: ast.Literal{Kind: "atom", Text: key.Text}, Line: key.Line, Column: key.Column}
-					e.Args = append(e.Args, &ast.Expr{Kind: "tuple", Op: "keyword", Args: []*ast.Expr{name, value}, Line: key.Line, Column: key.Column})
+					e.Args = append(e.Args, &ast.Expr{Kind: "tuple", Op: "keyword", Args: []*ast.Expr{name, value}, Line: key.Line, Column: key.Column, Comments: notes})
 					if p.peek().Kind != lexer.Comma {
 						break
 					}
@@ -1095,6 +1112,9 @@ func (p *parser) atom() (*ast.Expr, error) {
 				arg, err := p.expr(0)
 				if err != nil {
 					return nil, err
+				}
+				if len(notes) > 0 {
+					arg.Comments = notes
 				}
 				e.Args = append(e.Args, arg)
 				// [first, second | rest] puts elements in front of a list,
@@ -1111,6 +1131,9 @@ func (p *parser) atom() (*ast.Expr, error) {
 				}
 				p.pos++
 			}
+		}
+		if t.Kind == lexer.LBracket {
+			e.Closing = p.notes(p.peek())
 		}
 		if _, err := p.expect(end, ""); err != nil {
 			return nil, err
