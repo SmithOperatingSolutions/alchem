@@ -4,7 +4,7 @@ An Alchem file contains one `defmodule UppercaseName do ... end`. The entry modu
 
 ## Values, bindings and expressions
 
-Primitive types are `integer` (signed 64-bit), `float` (64-bit IEEE 754), `boolean` (`true`/`false`) and `string` (decoded UTF-8 with Go-style quoted escapes). Invalid UTF-8, invalid escapes and out-of-range integer literals are compilation errors. A byte escape such as `\x00` or `\xff` writes a byte that cannot be typed, so a literal can hold binary data. String equality compares decoded bytes without Unicode normalization.
+Primitive types are `integer` (signed 64-bit), `float` (64-bit IEEE 754), `boolean` (`true`/`false`) and `string` (decoded UTF-8 with Go-style quoted escapes). Invalid UTF-8, invalid escapes and out-of-range integer literals are compilation errors. A byte escape such as `\x00` or `\xff` writes a byte that cannot be typed, so a literal can hold binary data. A code point is written `\uHHHH`, `\UHHHHHHHH` or, as in Elixir, `\u{H...}` with one to six hex digits; an invalid escape is reported by name, with the escapes a string takes. String equality compares decoded bytes without Unicode normalization.
 
 Bindings use `name = expression`, with optional annotations such as `xs: list[integer] = []`. Destructuring bindings are described below. Names start with a lowercase Unicode letter or underscore and continue with letters, digits or underscores. Keywords and builtin names are reserved. Bindings are immutable: an existing name cannot be redefined or shadowed in a nested branch. Unused bindings are allowed. Names must be defined before use. Each function has its own scope; branch-local bindings do not escape their branch, and separate branches may use the same new name.
 
@@ -664,7 +664,7 @@ end
 | `~N[2026-01-05 13:04:05]` | a `NaiveDateTime` |
 | `~U[2026-01-05T13:04:05Z]` | a `DateTime` |
 
-The delimiters may be `/ /`, `| |`, `" "`, `' '`, `( )`, `[ ]`, `{ }` or `< >`; a backslash escapes the closing one. `~s`, `~w`, `~r` and `~h` interpolate `#{expression}`, and `~S` and `~H` never do; a `~r` that interpolates is compiled when it runs instead of being checked when the program is compiled. A one-line sigil cannot span lines; a sigil heredoc (`~h"""`) can. Calendar sigils are checked when the program is compiled.
+The delimiters may be `/ /`, `| |`, `" "`, `' '`, `( )`, `[ ]`, `{ }` or `< >`; a backslash escapes the closing one. `~s`, `~w`, `~r` and `~h` interpolate `#{expression}`, and `~S` and `~H` never do; an interpolation is an expression like any other, so strings in it may hold the delimiter, as in `~h"<a href=#{path("x")}>"`; a `~r` that interpolates is compiled when it runs instead of being checked when the program is compiled. A one-line sigil cannot span lines; a sigil heredoc (`~h"""`) can. Calendar sigils are checked when the program is compiled.
 
 `~h` is an HTML template. Its own text is markup as written, and each interpolated value is converted by its type: a `string` is escaped (`&`, `<`, `>`, `"` and `'` become character references), `Markup` goes in unchanged, so templates nest, an `integer`, `float` or `atom` is written as text, and a `list[Markup]` is joined. Any other type is a compile error. The result is a `Markup` value, a struct whose `html` field holds the text; `Markup.to_string` returns it. Escaping makes a value safe inside an element or a quoted attribute value, so attribute values belong in quotes.
 

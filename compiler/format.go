@@ -492,7 +492,8 @@ func formatExpr(e *ast.Expr, n int) string {
 		if closer := lexer.SigilCloser(e.Delimiter); closer != "" {
 			open, shut = e.Delimiter, closer
 		}
-		return "~" + e.Name + open + strings.ReplaceAll(e.Value.Text, shut, "\\"+shut) + shut + e.Op
+		interpolates := e.Name[0] >= 'a' && e.Name[0] <= 'z'
+		return "~" + e.Name + open + lexer.SigilEscape(e.Value.Text, shut[0], interpolates) + shut + e.Op
 	case "try":
 		s := e.Body[0]
 		text := "try do\n" + formatBlock(s.Then, n+1)

@@ -137,6 +137,9 @@ func scan(source string) ([]Token, []Token, error) {
 			if r == '~' && i+2 < len(source) && unicode.IsLetter(rune(source[i+1])) && sigilClosers[source[i+2]] != 0 {
 				// ~r/.../i: a letter, delimited text, then optional modifier letters.
 				closer := sigilClosers[source[i+2]]
+				// A lower-case sigil interpolates, and an interpolation is an
+				// expression: its strings and braces may hold the closer.
+				interpolates := source[i+1] >= 'a' && source[i+1] <= 'z'
 				end := i + 3
 				for ; end < len(source) && source[end] != closer; end++ {
 					if source[end] == '\n' {
@@ -144,6 +147,14 @@ func scan(source string) ([]Token, []Token, error) {
 					}
 					if source[end] == '\\' && end+1 < len(source) {
 						end++
+						continue
+					}
+					if interpolates && source[end] == '#' && end+1 < len(source) && source[end+1] == '{' {
+						inner, problem := InterpolationEnd(source, end)
+						if problem != "" {
+							return nil, fmt.Errorf("%d:%d: sigil interpolation: %s", line, col, problem)
+						}
+						end = inner
 					}
 				}
 				if end >= len(source) {
@@ -153,7 +164,7 @@ func scan(source string) ([]Token, []Token, error) {
 				for modifiers < len(source) && (source[modifiers] >= 'a' && source[modifiers] <= 'z' || source[modifiers] == 'U') {
 					modifiers++
 				}
-				content := strings.ReplaceAll(source[i+3:end], "\\"+string(closer), string(closer))
+				content := sigilUnescape(source[i+3:end], closer, interpolates)
 				tokens = append(tokens, Token{Sigil, source[i+1:i+2] + "\x00" + content + "\x00" + source[end+1:modifiers], line, col})
 				col += utf8.RuneCountInString(source[i:modifiers])
 				i = modifiers
@@ -404,8 +415,12 @@ func scan(source string) ([]Token, []Token, error) {
 					tokens = append(tokens, Token{Template, raw, startLine, startCol})
 					continue
 				}
+				written := raw
 				raw = Unescape(raw)
 				if _, err := strconv.Unquote(raw); err != nil {
+					if problem := StringProblem(written); problem != "" {
+						return nil, fmt.Errorf("%d:%d: %s", startLine, startCol, problem)
+					}
 					return nil, fmt.Errorf("%d:%d: invalid string: %w", startLine, startCol, err)
 				}
 				tokens = append(tokens, Token{String, raw, startLine, startCol})
@@ -474,6 +489,13 @@ func Unescape(raw string) string {
 	var out strings.Builder
 	for i := 0; i < len(raw); i++ {
 		if raw[i] == '\\' && i+1 < len(raw) {
+			// Elixir's \u{...}, a code point of any length, which Go spells
+			// \U and eight digits.
+			if code, size, ok := bracedCodePoint(raw[i:]); ok {
+				fmt.Fprintf(&out, `\U%08X`, code)
+				i += size - 1
+				continue
+			}
 			// Elixir's \e (escape) and \s (space), which Go spells otherwise.
 			switch raw[i+1] {
 			case 'e':
@@ -494,6 +516,79 @@ func Unescape(raw string) string {
 	}
 	return out.String()
 }
+
+// bracedCodePoint reads \u{...} at the start of text: one to six hex
+// digits naming a Unicode code point. size is the escape's length.
+func bracedCodePoint(text string) (code rune, size int, ok bool) {
+	if !strings.HasPrefix(text, `\u{`) {
+		return 0, 0, false
+	}
+	end := strings.IndexByte(text, '}')
+	if end < 4 || end > 9 {
+		return 0, 0, false
+	}
+	value, err := strconv.ParseUint(text[3:end], 16, 32)
+	if err != nil || value > unicode.MaxRune || value >= 0xD800 && value <= 0xDFFF {
+		return 0, 0, false
+	}
+	return rune(value), end + 1, true
+}
+
+// StringProblem explains why the quoted text raw is not a valid string: the
+// first escape it does not take, and the escapes there are. It is "" when
+// the fault is not an escape.
+func StringProblem(raw string) string {
+	for i := 0; i+1 < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		escape := raw[i : i+2]
+		valid := true
+		switch c := raw[i+1]; c {
+		case 'a', 'b', 'f', 'n', 'r', 't', 'v', '\\', '"', '\'', 'e', 's', '#':
+		case '0', '1', '2', '3', '4', '5', '6', '7':
+			valid = i+3 < len(raw) && octal(raw[i+2]) && octal(raw[i+3])
+			escape = raw[i:min(len(raw)-1, i+4)]
+		case 'x':
+			valid = i+3 < len(raw) && hex(raw[i+2]) && hex(raw[i+3])
+			escape = raw[i:min(len(raw)-1, i+4)]
+		case 'u', 'U':
+			if _, size, ok := bracedCodePoint(raw[i:]); ok {
+				i += size - 1
+				continue
+			}
+			digits := 4
+			if c == 'U' {
+				digits = 8
+			}
+			// The text ends with its closing quote, which is no part of
+			// an escape.
+			end := min(len(raw)-1, i+2+digits)
+			if c == 'u' && strings.HasPrefix(raw[i:], `\u{`) {
+				if close := strings.IndexByte(raw[i:], '}'); close > 0 {
+					end = i + close + 1
+				}
+			}
+			escape = raw[i:end]
+			valid = false
+			if !strings.HasPrefix(raw[i:], `\u{`) && end-i == 2+digits {
+				value, err := strconv.ParseUint(raw[i+2:end], 16, 32)
+				valid = err == nil && value <= unicode.MaxRune && (value < 0xD800 || value > 0xDFFF)
+			}
+		default:
+			valid = false
+		}
+		if !valid {
+			return "invalid escape " + escape + "; a string takes \\n, \\t, \\r, \\e, \\s, \\\\, \\\", \\#, \\xHH (a byte), \\uHHHH, \\UHHHHHHHH and \\u{H...} (a Unicode code point)"
+		}
+		i++
+	}
+	return ""
+}
+
+func octal(c byte) bool { return c >= '0' && c <= '7' }
+
+func hex(c byte) bool { return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F' }
 
 // InterpolationEnd returns the index of the } that closes the #{ at
 // source[start]; nested strings and braces are skipped.
@@ -604,6 +699,9 @@ func heredocString(text string, line, col int) (Token, error) {
 	}
 	unescaped := Unescape(raw.String())
 	if _, err := strconv.Unquote(unescaped); err != nil {
+		if problem := StringProblem(raw.String()); problem != "" {
+			return Token{}, fmt.Errorf("%d:%d: %s", line, col, problem)
+		}
 		return Token{}, fmt.Errorf("%d:%d: invalid string: %w", line, col, err)
 	}
 	return Token{String, unescaped, line, col}, nil
@@ -634,6 +732,49 @@ func Heredoc(source string, offset int) (written string, ok bool) {
 		}
 	}
 	return open + "\n" + text + `"""` + source[next:modifiers], true
+}
+
+// sigilUnescape takes the backslash off each escaped closer in a one-line
+// sigil's text, outside the #{...} of a sigil that interpolates: there the
+// text is an expression, whose strings have escapes of their own.
+func sigilUnescape(text string, closer byte, interpolates bool) string {
+	var out strings.Builder
+	for i := 0; i < len(text); i++ {
+		switch {
+		case interpolates && text[i] == '#' && i+1 < len(text) && text[i+1] == '{':
+			if end, problem := InterpolationEnd(text, i); problem == "" {
+				out.WriteString(text[i : end+1])
+				i = end
+				continue
+			}
+		case text[i] == '\\' && i+1 < len(text) && text[i+1] == closer:
+			out.WriteByte(closer)
+			i++
+			continue
+		}
+		out.WriteByte(text[i])
+	}
+	return out.String()
+}
+
+// SigilEscape is sigilUnescape undone: the text of a one-line sigil with
+// each closer outside an interpolation escaped, as the formatter writes it.
+func SigilEscape(text string, closer byte, interpolates bool) string {
+	var out strings.Builder
+	for i := 0; i < len(text); i++ {
+		switch {
+		case interpolates && text[i] == '#' && i+1 < len(text) && text[i+1] == '{':
+			if end, problem := InterpolationEnd(text, i); problem == "" {
+				out.WriteString(text[i : end+1])
+				i = end
+				continue
+			}
+		case text[i] == closer:
+			out.WriteByte('\\')
+		}
+		out.WriteByte(text[i])
+	}
+	return out.String()
 }
 
 // SigilCloser is the delimiter that closes a one-line sigil opened with

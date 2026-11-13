@@ -86,6 +86,7 @@ func init() {
 	topic("Basics", "strings", "UTF-8 text with interpolation, heredocs and the String module.",
 		[]string{
 			"\"#{expression}\" interpolates a string, integer, float or boolean; write \\#{ for the literal characters.",
+			"Escapes: \\n, \\t, \\r, \\e (escape), \\s (space), \\\\, \\\", \\xHH for a byte, and \\uHHHH, \\UHHHHHHHH or \\u{H...} for a Unicode code point, as in \"caf\\u{e9}\".",
 			"A heredoc starts with \"\"\" at the end of a line and ends at the next line that begins with \"\"\"; the indentation of the closing quotes is removed from every line. What follows the closing quotes continues the expression, so a heredoc can be an argument, closed with \"\"\").",
 			"A heredoc has escapes and #{...} interpolation, as a string does; ~S\"\"\" starts one that is taken literally, as documentation with examples usually is.",
 			"inspect(value) renders any value as text; to_string renders the four primitive types.",

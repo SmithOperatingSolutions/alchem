@@ -37,6 +37,22 @@ defmodule LibraryMoreTest do
     assert(Regex.replace(~r/(\w)(\d)/, "a1", "\\2\\1") == "1a")
   end
 
+  test "code points written with braces" do
+    assert(String.length("\u{E000}") == 1)
+    assert("\u{e9}\u{1F600}\u{41}" == "\u00e9\U0001F600A")
+    assert(byte_size("\u{10FFFF}") == 4 and "\u{0}" == "\x00")
+    n = 2
+    assert("#{n}\u{2192}#{n}" == "2\u21922")
+    assert("""
+    \u{263A}
+    """ == "\u263A\n")
+    assert("\\u{41}" == "\\" <> "u{41}")
+    case "\u{e9}" do
+      "\u00e9" -> assert(true)
+      _ -> flunk("the escapes did not agree")
+    end
+  end
+
   test "a string literal may hold any byte" do
     bytes = "a\x00b\xff"
     assert(byte_size(bytes) == 4)
