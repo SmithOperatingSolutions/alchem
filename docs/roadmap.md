@@ -146,7 +146,7 @@ Run the harness before and after a performance change on the same machine and re
 - [x] `extern` checked against Go type information by `alchem check`; bindings to methods, opaque Go types, structs, variadic functions, callbacks and multiple results.
 - [x] Equality on type variables as an inferred requirement on callers.
 - [x] `alchem.lock` and `--locked`.
-- [ ] Servers as named children of a user `Supervisor`.
+- [x] Servers as named children of a user `Supervisor` (`Supervisor.server`), registered before `Supervisor.start` returns.
 - [ ] Bindings to generic Go functions and to Go interfaces implemented in Alchem.
 
 ## M8 — Elixir-style library and testing

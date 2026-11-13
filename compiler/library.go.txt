@@ -5718,6 +5718,11 @@ func runTests(ctx *actor.Context, module string, tests []testCase) int {
 	return 0
 }
 
+// ---- Assertions ----
+
+// The assertions also work in ordinary programs, which have none of the
+// coverage counters a test build adds.
+
 // assertRaise passes when the function fails with a reason containing the
 // expected text.
 func assertRaise[A any](ctx *actor.Context, expected string, f func(*actor.Context) A, where string) {
@@ -11406,4 +11411,18 @@ func markupJoin(pieces L[TMarkup]) TMarkup {
 		b.WriteString(piece.F0)
 	}
 	return TMarkup{b.String()}
+}
+
+// ---- Supervised servers ----
+
+// supervisorServer is the child specification of a server that a user
+// supervisor runs under a name; see actor.ServerChild.
+func supervisorServer[S, Q, R any](ctx *actor.Context, name actor.Atom, policy string, state S, handle func(*actor.Context, S, Q) struct {
+	E0 S
+	E1 R
+}, where string) triple[string, string, func(*actor.Context, *actor.PID[struct{}]) int64] {
+	if policy != "permanent" && policy != "transient" && policy != "temporary" {
+		failAt(ctx, where, "Supervisor.server: the restart policy is \"permanent\", \"transient\" or \"temporary\", not "+strconv.Quote(policy))
+	}
+	return triple[string, string, func(*actor.Context, *actor.PID[struct{}]) int64]{string(name), policy, actor.ServerChild[S, Q, R, struct{}](string(name), state, handle, where)}
 }

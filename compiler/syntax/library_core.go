@@ -435,6 +435,7 @@ func init() {
 	lib("Server.send_after", "server[q,r], q, integer -> integer", "serverSendAfter ctx where")
 	lib("Server.self", "-> server[q,r]", "serverSelf ctx where explicit")
 	lib("Server.register", "server[q,r], atom -> boolean", "serverRegister ctx where")
+	lib("Supervisor.server", "atom, string, s, fn[s,q,tuple[s,r]] -> tuple[string,string,fn[pid[tuple[]],integer]]", "supervisorServer ctx where")
 	lib("Server.whereis", "atom -> option[server[q,r]]", "serverWhereis ctx explicit")
 	lib("Server.monitor", "server[q,r], pid[a], fn[string,q] -> boolean", "serverMonitor ctx where")
 	lib("Server.continue", "q -> boolean", "serverContinue ctx where")
