@@ -103,6 +103,34 @@ defmodule TemplatesTest do
     assert(Markup.parts(received) == Markup.parts(page))
   end
 
+  def both(a: string, b: string): string do
+    a <> "|" <> b
+  end
+
+  test "a heredoc where an argument goes" do
+    assert(String.trim("""
+    hello
+    """) == "hello")
+    who = "ada"
+    assert(Markup.to_string(~h"""
+    <p>#{who}</p>
+    """) == "<p>ada</p>\n")
+    assert(both("""
+    first
+    """, "second") == "first\n|second")
+    assert(both("a", """
+    last
+    """) <> "!" == "a|last\n!")
+    words = ~w"""
+    a b
+    """ ++ ["c"]
+    assert(words == ["a", "b", "c"])
+    shouted = """
+    quiet
+    """ |> String.trim() |> String.upcase()
+    assert(shouted == "QUIET")
+  end
+
   test "interpolating sigil heredocs keep quotes and line breaks" do
     who = "ada"
     words = ~w"""

@@ -126,7 +126,7 @@ See also: alchem syntax pipes, alchem syntax ranges, alchem syntax strings
 UTF-8 text with interpolation, heredocs and the String module.
 
 - "#{expression}" interpolates a string, integer, float or boolean; write \#{ for the literal characters.
-- A heredoc starts with """ at the end of a line and ends with """ on its own line; the closing line's indentation is removed from every line.
+- A heredoc starts with """ at the end of a line and ends at the next line that begins with """; the indentation of the closing quotes is removed from every line. What follows the closing quotes continues the expression, so a heredoc can be an argument, closed with """).
 - A heredoc has escapes and #{...} interpolation, as a string does; ~S""" starts one that is taken literally, as documentation with examples usually is.
 - inspect(value) renders any value as text; to_string renders the four primitive types.
 
