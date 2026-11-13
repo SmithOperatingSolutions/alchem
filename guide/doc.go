@@ -21,15 +21,45 @@ func moduleNamed(name string) (syntax.Module, bool) {
 // DocIndex lists the library modules by group.
 func DocIndex() string {
 	var b strings.Builder
-	b.WriteString("Library modules. Run alchem doc <Module> for its functions, alchem doc <Module.function> for signatures and examples, or alchem doc --search <text>.\n")
+	b.WriteString("Library modules. Run alchem doc <Module> for its functions, alchem doc <Module.function> for signatures and examples, alchem doc --group <group> for one group, or alchem doc --search <text>.\n")
 	order, modules := groups(syntax.Modules, func(m syntax.Module) string { return m.Group })
 	for _, group := range order {
-		b.WriteString("\n" + group + "\n")
+		b.WriteString("\n" + group + " (" + GroupName(group) + ")\n")
 		for _, module := range modules[group] {
 			fmt.Fprintf(&b, "  %-14s %s\n", module.Name, module.Summary)
 		}
 	}
 	return b.String()
+}
+
+// DocGroup describes the library modules of one group: what each is for,
+// how many functions it has, and the group's leading examples.
+func DocGroup(name string, asJSON bool) (string, error) {
+	order, modules := groups(syntax.Modules, func(m syntax.Module) string { return m.Group })
+	group, err := groupNamed(name, order, "library modules", "alchem doc")
+	if err != nil {
+		return "", err
+	}
+	if asJSON {
+		var out []moduleJSON
+		for _, module := range modules[group] {
+			out = append(out, moduleData(module))
+		}
+		return encode(out), nil
+	}
+	var b strings.Builder
+	b.WriteString(group + ": library modules. The number is how many functions a module has; run alchem doc <Module> to list them.\n\n")
+	for _, module := range modules[group] {
+		fmt.Fprintf(&b, "  %s (%d)\n      %s\n", module.Name, len(functionsOf(module.Name)), module.Summary)
+	}
+	if names := featured[group]; len(names) > 0 {
+		b.WriteString("\nExamples\n\n")
+		byName := functionsByName()
+		for _, name := range names {
+			b.WriteString(indented(firstExample(byName[name])) + "\n")
+		}
+	}
+	return b.String(), nil
 }
 
 func indented(text string) string {

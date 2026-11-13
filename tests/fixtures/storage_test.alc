@@ -1,0 +1,288 @@
+defmodule StorageTest do
+  @moduletag area: "storage"
+
+  struct Item do
+    id: string
+    name: string
+    price: integer
+    note: option[string]
+    tags: list[atom]
+  end
+
+  type Shape do
+    circle(radius: float)
+    square(side: float, label: string)
+    point
+  end
+
+  struct Box do
+    items: list[Item]
+    shapes: list[Shape]
+    counts: map[string, integer]
+    by_number: map[integer, boolean]
+    by_name: map[atom, float]
+    pair: tuple[integer, string]
+    seen: set[string]
+    outcome: result[integer, string]
+    raw: JSON
+  end
+
+  struct Tree do
+    value: integer
+    children: list[Tree]
+  end
+
+  struct Pair[a] do
+    left: a
+    right: a
+  end
+
+  def item(): Item do
+    %Item{id: "a", name: "Pen", price: 3, note: none, tags: [:x, :y]}
+  end
+
+  def reason(read: result[integer, string]): string do
+    case read do
+      ok(_) -> "read"
+      error(why) -> why
+    end
+  end
+
+  test "JSON read as the type it was written from" do
+    box = %Box{items: [item(), %Item{item() | note: some("hi")}], shapes: [Shape.circle(1.5), Shape.square(2.0, "s"), Shape.point],
+      counts: %{"a" => 1}, by_number: %{4 => true}, by_name: %{:half => 0.5}, pair: {1, "one"}, seen: MapSet.new(["p", "q"]),
+      outcome: error("no"), raw: JSON.list([JSON.null, JSON.integer(2)])}
+    back: result[Box, string] = JSON.decode_as(JSON.encode!(box))
+    assert(back == ok(box))
+    tree = %Tree{value: 1, children: [%Tree{value: 2, children: []}, %Tree{value: 3, children: [%Tree{value: 4, children: []}]}]}
+    grown: result[Tree, string] = JSON.decode_as(JSON.encode!(tree))
+    assert(grown == ok(tree))
+    pair: result[Pair[list[integer]], string] = JSON.decode_as("{\"left\": [1], \"right\": []}")
+    assert(pair == ok(%Pair{left: [1], right: []}))
+    # From a value already decoded, and for the builtin types by themselves.
+    numbers: result[list[integer], string] = JSON.decode_as(JSON.decode!("[1, 2]"))
+    assert(numbers == ok([1, 2]))
+    whole: result[float, string] = JSON.decode_as("2")
+    assert(whole == ok(2.0))
+    maybe: result[option[boolean], string] = JSON.decode_as("null")
+    assert(maybe == ok(none))
+    any: result[JSON, string] = JSON.decode_as("{\"k\": 1}")
+    assert(any == ok(JSON.object(%{"k" => JSON.integer(1)})))
+  end
+
+  test "JSON fields left out, added and misplaced" do
+    # An option may be left out; members without a field are passed over.
+    lean: result[Item, string] = JSON.decode_as("{\"id\": \"a\", \"name\": \"Pen\", \"price\": 3, \"tags\": [], \"colour\": \"blue\"}")
+    assert(lean == ok(%Item{id: "a", name: "Pen", price: 3, note: none, tags: []}))
+    missing: result[Item, string] = JSON.decode_as("{\"id\": \"a\", \"price\": 3, \"tags\": []}")
+    assert(missing == error("name: missing"))
+    typed: result[Item, string] = JSON.decode_as("{\"id\": \"a\", \"name\": \"Pen\", \"price\": \"3\", \"tags\": []}")
+    assert(typed == error("price: expected an integer, found a string"))
+    deep: result[Box, string] = JSON.decode_as("{\"items\": [{\"id\": \"a\", \"name\": \"n\", \"price\": 1, \"tags\": [\"t\", 3]}]}")
+    assert(deep == error("items[0].tags[1]: expected a string, found an integer"))
+    not_object: result[Item, string] = JSON.decode_as("[1]")
+    assert(not_object == error("expected an object for Item, found a list"))
+    shapes: result[list[Shape], string] = JSON.decode_as("[\"point\", {\"circle\": [2]}]")
+    assert(shapes == ok([Shape.point, Shape.circle(2.0)]))
+    unknown: result[list[Shape], string] = JSON.decode_as("[\"point\", {\"oval\": [1]}]")
+    assert(unknown == error("[1]: expected one of circle, square, point, found oval"))
+    short: result[Shape, string] = JSON.decode_as("{\"square\": [1.0]}")
+    assert(short == error("square: expected 2 fields, found 1"))
+    inside: result[Shape, string] = JSON.decode_as("{\"square\": [1.0, 2]}")
+    assert(inside == error("square[1]: expected a string, found an integer"))
+    number: result[Shape, string] = JSON.decode_as("7")
+    assert(number == error("expected one of circle, square, point, found an integer"))
+    tuple: result[tuple[integer, string], string] = JSON.decode_as("[1]")
+    assert(tuple == error("expected a list of 2, found one of 1"))
+    keys: result[map[integer, string], string] = JSON.decode_as("{\"one\": \"x\"}")
+    assert(keys == error("one: expected an integer as the key, found \"one\""))
+    flags: result[map[boolean, integer], string] = JSON.decode_as("{\"true\": 1, \"false\": 0}")
+    assert(flags == ok(%{true => 1, false => 0}))
+    text: result[integer, string] = JSON.decode_as("nope")
+    assert(String.starts_with?(reason(text), "invalid JSON: "))
+    fraction: result[integer, string] = JSON.decode_as("1.5")
+    assert(fraction == error("expected an integer, found a float"))
+  end
+
+  test "passwords" do
+    assert(Base.encode16(Crypto.pbkdf2(:sha256, "password", "salt", 4096, 32), [case: :lower]) == "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a")
+    assert(Base.encode16(Crypto.pbkdf2(:sha1, "password", "salt", 2, 20), [case: :lower]) == "ea6c014dc72d6f8ccd1ed92ace1d41f0d8de8957")
+    assert_raise("Crypto.pbkdf2: the algorithms are", fn -> Crypto.pbkdf2(:crc32, "p", "s", 1, 16) end)
+    assert_raise("Crypto.pbkdf2 takes from 1 to", fn -> Crypto.pbkdf2(:sha256, "p", "s", 0, 16) end)
+    assert_raise("Crypto.pbkdf2 gives a key of 1 to 1024 bytes", fn -> Crypto.pbkdf2(:sha256, "p", "s", 1, 0) end)
+    stored = Crypto.hash_password("hunter2")
+    assert(String.starts_with?(stored, "$pbkdf2-sha256$i=600000$"))
+    assert(Crypto.verify_password("hunter2", stored))
+    refute(Crypto.verify_password("hunter3", stored))
+    refute(Crypto.verify_password("", stored))
+    quick = Crypto.hash_password("a b", [iterations: 10])
+    assert(String.starts_with?(quick, "$pbkdf2-sha256$i=10$"))
+    assert(Crypto.verify_password("a b", quick))
+    assert(quick != Crypto.hash_password("a b", [iterations: 10]))
+    Enum.each(["", "junk", "$pbkdf2-sha256$i=10$$", "$pbkdf2-sha256$i=0$c2FsdA$a2V5", "$pbkdf2-sha256$i=x$c2FsdA$a2V5", "$pbkdf2-sha256$i=10$!$a2V5", "$pbkdf2-sha256$i=10$c2FsdA$!", "$bcrypt$i=10$c2FsdA$a2V5", String.replace(quick, "i=10", "i=11")], fn text ->
+      refute(Crypto.verify_password("a b", text))
+    end)
+    assert_raise("Crypto.hash_password takes iterations:", fn -> Crypto.hash_password("a", [rounds: 10]) end)
+    assert_raise("Crypto.hash_password takes from 1 to", fn -> Crypto.hash_password("a", [iterations: 0]) end)
+  end
+
+  def scratch(): string do
+    Path.join(System.tmp_dir!(), "alchem_store_" <> Base.encode16(Crypto.strong_rand_bytes(8)))
+  end
+
+  def bump(held: option[string]): option[string] do
+    case held do
+      some(n) -> some(Integer.to_string(String.to_integer(n) + 1))
+      none -> some("1")
+    end
+  end
+
+  test "a store keeps what it was given" do
+    path = scratch()
+    ok(store) = DiskStore.open(path)
+    assert(DiskStore.size(store) == 0)
+    assert(DiskStore.put(store, "user:2", "bo") == ok({}))
+    assert(DiskStore.put(store, "user:1", "al") == ok({}))
+    assert(DiskStore.put(store, "user:1", "alice") == ok({}))
+    assert(DiskStore.put(store, "session:9", "") == ok({}))
+    assert(DiskStore.put(store, "", "the empty key") == ok({}))
+    assert(DiskStore.get(store, "user:1") == some("alice"))
+    assert(DiskStore.get(store, "session:9") == some(""))
+    assert(DiskStore.get(store, "user:3") == none)
+    assert(DiskStore.has_key?(store, "session:9"))
+    refute(DiskStore.has_key?(store, "session:8"))
+    assert(DiskStore.keys(store) == ["", "session:9", "user:1", "user:2"])
+    assert(DiskStore.prefix(store, "user:") == [{"user:1", "alice"}, {"user:2", "bo"}])
+    assert(DiskStore.prefix(store, "") |> length() == 4)
+    assert(DiskStore.prefix(store, "v") == [])
+    assert(DiskStore.range(store, "session:", "user:2") == [{"session:9", ""}, {"user:1", "alice"}])
+    assert(DiskStore.range(store, "z", "a") == [])
+    assert(DiskStore.delete(store, "user:2") == ok({}))
+    assert(DiskStore.delete(store, "never there") == ok({}))
+    assert(DiskStore.commit(store, [{"a", "1"}, {"b", "2"}], ["session:9", ""]) == ok({}))
+    assert(DiskStore.commit(store, [], []) == ok({}))
+    assert(DiskStore.update(store, "count", &bump/1) == ok(some("1")))
+    assert(DiskStore.update(store, "count", &bump/1) == ok(some("2")))
+    assert(DiskStore.update(store, "a", fn _ -> none end) == ok(none))
+    assert(DiskStore.update(store, "absent", fn _ -> none end) == ok(none))
+    kept = [{"b", "2"}, {"count", "2"}, {"user:1", "alice"}]
+    assert(DiskStore.prefix(store, "") == kept)
+    # Opening the path again while it is open gives the same store.
+    ok(same) = DiskStore.open(path)
+    assert(DiskStore.put(same, "seen", "by both") == ok({}))
+    assert(DiskStore.get(store, "seen") == some("by both"))
+    assert(DiskStore.delete(store, "seen") == ok({}))
+    assert(DiskStore.close(store))
+    refute(DiskStore.close(store))
+    assert(DiskStore.put(store, "late", "x") == error("closed"))
+    assert(DiskStore.delete(store, "b") == error("closed"))
+    assert(DiskStore.commit(store, [{"late", "x"}], []) == error("closed"))
+    assert(DiskStore.update(store, "late", &bump/1) == error("closed"))
+    assert(DiskStore.compact(store) == error("closed"))
+    assert_raise("DiskStore.get: the store is closed", fn -> DiskStore.get(store, "b") end)
+    assert_raise("DiskStore.keys: the store is closed", fn -> DiskStore.keys(store) end)
+    ok(again) = DiskStore.open(path)
+    assert(DiskStore.prefix(again, "") == kept)
+    assert(DiskStore.compact(again) == ok({}))
+    assert(DiskStore.put(again, "after", "compacting") == ok({}))
+    DiskStore.close(again)
+    ok(third) = DiskStore.open(path)
+    assert(DiskStore.prefix(third, "") == [{"after", "compacting"} | kept])
+    DiskStore.close(third)
+    File.rm(path)
+  end
+
+  test "a store drops what a crash cut short" do
+    path = scratch()
+    ok(store) = DiskStore.open(path)
+    DiskStore.put(store, "first", "1")
+    DiskStore.commit(store, [{"second", "2"}, {"third", "3"}], [])
+    DiskStore.close(store)
+    whole = File.read_binary!(path)
+    # The last record cut anywhere is dropped whole, with both its changes.
+    Enum.each([1, 5, 12], fn cut ->
+      File.write!(path, binary_part(whole, 0, byte_size(whole) - cut))
+      ok(torn) = DiskStore.open(path)
+      assert(DiskStore.keys(torn) == ["first"])
+      DiskStore.close(torn)
+    end)
+    # So is one whose bytes changed, and whatever follows the file's end.
+    File.write!(path, binary_part(whole, 0, byte_size(whole) - 1) <> "X")
+    ok(spoiled) = DiskStore.open(path)
+    assert(DiskStore.keys(spoiled) == ["first"])
+    # What is written next follows the last whole record.
+    assert(DiskStore.put(spoiled, "fourth", "4") == ok({}))
+    DiskStore.close(spoiled)
+    File.write!(path, File.read_binary!(path) <> "trailing")
+    ok(mended) = DiskStore.open(path)
+    assert(DiskStore.prefix(mended, "") == [{"first", "1"}, {"fourth", "4"}])
+    DiskStore.close(mended)
+    # A file cut within its first bytes is a new store; another file is not one.
+    File.write!(path, "ALCHEM")
+    ok(begun) = DiskStore.open(path)
+    assert(DiskStore.size(begun) == 0)
+    assert(DiskStore.put(begun, "k", "v") == ok({}))
+    DiskStore.close(begun)
+    File.write!(path, "name,price\npen,3\n")
+    assert(store_reason(DiskStore.open(path)) == path <> " is not a store")
+    assert(File.read!(path) == "name,price\npen,3\n")
+    File.rm(path)
+    assert(store_reason(DiskStore.open(Path.join(path, "no/such/dir"))) == "enoent")
+  end
+
+  def store_reason(opened: result[disk_store, string]): string do
+    case opened do
+      ok(_) -> "opened"
+      error(why) -> why
+    end
+  end
+
+  test "many processes write to a store at once" do
+    path = scratch()
+    ok(store) = DiskStore.open(path)
+    tasks = Enum.map(1..20, fn n ->
+      Task.async(fn ->
+        Enum.each(1..10, fn i ->
+          ok(_) = DiskStore.update(store, "count", &bump/1)
+          ok({}) = DiskStore.put(store, "task:" <> Integer.to_string(n) <> ":" <> Integer.to_string(i), "done")
+        end)
+        n
+      end)
+    end)
+    Enum.each(tasks, fn task -> Task.await(task, 30000) end)
+    assert(DiskStore.get(store, "count") == some("200"))
+    assert(length(DiskStore.prefix(store, "task:")) == 200)
+    # More writers than the store queues at once.
+    crowd = Enum.map(1..600, fn n ->
+      Task.async(fn ->
+        ok({}) = DiskStore.put(store, "crowd:" <> Integer.to_string(n), "here")
+        n
+      end)
+    end)
+    Enum.each(crowd, fn task -> Task.await(task, 30000) end)
+    assert(length(DiskStore.prefix(store, "crowd:")) == 600)
+    assert(DiskStore.commit(store, [], Enum.map(DiskStore.prefix(store, "crowd:"), fn {key, _} -> key end)) == ok({}))
+    DiskStore.close(store)
+    ok(again) = DiskStore.open(path)
+    assert(DiskStore.get(again, "count") == some("200"))
+    assert(DiskStore.size(again) == 201)
+    DiskStore.close(again)
+    File.rm(path)
+  end
+
+  test "a store's file does not grow without end" do
+    path = scratch()
+    ok(store) = DiskStore.open(path)
+    large = String.duplicate("x", 300000)
+    Enum.each(1..12, fn n -> ok({}) = DiskStore.put(store, "page", large <> Integer.to_string(n)) end)
+    ok(stat) = File.stat(path)
+    assert(stat.size < 2000000)
+    assert(DiskStore.get(store, "page") == some(large <> "12"))
+    DiskStore.close(store)
+    ok(again) = DiskStore.open(path)
+    assert(DiskStore.get(again, "page") == some(large <> "12"))
+    assert(File.exists?(path <> ".compact") == false)
+    DiskStore.close(again)
+    File.rm(path)
+  end
+end

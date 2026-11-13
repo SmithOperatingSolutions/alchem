@@ -11,15 +11,37 @@ import (
 // SyntaxIndex lists the topics by group.
 func SyntaxIndex() string {
 	var b strings.Builder
-	b.WriteString("Syntax topics. Run alchem syntax <topic> for the rules and an example, or alchem syntax --all for everything.\n")
+	b.WriteString("Syntax topics. Run alchem syntax <topic> for the rules and an example, alchem syntax --group <group> for one group, or alchem syntax --all for everything.\n")
 	order, topics := groups(syntax.Topics, func(t syntax.Topic) string { return t.Group })
 	for _, group := range order {
-		b.WriteString("\n" + group + "\n")
+		b.WriteString("\n" + group + " (" + GroupName(group) + ")\n")
 		for _, topic := range topics[group] {
 			fmt.Fprintf(&b, "  %-20s %s\n", topic.Name, topic.Summary)
 		}
 	}
 	return b.String()
+}
+
+// SyntaxGroup lists the topics of one group with what each covers.
+func SyntaxGroup(name string, asJSON bool) (string, error) {
+	order, topics := groups(syntax.Topics, func(t syntax.Topic) string { return t.Group })
+	group, err := groupNamed(name, order, "syntax topics", "alchem syntax")
+	if err != nil {
+		return "", err
+	}
+	if asJSON {
+		var out []topicJSON
+		for _, topic := range topics[group] {
+			out = append(out, topicData(topic))
+		}
+		return encode(out), nil
+	}
+	var b strings.Builder
+	b.WriteString(group + ": syntax topics. Run alchem syntax <topic> for the rules and an example.\n\n")
+	for _, topic := range topics[group] {
+		fmt.Fprintf(&b, "  %-20s %s\n", topic.Name, topic.Summary)
+	}
+	return b.String(), nil
 }
 
 // sampleText is an example as help shows it: a whole file when it has
@@ -104,6 +126,14 @@ type sampleJSON struct {
 	Source string `json:"source"`
 }
 
+func topicData(topic syntax.Topic) topicJSON {
+	entry := topicJSON{Name: topic.Name, Group: topic.Group, Summary: topic.Summary, Notes: topic.Notes, See: topic.See}
+	for _, sample := range topic.Examples {
+		entry.Examples = append(entry.Examples, sampleJSON{sample.Title, sampleText(sample)})
+	}
+	return entry
+}
+
 // SyntaxJSON is one topic, or all of them when the name is empty, as data.
 func SyntaxJSON(name string) (string, error) {
 	var out []topicJSON
@@ -111,11 +141,7 @@ func SyntaxJSON(name string) (string, error) {
 		if name != "" && topic.Name != strings.ToLower(name) {
 			continue
 		}
-		entry := topicJSON{Name: topic.Name, Group: topic.Group, Summary: topic.Summary, Notes: topic.Notes, See: topic.See}
-		for _, sample := range topic.Examples {
-			entry.Examples = append(entry.Examples, sampleJSON{sample.Title, sampleText(sample)})
-		}
-		out = append(out, entry)
+		out = append(out, topicData(topic))
 	}
 	if name != "" {
 		if len(out) == 0 {

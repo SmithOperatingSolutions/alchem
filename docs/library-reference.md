@@ -12,7 +12,7 @@ Every library function with its signatures, a description and examples; `alchem 
 
 **Dates and times**: [Date](#date), [Time](#time), [NaiveDateTime](#naivedatetime), [DateTime](#datetime), [Calendar](#calendar), [Duration](#duration)
 
-**Files and system**: [File](#file), [Path](#path), [IO](#io), [System](#system), [OptionParser](#optionparser), [Logger](#logger), [Port](#port)
+**Files and system**: [File](#file), [Path](#path), [IO](#io), [System](#system), [OptionParser](#optionparser), [Logger](#logger), [Port](#port), [DiskStore](#diskstore)
 
 **Concurrency**: [Process](#process), [Node](#node), [Supervisor](#supervisor), [Server](#server), [Task](#task), [Task.Supervisor](#task.supervisor), [Agent](#agent), [Registry](#registry), [DynamicSupervisor](#dynamicsupervisor)
 
@@ -4887,7 +4887,7 @@ alx> Base.url_encode64("hi")
 
 ## JSON
 
-Converts between JSON text and the builtin JSON type.
+Converts between JSON text, the builtin JSON type and declared types.
 
 ### JSON.decode
 
@@ -4918,6 +4918,27 @@ Parses JSON text; fails when it is invalid.
 ```elixir
 alx> JSON.decode!("{\"a\": null}")
 JSON.object(%{"a" => JSON.null})
+```
+
+### JSON.decode_as
+
+```
+JSON.decode_as(JSON) -> result[a,string]
+JSON.decode_as(string) -> result[a,string]
+```
+
+Reads JSON as the type the result is annotated with, from text or from a JSON value: the reverse of what JSON.encode! writes for that type. A struct is read from an object by field name, where a field that is an option may be left out and members the struct has no field for are passed over; a variant from its name, or from {"name": [fields]} when it has fields; lists, sets and tuples from arrays; a map from an object, its keys read as strings, atoms, integers, floats or booleans; an option from null or the value; and an integer is accepted where a float is wanted. JSON that does not fit is an error that says where, as in "items[2].price: expected an integer, found a string". A type holding functions or processes cannot be read.
+
+```elixir
+alx> prices: result[map[string, list[integer]], string] = JSON.decode_as("{\"pen\": [3, 4]}")
+alx> prices
+ok(%{"pen" => [3, 4]})
+alx> pair: result[tuple[string, option[float]], string] = JSON.decode_as(JSON.decode!("[\"x\", null]"))
+alx> pair
+ok({"x", none})
+alx> wrong: result[map[string, list[integer]], string] = JSON.decode_as("{\"pen\": [3, \"four\"]}")
+alx> wrong
+error("pen[1]: expected an integer, found a string")
 ```
 
 ### JSON.encode
@@ -10553,7 +10574,7 @@ HTTP.serve(string, fn[HTTP.Request,HTTP.Response]) -> result[http_server,string]
 HTTP.serve(string, fn[HTTP.Request,HTTP.Response], list[tuple[atom,integer]]) -> result[http_server,string]
 ```
 
-Serves HTTP on an address, host:port. Each request runs the handler in a process of its own; a handler that fails answers 500. The server stops when HTTP.stop is called or the program ends. A third argument sets limits: read_timeout:, write_timeout:, idle_timeout: (how long a kept-alive connection waits for its next request) and header_timeout: in milliseconds, max_header_bytes:, max_body_bytes: (64 MB by default; larger requests get 413), and keep_alive: 0 to close each connection after one request.
+Serves HTTP on an address, host:port. Each request runs the handler in a process of its own; a handler that fails answers 500. The server stops when HTTP.stop is called or the program ends. A third argument sets limits: read_timeout:, write_timeout:, idle_timeout: (how long a kept-alive connection waits for its next request) and header_timeout: in milliseconds, max_header_bytes:, max_body_bytes: (64 MB by default; larger requests get 413), keep_alive: 0 to close each connection after one request, and compress: 1 to send bodies of 1 KB or more with gzip to clients that accept it, leaving streamed bodies, images and other media, and responses the handler encoded itself as they are.
 
 ```elixir
 alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
@@ -12002,6 +12023,298 @@ alx> DynamicSupervisor.which_children(sup) == [Process.id(worker)]
 true
 ```
 
+## DiskStore
+
+A table of text under text keys, kept in one file so that it outlasts the program: a write is on the disk when it returns, keys are read in order by range or prefix, and any process may use it.
+
+### DiskStore.close
+
+```
+DiskStore.close(disk_store) -> boolean
+```
+
+Closes a store once the writes under way are on the disk; false when it was closed already. A closed store refuses writes with error("closed"), and reading one fails.
+
+```elixir
+alx> path = Path.join(System.tmp_dir!(), "store_doc_" <> Base.encode16(Crypto.strong_rand_bytes(6)))
+alx> ok(store) = DiskStore.open(path)
+alx> DiskStore.close(store)
+true
+alx> DiskStore.close(store)
+false
+alx> DiskStore.put(store, "k", "v")
+error("closed")
+alx> File.rm(path)
+ok({})
+```
+
+### DiskStore.commit
+
+```
+DiskStore.commit(disk_store, list[tuple[string,string]], list[string]) -> result[tuple[],string]
+```
+
+Makes several changes as one: the {key, value} pairs are stored and the listed keys removed, and after a crash either all of it is there or none.
+
+```elixir
+alx> path = Path.join(System.tmp_dir!(), "store_doc_" <> Base.encode16(Crypto.strong_rand_bytes(6)))
+alx> ok(store) = DiskStore.open(path)
+alx> DiskStore.put(store, "cart:7", "pen")
+ok({})
+alx> DiskStore.commit(store, [{"order:1", "pen"}, {"stock:pen", "4"}], ["cart:7"])
+ok({})
+alx> DiskStore.keys(store)
+["order:1", "stock:pen"]
+alx> DiskStore.close(store)
+true
+alx> File.rm(path)
+ok({})
+```
+
+### DiskStore.compact
+
+```
+DiskStore.compact(disk_store) -> result[tuple[],string]
+```
+
+Writes the file afresh with only what the store holds now, dropping the record of earlier values. A store does this by itself when its file has grown well past what it holds, so calling it is seldom needed.
+
+```elixir
+alx> path = Path.join(System.tmp_dir!(), "store_doc_" <> Base.encode16(Crypto.strong_rand_bytes(6)))
+alx> ok(store) = DiskStore.open(path)
+alx> DiskStore.put(store, "k", "old")
+ok({})
+alx> DiskStore.put(store, "k", "new")
+ok({})
+alx> DiskStore.compact(store)
+ok({})
+alx> DiskStore.get(store, "k")
+some("new")
+alx> DiskStore.close(store)
+true
+alx> File.rm(path)
+ok({})
+```
+
+### DiskStore.delete
+
+```
+DiskStore.delete(disk_store, string) -> result[tuple[],string]
+```
+
+Removes a key; a key that holds nothing is left as it is.
+
+```elixir
+alx> path = Path.join(System.tmp_dir!(), "store_doc_" <> Base.encode16(Crypto.strong_rand_bytes(6)))
+alx> ok(store) = DiskStore.open(path)
+alx> DiskStore.put(store, "k", "v")
+ok({})
+alx> DiskStore.delete(store, "k")
+ok({})
+alx> DiskStore.get(store, "k")
+none
+alx> DiskStore.close(store)
+true
+alx> File.rm(path)
+ok({})
+```
+
+### DiskStore.get
+
+```
+DiskStore.get(disk_store, string) -> option[string]
+```
+
+The value under a key, or none.
+
+```elixir
+alx> path = Path.join(System.tmp_dir!(), "store_doc_" <> Base.encode16(Crypto.strong_rand_bytes(6)))
+alx> ok(store) = DiskStore.open(path)
+alx> DiskStore.get(store, "missing")
+none
+alx> DiskStore.close(store)
+true
+alx> File.rm(path)
+ok({})
+```
+
+### DiskStore.has_key?
+
+```
+DiskStore.has_key?(disk_store, string) -> boolean
+```
+
+Reports whether a key holds a value.
+
+```elixir
+alx> path = Path.join(System.tmp_dir!(), "store_doc_" <> Base.encode16(Crypto.strong_rand_bytes(6)))
+alx> ok(store) = DiskStore.open(path)
+alx> DiskStore.put(store, "k", "")
+ok({})
+alx> {DiskStore.has_key?(store, "k"), DiskStore.has_key?(store, "other")}
+{true, false}
+alx> DiskStore.close(store)
+true
+alx> File.rm(path)
+ok({})
+```
+
+### DiskStore.keys
+
+```
+DiskStore.keys(disk_store) -> list[string]
+```
+
+Every key, in order.
+
+```elixir
+alx> path = Path.join(System.tmp_dir!(), "store_doc_" <> Base.encode16(Crypto.strong_rand_bytes(6)))
+alx> ok(store) = DiskStore.open(path)
+alx> DiskStore.commit(store, [{"b", "2"}, {"a", "1"}], [])
+ok({})
+alx> DiskStore.keys(store)
+["a", "b"]
+alx> DiskStore.close(store)
+true
+alx> File.rm(path)
+ok({})
+```
+
+### DiskStore.open
+
+```
+DiskStore.open(string) -> result[disk_store,string]
+```
+
+Opens the store in a file, making the file when there is none. What a crash cut short at the end of the file is dropped. Opening a path that is already open gives the same store, and one program opens a given file at a time. A file that is something else is an error. Every key and value is also held in memory, where reads are answered, so a store suits data that fits there. Values of other types are kept as text: JSON.encode! writes one and JSON.decode_as reads it back.
+
+```elixir
+alx> path = Path.join(System.tmp_dir!(), "store_doc_" <> Base.encode16(Crypto.strong_rand_bytes(6)))
+alx> ok(store) = DiskStore.open(path)
+alx> DiskStore.put(store, "greeting", "hello")
+ok({})
+alx> DiskStore.close(store)
+true
+alx> ok(again) = DiskStore.open(path)
+alx> DiskStore.get(again, "greeting")
+some("hello")
+alx> DiskStore.close(again)
+true
+alx> File.rm(path)
+ok({})
+```
+
+### DiskStore.prefix
+
+```
+DiskStore.prefix(disk_store, string) -> list[tuple[string,string]]
+```
+
+The {key, value} pairs whose keys begin with a prefix, in key order: with keys written as kind:id, everything of one kind.
+
+```elixir
+alx> path = Path.join(System.tmp_dir!(), "store_doc_" <> Base.encode16(Crypto.strong_rand_bytes(6)))
+alx> ok(store) = DiskStore.open(path)
+alx> DiskStore.commit(store, [{"user:1", "al"}, {"user:2", "bo"}, {"visit:1", "x"}], [])
+ok({})
+alx> DiskStore.prefix(store, "user:")
+[{"user:1", "al"}, {"user:2", "bo"}]
+alx> DiskStore.close(store)
+true
+alx> File.rm(path)
+ok({})
+```
+
+### DiskStore.put
+
+```
+DiskStore.put(disk_store, string, string) -> result[tuple[],string]
+```
+
+Stores a value under a key, replacing what the key held, and returns when the change is on the disk.
+
+```elixir
+alx> path = Path.join(System.tmp_dir!(), "store_doc_" <> Base.encode16(Crypto.strong_rand_bytes(6)))
+alx> ok(store) = DiskStore.open(path)
+alx> DiskStore.put(store, "user:1", "al")
+ok({})
+alx> DiskStore.get(store, "user:1")
+some("al")
+alx> DiskStore.close(store)
+true
+alx> File.rm(path)
+ok({})
+```
+
+### DiskStore.range
+
+```
+DiskStore.range(disk_store, string, string) -> list[tuple[string,string]]
+```
+
+The {key, value} pairs whose keys are at or after the first key and before the second, in key order.
+
+```elixir
+alx> path = Path.join(System.tmp_dir!(), "store_doc_" <> Base.encode16(Crypto.strong_rand_bytes(6)))
+alx> ok(store) = DiskStore.open(path)
+alx> DiskStore.commit(store, [{"a", "1"}, {"b", "2"}, {"c", "3"}], [])
+ok({})
+alx> DiskStore.range(store, "a", "c")
+[{"a", "1"}, {"b", "2"}]
+alx> DiskStore.close(store)
+true
+alx> File.rm(path)
+ok({})
+```
+
+### DiskStore.size
+
+```
+DiskStore.size(disk_store) -> integer
+```
+
+The number of keys.
+
+```elixir
+alx> path = Path.join(System.tmp_dir!(), "store_doc_" <> Base.encode16(Crypto.strong_rand_bytes(6)))
+alx> ok(store) = DiskStore.open(path)
+alx> DiskStore.put(store, "k", "v")
+ok({})
+alx> DiskStore.size(store)
+1
+alx> DiskStore.close(store)
+true
+alx> File.rm(path)
+ok({})
+```
+
+### DiskStore.update
+
+```
+DiskStore.update(disk_store, string, fn[option[string],option[string]]) -> result[option[string],string]
+```
+
+Changes one key by a function of what it holds, none when it holds nothing: the function gives some(value) to store or none to remove the key, and no other write to the store comes between its reading and its writing. The result is what the function gave. The function must not itself write to the store, which waits for it.
+
+```elixir
+alx> path = Path.join(System.tmp_dir!(), "store_doc_" <> Base.encode16(Crypto.strong_rand_bytes(6)))
+alx> ok(store) = DiskStore.open(path)
+alx> count = fn(held: option[string]): option[string] do
+...>   case held do
+...>     some(n) -> some(Integer.to_string(String.to_integer(n) + 1))
+...>     none -> some("1")
+...>   end
+...> end
+alx> DiskStore.update(store, "visits", count)
+ok(some("1"))
+alx> DiskStore.update(store, "visits", count)
+ok(some("2"))
+alx> DiskStore.close(store)
+true
+alx> File.rm(path)
+ok({})
+```
+
 ## WebSocket
 
 WebSockets, RFC 6455: a handler of HTTP.serve upgrades its request into a socket, and WebSocket.connect opens one to a server. Messages are text or binary; pings and the closing handshake are answered without the program's help. Calls that wait take milliseconds and give error("timeout") or error("closed"). A socket belongs to the process that made it and closes when that process ends, so a handler that upgrades either keeps the socket or hands it on with controlling_process.
@@ -12040,6 +12353,28 @@ alx> WebSocket.send(ws, "late")
 error("closed")
 ```
 
+### WebSocket.compressed?
+
+```
+WebSocket.compressed?(websocket) -> boolean
+```
+
+Reports whether the handshake agreed to compress messages: the server upgraded with compress: and the client offered it.
+
+```elixir
+alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+...>   ok(socket) = WebSocket.upgrade(request, [compress: true])
+...>   WebSocket.recv(socket, 1000)
+...>   HTTP.text(200, "")
+...> end)
+alx> ok(ws) = WebSocket.connect("ws://" <> HTTP.address(server), 1000, [compress: "true"])
+alx> WebSocket.compressed?(ws)
+true
+alx> ok(plain) = WebSocket.connect("ws://" <> HTTP.address(server), 1000)
+alx> WebSocket.compressed?(plain)
+false
+```
+
 ### WebSocket.connect
 
 ```
@@ -12048,7 +12383,7 @@ WebSocket.connect(string, integer, list[tuple[atom,string]]) -> result[websocket
 WebSocket.connect(string, integer, list[tuple[atom,string]], list[tuple[string,string]]) -> result[websocket,string]
 ```
 
-Opens a WebSocket to a ws:// or wss:// address, waiting up to the given milliseconds for the connection and the handshake. Options, as text: ca_file: a PEM file of certificates to trust, insecure: "true" to trust any, and origin: the Origin header to send. A list of {name, value} headers after the options is sent with the handshake, such as a Cookie or Authorization; the headers the handshake sets itself are refused.
+Opens a WebSocket to a ws:// or wss:// address, waiting up to the given milliseconds for the connection and the handshake. Options, as text: ca_file: a PEM file of certificates to trust, insecure: "true" to trust any, origin: the Origin header to send, and compress: "true" to offer permessage-deflate, which is used when the server accepts it. A list of {name, value} headers after the options is sent with the handshake, such as a Cookie or Authorization; the headers the handshake sets itself are refused.
 
 ```elixir
 alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
@@ -12279,10 +12614,11 @@ alx> Process.receive(me, 1000)
 
 ```
 WebSocket.upgrade(HTTP.Request) -> result[websocket,string]
+WebSocket.upgrade(HTTP.Request, list[tuple[atom,boolean]]) -> result[websocket,string]
 WebSocket.upgrade(HTTP.Request, list[tuple[atom,integer]]) -> result[websocket,string]
 ```
 
-Called by an HTTP.serve handler, answers its request with the WebSocket handshake and returns the socket. The response the handler returns afterwards is not sent. A request that is not a WebSocket handshake is error("not a WebSocket request: ..."), and the handler answers it as it likes. [max_message_bytes: n] bounds incoming messages (16 MB by default); a larger one closes the socket with code 1009. Check HTTP.header(request, "origin") before upgrading when only your own pages should connect.
+Called by an HTTP.serve handler, answers its request with the WebSocket handshake and returns the socket. The response the handler returns afterwards is not sent. A request that is not a WebSocket handshake is error("not a WebSocket request: ..."), and the handler answers it as it likes. [max_message_bytes: n] bounds incoming messages (16 MB by default); a larger one closes the socket with code 1009. [compress: true], or compress: 1 beside max_message_bytes:, accepts permessage-deflate (RFC 7692) from a client that offers it, as browsers do: messages of 256 bytes or more are then sent compressed, each on its own, and the limit of a message applies to what it expands to. Check HTTP.header(request, "origin") before upgrading when only your own pages should connect.
 
 ```elixir
 alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
@@ -12312,7 +12648,7 @@ alx> {plain.status, plain.body}
 
 ## Crypto
 
-Cryptographic building blocks: random bytes from the operating system's secure source, hashes, HMAC signatures and a comparison that takes the same time however much of its input matches. Results are raw bytes; Base.encode16 or Base.encode64 makes them printable.
+Cryptographic building blocks: random bytes from the operating system's secure source, hashes, HMAC signatures, password storage and a comparison that takes the same time however much of its input matches. Results are raw bytes; Base.encode16 or Base.encode64 makes them printable.
 
 ### Crypto.hash
 
@@ -12327,6 +12663,25 @@ alx> Base.encode16(Crypto.hash(:sha256, "abc"), [case: :lower])
 "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 ```
 
+### Crypto.hash_password
+
+```
+Crypto.hash_password(string) -> string
+Crypto.hash_password(string, list[tuple[atom,integer]]) -> string
+```
+
+What to store in place of a password: its PBKDF2-HMAC-SHA256 key under a fresh random salt, written with the salt and the count of iterations as $pbkdf2-sha256$i=600000$salt$key, so that Crypto.verify_password needs nothing else. The same password gives a different result each time. [iterations: n] sets the count, 600,000 by default; passwords stored with an older count still verify.
+
+```elixir
+alx> stored = Crypto.hash_password("correct horse", [iterations: 1000])
+alx> String.starts_with?(stored, "$pbkdf2-sha256$i=1000$")
+true
+alx> Crypto.verify_password("correct horse", stored)
+true
+alx> stored == Crypto.hash_password("correct horse", [iterations: 1000])
+false
+```
+
 ### Crypto.hmac
 
 ```
@@ -12338,6 +12693,19 @@ The HMAC of data under a key with one of the hash algorithms, as raw bytes: a si
 ```elixir
 alx> Base.encode16(Crypto.hmac(:sha256, "Jefe", "what do ya want for nothing?"), [case: :lower])
 "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+```
+
+### Crypto.pbkdf2
+
+```
+Crypto.pbkdf2(atom, string, string, integer, integer) -> string
+```
+
+A key of the given number of bytes derived from a password and a salt by PBKDF2 over HMAC with one of the hash algorithms, as raw bytes. The count of iterations makes each guess at the password cost that much work. For storing passwords, Crypto.hash_password chooses the salt and the count.
+
+```elixir
+alx> Base.encode16(Crypto.pbkdf2(:sha256, "password", "salt", 4096, 32), [case: :lower])
+"c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a"
 ```
 
 ### Crypto.secure_compare
@@ -12367,5 +12735,21 @@ The given number of random bytes from the operating system's secure source, for 
 alx> byte_size(Crypto.strong_rand_bytes(16))
 16
 alx> Crypto.strong_rand_bytes(16) == Crypto.strong_rand_bytes(16)
+false
+```
+
+### Crypto.verify_password
+
+```
+Crypto.verify_password(string, string) -> boolean
+```
+
+Reports whether a password is the one Crypto.hash_password made a stored value from. Text that is not such a value matches no password.
+
+```elixir
+alx> stored = Crypto.hash_password("correct horse", [iterations: 1000])
+alx> {Crypto.verify_password("correct horse", stored), Crypto.verify_password("wrong", stored)}
+{true, false}
+alx> Crypto.verify_password("correct horse", "not a stored password")
 false
 ```

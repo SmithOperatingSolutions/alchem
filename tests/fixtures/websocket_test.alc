@@ -431,6 +431,11 @@ defmodule WebSocketTest do
   # Accepts one connection on a raw listener, answers the WebSocket
   # handshake by hand, then sends the given bytes and closes.
   def raw_server(listener: socket, then: string): integer do
+    raw_server_with(listener, "", then)
+  end
+
+  # The same, with further header lines in the answer.
+  def raw_server_with(listener: socket, extra: string, then: string): integer do
     ok(conn) = TCP.accept(listener, 2000)
     lines = read_headers(conn, [])
     key = Enum.reduce(lines, "", fn line, found ->
@@ -440,7 +445,7 @@ defmodule WebSocketTest do
       end
     end)
     accept = Base.encode64(Crypto.hash(:sha1, key <> "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
-    TCP.send(conn, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " <> accept <> "\r\n\r\n" <> then)
+    TCP.send(conn, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " <> accept <> "\r\n" <> extra <> "\r\n" <> then)
     TCP.close(conn)
     0
   end
@@ -456,8 +461,136 @@ defmodule WebSocketTest do
     ok(cut) = WebSocket.connect(address, 2000)
     assert(WebSocket.recv(cut, 2000) == ok(WebSocket.Event.closed(1006, "")))
     Task.await(second, 2000)
+    # A server may answer only with the compression it was offered.
+    unasked = Task.async(fn -> raw_server_with(listener, "Sec-WebSocket-Extensions: permessage-deflate\r\n", "") end)
+    assert(refusal(WebSocket.connect(address, 2000)) == "the server chose an extension that was not offered: permessage-deflate")
+    Task.await(unasked, 2000)
+    keeping = Task.async(fn -> raw_server_with(listener, "Sec-WebSocket-Extensions: permessage-deflate\r\n", "") end)
+    assert(refusal(WebSocket.connect(address, 2000, [compress: "true"])) == "the server chose an extension that was not offered: permessage-deflate")
+    Task.await(keeping, 2000)
     TCP.close(listener)
     assert(WebSocket.connect("ws://127.0.0.1", 500) |> is_error())
+  end
+
+  def echo_all(ws: websocket): integer do
+    case WebSocket.recv(ws, 3000) do
+      ok(WebSocket.Event.text(text)) ->
+        WebSocket.send(ws, text)
+        echo_all(ws)
+      ok(WebSocket.Event.binary(data)) ->
+        WebSocket.send_binary(ws, data)
+        echo_all(ws)
+      _ -> 0
+    end
+  end
+
+  # A server that says whether its socket is compressed and then echoes.
+  def echoing(options: list[tuple[atom, integer]]): http_server do
+    ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+      case WebSocket.upgrade(request, options) do
+        ok(ws) ->
+          WebSocket.send(ws, if WebSocket.compressed?(ws) do "compressed" else "plain" end)
+          echo_all(ws)
+          HTTP.text(200, "")
+        error(reason) -> HTTP.text(400, reason)
+      end
+    end)
+    server
+  end
+
+  # The handshake by hand, offering compression as a browser does.
+  def raw_offering(server: http_server): socket do
+    ok(conn) = TCP.connect(HTTP.address(server), 1000)
+    TCP.send(conn, "GET /raw HTTP/1.1\r\nHost: test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n\r\n")
+    ok(status) = TCP.recv_line(conn, 1000)
+    assert(status == "HTTP/1.1 101 Switching Protocols")
+    headers = read_headers(conn, [])
+    assert(Enum.member?(headers, "Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover"))
+    assert(server_frame(conn) == {"81", "compressed"})
+    conn
+  end
+
+  def rows(): string do
+    String.duplicate("<li class=\"row\">item &amp; more</li>", 400)
+  end
+
+  test "compressed messages" do
+    server = echoing([compress: 1])
+    address = "ws://" <> HTTP.address(server)
+    ok(ws) = WebSocket.connect(address, 1000, [compress: "true"])
+    assert(WebSocket.compressed?(ws))
+    assert(WebSocket.recv(ws, 1000) == ok(WebSocket.Event.text("compressed")))
+    Enum.each([rows(), "short", "", String.duplicate("é", 300)], fn text ->
+      assert(WebSocket.send(ws, text) == ok({}))
+      assert(WebSocket.recv(ws, 1000) == ok(WebSocket.Event.text(text)))
+    end)
+    noise = Crypto.strong_rand_bytes(2000)
+    assert(WebSocket.send_binary(ws, noise) == ok({}))
+    assert(WebSocket.recv(ws, 1000) == ok(WebSocket.Event.binary(noise)))
+    WebSocket.close(ws)
+
+    # Compression takes both ends: a client that does not offer it, and a
+    # server that does not accept it, talk as before.
+    ok(plain) = WebSocket.connect(address, 1000)
+    refute(WebSocket.compressed?(plain))
+    assert(WebSocket.recv(plain, 1000) == ok(WebSocket.Event.text("plain")))
+    assert(WebSocket.send(plain, rows()) == ok({}))
+    assert(WebSocket.recv(plain, 1000) == ok(WebSocket.Event.text(rows())))
+    WebSocket.close(plain)
+    HTTP.stop(server)
+
+    off = echoing([compress: 0])
+    ok(declined) = WebSocket.connect("ws://" <> HTTP.address(off), 1000, [compress: "true"])
+    refute(WebSocket.compressed?(declined))
+    assert(WebSocket.recv(declined, 1000) == ok(WebSocket.Event.text("plain")))
+    WebSocket.close(declined)
+    HTTP.stop(off)
+
+    ok(flagged) = HTTP.serve("127.0.0.1:0", fn request ->
+      ok(socket) = WebSocket.upgrade(request, [compress: true])
+      WebSocket.send(socket, inspect(WebSocket.compressed?(socket)))
+      HTTP.text(200, "")
+    end)
+    ok(asked) = WebSocket.connect("ws://" <> HTTP.address(flagged), 1000, [compress: "true"])
+    assert(WebSocket.recv(asked, 1000) == ok(WebSocket.Event.text("true")))
+    HTTP.stop(flagged)
+  end
+
+  test "compressed frames as they are sent" do
+    server = echoing([compress: 1])
+    conn = raw_offering(server)
+    # A message may go uncompressed on a compressed socket, and a short one
+    # does.
+    TCP.send(conn, masked("81", "short"))
+    assert(server_frame(conn) == {"81", "short"})
+    TCP.send(conn, masked("81", rows()))
+    {first, packed} = server_frame(conn)
+    assert(first == "C1")
+    assert(byte_size(packed) < 200)
+    TCP.send(conn, masked("C1", packed))
+    assert(server_frame(conn) == {"C1", packed})
+    # What cannot be inflated ends the socket with 1007.
+    TCP.send(conn, masked("C1", Base.decode16!("FFFFFFFF")))
+    assert(server_frame(conn) == {"88", Base.decode16!("03EF") <> "a compressed message could not be read"})
+    TCP.close(conn)
+    HTTP.stop(server)
+
+    # The limit of a message is on what it inflates to.
+    small = echoing([max_message_bytes: 100, compress: 1])
+    bomb = raw_offering(small)
+    TCP.send(bomb, masked("C1", packed))
+    assert(server_frame(bomb) == {"88", Base.decode16!("03F1") <> "message too large"})
+    TCP.close(bomb)
+    HTTP.stop(small)
+
+    # Without the extension the bit that marks compression is an error.
+    plain = echoing([])
+    unasked = raw(plain)
+    assert(server_frame(unasked) == {"81", "plain"})
+    TCP.send(unasked, masked("C1", packed))
+    assert(server_frame(unasked) == {"88", Base.decode16!("03EA") <> "protocol error: reserved bits are set"})
+    TCP.close(unasked)
+    HTTP.stop(plain)
   end
 
   test "crypto" do

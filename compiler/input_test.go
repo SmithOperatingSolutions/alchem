@@ -147,3 +147,26 @@ end
 		}
 	}
 }
+
+// The library is chosen by the names a program's code mentions. A word
+// inside a string is not code: printing "cover" must not bring in the test
+// runner, which refers to tables only a test program has.
+func TestTextInStringsSelectsNoLibrary(t *testing.T) {
+	library := selectLibrary("func main(){ println(\"cover runTests\", `writeCoverage`) /* cover */ }\n// cover\n")
+	if strings.Contains(library, "func cover(") || strings.Contains(library, "func runTests(") {
+		t.Fatalf("words in strings and comments selected library sections:\n%.400s", library)
+	}
+	binary := buildProgram(t, `defmodule Words do
+  def main() do
+    IO.puts("object-fit: cover;")
+    IO.puts("""
+    cover runTests writeCoverage
+    """)
+  end
+end
+`)
+	out, err := runProgram(binary, "")
+	if err != nil || out != "object-fit: cover;\ncover runTests writeCoverage\n\n" {
+		t.Fatalf("err=%v out=%q", err, out)
+	}
+}

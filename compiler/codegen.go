@@ -46,9 +46,11 @@ type generator struct {
 	// decls are the program's struct and sum types by name. codecs numbers
 	// those that cross to another node, in the order their functions are
 	// generated.
-	decls      map[string]ast.TypeDecl
-	codecs     map[string]int
-	codecOrder []string
+	decls       map[string]ast.TypeDecl
+	codecs      map[string]int
+	codecOrder  []string
+	readers     map[string]int
+	readerOrder []string
 }
 
 func (g *generator) id() string { g.next++; return fmt.Sprintf("v%d", g.next) }
@@ -182,6 +184,7 @@ func generateProgram(p ast.Program, options BuildOptions, plan *externPlan) stri
 		out.WriteString(fmt.Sprintf("var fixed%d = %s\n", i, pieces))
 	}
 	out.WriteString(g.codecFunctions())
+	out.WriteString(g.readerFunctions())
 	usesNodes := strings.Contains(out.String(), "node.Codec[")
 	generated := out.String()
 	if strings.Contains(generated, "regexp.") {
@@ -569,6 +572,8 @@ func goType(t string) string {
 		return "*wsConn"
 	case "file":
 		return "*fileHandle"
+	case "disk_store":
+		return "*storeHandle"
 	}
 	for _, kind := range []string{"pid", "supervisor"} {
 		if elem, ok := ast.CapabilityElement(t, kind); ok {
@@ -1379,6 +1384,9 @@ func (g *generator) libraryCall(e *ast.Expr, entry syntax.Library, scope map[str
 	}
 	for _, name := range entry.Codec {
 		args = append(args, g.codec(bound[name]))
+	}
+	for _, name := range entry.Read {
+		args = append(args, g.reader(bound[name]))
 	}
 	if entry.Where {
 		args = append(args, g.location(e.Line, e.Column))

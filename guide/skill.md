@@ -12,6 +12,7 @@ It lists the commands, the syntax topics and the library modules, and how to ask
 
 - `alchem syntax <topic>`: one construct with its rules and a working example (`alchem syntax` lists the topics).
 - `alchem doc <Module>`: the functions of a library module; `alchem doc <Module.function>`: signatures and examples.
+- `alchem doc --group <group>` and `alchem syntax --group <group>`: one group of modules or topics, with what each is for.
 - `alchem doc --search <text>`: find functions and topics by name or description.
 - `alchem doc <file.alc>`: the documentation written in a project file.
 

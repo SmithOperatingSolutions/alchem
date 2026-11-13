@@ -152,7 +152,7 @@ func init() {
 	module("Integer", "Text", "Integer parsing, formatting and number theory.")
 	module("Float", "Text", "Float parsing, formatting and rounding.")
 	module("Base", "Text", "Base 16, 32 and 64 encoding.")
-	module("JSON", "Text", "Converts between JSON text and the builtin JSON type.")
+	module("JSON", "Text", "Converts between JSON text, the builtin JSON type and declared types.")
 	module("Date", "Dates and times", "Calendar dates, written ~D[2026-01-05].")
 	module("Time", "Dates and times", "Times of day, written ~T[13:04:05], and the program clock.")
 	module("NaiveDateTime", "Dates and times", "A date and time without a time zone, written ~N[2026-01-05 13:04:05].")

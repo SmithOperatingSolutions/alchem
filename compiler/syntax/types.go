@@ -262,7 +262,29 @@ func (c checker) unwired(t string) string {
 	found := ""
 	c.contains(t, func(part string) bool {
 		head, _ := ast.Split(part)
-		blocked := isFunction(part) || ast.TypeVariable(part) || c.opaque(part) || head == "stream" || head == "regex" || head == "port" || head == "task" || head == "agent" || head == "server" || head == "supervisor" || head == "registry" || head == "dynamic_supervisor" || head == "socket" || head == "http_server" || head == "websocket" || head == "generator" || head == "file"
+		blocked := isFunction(part) || ast.TypeVariable(part) || c.opaque(part) || head == "stream" || head == "regex" || head == "port" || head == "task" || head == "agent" || head == "server" || head == "supervisor" || head == "registry" || head == "dynamic_supervisor" || head == "socket" || head == "http_server" || head == "websocket" || head == "generator" || head == "file" || head == "disk_store"
+		if blocked && found == "" {
+			found = part
+		}
+		return blocked
+	}, map[string]bool{})
+	return found
+}
+
+// unread returns the first part of a type that cannot be read from JSON,
+// or "" when every part can: a function, a capability, or a map whose keys
+// JSON's text keys cannot give back.
+func (c checker) unread(t string) string {
+	found := ""
+	c.contains(t, func(part string) bool {
+		head, args := ast.Split(part)
+		blocked := isFunction(part) || ast.TypeVariable(part) || c.opaque(part)
+		switch head {
+		case "stream", "regex", "port", "task", "agent", "server", "supervisor", "registry", "dynamic_supervisor", "socket", "http_server", "websocket", "generator", "file", "disk_store", "pid":
+			blocked = true
+		case "map":
+			blocked = blocked || len(args) == 2 && strings.HasPrefix(args[0], "tuple[")
+		}
 		if blocked && found == "" {
 			found = part
 		}
@@ -275,7 +297,7 @@ func (c checker) unwired(t string) string {
 func (c checker) equatable(t string) bool {
 	return ast.Equatable(t) && !c.contains(t, func(t string) bool {
 		head, _ := ast.Split(t)
-		return isFunction(t) || ast.TypeVariable(t) || c.opaque(t) || head == "pid" || head == "supervisor" || head == "server" || head == "stream" || head == "regex" || head == "task" || head == "agent" || head == "registry" || head == "dynamic_supervisor" || head == "socket" || head == "http_server" || head == "websocket" || head == "generator" || head == "file"
+		return isFunction(t) || ast.TypeVariable(t) || c.opaque(t) || head == "pid" || head == "supervisor" || head == "server" || head == "stream" || head == "regex" || head == "task" || head == "agent" || head == "registry" || head == "dynamic_supervisor" || head == "socket" || head == "http_server" || head == "websocket" || head == "generator" || head == "file" || head == "disk_store"
 	}, map[string]bool{})
 }
 

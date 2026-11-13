@@ -120,7 +120,7 @@ func Join(head string, args []string) string {
 	return head + "[" + strings.Join(args, ",") + "]"
 }
 
-var builtinHeads = map[string]bool{"integer": true, "float": true, "string": true, "boolean": true, "atom": true, "port": true, "void": true, "list": true, "tuple": true, "map": true, "fn": true, "pid": true, "supervisor": true, "server": true, "option": true, "result": true, "stream": true, "set": true, "regex": true, "task": true, "agent": true, "step": true, "registry": true, "dynamic_supervisor": true, "socket": true, "http_server": true, "websocket": true, "generator": true, "file": true}
+var builtinHeads = map[string]bool{"integer": true, "float": true, "string": true, "boolean": true, "atom": true, "port": true, "void": true, "list": true, "tuple": true, "map": true, "fn": true, "pid": true, "supervisor": true, "server": true, "option": true, "result": true, "stream": true, "set": true, "regex": true, "task": true, "agent": true, "step": true, "registry": true, "dynamic_supervisor": true, "socket": true, "http_server": true, "websocket": true, "generator": true, "file": true, "disk_store": true}
 
 // TypeVariable reports a type variable: a lowercase name that is not a builtin type.
 func TypeVariable(t string) bool {
@@ -190,7 +190,7 @@ func ValidType(t string) bool {
 		return len(args) == 1 && KeyType(args[0])
 	case "task":
 		return len(args) == 1 && Sendable(args[0])
-	case "regex", "port", "dynamic_supervisor", "socket", "http_server", "websocket", "file":
+	case "regex", "port", "dynamic_supervisor", "socket", "http_server", "websocket", "file", "disk_store":
 		return len(args) == 0
 	case "registry":
 		return len(args) == 2 && KeyType(args[0])
@@ -250,7 +250,7 @@ func Equatable(t string) bool {
 			return false
 		}
 	}
-	if head, _ := Split(t); head == "server" || head == "stream" || head == "regex" || head == "port" || head == "task" || head == "agent" || head == "registry" || head == "dynamic_supervisor" || head == "socket" || head == "http_server" || head == "websocket" || head == "generator" || head == "file" {
+	if head, _ := Split(t); head == "server" || head == "stream" || head == "regex" || head == "port" || head == "task" || head == "agent" || head == "registry" || head == "dynamic_supervisor" || head == "socket" || head == "http_server" || head == "websocket" || head == "generator" || head == "file" || head == "disk_store" {
 		return false
 	}
 	if _, _, ok := FunctionParts(t); ok || TypeVariable(t) {
