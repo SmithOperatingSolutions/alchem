@@ -32,6 +32,7 @@ func init() {
 	lib("Enum.filter", "enum[a], fn[a,boolean] -> list[a]", "enumFilter ctx")
 	lib("Enum.find", "enum[a], fn[a,boolean] -> option[a]", "enumFind ctx")
 	lib("Enum.find", "enum[a], a, fn[a,boolean] -> a", "enumFindDefault ctx")
+	lib("Enum.find_value", "enum[a], b, fn[a,option[b]] -> b", "enumFindValueOr ctx")
 	lib("Enum.find_index", "enum[a], fn[a,boolean] -> option[integer]", "enumFindIndex ctx")
 	lib("Enum.find_value", "enum[a], fn[a,option[b]] -> option[b]", "enumFindValue ctx")
 	lib("Enum.flat_map", "enum[a], fn[a,list[b]] -> list[b]", "enumFlatMap ctx")

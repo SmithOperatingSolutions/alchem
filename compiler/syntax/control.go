@@ -103,7 +103,15 @@ func (c checker) control(e *ast.Expr, scope map[string]string, want string) (str
 			}
 			switch e.Name {
 			case "h":
+				line, column := e.Line, e.Column
 				*e = *markupTemplate(template, at)
+				typ, err := c.expr(e, scope, want)
+				if err != nil {
+					if found := markupMismatch.FindStringSubmatch(err.Error()); found != nil {
+						return "", diagnostic(line, column, "~h cannot put a %s into HTML: a value in a template must be a string, integer, float, atom, Markup or list of Markup; convert it to a string first", found[1])
+					}
+				}
+				return typ, err
 			case "s":
 				*e = *template
 			case "w":
@@ -646,3 +654,7 @@ func markupTemplate(template *ast.Expr, at func(ast.Expr) *ast.Expr) *ast.Expr {
 	}
 	return at(ast.Expr{Kind: "call", Name: "Markup.join", Args: []*ast.Expr{at(ast.Expr{Kind: "list", Args: pieces})}})
 }
+
+// markupMismatch is the failure of Markup.of for a value a template cannot
+// hold, with the value's type.
+var markupMismatch = regexp.MustCompile(`expected Markup, found (\S+)$`)

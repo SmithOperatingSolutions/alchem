@@ -1,0 +1,82 @@
+defmodule LanguageGapsTest do
+  @moduletag area: "language gaps"
+
+  struct Options do
+    retries: integer = 3
+    name: string = "default"
+    tags: list[string] = []
+  end
+
+  def send(text: string): result[tuple[], string] do
+    if text == "", do: error("empty"), else: ok({})
+  end
+
+  def parse(text: string): result[integer, string] do
+    case Integer.parse(text) do
+      ok(n) -> if n > 0, do: ok(n), else: error("not positive")
+      error(_) -> error("not a number")
+    end
+  end
+
+  test "one-line if and unless" do
+    n = 2
+    assert((if n > 1, do: "many", else: "one") == "many")
+    assert((unless n > 1, do: "one", else: "many") == "many")
+    if n > 0, do: IO.puts("")
+    assert(send("") == error("empty") and send("x") == ok({}))
+  end
+
+  test "a struct literal of defaults" do
+    options = %Options{}
+    assert(options.retries == 3 and options.name == "default" and options.tags == [])
+    assert(%Options{} == %Options{retries: 3, name: "default"})
+  end
+
+  test "split with options" do
+    assert(String.split("a=b=c", "=", [parts: 2]) == ["a", "b=c"])
+    assert(String.split("a=b=c", "=", [parts: 9]) == ["a", "b", "c"])
+    assert(String.split(",a,,b,", ",", [trim: true]) == ["a", "b"])
+    assert(String.split(",a,", ",", [trim: false]) == ["", "a", ""])
+    assert(String.split("a1b22c", ~r/\d+/, [parts: 2]) == ["a", "b22c"])
+    assert(String.split("1a2", ~r/\d/, [trim: true]) == ["a"])
+    assert(String.split("1a2", ~r/\d/, [trim: false]) == ["", "a", ""])
+    assert_raise("parts: must be at least 1", fn -> String.split("a", ",", [parts: 0]) end)
+    assert_raise("unknown option :limit", fn -> String.split("a", ",", [limit: 2]) end)
+    assert_raise("unknown option :strip", fn -> String.split("a", ~r/,/, [strip: true]) end)
+    assert_raise("separator must not be empty", fn -> String.split("a", "", [parts: 2]) end)
+    assert_raise("separator must not be empty", fn -> String.split("a", "", [trim: true]) end)
+  end
+
+  test "lists of pairs as tables" do
+    pairs = [{"a", 1}, {"b", 2}, {"a", 3}]
+    assert(List.keyfind(pairs, "a") == some({"a", 1}) and List.keyfind(pairs, "z") == none)
+    assert(List.keymember?(pairs, "b") and not List.keymember?(pairs, "z"))
+    assert(List.keydelete(pairs, "a") == [{"b", 2}, {"a", 3}] and List.keydelete(pairs, "z") == pairs)
+    assert(List.keyreplace(pairs, "b", {"b", 20}) == [{"a", 1}, {"b", 20}, {"a", 3}])
+    assert(List.keyreplace(pairs, "z", {"z", 0}) == pairs)
+    assert(List.keystore(pairs, "z", {"z", 9}) == [{"a", 1}, {"b", 2}, {"a", 3}, {"z", 9}])
+    assert(List.keystore(pairs, "a", {"a", 0}) == [{"a", 0}, {"b", 2}, {"a", 3}])
+    assert(List.keytake(pairs, "b") == some({{"b", 2}, [{"a", 1}, {"a", 3}]}) and List.keytake(pairs, "z") == none)
+    assert(List.keysort([{3, "c"}, {1, "a"}, {3, "b"}]) == [{1, "a"}, {3, "c"}, {3, "b"}])
+    assert(Enum.find_value([5, 6], 0, fn n -> if rem(n, 2) == 0, do: some(n), else: none end) == 6)
+    assert(Enum.find_value([5], 0, fn n -> if rem(n, 2) == 0, do: some(n), else: none end) == 0)
+  end
+
+  test "case arms settle each other's types" do
+    case some("x") do
+      some(text) -> send(text)
+      none -> ok({})
+    end
+    value = case some(2) do
+      some(n) -> ok(n)
+      none -> error("missing")
+    end
+    assert(value == ok(2))
+    other = case 2 do
+      1 -> error(:one)
+      _ -> ok("two")
+    end
+    assert(other == ok("two"))
+    assert(parse("5") == ok(5) and parse("-1") == error("not positive") and parse("x") == error("not a number"))
+  end
+end

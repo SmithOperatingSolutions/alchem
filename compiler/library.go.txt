@@ -11407,3 +11407,154 @@ func markupJoin(pieces L[TMarkup]) TMarkup {
 	}
 	return TMarkup{b.String()}
 }
+
+// ---- Split options ----
+
+// splitParts reads [parts: n]: at most n pieces, the last holding the rest.
+func splitParts(ctx *actor.Context, options L[pair[actor.Atom, int64]], where string) int {
+	parts := -1
+	for _, option := range fwd(options) {
+		if option.E0 != "parts" {
+			failAt(ctx, where, "String.split: unknown option :"+string(option.E0)+"; it takes parts: n or trim: true")
+		}
+		if option.E1 < 1 {
+			failAt(ctx, where, "String.split: parts: must be at least 1")
+		}
+		parts = int(option.E1)
+	}
+	return parts
+}
+
+// splitTrim reads [trim: true]: empty pieces are left out.
+func splitTrim(ctx *actor.Context, options L[pair[actor.Atom, bool]], where string) bool {
+	trim := false
+	for _, option := range fwd(options) {
+		if option.E0 != "trim" {
+			failAt(ctx, where, "String.split: unknown option :"+string(option.E0)+"; it takes parts: n or trim: true")
+		}
+		trim = option.E1
+	}
+	return trim
+}
+
+func withoutEmpty(pieces []string) L[string] {
+	kept := make([]string, 0, len(pieces))
+	for _, piece := range pieces {
+		if piece != "" {
+			kept = append(kept, piece)
+		}
+	}
+	return mk(kept)
+}
+
+func strSplitParts(ctx *actor.Context, s, separator string, options L[pair[actor.Atom, int64]], where string) L[string] {
+	if separator == "" {
+		failAt(ctx, where, "separator must not be empty")
+	}
+	return mk(strings.SplitN(s, separator, splitParts(ctx, options, where)))
+}
+
+func strSplitTrim(ctx *actor.Context, s, separator string, options L[pair[actor.Atom, bool]], where string) L[string] {
+	if separator == "" {
+		failAt(ctx, where, "separator must not be empty")
+	}
+	pieces := strings.Split(s, separator)
+	if splitTrim(ctx, options, where) {
+		return withoutEmpty(pieces)
+	}
+	return mk(pieces)
+}
+
+func regexSplitParts(ctx *actor.Context, s string, pattern *regexp.Regexp, options L[pair[actor.Atom, int64]], where string) L[string] {
+	return mk(pattern.Split(s, splitParts(ctx, options, where)))
+}
+
+func regexSplitTrim(ctx *actor.Context, s string, pattern *regexp.Regexp, options L[pair[actor.Atom, bool]], where string) L[string] {
+	pieces := pattern.Split(s, -1)
+	if splitTrim(ctx, options, where) {
+		return withoutEmpty(pieces)
+	}
+	return mk(pieces)
+}
+
+// ---- Key lists ----
+
+// The List.key functions treat a list of pairs as a table keyed by the
+// first element of each pair, as Elixir's do at position 0.
+
+func keyIndex[K, V any](pairs []pair[K, V], key K, eq func(K, K) bool) int {
+	for i, p := range pairs {
+		if eq(p.E0, key) {
+			return i
+		}
+	}
+	return -1
+}
+
+func listKeyFind[K, V any](l L[pair[K, V]], key K, eq func(K, K) bool) Toption[pair[K, V]] {
+	pairs := fwd(l)
+	if i := keyIndex(pairs, key, eq); i >= 0 {
+		return someOf(pairs[i])
+	}
+	return noneOf[pair[K, V]]()
+}
+
+func listKeyMember[K, V any](l L[pair[K, V]], key K, eq func(K, K) bool) bool {
+	return keyIndex(fwd(l), key, eq) >= 0
+}
+
+func listKeyDelete[K, V any](l L[pair[K, V]], key K, eq func(K, K) bool) L[pair[K, V]] {
+	pairs := fwd(l)
+	i := keyIndex(pairs, key, eq)
+	if i < 0 {
+		return l
+	}
+	return mk(append(append([]pair[K, V]{}, pairs[:i]...), pairs[i+1:]...))
+}
+
+func listKeyReplace[K, V any](l L[pair[K, V]], key K, replacement pair[K, V], eq func(K, K) bool) L[pair[K, V]] {
+	pairs := fwd(l)
+	i := keyIndex(pairs, key, eq)
+	if i < 0 {
+		return l
+	}
+	out := append([]pair[K, V]{}, pairs...)
+	out[i] = replacement
+	return mk(out)
+}
+
+func listKeyStore[K, V any](l L[pair[K, V]], key K, replacement pair[K, V], eq func(K, K) bool) L[pair[K, V]] {
+	pairs := fwd(l)
+	if keyIndex(pairs, key, eq) < 0 {
+		return mk(append(append([]pair[K, V]{}, pairs...), replacement))
+	}
+	return listKeyReplace(l, key, replacement, eq)
+}
+
+func listKeyTake[K, V any](l L[pair[K, V]], key K, eq func(K, K) bool) Toption[pair[pair[K, V], L[pair[K, V]]]] {
+	pairs := fwd(l)
+	i := keyIndex(pairs, key, eq)
+	if i < 0 {
+		return noneOf[pair[pair[K, V], L[pair[K, V]]]]()
+	}
+	rest := append(append([]pair[K, V]{}, pairs[:i]...), pairs[i+1:]...)
+	return someOf(pair[pair[K, V], L[pair[K, V]]]{pairs[i], mk(rest)})
+}
+
+// listKeySort sorts by key, keeping pairs with equal keys in order.
+func listKeySort[K, V any](l L[pair[K, V]], less func(K, K) bool) L[pair[K, V]] {
+	pairs := append([]pair[K, V]{}, fwd(l)...)
+	sort.SliceStable(pairs, func(i, j int) bool { return less(pairs[i].E0, pairs[j].E0) })
+	return mk(pairs)
+}
+
+// ---- Find value with a default ----
+
+func enumFindValueOr[A, B any](ctx *actor.Context, s iter.Seq[A], fallback B, f func(*actor.Context, A) Toption[B]) B {
+	for x := range s {
+		if found, ok := f(ctx, x).(Toption_c1[B]); ok {
+			return found.F0
+		}
+	}
+	return fallback
+}
