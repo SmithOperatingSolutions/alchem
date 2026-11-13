@@ -71,7 +71,7 @@ func init() {
 	doc("DateTime.to_unix", "Seconds since the Unix epoch.", "alx> DateTime.to_unix(~U[1970-01-02T00:00:00Z])", "86400")
 	doc("DateTime.utc_now", "The current moment.", "alx> DateTime.after?(DateTime.utc_now(), ~U[2020-01-01T00:00:00Z])", "true")
 
-	doc("File.append", "Appends text to a file, creating it when missing.", "alx> File.write(\"doc_append.txt\", \"a\")", "ok({})", "alx> File.append(\"doc_append.txt\", \"b\")", "ok({})", "alx> File.read(\"doc_append.txt\")", "ok(\"ab\")")
+	doc("File.append", "Appends text, or any bytes, to a file, creating it when missing.", "alx> File.write(\"doc_append.txt\", \"a\")", "ok({})", "alx> File.append(\"doc_append.txt\", \"b\")", "ok({})", "alx> File.read(\"doc_append.txt\")", "ok(\"ab\")")
 	doc("File.cp", "Copies a file.", "alx> File.write!(\"doc_cp.txt\", \"data\")", "alx> File.cp(\"doc_cp.txt\", \"doc_cp_copy.txt\")", "ok({})", "alx> File.read!(\"doc_cp_copy.txt\")", "\"data\"")
 	doc("File.cwd", "The working directory, as a result.", "alx> File.cwd() == ok(File.cwd!())", "true")
 	doc("File.cwd!", "The working directory; fails when it cannot be determined.", "alx> String.length(File.cwd!()) > 0", "true")
@@ -83,7 +83,11 @@ func init() {
 	doc("File.ls!", "The names in a directory, sorted; fails when it cannot be read.", "alx> File.mkdir_p(\"doc_ls_bang\")", "ok({})", "alx> File.ls!(\"doc_ls_bang\")", "Enum.take([\"\"], 0)")
 	doc("File.mkdir", "Creates a directory whose parent exists.", "alx> File.mkdir(\"doc_mkdir\")", "ok({})", "alx> File.dir?(\"doc_mkdir\")", "true")
 	doc("File.mkdir_p", "Creates a directory and any missing parents; succeeds when it already exists.", "alx> File.mkdir_p(\"doc_mkdir_p/a/b\")", "ok({})")
-	doc("File.read", "Reads a whole file, returning ok(contents) or error(reason).", "alx> File.write!(\"doc_read.txt\", \"hello\")", "alx> File.read(\"doc_read.txt\")", "ok(\"hello\")",
+	doc("File.read_binary", "Reads a whole file as the bytes it holds, whether or not they are text: an image, an archive or an upload. File.read is for text and refuses bytes that are not UTF-8.",
+		"alx> File.write!(\"doc_read_binary.bin\", \"a\\x00\\xff\")", "alx> File.read_binary(\"doc_read_binary.bin\")", "ok(\"a\\x00\\xff\")",
+		"alx> File.read(\"doc_read_binary.bin\")", "error(\"file is not valid UTF-8\")")
+	doc("File.read_binary!", "Reads a whole file as the bytes it holds; fails when it cannot be read.", "alx> File.write!(\"doc_read_binary_bang.bin\", \"\\xfe\\xff\")", "alx> byte_size(File.read_binary!(\"doc_read_binary_bang.bin\"))", "2")
+	doc("File.read", "Reads a whole file of text, returning ok(contents) or error(reason); a file whose bytes are not UTF-8 is error(\"file is not valid UTF-8\"), and File.read_binary reads it.", "alx> File.write!(\"doc_read.txt\", \"hello\")", "alx> File.read(\"doc_read.txt\")", "ok(\"hello\")",
 		"alx> case File.read(\"no_such_file.txt\") do", "...>   ok(text) -> text", "...>   error(_) -> \"missing\"", "...> end", "\"missing\"")
 	doc("File.read!", "Reads a whole file; fails when it cannot be read.", "alx> File.write!(\"doc_read_bang.txt\", \"hello\")", "alx> File.read!(\"doc_read_bang.txt\")", "\"hello\"")
 	doc("File.regular?", "Reports whether the path is an ordinary file.", "alx> File.regular?(\".\")", "false")
@@ -97,7 +101,7 @@ func init() {
 		"alx> File.write!(\"doc_stream.txt\", \"one\\ntwo\\nthree\\n\")", "alx> File.stream!(\"doc_stream.txt\") |> Stream.map(&String.trim(&1)) |> Enum.take(2)", "[\"one\", \"two\"]",
 		"alx> File.stream!(\"doc_stream.txt\", 4) |> Enum.take(1)", "[\"one\\n\"]")
 	doc("File.touch", "Creates an empty file, or updates the modification time of an existing one.", "alx> File.touch(\"doc_touch.txt\")", "ok({})", "alx> File.exists?(\"doc_touch.txt\")", "true")
-	doc("File.write", "Writes text to a file, replacing its contents.", "alx> File.write(\"doc_write.txt\", \"hello\")", "ok({})")
+	doc("File.write", "Writes text, or any bytes, to a file, replacing its contents.", "alx> File.write(\"doc_write.txt\", \"hello\")", "ok({})")
 	doc("File.write!", "Writes text to a file; fails when it cannot be written.", "alx> File.write!(\"doc_write_bang.txt\", \"hello\")", "alx> File.read!(\"doc_write_bang.txt\")", "\"hello\"")
 
 	doc("Path.absname", "The path made absolute against the working directory.", "alx> Path.absname(\"a.txt\") == Path.join(File.cwd!(), \"a.txt\")", "true")

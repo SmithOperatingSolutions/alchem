@@ -6270,7 +6270,7 @@ Reading, writing and managing files; File.stream! reads lazily.
 File.append(string, string) -> result[tuple[],string]
 ```
 
-Appends text to a file, creating it when missing.
+Appends text, or any bytes, to a file, creating it when missing.
 
 ```elixir
 alx> File.write("doc_append.txt", "a")
@@ -6582,7 +6582,7 @@ alx> case File.open(Path.join(System.tmp_dir!(), "no/such/dir/x"), [:read]) do
 File.read(string) -> result[string,string]
 ```
 
-Reads a whole file, returning ok(contents) or error(reason).
+Reads a whole file of text, returning ok(contents) or error(reason); a file whose bytes are not UTF-8 is error("file is not valid UTF-8"), and File.read_binary reads it.
 
 ```elixir
 alx> File.write!("doc_read.txt", "hello")
@@ -6607,6 +6607,36 @@ Reads a whole file; fails when it cannot be read.
 alx> File.write!("doc_read_bang.txt", "hello")
 alx> File.read!("doc_read_bang.txt")
 "hello"
+```
+
+### File.read_binary
+
+```
+File.read_binary(string) -> result[string,string]
+```
+
+Reads a whole file as the bytes it holds, whether or not they are text: an image, an archive or an upload. File.read is for text and refuses bytes that are not UTF-8.
+
+```elixir
+alx> File.write!("doc_read_binary.bin", "a\x00\xff")
+alx> File.read_binary("doc_read_binary.bin")
+ok("a\x00\xff")
+alx> File.read("doc_read_binary.bin")
+error("file is not valid UTF-8")
+```
+
+### File.read_binary!
+
+```
+File.read_binary!(string) -> string
+```
+
+Reads a whole file as the bytes it holds; fails when it cannot be read.
+
+```elixir
+alx> File.write!("doc_read_binary_bang.bin", "\xfe\xff")
+alx> byte_size(File.read_binary!("doc_read_binary_bang.bin"))
+2
 ```
 
 ### File.regular?
@@ -6767,7 +6797,7 @@ File.write(string, string) -> result[tuple[],string]
 File.write(string, string, list[atom]) -> result[tuple[],string]
 ```
 
-Writes text to a file, replacing its contents.
+Writes text, or any bytes, to a file, replacing its contents.
 
 ```elixir
 alx> File.write("doc_write.txt", "hello")

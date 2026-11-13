@@ -73,6 +73,24 @@ defmodule LibraryMoreTest do
     HTTP.stop(server)
   end
 
+  test "a file's bytes, read whole" do
+    path = Path.join(System.tmp_dir!(), "alchem-read-binary-" <> Integer.to_string(System.monotonic_time(:nanosecond)) <> ".bin")
+    bytes = "\x00\xff\xfe\x80abc"
+    assert(File.write(path, bytes) == ok({}))
+    assert(File.read_binary(path) == ok(bytes))
+    assert(File.read_binary!(path) == bytes)
+    assert(File.read(path) == error("file is not valid UTF-8"))
+    assert(File.append(path, "\x01") == ok({}))
+    assert(File.read_binary(path) == ok(bytes <> "\x01"))
+    assert(File.write(path, "text") == ok({}) and File.read_binary(path) == File.read(path))
+    File.rm(path)
+    case File.read_binary(path) do
+      ok(_) -> flunk("a removed file was read")
+      error(reason) -> assert(String.contains?(reason, "no such file") or String.contains?(reason, "cannot find"))
+    end
+    assert_raise("could not read", fn -> File.read_binary!(path) end)
+  end
+
   test "ports in each mode" do
     me: pid[PortEvent] = Process.self(64)
     ok(lines) = Port.open("cat", [], me, [mode: :line, stderr: :merge])

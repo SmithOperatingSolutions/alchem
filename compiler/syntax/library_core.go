@@ -249,6 +249,8 @@ func init() {
 	lib("Path.wildcard", "string -> list[string]", "pathWildcard ctx where")
 
 	lib("File.read!", "string -> string", "fileReadBang ctx where")
+	lib("File.read_binary", "string -> result[string,string]", "fileReadBinary")
+	lib("File.read_binary!", "string -> string", "fileReadBinaryBang ctx where")
 	lib("File.write!", "string, string -> void", "fileWriteBang ctx where")
 	lib("File.exists?", "string -> boolean", "fileExists")
 	lib("File.dir?", "string -> boolean", "fileIsDir")

@@ -4640,6 +4640,35 @@ func must(ctx *actor.Context, outcome Tresult[struct{}, string], where string) {
 	}
 }
 
+// fileReadBinary reads a whole file as the bytes it holds, which need not
+// be text: an image, an archive, an upload.
+func fileReadBinary(path string) Tresult[string, string] {
+	file, err := os.Open(path)
+	if err != nil {
+		return errOf[string](err.Error())
+	}
+	defer file.Close()
+	const limit = 16 << 20
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return errOf[string](err.Error())
+	}
+	if len(data) > limit {
+		return errOf[string]("file exceeds 16777216 bytes")
+	}
+	return okOf(string(data))
+}
+
+func fileReadBinaryBang(ctx *actor.Context, path string, where string) string {
+	switch outcome := fileReadBinary(path).(type) {
+	case Tresult_c0[string, string]:
+		return outcome.F0
+	case Tresult_c1[string, string]:
+		failAt(ctx, where, "could not read "+path+": "+outcome.F0)
+	}
+	return ""
+}
+
 func fileReadBang(ctx *actor.Context, path string, where string) string {
 	switch outcome := fileRead(path).(type) {
 	case Tresult_c0[string, string]:

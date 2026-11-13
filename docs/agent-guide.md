@@ -225,7 +225,7 @@ ok({~U[2026-01-05T11:04:05Z], 7200})
 
 **Files and system**
 
-- `File` (33): Reading, writing and managing files; File.stream! reads lazily.
+- `File` (35): Reading, writing and managing files; File.stream! reads lazily.
 - `Path` (12): Manipulating file paths as text.
 - `IO` (10): Standard input, output and error.
 - `System` (17): Arguments, environment, external commands and exit.
