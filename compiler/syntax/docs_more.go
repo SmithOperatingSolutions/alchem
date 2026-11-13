@@ -202,7 +202,7 @@ func init() {
 		"alx> me: pid[PortEvent] = Process.self(8)",
 		"alx> case Port.open(\"cat\", Enum.take([\"\"], 0), me) do", "...>   ok(echo) -> Port.command(echo, \"hello\\n\") and Port.close(echo)", "...>   error(_) -> false", "...> end", "true",
 		"alx> assert_receive(me, PortEvent.data(\"hello\"), 5000)")
-	doc("Port.close", "Closes the program's standard input, so a program that reads to the end can finish; false when it was already closed. The program is ended when its owner, the process its output goes to, ends, and when the Alchem program does; Port.kill ends it on request.",
+	doc("Port.close", "Closes the program's standard input, so a program that reads to the end can finish; false when it was already closed. The program is ended when its owner, the process its output goes to, ends, and when the Alchem program does, also when it is interrupted or asked to terminate; Port.kill ends it on request.",
 		"alx> me: pid[PortEvent] = Process.self(8)",
 		"alx> case Port.open(\"cat\", Enum.take([\"\"], 0), me) do", "...>   ok(echo) -> {Port.close(echo), Port.close(echo)}", "...>   error(_) -> {false, false}", "...> end", "{true, false}",
 		"alx> assert_receive(me, PortEvent.exit(0), 5000)")

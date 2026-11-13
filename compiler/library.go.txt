@@ -8010,6 +8010,54 @@ type portHandle struct {
 	done chan struct{}
 }
 
+// The programs ports are running. When the Alchem program is interrupted or
+// asked to terminate, they are ended before it goes: otherwise they would
+// outlive it, as the operating system does not end a program's children.
+var (
+	portsLock    sync.Mutex
+	portsRunning = map[*portHandle]bool{}
+	portsWatched sync.Once
+)
+
+func portRunning(port *portHandle) {
+	portsWatched.Do(func() {
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			received := <-signals
+			portsLock.Lock()
+			running := make([]*portHandle, 0, len(portsRunning))
+			for port := range portsRunning {
+				running = append(running, port)
+			}
+			portsLock.Unlock()
+			var ended sync.WaitGroup
+			for _, port := range running {
+				ended.Add(1)
+				go func() {
+					defer ended.Done()
+					port.end()
+				}()
+			}
+			ended.Wait()
+			// Then the signal does what it would have done: it ends the
+			// program, with the status a shell reports for it.
+			signal.Reset(received)
+			if self, err := os.FindProcess(os.Getpid()); err == nil && self.Signal(received) == nil {
+				time.Sleep(time.Second)
+			}
+			code := 1
+			if number, ok := received.(syscall.Signal); ok {
+				code = 128 + int(number)
+			}
+			os.Exit(code)
+		}()
+	})
+	portsLock.Lock()
+	portsRunning[port] = true
+	portsLock.Unlock()
+}
+
 // end ends the program: it is asked to stop first, with an interrupt, so
 // that a program which runs others can stop them, and killed if it has not
 // gone shortly after. Where a program cannot be interrupted it is killed at
@@ -8080,6 +8128,7 @@ func portStart(ctx *actor.Context, program string, arguments iter.Seq[string], o
 		return errOf[*portHandle](err.Error())
 	}
 	port := &portHandle{command: command, input: input, name: program, header: header, done: make(chan struct{})}
+	portRunning(port)
 	// The program ends with its owner: the process its output goes to.
 	var ownerEnded <-chan struct{}
 	if actor.ContextOf(owner) != nil {
@@ -8153,6 +8202,9 @@ func portStart(ctx *actor.Context, program string, arguments iter.Seq[string], o
 		port.exited = true
 		watchers := port.watchers
 		port.lock.Unlock()
+		portsLock.Lock()
+		delete(portsRunning, port)
+		portsLock.Unlock()
 		close(port.done)
 		actor.Send(reader, owner, TPortEvent(TPortEvent_c1{status}), -1, where)
 		for _, watcher := range watchers {

@@ -42,7 +42,7 @@ var libraryImports = map[string]string{
 	"atomic": "sync/atomic", "bufio": "bufio", "bytes": "bytes", "reflect": "reflect", "context": "context", "crand": "crypto/rand", "hmac": "crypto/hmac", "md5": "crypto/md5", "sha1": "crypto/sha1", "sha256": "crypto/sha256", "sha512": "crypto/sha512", "subtle": "crypto/subtle", "binary": "encoding/binary", "net": "net", "http": "net/http", "big": "math/big", "cmp": "cmp", "slices": "slices", "base32": "encoding/base32", "base64": "encoding/base64", "hex": "encoding/hex", "hash": "hash", "html": "html", "json": "encoding/json",
 	"errors": "errors", "fmt": "fmt", "io": "io", "iter": "iter", "math": "math", "node": "alchem.local/actor/node", "rand": "math/rand/v2", "os": "os", "exec": "os/exec",
 	"filepath": "path/filepath", "regexp": "regexp", "runtime": "runtime", "sort": "sort", "strconv": "strconv", "strings": "strings",
-	"sync": "sync", "time": "time", "tls": "crypto/tls", "x509": "crypto/x509", "log": "log", "unicode": "unicode", "url": "net/url", "utf8": "unicode/utf8", "actor": "alchem.local/actor",
+	"sync": "sync", "signal": "os/signal", "syscall": "syscall", "time": "time", "tls": "crypto/tls", "x509": "crypto/x509", "log": "log", "unicode": "unicode", "url": "net/url", "utf8": "unicode/utf8", "actor": "alchem.local/actor",
 }
 
 // selectLibrary returns the runtime sections a generated program needs: those

@@ -7899,7 +7899,7 @@ Runs an external program and exchanges text with it: its output arrives as messa
 Port.close(port) -> boolean
 ```
 
-Closes the program's standard input, so a program that reads to the end can finish; false when it was already closed. The program is ended when its owner, the process its output goes to, ends, and when the Alchem program does; Port.kill ends it on request.
+Closes the program's standard input, so a program that reads to the end can finish; false when it was already closed. The program is ended when its owner, the process its output goes to, ends, and when the Alchem program does, also when it is interrupted or asked to terminate; Port.kill ends it on request.
 
 ```elixir
 alx> me: pid[PortEvent] = Process.self(8)
