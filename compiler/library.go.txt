@@ -5049,15 +5049,12 @@ func regexRun(pattern *regexp.Regexp, text string) Toption[L[string]] {
 	return someOf(mk(match))
 }
 
-// scan returns every match: its capture groups, or the whole match when the
-// pattern has none.
+// scan returns every match, each followed by its capture groups, as run
+// gives the first.
 func regexScan(pattern *regexp.Regexp, text string) L[L[string]] {
 	var out []L[string]
 	for _, match := range pattern.FindAllStringSubmatch(text, -1) {
-		if len(match) > 1 {
-			match = match[1:]
-		}
-		out = append(out, mk(append([]string{}, match...)))
+		out = append(out, mk(match))
 	}
 	return mk(out)
 }
@@ -5067,6 +5064,31 @@ var backReference = regexp.MustCompile(`\\(\d+)`)
 // replace accepts \1 for a capture group, as well as Go's ${1}.
 func regexReplace(pattern *regexp.Regexp, text, replacement string) string {
 	return pattern.ReplaceAllString(text, backReference.ReplaceAllString(replacement, "${$1}"))
+}
+
+// regexReplaceWith replaces every match with what the function makes of it.
+func regexReplaceWith(ctx *actor.Context, pattern *regexp.Regexp, text string, f func(*actor.Context, string) string) string {
+	return pattern.ReplaceAllStringFunc(text, func(match string) string { return f(ctx, match) })
+}
+
+// regexReplaceGroups replaces every match with what the function makes of
+// the match followed by its groups, as run gives them.
+func regexReplaceGroups(ctx *actor.Context, pattern *regexp.Regexp, text string, f func(*actor.Context, L[string]) string) string {
+	var b strings.Builder
+	last := 0
+	for _, at := range pattern.FindAllStringSubmatchIndex(text, -1) {
+		groups := make([]string, len(at)/2)
+		for i := range groups {
+			if at[2*i] >= 0 {
+				groups[i] = text[at[2*i]:at[2*i+1]]
+			}
+		}
+		b.WriteString(text[last:at[0]])
+		b.WriteString(f(ctx, mk(groups)))
+		last = at[1]
+	}
+	b.WriteString(text[last:])
+	return b.String()
 }
 
 func regexSplit(pattern *regexp.Regexp, text string) L[string] { return mk(pattern.Split(text, -1)) }

@@ -71,9 +71,12 @@ func init() {
 	doc("Regex.compile!", "Compiles a pattern from text; fails on an invalid one.", "alx> Regex.match?(Regex.compile!(\"^a\"), \"abc\")", "true")
 	doc("Regex.match?", "Reports whether the pattern matches anywhere in the string.", "alx> Regex.match?(~r/\\d+/, \"order 42\")", "true", "alx> Regex.match?(~r/^hello/i, \"HELLO there\")", "true")
 	doc("Regex.named_captures", "The named groups of the first match, as a map.", "alx> Regex.named_captures(~r/(?P<key>\\w+)=(?P<value>\\w+)/, \"a=1\")", "some(%{\"key\" => \"a\", \"value\" => \"1\"})")
-	doc("Regex.replace", "Replaces every match; \\\\1 in the replacement inserts a group.", "alx> Regex.replace(~r/\\d/, \"a1b2\", \"#\")", "\"a#b#\"")
+	doc("Regex.replace", "Replaces every match; \\\\1 in the replacement inserts a group. The replacement may instead be a function of the match, or, when its parameter is declared list[string], of the match followed by its groups as Regex.run gives them.", "alx> Regex.replace(~r/\\d/, \"a1b2\", \"#\")", "\"a#b#\"",
+		"alx> Regex.replace(~r/\\d+/, \"a1b22\", fn digits -> \"<\" <> digits <> \">\" end)", "\"a<1>b<22>\"",
+		"alx> Regex.replace(~r/(\\w)=(\\d)/, \"a=1 b=2\", fn(found: list[string]): string do Enum.at(found, 2, \"\") <> Enum.at(found, 1, \"\") end)", "\"1a 2b\"")
 	doc("Regex.run", "The first match followed by its groups, or none.", "alx> Regex.run(~r/(\\w+)@(\\w+)/, \"mail joe@example now\")", "some([\"joe@example\", \"joe\", \"example\"])", "alx> Regex.run(~r/x/, \"abc\")", "none")
-	doc("Regex.scan", "Every match, each followed by its groups.", "alx> Regex.scan(~r/\\d+/, \"1 and 22\")", "[[\"1\"], [\"22\"]]")
+	doc("Regex.scan", "Every match, each followed by its groups, as Regex.run gives the first.", "alx> Regex.scan(~r/\\d+/, \"1 and 22\")", "[[\"1\"], [\"22\"]]",
+		"alx> Regex.scan(~r/(\\w)(\\d)/, \"a1 b2\")", "[[\"a1\", \"a\", \"1\"], [\"b2\", \"b\", \"2\"]]")
 	doc("Regex.source", "The pattern text.", "alx> Regex.source(~r/a+b/)", "\"a+b\"")
 	doc("Regex.split", "Splits the string wherever the pattern matches.", "alx> Regex.split(~r/\\s*,\\s*/, \"a , b,c\")", "[\"a\", \"b\", \"c\"]")
 

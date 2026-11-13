@@ -339,6 +339,8 @@ func init() {
 	lib("Regex.run", "regex, string -> option[list[string]]", "regexRun")
 	lib("Regex.scan", "regex, string -> list[list[string]]", "regexScan")
 	lib("Regex.replace", "regex, string, string -> string", "regexReplace")
+	libAlso("Regex.replace", "regex, string, fn[string,string] -> string", "regexReplaceWith ctx")
+	libAlso("Regex.replace", "regex, string, fn[list[string],string] -> string", "regexReplaceGroups ctx")
 	lib("Regex.split", "regex, string -> list[string]", "regexSplit")
 	lib("Regex.source", "regex -> string", "regexSource")
 	lib("Regex.named_captures", "regex, string -> option[map[string,string]]", "regexNamedCaptures")

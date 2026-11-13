@@ -21,6 +21,22 @@ defmodule LibraryMoreTest do
     assert(not Port.kill(waiting))
   end
 
+  test "scan gives each match with its groups, and replace takes a function" do
+    assert(Regex.scan(~r/\d+/, "1 and 22") == [["1"], ["22"]])
+    assert(Regex.scan(~r/(\w)(\d)/, "a1 b2") == [["a1", "a", "1"], ["b2", "b", "2"]])
+    assert(Regex.scan(~r/(\w)(\d)/, "a1 b2") |> List.first() == Regex.run(~r/(\w)(\d)/, "a1 b2"))
+    assert(Regex.scan(~r/(a)|(b)/, "ab") == [["a", "a", ""], ["b", "", "b"]])
+    assert(Regex.scan(~r/x/, "abc") == [])
+    assert(Regex.replace(~r/\d+/, "a1b22", fn digits -> "<" <> digits <> ">" end) == "a<1>b<22>")
+    assert(Regex.replace(~r/x/, "abc", fn found -> String.upcase(found) end) == "abc")
+    swapped = Regex.replace(~r/(\w)=(\d)?/, "a=1 b= c", fn(found: list[string]): string do
+      [_, name, digit] = found
+      digit <> ":" <> name
+    end)
+    assert(swapped == "1:a :b c")
+    assert(Regex.replace(~r/(\w)(\d)/, "a1", "\\2\\1") == "1a")
+  end
+
   test "ports in each mode" do
     me: pid[PortEvent] = Process.self(64)
     ok(lines) = Port.open("cat", [], me, [mode: :line, stderr: :merge])

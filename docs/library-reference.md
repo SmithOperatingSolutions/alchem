@@ -4276,13 +4276,19 @@ some(%{"key" => "a", "value" => "1"})
 
 ```
 Regex.replace(regex, string, string) -> string
+Regex.replace(regex, string, fn[string,string]) -> string
+Regex.replace(regex, string, fn[list[string],string]) -> string
 ```
 
-Replaces every match; \\1 in the replacement inserts a group.
+Replaces every match; \\1 in the replacement inserts a group. The replacement may instead be a function of the match, or, when its parameter is declared list[string], of the match followed by its groups as Regex.run gives them.
 
 ```elixir
 alx> Regex.replace(~r/\d/, "a1b2", "#")
 "a#b#"
+alx> Regex.replace(~r/\d+/, "a1b22", fn digits -> "<" <> digits <> ">" end)
+"a<1>b<22>"
+alx> Regex.replace(~r/(\w)=(\d)/, "a=1 b=2", fn(found: list[string]): string do Enum.at(found, 2, "") <> Enum.at(found, 1, "") end)
+"1a 2b"
 ```
 
 ### Regex.run
@@ -4306,11 +4312,13 @@ none
 Regex.scan(regex, string) -> list[list[string]]
 ```
 
-Every match, each followed by its groups.
+Every match, each followed by its groups, as Regex.run gives the first.
 
 ```elixir
 alx> Regex.scan(~r/\d+/, "1 and 22")
 [["1"], ["22"]]
+alx> Regex.scan(~r/(\w)(\d)/, "a1 b2")
+[["a1", "a", "1"], ["b2", "b", "2"]]
 ```
 
 ### Regex.source
