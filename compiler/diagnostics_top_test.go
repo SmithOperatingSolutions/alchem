@@ -13,6 +13,12 @@ func TestTopLevelDiagnostics(t *testing.T) {
 	const main = "\n  def main() do\n    IO.inspect(1)\n  end\nend\n"
 	cases := []struct{ name, source, want string }{
 		{"type name", "defmodule Main do\n  type foo = integer" + main, "type name must be one capitalized word"},
+		{"one-line if as a value without else", "defmodule Main do\n  def main() do\n    word = if true, do: \"a\"\n    IO.puts(word)\n  end\nend\n", "an if used as a value needs an else"},
+		{"empty struct without defaults", "defmodule Main do\n  struct P do\n    x: integer\n  end\n\n  def main() do\n    p = %P{}\n    IO.inspect(p.x)\n  end\nend\n", "missing field x"},
+		{"bound constructor still needs a type", "defmodule Main do\n  def main() do\n    x = ok({})\n    IO.inspect(x)\n  end\nend\n", "cannot infer the type of ok here"},
+		{"constructor as a statement mid-block", "defmodule Main do\n  def main() do\n    ok(1)\n    IO.puts(\"x\")\n  end\nend\n", "expected binding or function call"},
+		{"case arms that disagree", "defmodule Main do\n  def main() do\n    v = case 1 do\n      1 -> ok(1)\n      _ -> ok(\"x\")\n    end\n    IO.inspect(v)\n  end\nend\n", "expected integer, found string"},
+		{"template value without HTML", "defmodule Main do\n  def main() do\n    IO.puts(Markup.to_string(~h\"<p>#{true}</p>\"))\n  end\nend\n", "~h cannot put a boolean into HTML"},
 		{"constant twice", "defmodule Main do\n  @limit 1\n  @limit 2" + main, "module constant @limit is defined twice"},
 		{"constant without value", "defmodule Main do\n  @limit\n  def f(): integer do\n    1\n  end" + main, "@limit needs a value on the same line"},
 		{"constant calls", "defmodule Main do\n  @limit String.length(\"abc\")" + main, "must be built from literals and earlier constants"},

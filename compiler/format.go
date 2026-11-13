@@ -312,6 +312,10 @@ func binding(e *ast.Expr) int {
 		return syntax.Precedence("..")
 	case e.Kind == "call" && e.Pipe && len(e.Args) > 0:
 		return syntax.Precedence("|>")
+	case e.Kind == "value" && len(e.Body) == 1 && e.Body[0].Declared == "do:":
+		// A one-line if reads up to the end of its else: value, so as an
+		// operand it needs parentheses.
+		return 0
 	}
 	return 100
 }
@@ -682,6 +686,14 @@ func formatBlock(body []ast.Statement, n int) string {
 			keyword := "if "
 			if s.Name == "unless" {
 				keyword = "unless "
+			}
+			if s.Declared == "do:" {
+				line := pad + keyword + e + ", do: " + strings.TrimSpace(formatBlock(s.Then, 0))
+				if len(s.Else) > 0 {
+					line += ", else: " + strings.TrimSpace(formatBlock(s.Else, 0))
+				}
+				b.WriteString(line + "\n")
+				break
 			}
 			b.WriteString(pad + keyword + e + " do\n" + formatBlock(s.Then, n+1))
 			if len(s.Else) > 0 {

@@ -41,8 +41,23 @@ func init() {
 		"alx> Enum.find([1, 2, 3], &(&1 > 1))", "some(2)", "alx> Enum.find([1, 2, 3], 0, &(&1 > 5))", "0")
 	doc("Enum.find_index", "Returns the index of the first element satisfying the function.",
 		"alx> Enum.find_index([\"a\", \"b\"], &(&1 == \"b\"))", "some(1)")
-	doc("Enum.find_value", "Returns the first some(...) the function produces.",
-		"alx> Enum.find_value([1, 2, 3], fn n -> if n > 1 do some(n * 10) else none end end)", "some(20)")
+	doc("Enum.find_value", "Returns the first some(...) the function produces, or with a default, the value inside it or the default when there is none.",
+		"alx> Enum.find_value([1, 2, 3], fn n -> if n > 1, do: some(n * 10), else: none end)", "some(20)",
+		"alx> Enum.find_value([1, 3], 0, fn n -> if rem(n, 2) == 0, do: some(n), else: none end)", "0")
+	doc("List.keyfind", "The first pair whose key, its first element, equals the given one. The List.key functions treat a list of pairs as a table keyed on the first element, as Elixir's do at position 0.",
+		"alx> List.keyfind([{\"a\", 1}, {\"b\", 2}], \"b\")", "some({\"b\", 2})", "alx> List.keyfind([{\"a\", 1}], \"z\")", "none")
+	doc("List.keymember?", "Reports whether a pair has the key.",
+		"alx> List.keymember?([{:x, 1}], :x)", "true")
+	doc("List.keydelete", "The list without the first pair that has the key.",
+		"alx> List.keydelete([{\"red\", 4}, {\"blue\", 5}, {\"red\", 6}], \"red\")", "[{\"blue\", 5}, {\"red\", 6}]")
+	doc("List.keyreplace", "The list with the first pair that has the key replaced; unchanged when no pair has it.",
+		"alx> List.keyreplace([{\"a\", 1}, {\"b\", 2}], \"b\", {\"b\", 20})", "[{\"a\", 1}, {\"b\", 20}]")
+	doc("List.keystore", "As keyreplace, but adds the pair at the end when no pair has the key.",
+		"alx> List.keystore([{\"a\", 1}], \"c\", {\"c\", 3})", "[{\"a\", 1}, {\"c\", 3}]")
+	doc("List.keytake", "The first pair with the key and the list without it, or none.",
+		"alx> List.keytake([{\"a\", 1}, {\"b\", 2}], \"a\")", "some({{\"a\", 1}, [{\"b\", 2}]})")
+	doc("List.keysort", "The pairs sorted by key; pairs with equal keys keep their order.",
+		"alx> List.keysort([{3, \"c\"}, {1, \"a\"}, {3, \"b\"}])", "[{1, \"a\"}, {3, \"c\"}, {3, \"b\"}]")
 	doc("Enum.flat_map", "Maps each element to a list and concatenates the results.",
 		"alx> Enum.flat_map([1, 2], fn n -> [n, n * 10] end)", "[1, 10, 2, 20]")
 	doc("Enum.flat_map_reduce", "Maps to lists and threads an accumulator, returning the concatenation and the final accumulator.",

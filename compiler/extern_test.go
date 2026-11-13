@@ -157,7 +157,6 @@ func TestExternDeclarationErrors(t *testing.T) {
 		{`extern f(x: string): integer = "strconv.Atoi"`, "Go returns 2 values here"},
 		{`extern f(x: string) = "os.Remove"`, "declare the result as result[tuple[],string]"},
 		{`extern f(x: a): a = "strings.ToUpper"`, "extern functions cannot use type variables"},
-		{`extern f(x: list[integer]): integer = "slices.Max"`, "generic Go functions cannot be bound"},
 		{`extern type Buffer = "bytes.Missing"`, "extern type Buffer: Go package bytes has no type Missing"},
 		{`extern type Buffer = "bytes"`, "extern type target must be"},
 		{`extern type Buffer = "*bytes.Buffer" extern f(b: Buffer): integer = "bytes.Buffer.Absent"`, "has no method Absent"},

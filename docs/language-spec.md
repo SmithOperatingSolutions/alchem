@@ -358,7 +358,7 @@ total = case items do
 end
 ```
 
-Every branch must end in a value of the same type; the first branch fixes it unless the context expects one. An `if` used as a value needs an `else`, and a `case` must be exhaustive. Branches may contain bindings and other statements before their final expression; those bindings are not visible outside. `return` cannot be used inside an `if` or `case` that produces a value. At the start of a statement, `if` and `case` remain statements whose branches need not produce values.
+Every branch must end in a value of the same type; the first branch fixes it unless the context expects one. A branch that only partly fixes it, such as `ok(n)` or `error("missing")` for a `result`, is completed by the others: `case parse(x) do ok(n) -> ok(n * 2); error(_) -> error("bad") end` is a `result[integer, string]` without an annotation. `if condition, do: value, else: value` is the same `if` on one line, and `unless` has the same form. An `if` used as a value needs an `else`, and a `case` must be exhaustive. Branches may contain bindings and other statements before their final expression; those bindings are not visible outside. `return` cannot be used inside an `if` or `case` that produces a value. At the start of a statement, `if` and `case` remain statements whose branches need not produce values.
 
 ## Floats
 

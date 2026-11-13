@@ -205,6 +205,13 @@ type checker struct {
 	// yield is set while checking an if or case used as a value; it points at
 	// the type its branches produce, empty until the first branch is typed.
 	yield *string
+	// hint, beside yield, holds what the branches have shown of the value's
+	// type before any branch settled it: ok(n) shows result[integer, ?] and
+	// error("x") result[?, string]. A hole is "?".
+	hint *string
+	// hintFor is the expression a branch of that value ends with; only it
+	// adds to the hint, not the constructors nested in its arguments.
+	hintFor *ast.Expr
 	// current names the function being checked. needs records which of each
 	// function's type variables are compared for equality, and uses records
 	// every instantiation of a generic function, so the requirement can be
@@ -274,10 +281,15 @@ func (c checker) block(body []ast.Statement, scope map[string]string, result str
 		if s.Kind == "return" && c.yield != nil {
 			return false, diagnostic(s.Line, s.Column, "return cannot be used inside an if or case that produces a value")
 		}
+		checking := c
 		if s.Kind == "yield" {
 			expected = *c.yield
+			if expected == "" && c.hint != nil {
+				expected = *c.hint
+			}
+			checking.hintFor = s.Expr
 		}
-		typ, err := c.expr(s.Expr, scope, expected)
+		typ, err := checking.expr(s.Expr, scope, expected)
 		if err != nil {
 			return false, err
 		}
@@ -295,7 +307,10 @@ func (c checker) block(body []ast.Statement, scope map[string]string, result str
 				return false, diagnostic(s.Line, s.Column, "assert requires boolean or comparison")
 			}
 		case "call":
-			if kind := s.Expr.Kind; kind != "call" && kind != "invoke" && kind != "try" && kind != "for" && kind != "unmatched" {
+			// The last line of a block may be a value such as ok({}): it ends
+			// a case arm whose case is itself a statement.
+			last := i == len(body)-1 && s.Expr.Kind == "variant"
+			if kind := s.Expr.Kind; kind != "call" && kind != "invoke" && kind != "try" && kind != "for" && kind != "unmatched" && !last {
 				return false, diagnostic(s.Line, s.Column, "expected binding or function call")
 			}
 		case "yield":
@@ -470,9 +485,9 @@ func (c checker) expr(e *ast.Expr, scope map[string]string, expected ...string) 
 		}
 		e.Type = "boolean"
 	case "value":
-		produced := want
+		produced, hint := want, ""
 		inner := c
-		inner.yield = &produced
+		inner.yield, inner.hint = &produced, &hint
 		yields(e.Body)
 		complete, err := inner.block(e.Body, cloneScope(scope), "void")
 		if err != nil {
@@ -976,10 +991,32 @@ func (c checker) expr(e *ast.Expr, scope map[string]string, expected ...string) 
 	if e.Type == "void" && !c.statements[e] {
 		return fail(e.Name + " returns no value")
 	}
-	if want != "" && e.Type != want {
+	if want != "" && e.Type != want && !fillsHint(e.Type, want) {
 		return fail("expected " + want + ", found " + e.Type)
 	}
 	return e.Type, nil
+}
+
+// fillsHint reports whether a type matches a hint, a type with "?" for the
+// parts no branch has settled yet.
+func fillsHint(typ, hint string) bool {
+	if hint == "?" {
+		return true
+	}
+	if !strings.Contains(hint, "?") {
+		return typ == hint
+	}
+	head, args := ast.Split(typ)
+	hintHead, hintArgs := ast.Split(hint)
+	if head != hintHead || len(args) != len(hintArgs) {
+		return false
+	}
+	for i := range args {
+		if !fillsHint(args[i], hintArgs[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // tupleCall types elem(tuple, i) as tuple[i], and put_elem(tuple, i, value)

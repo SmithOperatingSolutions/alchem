@@ -162,7 +162,7 @@ alx> 5 |> then(fn n -> n * 2 end)
 
 - `Enum` (73): Eager operations over any enumerable: lists, maps, sets, ranges and streams. Results are finished values.
 - `Stream` (38): Lazy operations over any enumerable. Nothing runs until the stream is consumed by an Enum function, so streams may be infinite.
-- `List` (24): Operations specific to lists, such as positional updates.
+- `List` (31): Operations specific to lists, such as positional updates.
 - `Map` (32): Immutable maps with integer, string or boolean keys.
 - `Keyword` (21): Keyword lists: lists of {atom, value} pairs written [name: value], kept in order and allowing a key more than once.
 - `MapSet` (16): Immutable sets of integers, strings or booleans; the type is set[T].
@@ -197,8 +197,8 @@ alx> MapSet.new([3, 1, 3]) |> MapSet.to_list()
 - `Crypto` (4): Cryptographic building blocks: random bytes from the operating system's secure source, hashes, HMAC signatures and a comparison that takes the same time however much of its input matches. Results are raw bytes; Base.encode16 or Base.encode64 makes them printable.
 
 ```elixir
-alx> String.split(" a  b ")
-["a", "b"]
+alx> String.split("k=v=w", "=", [parts: 2])
+["k", "v=w"]
 alx> Regex.run(~r/(\w+)@(\w+)/, "mail joe@example now")
 some(["joe@example", "joe", "example"])
 alx> Integer.parse("42")
