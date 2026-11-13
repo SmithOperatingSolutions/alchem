@@ -190,11 +190,11 @@ alx> MapSet.new([3, 1, 3]) |> MapSet.to_list()
 - `Integer` (12): Integer parsing, formatting and number theory.
 - `Float` (10): Float parsing, formatting and rounding.
 - `Base` (14): Base 16, 32 and 64 encoding.
-- `JSON` (4): Converts between JSON text and the builtin JSON type.
+- `JSON` (5): Converts between JSON text, the builtin JSON type and declared types.
 - `URI` (12): Percent-encoding and query strings.
 - `Version` (7): Parsing and comparing semantic versions.
 - `Markup` (7): HTML built by ~h templates, which escape every value they interpolate; see alchem syntax templates.
-- `Crypto` (4): Cryptographic building blocks: random bytes from the operating system's secure source, hashes, HMAC signatures and a comparison that takes the same time however much of its input matches. Results are raw bytes; Base.encode16 or Base.encode64 makes them printable.
+- `Crypto` (7): Cryptographic building blocks: random bytes from the operating system's secure source, hashes, HMAC signatures, password storage and a comparison that takes the same time however much of its input matches. Results are raw bytes; Base.encode16 or Base.encode64 makes them printable.
 
 ```elixir
 alx> String.split("k=v=w", "=", [parts: 2])
@@ -232,6 +232,7 @@ ok({~U[2026-01-05T11:04:05Z], 7200})
 - `OptionParser` (4): Reads command-line switches into a map.
 - `Logger` (10): Leveled messages on standard error.
 - `Port` (7): Runs an external program and exchanges text with it: its output arrives as messages, a line at a time.
+- `DiskStore` (13): A table of text under text keys, kept in one file so that it outlasts the program: a write is on the disk when it returns, keys are read in order by range or prefix, and any process may use it.
 
 ```elixir
 alx> File.write!("doc_read.txt", "hello")
@@ -285,4 +286,4 @@ alx> assert_raise("division by zero", fn -> div(1, 0) end)
 - `TCP` (12): TCP connections: listen, accept, connect, send and receive text. Calls that wait take milliseconds (negative waits indefinitely) and give error("timeout") or error("closed"); a process waiting in one still stops when asked. A socket belongs to the process that opened it and closes when that process ends.
 - `UDP` (7): UDP sockets: datagrams sent to and received from host:port addresses, passively with UDP.recv or actively as UDP.Event messages. UDP sockets close as TCP sockets do.
 - `HTTP` (16): An HTTP client, and a server that answers each request in a process of its own. Requests and responses are the HTTP.Request and HTTP.Response structs; header names are lower case.
-- `WebSocket` (9): WebSockets, RFC 6455: a handler of HTTP.serve upgrades its request into a socket, and WebSocket.connect opens one to a server. Messages are text or binary; pings and the closing handshake are answered without the program's help. Calls that wait take milliseconds and give error("timeout") or error("closed"). A socket belongs to the process that made it and closes when that process ends, so a handler that upgrades either keeps the socket or hands it on with controlling_process.
+- `WebSocket` (10): WebSockets, RFC 6455: a handler of HTTP.serve upgrades its request into a socket, and WebSocket.connect opens one to a server. Messages are text or binary; pings and the closing handshake are answered without the program's help. Calls that wait take milliseconds and give error("timeout") or error("closed"). A socket belongs to the process that made it and closes when that process ends, so a handler that upgrades either keeps the socket or hands it on with controlling_process.

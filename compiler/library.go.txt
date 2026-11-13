@@ -5591,6 +5591,269 @@ func jsonDecodeBang(ctx *actor.Context, text string, where string) TJSON {
 	return value
 }
 
+// What follows reads a JSON value as a declared type, for JSON.decode_as.
+// The generated program composes these into a reader for the type asked
+// for; each takes the path of the value it reads, for its error.
+
+func jsonKind(v TJSON) string {
+	switch v.(type) {
+	case TJSON_c1:
+		return "a boolean"
+	case TJSON_c2:
+		return "an integer"
+	case TJSON_c3:
+		return "a float"
+	case TJSON_c4:
+		return "a string"
+	case TJSON_c5:
+		return "a list"
+	case TJSON_c6:
+		return "an object"
+	}
+	return "null"
+}
+
+// jsonUnfit says what a value at a path should have been.
+func jsonUnfit(path, wanted string, found TJSON) error {
+	if path != "" {
+		path += ": "
+	}
+	return errors.New(path + "expected " + wanted + ", found " + jsonKind(found))
+}
+
+func jsonName(path, name string) string {
+	if path == "" {
+		return name
+	}
+	return path + "." + name
+}
+
+func jsonIndex(path string, index int) string {
+	return path + "[" + strconv.Itoa(index) + "]"
+}
+
+func jsonAsInteger(v TJSON, path string) (int64, error) {
+	if n, ok := v.(TJSON_c2); ok {
+		return n.F0, nil
+	}
+	return 0, jsonUnfit(path, "an integer", v)
+}
+
+// A float written without a fraction is read back as an integer, so an
+// integer is accepted where a float is wanted.
+func jsonAsFloat(v TJSON, path string) (float64, error) {
+	switch n := v.(type) {
+	case TJSON_c3:
+		return n.F0, nil
+	case TJSON_c2:
+		return float64(n.F0), nil
+	}
+	return 0, jsonUnfit(path, "a float", v)
+}
+
+func jsonAsBoolean(v TJSON, path string) (bool, error) {
+	if b, ok := v.(TJSON_c1); ok {
+		return b.F0, nil
+	}
+	return false, jsonUnfit(path, "a boolean", v)
+}
+
+func jsonAsString(v TJSON, path string) (string, error) {
+	if s, ok := v.(TJSON_c4); ok {
+		return s.F0, nil
+	}
+	return "", jsonUnfit(path, "a string", v)
+}
+
+func jsonAsAtom(v TJSON, path string) (actor.Atom, error) {
+	if s, ok := v.(TJSON_c4); ok {
+		return actor.Atom(s.F0), nil
+	}
+	return "", jsonUnfit(path, "a string", v)
+}
+
+func jsonAsJSON(v TJSON, path string) (TJSON, error) { return v, nil }
+
+// jsonItems gives the elements of an array, which must number count unless
+// count is negative.
+func jsonItems(v TJSON, path string, count int) ([]TJSON, error) {
+	list, ok := v.(TJSON_c5)
+	if !ok {
+		return nil, jsonUnfit(path, "a list", v)
+	}
+	if count >= 0 && len(list.F0.S) != count {
+		if path != "" {
+			path += ": "
+		}
+		return nil, errors.New(path + "expected a list of " + strconv.Itoa(count) + ", found one of " + strconv.Itoa(len(list.F0.S)))
+	}
+	return fwd(list.F0), nil
+}
+
+func jsonAsList[T any](each func(TJSON, string) (T, error)) func(TJSON, string) (L[T], error) {
+	return func(v TJSON, path string) (L[T], error) {
+		items, err := jsonItems(v, path, -1)
+		if err != nil {
+			return L[T]{}, err
+		}
+		out := make([]T, len(items))
+		for i, item := range items {
+			if out[i], err = each(item, jsonIndex(path, i)); err != nil {
+				return L[T]{}, err
+			}
+		}
+		return mk(out), nil
+	}
+}
+
+func jsonAsSet[T comparable](each func(TJSON, string) (T, error)) func(TJSON, string) (actor.Map[T, struct{}], error) {
+	return func(v TJSON, path string) (actor.Map[T, struct{}], error) {
+		items, err := jsonItems(v, path, -1)
+		if err != nil {
+			return actor.Map[T, struct{}]{}, err
+		}
+		out := actor.NewMapBuilder(actor.Map[T, struct{}]{})
+		for i, item := range items {
+			member, err := each(item, jsonIndex(path, i))
+			if err != nil {
+				return actor.Map[T, struct{}]{}, err
+			}
+			out.Put(member, struct{}{})
+		}
+		return out.Map(), nil
+	}
+}
+
+func jsonAsOption[T any](each func(TJSON, string) (T, error)) func(TJSON, string) (Toption[T], error) {
+	return func(v TJSON, path string) (Toption[T], error) {
+		if _, null := v.(TJSON_c0); null || v == nil {
+			return noneOf[T](), nil
+		}
+		value, err := each(v, path)
+		if err != nil {
+			return noneOf[T](), err
+		}
+		return someOf(value), nil
+	}
+}
+
+func jsonKeyString(key, path string) (string, error) { return key, nil }
+func jsonKeyAtom(key, path string) (actor.Atom, error) { return actor.Atom(key), nil }
+func jsonKeyInteger(key, path string) (int64, error) {
+	n, err := strconv.ParseInt(key, 10, 64)
+	if err != nil {
+		return 0, errors.New(path + ": expected an integer as the key, found " + strconv.Quote(key))
+	}
+	return n, nil
+}
+func jsonKeyFloat(key, path string) (float64, error) {
+	n, err := strconv.ParseFloat(key, 64)
+	if err != nil {
+		return 0, errors.New(path + ": expected a float as the key, found " + strconv.Quote(key))
+	}
+	return n, nil
+}
+func jsonKeyBoolean(key, path string) (bool, error) {
+	if key != "true" && key != "false" {
+		return false, errors.New(path + ": expected true or false as the key, found " + strconv.Quote(key))
+	}
+	return key == "true", nil
+}
+
+func jsonAsMap[K comparable, V any](keyOf func(string, string) (K, error), each func(TJSON, string) (V, error)) func(TJSON, string) (actor.Map[K, V], error) {
+	return func(v TJSON, path string) (actor.Map[K, V], error) {
+		object, ok := v.(TJSON_c6)
+		if !ok {
+			return actor.Map[K, V]{}, jsonUnfit(path, "an object", v)
+		}
+		out := actor.NewMapBuilder(actor.Map[K, V]{})
+		keys, values := actor.MapSorted(object.F0, nil)
+		for i, name := range keys {
+			at := jsonName(path, name)
+			key, err := keyOf(name, at)
+			if err != nil {
+				return actor.Map[K, V]{}, err
+			}
+			value, err := each(values[i], at)
+			if err != nil {
+				return actor.Map[K, V]{}, err
+			}
+			out.Put(key, value)
+		}
+		return out.Map(), nil
+	}
+}
+
+// jsonFields gives the members of the object a struct is read from.
+func jsonFields(v TJSON, path, name string) (actor.Map[string, TJSON], error) {
+	object, ok := v.(TJSON_c6)
+	if !ok {
+		return actor.Map[string, TJSON]{}, jsonUnfit(path, "an object for "+name, v)
+	}
+	return object.F0, nil
+}
+
+// jsonMember gives one field of a struct and its path. A field that is an
+// option may be left out, and reads as none; any other must be there.
+// Members the struct has no field for are passed over.
+func jsonMember(fields actor.Map[string, TJSON], path, name string, optional bool) (TJSON, string, error) {
+	at := jsonName(path, name)
+	value, found := actor.MapGet(fields, name)
+	if !found {
+		if optional {
+			return TJSON(TJSON_c0{}), at, nil
+		}
+		return nil, at, errors.New(at + ": missing")
+	}
+	return value, at, nil
+}
+
+// jsonVariant gives the name of a variant and its fields: a variant without
+// fields is written as its name, one with fields as {"name": [fields]}.
+func jsonVariant(v TJSON, path, names string) (string, []TJSON, error) {
+	switch x := v.(type) {
+	case TJSON_c4:
+		return x.F0, nil, nil
+	case TJSON_c6:
+		keys, values := actor.MapSorted(x.F0, nil)
+		if len(keys) == 1 {
+			items, err := jsonItems(values[0], jsonName(path, keys[0]), -1)
+			return keys[0], items, err
+		}
+	}
+	return "", nil, jsonUnfit(path, "one of "+names, v)
+}
+
+func jsonUnknown(path, names, name string) error {
+	if path != "" {
+		path += ": "
+	}
+	return errors.New(path + "expected one of " + names + ", found " + name)
+}
+
+func jsonCount(items []TJSON, path, name string, count int) error {
+	if len(items) != count {
+		return errors.New(jsonName(path, name) + ": expected " + strconv.Itoa(count) + " fields, found " + strconv.Itoa(len(items)))
+	}
+	return nil
+}
+
+func jsonReadAs[A any](value TJSON, read func(TJSON, string) (A, error)) Tresult[A, string] {
+	out, err := read(value, "")
+	if err != nil {
+		return errOf[A](err.Error())
+	}
+	return okOf(out)
+}
+
+func jsonDecodeAs[A any](text string, read func(TJSON, string) (A, error)) Tresult[A, string] {
+	value, err := jsonParse(text)
+	if err != nil {
+		return errOf[A]("invalid JSON: " + err.Error())
+	}
+	return jsonReadAs(value, read)
+}
+
 // ---- Testing ----
 
 // A test file's entry point runs its tests through runTests. The command
@@ -10365,6 +10628,499 @@ func fileWriteModes(ctx *actor.Context, path, content string, modes L[actor.Atom
 	return fileDone(err)
 }
 
+// ---- DiskStore ----
+
+// A store keeps text under text keys in one file, so that what a program
+// records outlasts it. The file is a log: every change is appended as one
+// record and written through to the disk before the call that made it
+// returns, so a change that was acknowledged survives a crash, and a record
+// cut short by one is dropped when the file is next opened. Keys and values
+// are also held in memory, keys in order, so reads never touch the disk.
+//
+// The file begins with storeMagic. A record is the length of its body and
+// the body's CRC-32, four bytes each, then the body: one or more changes,
+// each a byte saying put or delete, the key, and for a put the value, with
+// lengths as varints. The changes of one record take effect together.
+const storeMagic = "ALCHEMSTORE1\n"
+
+const (
+	storePutOp    = 1
+	storeDeleteOp = 2
+	// storeSlack is how far the file may outgrow what it holds before it
+	// is written afresh.
+	storeSlack = 1 << 20
+)
+
+type storeHandle struct {
+	path string
+	// mu guards what is in memory and closed; reads take it shared.
+	mu     sync.RWMutex
+	values map[string]string
+	keys   []string
+	closed bool
+	// updates is held shared by a plain write and alone by DiskStore.update,
+	// so that nothing changes between what an update read and what it
+	// writes.
+	updates sync.RWMutex
+	// gate is held shared while a write is handed to the writer and alone
+	// to close the queue, so nothing is sent on a closed queue. The writer
+	// never takes it, so a full queue always drains.
+	gate  sync.RWMutex
+	queue chan *storeWrite
+	ended   chan struct{}
+	// file, size and live belong to the writer: the log, its length, and
+	// the length it would have holding only what is current.
+	file *os.File
+	size int64
+	live int64
+}
+
+type storeChange struct {
+	delete     bool
+	key, value string
+}
+
+// storeWrite is one record waiting to be written, or a request to rewrite
+// the file when it has no changes.
+type storeWrite struct {
+	changes []storeChange
+	compact bool
+	done    chan error
+}
+
+// storeOpened holds the stores that are open, by path: opening a file a
+// second time gives the same store, since two logs appending to one file
+// would spoil it.
+var storeOpened = struct {
+	sync.Mutex
+	byPath map[string]*storeHandle
+}{byPath: map[string]*storeHandle{}}
+
+func storeRecord(changes []storeChange) []byte {
+	body := []byte{}
+	for _, change := range changes {
+		if change.delete {
+			body = append(body, storeDeleteOp)
+			body = binary.AppendUvarint(body, uint64(len(change.key)))
+			body = append(body, change.key...)
+			continue
+		}
+		body = append(body, storePutOp)
+		body = binary.AppendUvarint(body, uint64(len(change.key)))
+		body = append(body, change.key...)
+		body = binary.AppendUvarint(body, uint64(len(change.value)))
+		body = append(body, change.value...)
+	}
+	record := binary.LittleEndian.AppendUint32(make([]byte, 0, len(body)+8), uint32(len(body)))
+	record = binary.LittleEndian.AppendUint32(record, crc32.ChecksumIEEE(body))
+	return append(record, body...)
+}
+
+// storeChanges reads the body of a record, or reports that it is not one.
+func storeChanges(body []byte) ([]storeChange, bool) {
+	changes := []storeChange{}
+	text := func() (string, bool) {
+		size, used := binary.Uvarint(body)
+		if used <= 0 || size > uint64(len(body)-used) {
+			return "", false
+		}
+		value := string(body[used : used+int(size)])
+		body = body[used+int(size):]
+		return value, true
+	}
+	for len(body) > 0 {
+		op := body[0]
+		body = body[1:]
+		key, ok := text()
+		if !ok || op != storePutOp && op != storeDeleteOp {
+			return nil, false
+		}
+		change := storeChange{delete: op == storeDeleteOp, key: key}
+		if !change.delete {
+			if change.value, ok = text(); !ok {
+				return nil, false
+			}
+		}
+		changes = append(changes, change)
+	}
+	return changes, true
+}
+
+// storeCost is what one entry adds to a file holding only current entries.
+func storeCost(key, value string) int64 { return int64(len(key) + len(value) + 20) }
+
+// apply makes changes in memory. The caller holds mu.
+func (s *storeHandle) apply(changes []storeChange) {
+	for _, change := range changes {
+		old, had := s.values[change.key]
+		at, _ := slices.BinarySearch(s.keys, change.key)
+		switch {
+		case change.delete && had:
+			delete(s.values, change.key)
+			s.keys = slices.Delete(s.keys, at, at+1)
+			s.live -= storeCost(change.key, old)
+		case change.delete:
+		default:
+			if had {
+				s.live -= storeCost(change.key, old)
+			} else {
+				s.keys = slices.Insert(s.keys, at, change.key)
+			}
+			s.values[change.key] = change.value
+			s.live += storeCost(change.key, change.value)
+		}
+	}
+}
+
+func storeOpen(path string) Tresult[*storeHandle, string] {
+	full, err := filepath.Abs(path)
+	if err != nil {
+		return errOf[*storeHandle](fileProblem(err))
+	}
+	storeOpened.Lock()
+	defer storeOpened.Unlock()
+	if s, open := storeOpened.byPath[full]; open {
+		return okOf(s)
+	}
+	data, err := os.ReadFile(full)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errOf[*storeHandle](fileProblem(err))
+	}
+	s := &storeHandle{path: full, values: map[string]string{}, queue: make(chan *storeWrite, 256), ended: make(chan struct{}), live: int64(len(storeMagic))}
+	kept := len(storeMagic)
+	switch {
+	case len(data) == 0 || len(data) < len(storeMagic) && strings.HasPrefix(storeMagic, string(data)):
+		// A new file, or one whose first write was cut short.
+		data, kept = nil, 0
+	case !strings.HasPrefix(string(data), storeMagic):
+		return errOf[*storeHandle](path + " is not a store")
+	}
+	for rest := data[kept:]; len(rest) >= 8; {
+		size := binary.LittleEndian.Uint32(rest)
+		if uint64(size) > uint64(len(rest)-8) || crc32.ChecksumIEEE(rest[8:8+size]) != binary.LittleEndian.Uint32(rest[4:]) {
+			break
+		}
+		changes, ok := storeChanges(rest[8 : 8+size])
+		if !ok {
+			break
+		}
+		s.apply(changes)
+		kept += 8 + int(size)
+		rest = rest[8+size:]
+	}
+	s.file, err = os.OpenFile(full, os.O_RDWR|os.O_CREATE, 0600)
+	if err == nil && kept == 0 {
+		_, err = s.file.WriteAt([]byte(storeMagic), 0)
+		kept = len(storeMagic)
+	}
+	if err == nil {
+		// What follows the last whole record was cut short by a crash.
+		err = s.file.Truncate(int64(kept))
+	}
+	if err == nil {
+		_, err = s.file.Seek(int64(kept), io.SeekStart)
+	}
+	if err == nil {
+		err = s.file.Sync()
+	}
+	if err != nil {
+		if s.file != nil {
+			s.file.Close()
+		}
+		return errOf[*storeHandle](fileProblem(err))
+	}
+	s.size = int64(kept)
+	storeOpened.byPath[full] = s
+	go s.write()
+	return okOf(s)
+}
+
+// write is the store's one writer. It takes whatever writes are waiting,
+// appends their records together and makes them durable with one sync, so
+// that many processes writing at once share the cost of the disk.
+func (s *storeHandle) write() {
+	defer close(s.ended)
+	for first := range s.queue {
+		batch := []*storeWrite{first}
+	gather:
+		for len(batch) < 256 {
+			select {
+			case next, open := <-s.queue:
+				if !open {
+					break gather
+				}
+				batch = append(batch, next)
+			default:
+				break gather
+			}
+		}
+		records, compact := []byte{}, false
+		for _, w := range batch {
+			if len(w.changes) > 0 {
+				records = append(records, storeRecord(w.changes)...)
+			}
+			compact = compact || w.compact
+		}
+		var err error
+		if len(records) > 0 {
+			if _, err = s.file.Write(records); err == nil {
+				err = s.file.Sync()
+			}
+			if err != nil {
+				// Nothing of a failed write may be read back later.
+				s.file.Truncate(s.size)
+				s.file.Seek(s.size, io.SeekStart)
+			} else {
+				s.size += int64(len(records))
+				s.mu.Lock()
+				for _, w := range batch {
+					s.apply(w.changes)
+				}
+				s.mu.Unlock()
+			}
+		}
+		if err == nil && (compact || s.size > 2*s.live+storeSlack) {
+			err = s.rewrite()
+			if !compact {
+				// Tidying up is not what these writes asked for.
+				err = nil
+			}
+		}
+		for _, w := range batch {
+			w.done <- err
+		}
+	}
+	s.file.Close()
+}
+
+// rewrite replaces the log by one holding only what is current: written
+// beside it, made durable, and renamed over it, so that a crash at any
+// point leaves one whole file or the other.
+func (s *storeHandle) rewrite() error {
+	fresh := []byte(storeMagic)
+	for _, key := range s.keys {
+		fresh = append(fresh, storeRecord([]storeChange{{key: key, value: s.values[key]}})...)
+	}
+	beside := s.path + ".compact"
+	file, err := os.OpenFile(beside, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err = file.Write(fresh); err == nil {
+		err = file.Sync()
+	}
+	if err != nil {
+		file.Close()
+		os.Remove(beside)
+		return err
+	}
+	// The log is closed while it is replaced, which some systems require.
+	file.Close()
+	s.file.Close()
+	renamed := os.Rename(beside, s.path)
+	if renamed != nil {
+		os.Remove(beside)
+	}
+	s.file, err = os.OpenFile(s.path, os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	if renamed == nil {
+		s.size = int64(len(fresh))
+		if folder, err := os.Open(filepath.Dir(s.path)); err == nil {
+			folder.Sync()
+			folder.Close()
+		}
+	}
+	if _, err = s.file.Seek(s.size, io.SeekStart); err != nil {
+		return err
+	}
+	return renamed
+}
+
+// submit hands a write to the writer and waits until it is on the disk.
+func (s *storeHandle) submit(ctx *actor.Context, w *storeWrite) Tresult[struct{}, string] {
+	actor.Check(ctx)
+	w.done = make(chan error, 1)
+	s.gate.RLock()
+	s.mu.RLock()
+	closed := s.closed
+	s.mu.RUnlock()
+	if closed {
+		s.gate.RUnlock()
+		return errOf[struct{}]("closed")
+	}
+	s.queue <- w
+	s.gate.RUnlock()
+	if err := <-w.done; err != nil {
+		return errOf[struct{}](fileProblem(err))
+	}
+	return okOf(struct{}{})
+}
+
+func storePut(ctx *actor.Context, s *storeHandle, key, value string) Tresult[struct{}, string] {
+	s.updates.RLock()
+	defer s.updates.RUnlock()
+	return s.submit(ctx, &storeWrite{changes: []storeChange{{key: key, value: value}}})
+}
+
+func storeDelete(ctx *actor.Context, s *storeHandle, key string) Tresult[struct{}, string] {
+	s.updates.RLock()
+	defer s.updates.RUnlock()
+	return s.submit(ctx, &storeWrite{changes: []storeChange{{delete: true, key: key}}})
+}
+
+// storeCommit makes several changes at once: all of them are kept, or after
+// a crash none.
+func storeCommit(ctx *actor.Context, s *storeHandle, puts L[pair[string, string]], deletes L[string]) Tresult[struct{}, string] {
+	changes := []storeChange{}
+	for _, key := range fwd(deletes) {
+		changes = append(changes, storeChange{delete: true, key: key})
+	}
+	for _, put := range fwd(puts) {
+		changes = append(changes, storeChange{key: put.E0, value: put.E1})
+	}
+	if len(changes) == 0 {
+		return okOf(struct{}{})
+	}
+	s.updates.RLock()
+	defer s.updates.RUnlock()
+	return s.submit(ctx, &storeWrite{changes: changes})
+}
+
+// storeUpdate changes one key by a function of what it holds, with no other
+// write to the store in between: none deletes the key, some(value) puts it.
+// It gives what the function gave.
+func storeUpdate(ctx *actor.Context, s *storeHandle, key string, f func(*actor.Context, Toption[string]) Toption[string]) Tresult[Toption[string], string] {
+	s.updates.Lock()
+	defer s.updates.Unlock()
+	s.mu.RLock()
+	old, had := s.values[key]
+	closed := s.closed
+	s.mu.RUnlock()
+	if closed {
+		return errOf[Toption[string]]("closed")
+	}
+	current := noneOf[string]()
+	if had {
+		current = someOf(old)
+	}
+	next := f(ctx, current)
+	change := storeChange{delete: true, key: key}
+	if value, some := next.(Toption_c1[string]); some {
+		change = storeChange{key: key, value: value.F0}
+	} else if !had {
+		return okOf(next)
+	}
+	if _, failed := s.submit(ctx, &storeWrite{changes: []storeChange{change}}).(Tresult_c1[struct{}, string]); failed {
+		return errOf[Toption[string]]("the change could not be written")
+	}
+	return okOf(next)
+}
+
+func storeCompact(ctx *actor.Context, s *storeHandle) Tresult[struct{}, string] {
+	s.updates.RLock()
+	defer s.updates.RUnlock()
+	return s.submit(ctx, &storeWrite{compact: true})
+}
+
+// storeClose ends the writer once what was waiting is written. A closed
+// store takes no writes and gives no reads; opening its path again reads
+// the file afresh.
+func storeClose(s *storeHandle) bool {
+	storeOpened.Lock()
+	defer storeOpened.Unlock()
+	s.gate.Lock()
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		s.gate.Unlock()
+		return false
+	}
+	s.closed = true
+	s.mu.Unlock()
+	close(s.queue)
+	s.gate.Unlock()
+	<-s.ended
+	delete(storeOpened.byPath, s.path)
+	return true
+}
+
+// reading takes the lock for a read, failing when the store is closed.
+func (s *storeHandle) reading(ctx *actor.Context, function, where string) {
+	s.mu.RLock()
+	if s.closed {
+		s.mu.RUnlock()
+		failAt(ctx, where, function+": the store is closed")
+	}
+}
+
+func storeGet(ctx *actor.Context, s *storeHandle, key string, where string) Toption[string] {
+	s.reading(ctx, "DiskStore.get", where)
+	defer s.mu.RUnlock()
+	if value, found := s.values[key]; found {
+		return someOf(value)
+	}
+	return noneOf[string]()
+}
+
+func storeHasKey(ctx *actor.Context, s *storeHandle, key string, where string) bool {
+	s.reading(ctx, "DiskStore.has_key?", where)
+	defer s.mu.RUnlock()
+	_, found := s.values[key]
+	return found
+}
+
+func storeKeys(ctx *actor.Context, s *storeHandle, where string) L[string] {
+	s.reading(ctx, "DiskStore.keys", where)
+	defer s.mu.RUnlock()
+	return mk(slices.Clone(s.keys))
+}
+
+func storeSize(ctx *actor.Context, s *storeHandle, where string) int64 {
+	s.reading(ctx, "DiskStore.size", where)
+	defer s.mu.RUnlock()
+	return int64(len(s.keys))
+}
+
+// between gives the entries whose keys are at or after from and, when
+// bounded, before to, in key order. The caller holds mu.
+func (s *storeHandle) between(from, to string, bounded bool) L[pair[string, string]] {
+	start, _ := slices.BinarySearch(s.keys, from)
+	end := len(s.keys)
+	if bounded {
+		end, _ = slices.BinarySearch(s.keys, to)
+	}
+	out := []pair[string, string]{}
+	for i := start; i < end; i++ {
+		out = append(out, pair[string, string]{s.keys[i], s.values[s.keys[i]]})
+	}
+	return mk(out)
+}
+
+func storeRange(ctx *actor.Context, s *storeHandle, from, to string, where string) L[pair[string, string]] {
+	s.reading(ctx, "DiskStore.range", where)
+	defer s.mu.RUnlock()
+	return s.between(from, to, true)
+}
+
+// storePrefix gives the entries whose keys begin with a prefix: those up to
+// the first key that could not, which is the prefix with its last byte that
+// is not 0xff raised by one.
+func storePrefix(ctx *actor.Context, s *storeHandle, prefix string, where string) L[pair[string, string]] {
+	s.reading(ctx, "DiskStore.prefix", where)
+	defer s.mu.RUnlock()
+	after := []byte(prefix)
+	for len(after) > 0 && after[len(after)-1] == 0xff {
+		after = after[:len(after)-1]
+	}
+	if len(after) == 0 {
+		return s.between(prefix, "", false)
+	}
+	after[len(after)-1]++
+	return s.between(prefix, string(after), true)
+}
+
 // ---- HTTP ----
 
 func httpHeaders(h http.Header) L[pair[string, string]] {
@@ -10573,6 +11329,75 @@ func httpDo(ctx *actor.Context, method, address string, headers L[pair[string, s
 
 // httpServer is a listening server. Its owner is the process that serves:
 // stopping it closes the listener and the connections.
+// httpGzipFrom is the size from which a body is compressed when compress:
+// is on.
+const httpGzipFrom = 1024
+
+// httpAccepts reports whether a request takes a gzip body.
+func httpAccepts(r *http.Request) bool {
+	for _, value := range r.Header.Values("Accept-Encoding") {
+		for _, part := range strings.Split(value, ",") {
+			coding, weight, _ := strings.Cut(strings.TrimSpace(part), ";")
+			coding, weight = strings.ToLower(strings.TrimSpace(coding)), strings.ReplaceAll(weight, " ", "")
+			refused := weight == "q=0" || strings.HasPrefix(weight, "q=0.") && strings.Trim(weight[4:], "0") == ""
+			if (coding == "gzip" || coding == "*") && !refused {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+var httpGzippers = sync.Pool{New: func() any { return gzip.NewWriter(io.Discard) }}
+
+// httpBody writes a whole response: compressed with gzip when the server
+// was asked to, the request accepts it, the body is long enough to gain
+// and is not already encoded or of a kind that is compressed already.
+func httpBody(w http.ResponseWriter, r *http.Request, response THTTP_oResponse, compress bool) {
+	body := response.F2
+	kind := ""
+	for _, header := range fwd(response.F1) {
+		switch strings.ToLower(header.E0) {
+		case "content-encoding", "content-range":
+			compress = false
+		case "content-type":
+			kind = strings.ToLower(header.E1)
+		}
+	}
+	for _, prefix := range []string{"image/", "video/", "audio/", "application/zip", "application/gzip", "font/woff"} {
+		compress = compress && (!strings.HasPrefix(kind, prefix) || strings.HasPrefix(kind, "image/svg"))
+	}
+	if !compress || len(body) < httpGzipFrom || r.Method == http.MethodHead || !httpAccepts(r) || response.F0 == 204 || response.F0 == 304 {
+		httpHead(w, response)
+		io.WriteString(w, body)
+		return
+	}
+	var packed bytes.Buffer
+	writer := httpGzippers.Get().(*gzip.Writer)
+	writer.Reset(&packed)
+	io.WriteString(writer, body)
+	writer.Close()
+	httpGzippers.Put(writer)
+	for _, header := range fwd(response.F1) {
+		if !strings.EqualFold(header.E0, "Content-Length") {
+			w.Header().Add(header.E0, header.E1)
+		}
+	}
+	if kind == "" {
+		// Go would otherwise guess the type from the compressed bytes.
+		w.Header().Set("Content-Type", http.DetectContentType([]byte(body)))
+	}
+	w.Header().Set("Content-Encoding", "gzip")
+	w.Header().Add("Vary", "Accept-Encoding")
+	w.Header().Set("Content-Length", strconv.Itoa(packed.Len()))
+	status := int(response.F0)
+	if status < 100 || status > 999 {
+		status = http.StatusInternalServerError
+	}
+	w.WriteHeader(status)
+	w.Write(packed.Bytes())
+}
+
 type httpServer struct {
 	owner   *actor.PID[struct{}]
 	address string
@@ -10617,6 +11442,7 @@ func httpListen(ctx *actor.Context, address string, handle func(*actor.Context, 
 	// not the program's to print.
 	server := &http.Server{ErrorLog: log.New(io.Discard, "", 0)}
 	limit := int64(httpBodyLimit)
+	compress := false
 	for _, option := range fwd(options) {
 		if option.E1 < 0 {
 			failAt(ctx, where, "HTTP.serve: "+string(option.E0)+": cannot be negative")
@@ -10637,8 +11463,10 @@ func httpListen(ctx *actor.Context, address string, handle func(*actor.Context, 
 			limit = option.E1
 		case "keep_alive":
 			server.SetKeepAlivesEnabled(option.E1 != 0)
+		case "compress":
+			compress = option.E1 != 0
 		default:
-			failAt(ctx, where, "HTTP.serve: unknown option :"+string(option.E0)+"; the options are read_timeout:, write_timeout:, idle_timeout:, header_timeout:, max_header_bytes:, max_body_bytes: and keep_alive:")
+			failAt(ctx, where, "HTTP.serve: unknown option :"+string(option.E0)+"; the options are read_timeout:, write_timeout:, idle_timeout:, header_timeout:, max_header_bytes:, max_body_bytes:, keep_alive: and compress:")
 		}
 	}
 	listener, err := net.Listen("tcp", address)
@@ -10656,7 +11484,7 @@ func httpListen(ctx *actor.Context, address string, handle func(*actor.Context, 
 	}, 1, where)
 	serving := <-ready
 	server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		httpAnswer(serving, handle, w, r, limit, where)
+		httpAnswer(serving, handle, w, r, limit, compress, where)
 	})
 	go server.Serve(listener)
 	go func() {
@@ -10668,7 +11496,7 @@ func httpListen(ctx *actor.Context, address string, handle func(*actor.Context, 
 
 // httpAnswer runs the handler for one request in a process of its own. A
 // handler that fails answers 500.
-func httpAnswer(serving *actor.Context, handle func(*actor.Context, THTTP_oRequest) THTTP_oResponse, w http.ResponseWriter, r *http.Request, limit int64, where string) {
+func httpAnswer(serving *actor.Context, handle func(*actor.Context, THTTP_oRequest) THTTP_oResponse, w http.ResponseWriter, r *http.Request, limit int64, compress bool, where string) {
 	data, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -10730,8 +11558,7 @@ func httpAnswer(serving *actor.Context, handle func(*actor.Context, THTTP_oReque
 	}
 	select {
 	case response := <-answer:
-		httpHead(w, response)
-		io.WriteString(w, response.F2)
+		httpBody(w, r, response, compress)
 	case <-streaming:
 	case <-exchange.upgraded:
 	case <-actor.Ended(worker):
@@ -10740,8 +11567,7 @@ func httpAnswer(serving *actor.Context, handle func(*actor.Context, THTTP_oReque
 		}
 		select {
 		case response := <-answer:
-			httpHead(w, response)
-			io.WriteString(w, response.F2)
+			httpBody(w, r, response, compress)
 		case <-streaming:
 		default:
 			// A worker that failed while streaming has written its head;
@@ -10919,6 +11745,8 @@ type wsConn struct {
 	reader *bufio.Reader
 	client bool
 	limit  int64
+	// deflate is set when the handshake agreed on permessage-deflate.
+	deflate bool
 	writes sync.Mutex
 	events chan TWebSocket_oEvent
 	// done is closed when the reader has ended, quit when the connection has
@@ -10946,8 +11774,8 @@ type wsFailure struct {
 
 func (f wsFailure) Error() string { return f.text }
 
-func newWebSocket(ctx *actor.Context, conn net.Conn, reader *bufio.Reader, client bool, limit int64) *wsConn {
-	ws := &wsConn{conn: conn, reader: reader, client: client, limit: limit, events: make(chan TWebSocket_oEvent, 16), done: make(chan struct{}), quit: make(chan struct{})}
+func newWebSocket(ctx *actor.Context, conn net.Conn, reader *bufio.Reader, client bool, limit int64, deflate bool) *wsConn {
+	ws := &wsConn{conn: conn, reader: reader, client: client, limit: limit, deflate: deflate, events: make(chan TWebSocket_oEvent, 16), done: make(chan struct{}), quit: make(chan struct{})}
 	ws.own(ctx)
 	go ws.read()
 	return ws
@@ -10987,22 +11815,140 @@ func wsHeaderHas(header http.Header, name, token string) bool {
 	return false
 }
 
+// Compression is RFC 7692's permessage-deflate, with each message
+// compressed on its own: neither end keeps its compressor's state from one
+// message to the next, so a connection holds no memory for it between
+// messages. wsDeflateOffer is what a client asks for and wsDeflateAnswer
+// what a server agrees to.
+const (
+	wsDeflateOffer  = "permessage-deflate; server_no_context_takeover; client_no_context_takeover"
+	wsDeflateAnswer = wsDeflateOffer
+	// wsDeflateFrom is the size from which a message is compressed; deflate
+	// does little for a shorter one.
+	wsDeflateFrom = 256
+	// wsDeflateTail ends each compressed message: the sender leaves it off
+	// and the receiver puts it back, followed by an empty last block.
+	wsDeflateTail = "\x00\x00\xff\xff"
+)
+
+// wsExtensions parses Sec-WebSocket-Extensions: each extension with its
+// parameters, in order.
+func wsExtensions(header http.Header) []map[string]string {
+	out := []map[string]string{}
+	for _, value := range header.Values("Sec-WebSocket-Extensions") {
+		for _, offer := range strings.Split(value, ",") {
+			parts := strings.Split(offer, ";")
+			extension := map[string]string{"": strings.ToLower(strings.TrimSpace(parts[0]))}
+			for _, part := range parts[1:] {
+				name, setting, _ := strings.Cut(strings.TrimSpace(part), "=")
+				extension[strings.ToLower(strings.TrimSpace(name))] = strings.Trim(strings.TrimSpace(setting), "\"")
+			}
+			if extension[""] != "" {
+				out = append(out, extension)
+			}
+		}
+	}
+	return out
+}
+
+// wsDeflateOffered reports whether a client offered compression in a form
+// this end can give: its own window cannot be made smaller than deflate's
+// full one.
+func wsDeflateOffered(header http.Header) bool {
+offers:
+	for _, offer := range wsExtensions(header) {
+		if offer[""] != "permessage-deflate" {
+			continue
+		}
+		for name, setting := range offer {
+			switch name {
+			case "", "client_max_window_bits", "server_no_context_takeover", "client_no_context_takeover":
+			case "server_max_window_bits":
+				if setting != "15" {
+					continue offers
+				}
+			default:
+				continue offers
+			}
+		}
+		return true
+	}
+	return false
+}
+
+var wsDeflaters = sync.Pool{New: func() any {
+	writer, _ := flate.NewWriter(io.Discard, flate.BestSpeed)
+	return writer
+}}
+
+var wsInflaters = sync.Pool{New: func() any { return flate.NewReader(strings.NewReader("")) }}
+
+// wsDeflate compresses one message.
+func wsDeflate(payload []byte) []byte {
+	var out bytes.Buffer
+	out.Grow(len(payload)/4 + 64)
+	writer := wsDeflaters.Get().(*flate.Writer)
+	defer wsDeflaters.Put(writer)
+	writer.Reset(&out)
+	writer.Write(payload)
+	writer.Flush()
+	return bytes.TrimSuffix(out.Bytes(), []byte(wsDeflateTail))
+}
+
+// inflate gives back a compressed message, which may not grow past the
+// limit of a message.
+func (ws *wsConn) inflate(message []byte) ([]byte, error) {
+	source := io.MultiReader(bytes.NewReader(message), strings.NewReader(wsDeflateTail+"\x01"+wsDeflateTail))
+	reader := wsInflaters.Get().(io.ReadCloser)
+	defer wsInflaters.Put(reader)
+	reader.(flate.Resetter).Reset(source, nil)
+	out, err := io.ReadAll(io.LimitReader(reader, ws.limit+1))
+	if err != nil {
+		return nil, wsFailure{1007, "a compressed message could not be read"}
+	}
+	if int64(len(out)) > ws.limit {
+		return nil, wsFailure{1009, "message too large"}
+	}
+	return out, nil
+}
+
+func wsCompressed(ws *wsConn) bool { return ws.deflate }
+
 func wsUpgrade(ctx *actor.Context, request THTTP_oRequest, where string) Tresult[*wsConn, string] {
 	return wsUpgradeWith(ctx, request, L[pair[actor.Atom, int64]]{}, where)
+}
+
+// wsUpgradeCompress takes compress: true.
+func wsUpgradeCompress(ctx *actor.Context, request THTTP_oRequest, options L[pair[actor.Atom, bool]], where string) Tresult[*wsConn, string] {
+	numbers := []pair[actor.Atom, int64]{}
+	for _, option := range fwd(options) {
+		if option.E0 != "compress" {
+			failAt(ctx, where, "WebSocket.upgrade: unknown option :"+string(option.E0)+"; the options are max_message_bytes: and compress:")
+		}
+		setting := int64(0)
+		if option.E1 {
+			setting = 1
+		}
+		numbers = append(numbers, pair[actor.Atom, int64]{"compress", setting})
+	}
+	return wsUpgradeWith(ctx, request, mk(numbers), where)
 }
 
 // wsUpgradeWith answers the request its process is handling with the
 // WebSocket handshake and takes over the connection.
 func wsUpgradeWith(ctx *actor.Context, request THTTP_oRequest, options L[pair[actor.Atom, int64]], where string) Tresult[*wsConn, string] {
 	limit := int64(wsDefaultLimit)
+	compress := false
 	for _, option := range fwd(options) {
 		switch {
 		case option.E0 == "max_message_bytes" && option.E1 > 0:
 			limit = option.E1
 		case option.E0 == "max_message_bytes":
 			failAt(ctx, where, "WebSocket.upgrade: max_message_bytes: must be positive")
+		case option.E0 == "compress":
+			compress = option.E1 != 0
 		default:
-			failAt(ctx, where, "WebSocket.upgrade: unknown option :"+string(option.E0)+"; the option is max_message_bytes:")
+			failAt(ctx, where, "WebSocket.upgrade: unknown option :"+string(option.E0)+"; the options are max_message_bytes: and compress:")
 		}
 	}
 	found, ok := httpExchanges.Load(ctx)
@@ -11041,13 +11987,17 @@ func wsUpgradeWith(ctx *actor.Context, request THTTP_oRequest, options L[pair[ac
 	// The server's own deadlines no longer apply.
 	conn.SetDeadline(time.Time{})
 	conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
-	_, err = io.WriteString(conn, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: "+wsAccept(key)+"\r\n\r\n")
+	deflate, extensions := compress && wsDeflateOffered(r.Header), ""
+	if deflate {
+		extensions = "Sec-WebSocket-Extensions: " + wsDeflateAnswer + "\r\n"
+	}
+	_, err = io.WriteString(conn, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: "+wsAccept(key)+"\r\n"+extensions+"\r\n")
 	if err != nil {
 		conn.Close()
 		return errOf[*wsConn](netProblem(err))
 	}
 	conn.SetWriteDeadline(time.Time{})
-	return okOf(newWebSocket(ctx, conn, buffered.Reader, false, limit))
+	return okOf(newWebSocket(ctx, conn, buffered.Reader, false, limit, deflate))
 }
 
 func wsConnect(ctx *actor.Context, address string, ms int64, where string) Tresult[*wsConn, string] {
@@ -11059,10 +12009,11 @@ func wsConnectWith(ctx *actor.Context, address string, ms int64, options L[pair[
 }
 
 // wsHandshakeHeaders are the headers the handshake itself sets.
-var wsHandshakeHeaders = map[string]bool{"host": true, "upgrade": true, "connection": true, "sec-websocket-key": true, "sec-websocket-version": true}
+var wsHandshakeHeaders = map[string]bool{"host": true, "upgrade": true, "connection": true, "sec-websocket-key": true, "sec-websocket-version": true, "sec-websocket-extensions": true}
 
 // wsConnectHeaders opens a WebSocket to a ws:// or wss:// address. The
-// options are ca_file:, insecure: "true" and origin:, as text; headers are
+// options are ca_file:, insecure: "true", origin: and compress: "true", as
+// text; headers are
 // sent with the handshake, as a browser sends Cookie or a client
 // Authorization.
 func wsConnectHeaders(ctx *actor.Context, address string, ms int64, options L[pair[actor.Atom, string]], headers L[pair[string, string]], where string) Tresult[*wsConn, string] {
@@ -11077,7 +12028,7 @@ func wsConnectHeaders(ctx *actor.Context, address string, ms int64, options L[pa
 		}
 		extra += name + ": " + value + "\r\n"
 	}
-	caFile, insecure, origin := "", false, ""
+	caFile, insecure, origin, compress := "", false, "", false
 	for _, option := range fwd(options) {
 		switch option.E0 {
 		case "ca_file":
@@ -11086,8 +12037,10 @@ func wsConnectHeaders(ctx *actor.Context, address string, ms int64, options L[pa
 			insecure = option.E1 == "true"
 		case "origin":
 			origin = option.E1
+		case "compress":
+			compress = option.E1 == "true"
 		default:
-			failAt(ctx, where, "WebSocket.connect: unknown option :"+string(option.E0)+"; the options are ca_file:, insecure: and origin:")
+			failAt(ctx, where, "WebSocket.connect: unknown option :"+string(option.E0)+"; the options are ca_file:, insecure:, origin: and compress:")
 		}
 	}
 	target, err := url.Parse(address)
@@ -11144,6 +12097,9 @@ func wsConnectHeaders(ctx *actor.Context, address string, ms int64, options L[pa
 	if origin != "" {
 		request += "Origin: " + origin + "\r\n"
 	}
+	if compress {
+		request += "Sec-WebSocket-Extensions: " + wsDeflateOffer + "\r\n"
+	}
 	request += extra
 	reader := bufio.NewReader(conn)
 	if _, err := io.WriteString(conn, request+"\r\n"); err != nil {
@@ -11159,19 +12115,36 @@ func wsConnectHeaders(ctx *actor.Context, address string, ms int64, options L[pa
 		conn.Close()
 		return errOf[*wsConn]("the server did not accept the WebSocket: " + response.Status)
 	}
+	// The server may use only what was offered: compression, with each of
+	// its messages compressed on its own.
+	deflate := false
+	for _, extension := range wsExtensions(response.Header) {
+		_, afresh := extension["server_no_context_takeover"]
+		if extension[""] != "permessage-deflate" || !compress || deflate || !afresh {
+			conn.Close()
+			return errOf[*wsConn]("the server chose an extension that was not offered: " + extension[""])
+		}
+		deflate = true
+	}
 	conn.SetDeadline(time.Time{})
-	return okOf(newWebSocket(ctx, conn, reader, true, wsDefaultLimit))
+	return okOf(newWebSocket(ctx, conn, reader, true, wsDefaultLimit, deflate))
 }
 
-// frame reads one frame, unmasking its payload.
+// frame reads one frame, unmasking its payload. The first reserved bit
+// marks the first frame of a compressed message, where compression was
+// agreed.
 func (ws *wsConn) frame() (bool, byte, []byte, error) {
 	var head [2]byte
 	if _, err := io.ReadFull(ws.reader, head[:]); err != nil {
 		return false, 0, nil, err
 	}
 	fin, op := head[0]&0x80 != 0, head[0]&0x0f
-	if head[0]&0x70 != 0 {
+	packed := head[0]&0x40 != 0 && ws.deflate && (op == 0x1 || op == 0x2)
+	if head[0]&0x30 != 0 || head[0]&0x40 != 0 && !packed {
 		return false, 0, nil, wsFailure{1002, "protocol error: reserved bits are set"}
+	}
+	if packed {
+		op |= wsPacked
 	}
 	masked := head[1]&0x80 != 0
 	if masked == ws.client {
@@ -11216,14 +12189,22 @@ func (ws *wsConn) frame() (bool, byte, []byte, error) {
 	return fin, op, payload, nil
 }
 
+// wsPacked marks, in what frame gives as the opcode, a message that is
+// compressed.
+const wsPacked = 0x40
+
 // read takes frames until the connection ends, putting whole messages in
 // events and ending with a closed or error event.
 func (ws *wsConn) read() {
 	var message []byte
 	var kind byte
+	packed := false
 	for {
 		fin, op, payload, err := ws.frame()
 		if err == nil {
+			if op&wsPacked != 0 {
+				op, packed = op&^wsPacked, kind == 0
+			}
 			switch op {
 			case 0x8:
 				ws.peerClosed(payload)
@@ -11249,6 +12230,10 @@ func (ws *wsConn) read() {
 		}
 		if err == nil && int64(len(message)) > ws.limit {
 			err = wsFailure{1009, "message too large"}
+		}
+		if err == nil && fin && packed {
+			message, err = ws.inflate(message)
+			packed = false
 		}
 		if err == nil && fin && kind == 0x1 && !utf8.Valid(message) {
 			err = wsFailure{1007, "a text message is not valid UTF-8"}
@@ -11345,7 +12330,8 @@ func (ws *wsConn) finish(last TWebSocket_oEvent) {
 	close(ws.done)
 }
 
-// write sends one frame, masked when this end is the client.
+// write sends one frame, masked when this end is the client. An op with
+// wsPacked set carries a compressed message.
 func (ws *wsConn) write(op byte, payload []byte) error {
 	header := []byte{0x80 | op}
 	mask := byte(0)
@@ -11385,7 +12371,14 @@ func (ws *wsConn) send(ctx *actor.Context, op byte, data string) Tresult[struct{
 	if closing {
 		return errOf[struct{}]("closed")
 	}
-	if err := ws.write(op, []byte(data)); err != nil {
+	payload := []byte(data)
+	if ws.deflate && len(payload) >= wsDeflateFrom {
+		// A message that does not shrink goes as it is.
+		if small := wsDeflate(payload); len(small) < len(payload) {
+			op, payload = op|wsPacked, small
+		}
+	}
+	if err := ws.write(op, payload); err != nil {
 		ws.conn.Close()
 		return errOf[struct{}](netProblem(err))
 	}
@@ -11618,6 +12611,86 @@ func cryptoHmac(ctx *actor.Context, algorithm actor.Atom, key, data string, wher
 // that checking a signature does not reveal how much of it was right.
 func cryptoSecureCompare(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+// cryptoPbkdf2 derives a key of the given length from a password: PBKDF2
+// (RFC 8018) over HMAC with the named hash, which is made slow on purpose by
+// its count of iterations.
+func cryptoPbkdf2(ctx *actor.Context, algorithm actor.Atom, password, salt string, iterations, length int64, where string) string {
+	digest := cryptoDigest(ctx, algorithm, "Crypto.pbkdf2", where)
+	if iterations < 1 || iterations > passwordMostIterations {
+		failAt(ctx, where, "Crypto.pbkdf2 takes from 1 to "+strconv.Itoa(passwordMostIterations)+" iterations")
+	}
+	if length < 1 || length > 1024 {
+		failAt(ctx, where, "Crypto.pbkdf2 gives a key of 1 to 1024 bytes")
+	}
+	key, err := pbkdf2.Key(digest, password, []byte(salt), int(iterations), int(length))
+	if err != nil {
+		failAt(ctx, where, "Crypto.pbkdf2: "+err.Error())
+	}
+	return string(key)
+}
+
+// A stored password is "$pbkdf2-sha256$i=ITERATIONS$SALT$KEY", the salt and
+// key in base 64 without padding: everything needed to check a password
+// against it later, so the iterations can be raised without losing the
+// passwords already stored.
+const (
+	passwordIterations     = 600000
+	passwordMostIterations = 100000000
+	passwordScheme         = "pbkdf2-sha256"
+)
+
+func cryptoHashPassword(ctx *actor.Context, password string, where string) string {
+	return passwordHash(ctx, password, passwordIterations, where)
+}
+
+// cryptoHashPasswordWith takes iterations: n.
+func cryptoHashPasswordWith(ctx *actor.Context, password string, options L[pair[actor.Atom, int64]], where string) string {
+	iterations := int64(passwordIterations)
+	for _, option := range fwd(options) {
+		if option.E0 != "iterations" {
+			failAt(ctx, where, "Crypto.hash_password takes iterations:, not "+string(option.E0)+":")
+		}
+		iterations = option.E1
+	}
+	if iterations < 1 || iterations > passwordMostIterations {
+		failAt(ctx, where, "Crypto.hash_password takes from 1 to "+strconv.Itoa(passwordMostIterations)+" iterations")
+	}
+	return passwordHash(ctx, password, iterations, where)
+}
+
+func passwordHash(ctx *actor.Context, password string, iterations int64, where string) string {
+	salt := make([]byte, 16)
+	crand.Read(salt)
+	key, err := pbkdf2.Key(sha256.New, password, salt, int(iterations), 32)
+	if err != nil {
+		failAt(ctx, where, "Crypto.hash_password: "+err.Error())
+	}
+	return "$" + passwordScheme + "$i=" + strconv.FormatInt(iterations, 10) + "$" + base64.RawStdEncoding.EncodeToString(salt) + "$" + base64.RawStdEncoding.EncodeToString(key)
+}
+
+// cryptoVerifyPassword reports whether a password is the one a stored hash
+// was made from. Text that is not a stored hash matches no password.
+func cryptoVerifyPassword(password, stored string) bool {
+	parts := strings.Split(stored, "$")
+	if len(parts) != 5 || parts[0] != "" || parts[1] != passwordScheme || !strings.HasPrefix(parts[2], "i=") {
+		return false
+	}
+	iterations, err := strconv.Atoi(parts[2][2:])
+	if err != nil || iterations < 1 || iterations > passwordMostIterations {
+		return false
+	}
+	salt, err := base64.RawStdEncoding.DecodeString(parts[3])
+	if err != nil {
+		return false
+	}
+	wanted, err := base64.RawStdEncoding.DecodeString(parts[4])
+	if err != nil || len(wanted) == 0 || len(wanted) > 1024 {
+		return false
+	}
+	key, err := pbkdf2.Key(sha256.New, password, salt, iterations, len(wanted))
+	return err == nil && subtle.ConstantTimeCompare(key, wanted) == 1
 }
 
 // ---- Markup ----

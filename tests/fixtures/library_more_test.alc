@@ -269,6 +269,44 @@ defmodule LibraryMoreTest do
     HTTP.stop(server)
   end
 
+  test "HTTP responses compressed with gzip" do
+    page = "<ul>" <> String.duplicate("<li class=\"row\">item &amp; more</li>", 200) <> "</ul>"
+    handler = fn(request: HTTP.Request): HTTP.Response do
+      case request.path do
+        "/page" -> HTTP.text(200, page)
+        "/short" -> HTTP.text(200, "ok")
+        "/picture" -> %HTTP.Response{HTTP.text(200, page) | headers: [{"Content-Type", "image/png"}]}
+        "/encoded" -> %HTTP.Response{HTTP.text(200, page) | headers: [{"Content-Encoding", "identity"}]}
+        _ -> HTTP.chunked(200, [], [page])
+      end
+    end
+    ok(server) = HTTP.serve("127.0.0.1:0", handler, [compress: 1])
+    address = "http://" <> HTTP.address(server)
+    # A client that asks for gzip itself is given the bytes as they were sent.
+    asking = [{"Accept-Encoding", "br, gzip"}]
+    ok(packed) = HTTP.get(address <> "/page", asking)
+    assert(HTTP.header(packed.headers, "Content-Encoding") == some("gzip"))
+    assert(HTTP.header(packed.headers, "Vary") == some("Accept-Encoding"))
+    assert(HTTP.header(packed.headers, "Content-Type") == some("text/plain; charset=utf-8"))
+    assert(byte_size(packed.body) < 300)
+    # HTTP.get asks for gzip when no header says otherwise, and reads it.
+    ok(read) = HTTP.get(address <> "/page")
+    assert(read.body == page)
+    # What is short, compressed already, encoded by the handler, streamed,
+    # or asked for by a client that does not take gzip goes as it is.
+    Enum.each([{"/short", asking}, {"/picture", asking}, {"/encoded", asking}, {"/stream", asking}, {"/page", [{"Accept-Encoding", "identity"}]}, {"/page", [{"Accept-Encoding", "gzip;q=0"}]}], fn {path, headers} ->
+      ok(plain) = HTTP.get(address <> path, headers)
+      assert(HTTP.header(plain.headers, "Content-Encoding") != some("gzip"))
+      assert(plain.body == if path == "/short" do "ok" else page end)
+    end)
+    HTTP.stop(server)
+
+    ok(off) = HTTP.serve("127.0.0.1:0", handler)
+    ok(untouched) = HTTP.get("http://" <> HTTP.address(off) <> "/page", asking)
+    assert(untouched.body == page)
+    HTTP.stop(off)
+  end
+
   test "option parsing by map and requirements" do
     {values, rest, invalid} = OptionParser.parse(["--n=3", "--b=maybe", "--s", "--x", "-q", "--f", "nan?", "--n"], %{"n" => "integer", "b" => "boolean", "s" => "string", "f" => "float"})
     assert(Map.get(values, "n") == some("3"))

@@ -31,6 +31,9 @@ type Library struct {
 	// Codec variables are types whose values cross to another node; each
 	// adds a generated argument that encodes and decodes the type.
 	Codec []string
+	// Read variables are types built from JSON; each adds a generated
+	// argument that reads the type.
+	Read []string
 	// Fast names the variables whose equality argument is dropped, and "C"
 	// appended to Go, when the type is directly comparable.
 	Fast []string
@@ -144,6 +147,8 @@ func register(key, name, signature, target string) {
 			entry.Cal = append(entry.Cal, variable)
 		case "codec":
 			entry.Codec = append(entry.Codec, variable)
+		case "read":
+			entry.Read = append(entry.Read, variable)
 		default:
 			panic("library flag " + flag)
 		}
@@ -314,6 +319,11 @@ func (c checker) library(e *ast.Expr, entry Library, scope map[string]string, wa
 			return fail("%s needs the type of the process's messages: annotate what it is bound to, as in orders: option[pid[Order]] = %s(...)", entry.Name, entry.Name)
 		} else if blocked := c.unwired(t); blocked != "" {
 			return fail("%s cannot be used with messages of type %s: %s cannot be sent to another node", entry.Name, t, blocked)
+		}
+	}
+	for _, name := range entry.Read {
+		if blocked := c.unread(bindings[name]); blocked != "" {
+			return fail("%s cannot read %s: %s has no JSON form", entry.Name, bindings[name], blocked)
 		}
 	}
 	for _, name := range entry.Cal {

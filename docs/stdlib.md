@@ -54,6 +54,37 @@ Paths are relative to the working directory of the running program. Unless a tab
 
 `String.reverse`, `String.starts_with`, `String.ends_with`, `String.replace`, the `Float` functions, `File.write`, `File.append`, `File.remove`, `File.list`, `File.exists` and `System.env` can be referenced as function values, for example `map(words, &String.reverse)`. The other functions must be called directly; wrap one in an anonymous function to pass it.
 
+## Records that outlast the program
+
+`DiskStore.open(path)` opens a table of text under text keys, kept in one file. `DiskStore.put`, `delete` and `commit` return once the change is on the disk, so whatever was acknowledged is still there after a crash, and `commit(store, puts, deletes)` makes several changes that are kept together or not at all. `DiskStore.update(store, key, fun)` changes a key by a function of what it holds with no other write in between, which is how a counter or a balance is changed safely. Any process may use a store; when many write at once, their changes share one trip to the disk.
+
+Keys are kept in order: `DiskStore.prefix(store, "user:")` gives every `{key, value}` whose key begins that way and `DiskStore.range(store, from, to)` those between two keys, so keys written as `kind:id` make each kind a table of its own. Reads are answered from memory, which holds every key and value; a store suits the records of a program, not data larger than memory. Values of other types are kept as JSON:
+
+```elixir
+struct User do
+  name: string
+  email: string
+end
+
+def save(store: disk_store, id: string, user: User): result[tuple[], string] do
+  DiskStore.put(store, "user:" <> id, JSON.encode!(user))
+end
+
+def find(store: disk_store, id: string): option[User] do
+  case DiskStore.get(store, "user:" <> id) do
+    some(text) ->
+      read: result[User, string] = JSON.decode_as(text)
+      case read do
+        ok(user) -> some(user)
+        error(_) -> none
+      end
+    none -> none
+  end
+end
+```
+
+The file is a log of changes, rewritten by itself when it has grown well past what it holds. One program opens a given file at a time.
+
 ## Enum and Stream
 
 Every function is listed with its signatures, a description and examples in the generated [library reference](library-reference.md), which `alchem doc` prints from the command line, and [Elixir parity](elixir-parity.md) records what is missing and how the typed forms differ from Elixir's.
@@ -94,7 +125,7 @@ File.stream!("access.log")
 - **`Regex`** uses RE2 syntax: there are no backreferences or lookaround, and matching takes time linear in the input. Replacement text may use `\\1` for a capture group.
 - **`Task`** runs a function in its own process: `Task.async(fn -> work() end)` then `Task.await(task)`. Awaiting a task that failed, or that takes longer than the deadline (5 seconds by default), fails the caller; `Task.yield` reports the same outcomes as `option[result[T,string]]` instead. `Task.async_stream(enumerable, fun)` runs up to one task per processor at a time and yields results in input order. `Task.async` links the task to its caller: a task that fails takes the caller with it, unless the caller traps exits. `Task.start` starts a task that is not linked, and `Task.start_link` one that is. `Task.Supervisor.start_link()` starts a supervisor for tasks: `Task.Supervisor.async` runs a linked task under it and `async_nolink` one whose failure is seen only through `Task.yield` or `Task.await`.
 - **`Agent`** holds a state in a process: `Agent.start_link(fn -> initial end)`, then `get`, `update`, `get_and_update` and `cast` with functions that run inside the agent, one at a time. `get`, `update` and `get_and_update` take a timeout in milliseconds as a last argument. `Agent.start_link(fn -> 0 end, [name: :counter])` registers the agent, and each of these functions also takes the name: `Agent.get(:counter, fn(n: integer): integer do n end)`.
-- **`JSON`** converts between text and the builtin `JSON` type, whose constructors are `JSON.null`, `JSON.boolean(b)`, `JSON.integer(n)`, `JSON.float(x)`, `JSON.string(s)`, `JSON.list(items)` and `JSON.object(fields)`. Objects are written with their keys in order.
+- **`JSON`** converts between text and the builtin `JSON` type, whose constructors are `JSON.null`, `JSON.boolean(b)`, `JSON.integer(n)`, `JSON.float(x)`, `JSON.string(s)`, `JSON.list(items)` and `JSON.object(fields)`. Objects are written with their keys in order. `JSON.encode!(value)` also writes any value: a struct as an object by field name, a variant as its name or `{"name": [fields]}`, lists, sets and tuples as arrays, a map as an object, `none` as null. `JSON.decode_as` reads that back as the type its result is annotated with, from text or from a `JSON` value, so a struct needs no reader written by hand: `item: result[Item, string] = JSON.decode_as(text)`. A field that is an option may be left out, members the struct has no field for are passed over, and JSON that does not fit gives an error that says where, such as `items[2].price: expected an integer, found a string`.
 - **`System.cmd(program, arguments)`** runs a program and returns `{output, exit_status}`; **`System.halt(status)`** ends the program at once.
 - **`Float.round(x)`** returns a float, as in Elixir; `round(x)` and `trunc(x)` return integers.
 
@@ -204,7 +235,7 @@ ok(line) = TCP.recv_line(client, 5000)
 TCP.send(client, String.upcase(line) <> "\n")
 ```
 
-`HTTP.serve(address, handler, [idle_timeout: 5000, max_body_bytes: 1000000])` tunes timeouts, keep-alive and sizes; `HTTP.serve_tls(address, handler, [certfile: path, keyfile: path])` serves HTTPS. `HTTP.route(request, routes)` dispatches on `{method, "/users/:id", handler}` routes, answering 404 and 405 itself. `HTTP.chunked(status, headers, stream)` sends a body as it is made, and `HTTP.stream` receives one as a stream of chunks.
+`HTTP.serve(address, handler, [idle_timeout: 5000, max_body_bytes: 1000000])` tunes timeouts, keep-alive and sizes; `HTTP.serve_tls(address, handler, [certfile: path, keyfile: path])` serves HTTPS. `HTTP.route(request, routes)` dispatches on `{method, "/users/:id", handler}` routes, answering 404 and 405 itself. `HTTP.chunked(status, headers, stream)` sends a body as it is made, and `HTTP.stream` receives one as a stream of chunks. `compress: 1` among the options of `HTTP.serve` sends bodies of 1 KB or more with gzip to clients that accept it; streamed bodies, images and other media, and responses the handler encoded itself go as they are.
 
 `HTTP.serve(address, handler)` answers each request by running the handler, `fn[HTTP.Request, HTTP.Response]`, in a process of its own, so a slow or failing request holds up no other; a handler that fails answers 500. `HTTP.Request` has `method`, `path`, `query`, `headers` (lower-case names, including `host`) and `body`; `HTTP.Response` has `status`, `headers` and `body`, and `HTTP.text` and `HTTP.json` build common ones. The client functions, `HTTP.get`, `HTTP.post` and `HTTP.request`, return `ok(response)` for a response with any status and `error(reason)` when there was none.
 
@@ -247,6 +278,10 @@ def echo(ws: websocket): integer do
   end
 end
 ```
+
+`WebSocket.upgrade(request, [compress: true])` accepts permessage-deflate (RFC 7692) from a client that offers it, as every browser does, and `WebSocket.connect(address, ms, [compress: "true"])` offers it; `WebSocket.compressed?(ws)` tells whether the two agreed. Messages of 256 bytes or more are then compressed, each on its own, so a connection holds no compressor between messages, and the limit of `max_message_bytes:` applies to what a message expands to. HTML that repeats itself, such as a long list sent whole, goes in a tenth of its size or less.
+
+`Crypto.hash_password(password)` gives what to store in place of a password, and `Crypto.verify_password(password, stored)` checks one against it. The stored text, `$pbkdf2-sha256$i=600000$salt$key`, carries its random salt and its count of iterations, so the count can be raised later without losing the passwords already stored. `Crypto.pbkdf2(:sha256, password, salt, iterations, length)` is the function underneath, for deriving keys. A plain `Crypto.hash` is too fast to protect a password.
 
 `Crypto.strong_rand_bytes(n)` reads the operating system's secure random source, `Crypto.hash(:sha256, data)` and `Crypto.hmac(:sha256, key, data)` give raw digests (`Base.encode16` or `Base.encode64` make them printable), and `Crypto.secure_compare(a, b)` compares signatures and tokens in time that does not depend on where they differ.
 

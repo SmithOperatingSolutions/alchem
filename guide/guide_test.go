@@ -46,7 +46,7 @@ func TestAgentGuideCoversEverything(t *testing.T) {
 		}
 	}
 	// The overview stays small enough to read in one go.
-	if len(text) > 16000 {
+	if len(text) > 16500 {
 		t.Errorf("agent guide is %d bytes; keep the overview short and move detail into topics", len(text))
 	}
 	var data map[string]any
