@@ -100,3 +100,28 @@ func TestServerChildWithATakenName(t *testing.T) {
 	}
 	StopSupervisor(c, first, 1000, "test")
 }
+
+// Stopping a supervisor stops its servers before it returns, so their names
+// are free at once.
+func TestStoppedSupervisorFreesServerNames(t *testing.T) {
+	c := root(t)
+	for round := 0; round < 50; round++ {
+		s := StartSupervisor(c, "one_for_one", 5, 5000, serverSpecs("x", "y"), 1, "test")
+		servers := []*Server[int64, int64]{}
+		for _, name := range []string{"x", "y"} {
+			server, _ := ServerWhereis[int64, int64](c, name)
+			servers = append(servers, server)
+		}
+		if !StopSupervisor(c, s, 1000, "test") {
+			t.Fatal("stop")
+		}
+		for i, name := range []string{"x", "y"} {
+			if _, ok := ServerWhereis[int64, int64](c, name); ok {
+				t.Fatalf("round %d: %s is still registered after the supervisor stopped", round, name)
+			}
+			if ServerAlive(c, servers[i], "test") {
+				t.Fatalf("round %d: %s is still running", round, name)
+			}
+		}
+	}
+}
