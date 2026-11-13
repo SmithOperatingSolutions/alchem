@@ -4,7 +4,7 @@ Releases are GitHub releases built by `.github/workflows/release.yml`.
 
 ## Cutting a release
 
-1. Make sure `main` is green.
+1. Make sure `main` is green. After a squash merge whose tree is the one the pull request's checks passed on, CI on `main` reports that at once instead of running again (the "Already verified" job), so the commit can be tagged straight away.
 2. Tag the commit and push the tag:
 
    ```bash
@@ -26,7 +26,7 @@ Running the workflow by hand (`workflow_dispatch`) does steps 3 and 4 and upload
 The tap and the bucket are `Formula/alchem.rb` and `bucket/alchem.json` in this repository, so they move to a new release by pull request:
 
 ```bash
-go run ./tools/packaging -version v0.3.0
+go run ./tools/packaging -version v0.3.1
 ```
 
 The tool downloads the release's `checksums.txt` and rewrites both files. The Packaging workflow checks the pull request by installing from them. Scoop can also find a newer release on its own through the manifest's `checkver` and `autoupdate`.
