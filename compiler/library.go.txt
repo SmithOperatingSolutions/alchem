@@ -5598,13 +5598,6 @@ func writeCoverage() {
 	os.WriteFile(path, []byte(out.String()), 0600)
 }
 
-func testSetting(name string, fallback int64) int64 {
-	if value, err := strconv.ParseInt(os.Getenv(name), 10, 64); err == nil {
-		return value
-	}
-	return fallback
-}
-
 // runTests runs each test in its own process, so one failure cannot disturb
 // the next, in an order shuffled by the seed. It returns the exit status.
 func runTests(ctx *actor.Context, module string, tests []testCase) int {
@@ -5722,6 +5715,16 @@ func runTests(ctx *actor.Context, module string, tests []testCase) int {
 
 // The assertions also work in ordinary programs, which have none of the
 // coverage counters a test build adds.
+
+// testSetting reads a number the test runner passes in the environment. It
+// is here, not with the runner, because the receive assertions use it and
+// may be called from an ordinary program.
+func testSetting(name string, fallback int64) int64 {
+	if value, err := strconv.ParseInt(os.Getenv(name), 10, 64); err == nil {
+		return value
+	}
+	return fallback
+}
 
 // assertRaise passes when the function fails with a reason containing the
 // expected text.
