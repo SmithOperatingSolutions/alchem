@@ -524,6 +524,14 @@ defmodule WebSocketTest do
       assert(WebSocket.send(ws, text) == ok({}))
       assert(WebSocket.recv(ws, 1000) == ok(WebSocket.Event.text(text)))
     end)
+    # Text that compresses, but not to under 126 bytes, where a frame's
+    # length takes its longer forms: as a page's first message does.
+    token = Base.encode16(Crypto.strong_rand_bytes(300))
+    assert(WebSocket.send(ws, token) == ok({}))
+    assert(WebSocket.recv(ws, 1000) == ok(WebSocket.Event.text(token)))
+    long = String.duplicate(Base.encode64(Crypto.strong_rand_bytes(60000)), 2)
+    assert(WebSocket.send(ws, long) == ok({}))
+    assert(WebSocket.recv(ws, 1000) == ok(WebSocket.Event.text(long)))
     noise = Crypto.strong_rand_bytes(2000)
     assert(WebSocket.send_binary(ws, noise) == ok({}))
     assert(WebSocket.recv(ws, 1000) == ok(WebSocket.Event.binary(noise)))
@@ -569,6 +577,14 @@ defmodule WebSocketTest do
     assert(byte_size(packed) < 200)
     TCP.send(conn, masked("C1", packed))
     assert(server_frame(conn) == {"C1", packed})
+    # A compressed frame of 126 bytes or more is a message like any other.
+    token = Base.encode16(Crypto.strong_rand_bytes(300))
+    TCP.send(conn, masked("81", token))
+    {marked, squeezed} = server_frame(conn)
+    assert(marked == "C1")
+    assert(byte_size(squeezed) >= 126 and byte_size(squeezed) < 600)
+    TCP.send(conn, masked("C1", squeezed))
+    assert(server_frame(conn) == {"C1", squeezed})
     # What cannot be inflated ends the socket with 1007.
     TCP.send(conn, masked("C1", Base.decode16!("FFFFFFFF")))
     assert(server_frame(conn) == {"88", Base.decode16!("03EF") <> "a compressed message could not be read"})
