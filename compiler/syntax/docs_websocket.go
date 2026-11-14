@@ -38,7 +38,7 @@ func init() {
 		echo, connect, "alx> WebSocket.recv(ws, 10)", "error(\"timeout\")",
 		"alx> WebSocket.send(ws, \"x\")", "ok({})", "alx> WebSocket.recv(ws, 1000)", "ok(WebSocket.Event.text(\"X\"))",
 		"alx> WebSocket.close(ws)", "true", "alx> WebSocket.recv(ws, 1000)", "ok(WebSocket.Event.closed(1000, \"\"))", "alx> WebSocket.recv(ws, 1000)", "error(\"closed\")")
-	doc("WebSocket.close", "Closes with code 1000, or with a code from 3000 to 4999 and a reason of at most 123 bytes, waiting up to a second for the other end to answer. false when the socket was already closed.",
+	doc("WebSocket.close", "Closes with code 1000, or with a code from 3000 to 4999 and a reason of at most 123 bytes, waiting up to a second for the other end to answer. false when the socket was already closed or another process is closing it: of several processes closing a socket at once, one gets true.",
 		echo, connect, "alx> WebSocket.close(ws)", "true", "alx> WebSocket.close(ws)", "false", "alx> WebSocket.send(ws, \"late\")", "error(\"closed\")")
 	doc("WebSocket.controlling_process", "Hands a socket to another process, whose end then closes it and to which an active socket sends its events.",
 		echo, connect, "alx> keeper: pid[WebSocket.Event] = Process.spawn(fn(self: pid[WebSocket.Event]): integer do", "...>   Process.receive(self, 60000)", "...>   0", "...> end, 1)",

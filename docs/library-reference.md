@@ -12377,7 +12377,7 @@ WebSocket.close(websocket) -> boolean
 WebSocket.close(websocket, integer, string) -> boolean
 ```
 
-Closes with code 1000, or with a code from 3000 to 4999 and a reason of at most 123 bytes, waiting up to a second for the other end to answer. false when the socket was already closed.
+Closes with code 1000, or with a code from 3000 to 4999 and a reason of at most 123 bytes, waiting up to a second for the other end to answer. false when the socket was already closed or another process is closing it: of several processes closing a socket at once, one gets true.
 
 ```elixir
 alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
