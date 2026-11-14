@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -68,17 +69,63 @@ func within(root, path string) bool {
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative)
 }
 
+// PrivateVariable names the environment variable listing the hosts and
+// owners of private packages, as comma-separated patterns such as
+// github.com/owner/*.
+const PrivateVariable = "ALCHEM_PRIVATE"
+
+// baseEnvironment is the environment Go commands run in: the caller's, with
+// the patterns of ALCHEM_PRIVATE added to GOPRIVATE, so that those packages
+// are fetched from their own hosts and nothing about them is sent to the
+// public proxy or checksum database.
+func baseEnvironment() []string {
+	environment := os.Environ()
+	private := strings.TrimSpace(os.Getenv(PrivateVariable))
+	if private == "" {
+		return environment
+	}
+	if existing := os.Getenv("GOPRIVATE"); existing != "" {
+		private = existing + "," + private
+	}
+	return append(environment, "GOPRIVATE="+private)
+}
+
+// privateHint is added to a failed fetch that looks like a private package
+// asked of the public proxy or checksum database.
+func privateHint(path, message string) string {
+	lower := strings.ToLower(message)
+	public := strings.Contains(lower, "sum.golang.org") || strings.Contains(lower, "proxy.golang.org")
+	refused := strings.Contains(lower, "terminal prompts disabled") || strings.Contains(lower, "could not read username") || strings.Contains(lower, "404 not found") || strings.Contains(lower, "410 gone") || strings.Contains(lower, "authentication")
+	if !public && !refused {
+		return ""
+	}
+	pattern := path
+	if parts := strings.Split(path, "/"); len(parts) >= 2 {
+		pattern = parts[0] + "/" + parts[1] + "/*"
+	}
+	return fmt.Sprintf("\nIf %s is a private repository, set %s=%s (comma-separated patterns): it is then fetched with git from its own host, and nothing about it is sent to the public Go proxy or checksum database. See alchem syntax packages.", path, PrivateVariable, pattern)
+}
+
 // fetchPackage downloads one version of a remote package through the Go
 // module system, which verifies it against the checksum database, and returns
 // the directory holding its files and the hash of its content.
 func fetchPackage(ctx context.Context, moduleVersion string) (string, string, error) {
+	return fetchPackageFrom(ctx, moduleVersion, false)
+}
+
+// fetchPackageFrom is fetchPackage that, with cached set, only reads the
+// module cache and never contacts the network.
+func fetchPackageFrom(ctx context.Context, moduleVersion string, cached bool) (string, string, error) {
 	goPath, err := goCommand(ctx)
 	if err != nil {
 		return "", "", err
 	}
 	cmd := exec.CommandContext(ctx, goPath, "mod", "download", "-json", moduleVersion)
 	cmd.Dir = os.TempDir()
-	cmd.Env = goEnvironment(goPath, append(os.Environ(), "GOWORK=off", "GO111MODULE=on"))
+	cmd.Env = goEnvironment(goPath, append(baseEnvironment(), "GOWORK=off", "GO111MODULE=on"))
+	if cached {
+		cmd.Env = append(cmd.Env, "GOPROXY=off", "GOSUMDB=off")
+	}
 	cmd.WaitDelay = time.Second
 	output, err := cmd.Output()
 	var info struct{ Dir, Sum, Error string }
@@ -87,12 +134,72 @@ func fetchPackage(ctx context.Context, moduleVersion string) (string, string, er
 		return "", "", ctx.Err()
 	}
 	if info.Error != "" {
-		return "", "", errors.New(strings.TrimSpace(info.Error))
+		message := strings.TrimSpace(info.Error)
+		path, _, _ := strings.Cut(moduleVersion, "@")
+		return "", "", errors.New(message + privateHint(path, message))
 	}
 	if err != nil || info.Dir == "" || info.Sum == "" {
 		return "", "", fmt.Errorf("go mod download failed: %v", err)
 	}
 	return info.Dir, info.Sum, nil
+}
+
+// RemoteSource reports whether a source given to a command names a file
+// inside a versioned package, "module/path@v1.2.3/file.alc", as an import
+// does.
+func RemoteSource(source string) bool {
+	parts := remoteImport.FindStringSubmatch(filepath.ToSlash(source))
+	return parts != nil && !strings.Contains(parts[3], "..") && !strings.Contains(parts[3], "//")
+}
+
+// FetchSource returns the file a remote source names, fetching its package
+// when the module cache lacks it. A source that is not remote is returned as
+// it is.
+func FetchSource(ctx context.Context, source string) (string, error) {
+	if !RemoteSource(source) {
+		return source, nil
+	}
+	file, _, _, err := fetchSource(ctx, source, false)
+	return file, err
+}
+
+func fetchSource(ctx context.Context, source string, cached bool) (file, root string, remote ast.Remote, err error) {
+	parts := remoteImport.FindStringSubmatch(filepath.ToSlash(source))
+	key := parts[1] + "@" + parts[2]
+	root, sum, err := fetchPackageFrom(ctx, key, cached)
+	if err != nil {
+		return "", "", ast.Remote{}, fmt.Errorf("fetch %s: %w", key, err)
+	}
+	return filepath.Join(root, filepath.FromSlash(parts[3])), root, ast.Remote{Path: parts[1], Version: parts[2], Sum: sum}, nil
+}
+
+// CompilerRequirement is the path a require line gives to name the oldest
+// Alchem release its file works with: require "alchem" "v0.4.0".
+const CompilerRequirement = "alchem"
+
+// Version is the release of this compiler, such as "v0.4.0", set by the
+// command. When it is empty or not a release, as in a build from source,
+// every requirement is taken as met.
+var Version = ""
+
+var releaseVersion = regexp.MustCompile(`^v([0-9]+)\.([0-9]+)\.([0-9]+)`)
+
+// older reports whether release have comes before release want. Anything
+// after the three numbers is ignored, and a version that is not a release is
+// never older.
+func older(have, want string) bool {
+	h, w := releaseVersion.FindStringSubmatch(have), releaseVersion.FindStringSubmatch(want)
+	if h == nil || w == nil {
+		return false
+	}
+	for i := 1; i <= 3; i++ {
+		a, _ := strconv.Atoi(h[i])
+		b, _ := strconv.Atoi(w[i])
+		if a != b {
+			return a < b
+		}
+	}
+	return false
 }
 
 // MaxModules bounds one import graph; with the per-file cap it also bounds
@@ -110,6 +217,17 @@ func loadProjectContext(ctx context.Context, entry string) (ast.Program, error) 
 // loadProjectAs loads the program an entry file makes with what it imports.
 // library allows the entry to have no main, for a file that is only checked.
 func loadProjectAs(ctx context.Context, entry string, library bool) (ast.Program, error) {
+	// An entry may be a file of a versioned package, written as an import
+	// writes it: the program is then confined to that package.
+	var entryRemote *ast.Remote
+	entryRoot := ""
+	if _, missing := os.Stat(entry); missing != nil && RemoteSource(entry) {
+		file, root, remote, err := fetchSource(ctx, entry, false)
+		if err != nil {
+			return ast.Program{}, err
+		}
+		entry, entryRoot, entryRemote = file, root, &remote
+	}
 	if info, err := os.Stat(entry); err == nil && info.IsDir() {
 		entry = filepath.Join(entry, "main.alc")
 	}
@@ -127,6 +245,12 @@ func loadProjectAs(ctx context.Context, entry string, library bool) (ast.Program
 	versions := map[string]string{}
 	fetched := map[string]string{}
 	var remotes []ast.Remote
+	if entryRemote != nil {
+		roots[entry] = entryRoot
+		versions[entryRemote.Path] = entryRemote.Version
+		fetched[entryRemote.Path+"@"+entryRemote.Version] = entryRoot
+		remotes = append(remotes, *entryRemote)
+	}
 	var order []string
 	var visit func(string) error
 	visit = func(path string) error {
@@ -160,7 +284,7 @@ func loadProjectAs(ctx context.Context, entry string, library bool) (ast.Program
 		if previous := names[module.Module]; previous != "" {
 			return &Diagnostic{path, module.ModuleLine, module.ModuleColumn, fmt.Sprintf("duplicate module %s (also %s)", module.Module, previous)}
 		}
-		if reservedModule(module.Module) {
+		if reservedModule(module.Module) && !syntax.RetiringModule(module.Module) {
 			return &Diagnostic{path, module.ModuleLine, module.ModuleColumn, "reserved module name " + module.Module}
 		}
 		names[module.Module] = path
@@ -259,7 +383,7 @@ func loadProjectAs(ctx context.Context, entry string, library bool) (ast.Program
 		return ast.Program{}, err
 	}
 	sort.Slice(remotes, func(i, j int) bool { return remotes[i].Path < remotes[j].Path })
-	out := ast.Program{Source: entry, Module: modules[entry].Module, Remotes: remotes, GroupTags: modules[entry].GroupTags}
+	out := ast.Program{Source: entry, Module: modules[entry].Module, Remotes: remotes, GroupTags: modules[entry].GroupTags, Fetched: entryRemote != nil}
 	private := map[string]bool{}
 	for _, module := range modules {
 		for _, f := range module.Functions {
@@ -286,6 +410,14 @@ func loadProjectAs(ctx context.Context, entry string, library bool) (ast.Program
 		module := modules[path]
 		for _, require := range module.Requires {
 			require.Source = path
+			// require "alchem" names the oldest compiler the file works
+			// with, and adds nothing to the build.
+			if require.Path == CompilerRequirement {
+				if older(Version, require.Version) {
+					return out, &Diagnostic{path, require.Line, require.Column, fmt.Sprintf("this file needs Alchem %s or newer, and this is %s: upgrade alchem to build it", require.Version, Version)}
+				}
+				continue
+			}
 			for _, other := range out.Requires {
 				if other.Path == require.Path && other.Version != require.Version {
 					return out, &Diagnostic{path, require.Line, require.Column, fmt.Sprintf("conflicting versions of %s: %s here, %s in %s", require.Path, require.Version, other.Version, other.Source)}

@@ -4,7 +4,7 @@
 
 ## alchem build
 
-Compile a program to a native executable.
+Compile a program to a native executable. The entry may be a file of a package, written as an import writes it.
 
 ```
 alchem build [options] <entry.alc>
@@ -24,7 +24,7 @@ alchem build [options] <entry.alc>
 
 ## alchem run
 
-Build a program and run it with the arguments that follow.
+Build a program and run it with the arguments that follow. The entry may be a file of a package: host/owner/repo@v1.2.3/tools/name.alc.
 
 ```
 alchem run [options] <entry.alc> [-- arguments]
@@ -125,7 +125,7 @@ alchem syntax [--all] [--group name] [--json] [topic]
 
 ## alchem doc
 
-Show library documentation, or the documentation written in a file.
+Show library documentation, or the documentation written in a file, in a file of a package (host/owner/repo@v1.2.3/lib/name.alc), or in a module of the project in the current directory and the packages it imports.
 
 ```
 alchem doc [--all] [--group name] [--search text] [--json] [Module | Module.function | file.alc]

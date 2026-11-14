@@ -36,6 +36,52 @@ The text before `@` is the package path, the version is an exact tag, and the re
 
 Files inside a package import each other with ordinary relative paths, which may not leave the package directory, and may bind `extern` functions to Go packages inside the package. One program may use only one version of a package; two different versions are the compile error `conflicting versions`. `alchem check` and `alchem build` contact the network only when a program has remote imports or `require` lines whose modules are not already cached.
 
+### Private repositories
+
+Set `ALCHEM_PRIVATE` to comma-separated patterns naming private hosts or owners:
+
+```sh
+export ALCHEM_PRIVATE='github.com/owner/*,git.example.com'
+```
+
+A matching package is fetched with git from its own host, using the credentials git already has, and nothing about it (its name included) is sent to the public Go proxy or checksum database. The patterns are added to Go's `GOPRIVATE`, which works as well when it is already set. Without either, a private package fails at the checksum lookup, and the error says which pattern to set.
+
+### Documentation and programs of a package
+
+The commands that take a file take a package path too, written as an import writes it:
+
+```sh
+alchem doc github.com/example/mathlib@v1.2.0/lib/math.alc
+alchem run github.com/example/mathlib@v1.2.0/tools/table.alc -- 12
+alchem build github.com/example/mathlib@v1.2.0/tools/table.alc
+alchem check github.com/example/mathlib@v1.2.0/lib/math.alc
+```
+
+`doc` shows the file's `@moduledoc`, `@doc` and `@typedoc` text. `run`, `build` and `check` treat the file as the entry: its imports stay inside its package, the executable `build` makes goes in the current directory, and no lock file is kept, since the version asked for fixes the content.
+
+Inside a project, `alchem doc Math`, `alchem doc Math.double` and `alchem doc --search text` also cover the project's own `.alc` files and the packages they import, each result naming the file it came from. A package is read from the module cache only, so it appears once a `check`, `build` or `run` has fetched it; looking something up never contacts the network.
+
+### The release a package needs
+
+```elixir
+require "alchem" "v0.4.0"
+```
+
+In any module, this names the oldest Alchem release the file works with. An older compiler stops with `this file needs Alchem v0.4.0 or newer, and this is v0.3.9: upgrade alchem to build it` at that line. A compiler built from source has no release number and accepts every requirement. The line adds nothing to the build and nothing to the lock file. Releases before v0.3.8 do not know it.
+
+### Library modules that are moving to packages
+
+The library keeps what a package could not build for itself: the language's own types, processes, files, the network, JSON and the like. Modules that need none of that are moving to [alchem-packages](https://github.com/SmithOperatingSolutions/alchem-packages), where they are released on their own schedule:
+
+| Builtin, until v0.4.0 | Package file | Module |
+| --- | --- | --- |
+| `DiskStore` | `disk_store/disk_store.alc` | `DiskStore`, same functions; the type is `DiskStore.Store` |
+| `Crypto.hash_password`, `Crypto.verify_password` | `password/password.alc` | `Password.hash`, `Password.verify` |
+
+A builtin module's name is otherwise reserved, but a program may import a module named `DiskStore`: its calls then reach that module, and a program without one keeps using the builtin. So a program moves by adding the import, and by writing `DiskStore.Store` where it wrote the type `disk_store`.
+
+A module may name its functions `put`, `get`, `has_key`, `length`, `map`, `filter`, `reduce`, `prepend` and `concat`, which bare calls otherwise give to the oldest builtins. Inside such a module a bare call means its own function, and the builtin is written `Map.put`, `Enum.map` and so on.
+
 ## Lock file
 
 A program that uses remote packages or `require` gets an `alchem.lock` beside its entry file. It records the content hash of each remote package and the Go checksum lines of every required module, including indirect ones. Commit it.

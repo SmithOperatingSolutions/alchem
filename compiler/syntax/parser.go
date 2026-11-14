@@ -252,10 +252,16 @@ func parse(source string, check bool, raw ...bool) (ast.Program, error) {
 			result.Requires = append(result.Requires, require)
 			continue
 		}
-		if keyword.Text == "extern" && p.tokens[p.pos+1].Text == "type" && p.tokens[p.pos+2].Kind == lexer.Ident {
+		// "extern shared type" declares a handle whose Go value is safe to use
+		// from several goroutines, so it may be sent to another process.
+		shared := keyword.Text == "extern" && p.tokens[p.pos+1].Text == "shared" && p.tokens[p.pos+2].Text == "type" && p.tokens[p.pos+3].Kind == lexer.Ident
+		if shared || keyword.Text == "extern" && p.tokens[p.pos+1].Text == "type" && p.tokens[p.pos+2].Kind == lexer.Ident {
 			p.pos += 2
+			if shared {
+				p.pos++
+			}
 			name, _ := p.expect(lexer.Ident, "")
-			decl := ast.TypeDecl{Kind: "extern", Name: name.Text, Local: name.Text, Line: name.Line, Column: name.Column}
+			decl := ast.TypeDecl{Kind: "extern", Shared: shared, Name: name.Text, Local: name.Text, Line: name.Line, Column: name.Column}
 			if !unicode.IsUpper([]rune(name.Text)[0]) || strings.Contains(name.Text, ".") {
 				return ast.Program{}, diagnostic(name.Line, name.Column, "type name must be one capitalized word")
 			}

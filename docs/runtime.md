@@ -18,6 +18,7 @@ A process has one mailbox type, fixed by its spawn callback or first `Process.se
 | `Process.spawn(callback, capacity)` | `pid[T]`; callback type is `fn[pid[T],integer]` and receives its self PID |
 | `Process.id(pid)` | Integer identity |
 | `Process.alive(pid)` | False once stopping or terminated |
+| `Process.count()` | How many processes have not ended, the caller among them |
 | `Process.send(pid, value, milliseconds)` | Boolean enqueue success; false on timeout, stopped or dead target |
 | `Process.receive(self, milliseconds)` | `tuple[boolean,T]`; false on timeout; the second field is unspecified unless true |
 | `Process.await(pid, milliseconds)` | `tuple[boolean,string]`; true plus exit reason after the full owned subtree terminates; awaiting self is rejected |

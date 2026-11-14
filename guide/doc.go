@@ -199,6 +199,11 @@ func Doc(query string, all, asJSON bool) (string, error) {
 	}
 	module, functions, err := find(query)
 	if err != nil {
+		// Not the library's: a module of this project, or of a package it
+		// imports.
+		if text, found, problem := sourceDoc(query, asJSON); found {
+			return text, problem
+		}
 		return "", err
 	}
 	if functions != nil {
@@ -251,6 +256,22 @@ func Search(text string, asJSON bool) (string, error) {
 		}
 	}
 	hits = append(hits, described...)
+	// The project's own modules and those of the packages it imports.
+	for _, source := range sources() {
+		data, err := fileData(source.File)
+		if err != nil {
+			continue
+		}
+		summary := firstLine(data.Summary)
+		if matches(data.Name, data.Summary) {
+			hits = append(hits, hit{"module", data.Name, summary, "alchem doc " + data.Name})
+		}
+		for _, f := range data.Functions {
+			if matches(f.Name, f.Summary) {
+				hits = append(hits, hit{"function", f.Name, firstLine(f.Summary), "alchem doc " + f.Name})
+			}
+		}
+	}
 	if asJSON {
 		if hits == nil {
 			hits = []hit{}
@@ -308,16 +329,91 @@ func typeDefinition(decl ast.TypeDecl) string {
 	return "extern type " + name + " = " + decl.Extern
 }
 
+// firstLine is the first line of a documentation text.
+func firstLine(text string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
+	return strings.TrimSpace(line)
+}
+
+// Source is a module outside the library whose documentation can be shown:
+// a file of the project, or of a package it imports. Shown is the path that
+// names it, which for a package file is the path an import gives.
+type Source struct {
+	Module, File, Shown string
+}
+
+// Sources lists the modules of the project a command runs in. It is set by
+// the command, and called only when a name is not the library's or text is
+// searched for.
+var Sources func() []Source
+
+func sources() []Source {
+	if Sources == nil {
+		return nil
+	}
+	return Sources()
+}
+
+// sourceDoc documents a module, or one function of it, found among the
+// project's sources. found is false when no source has that module.
+func sourceDoc(query string, asJSON bool) (text string, found bool, err error) {
+	name := query
+	if index := strings.LastIndex(name, "/"); index > 0 {
+		name = name[:index]
+	}
+	module, function, qualified := strings.Cut(name, ".")
+	for _, source := range sources() {
+		if !strings.EqualFold(source.Module, module) {
+			continue
+		}
+		data, err := fileData(source.File)
+		if err != nil {
+			return "", true, err
+		}
+		if !qualified {
+			if asJSON {
+				return encode(data), true, nil
+			}
+			return fileText(data) + "\nFrom " + source.Shown + "\n", true, nil
+		}
+		var names []string
+		for _, f := range data.Functions {
+			if strings.EqualFold(f.Name, source.Module+"."+function) {
+				if asJSON {
+					return encode(f), true, nil
+				}
+				kept := data
+				kept.Summary, kept.Types, kept.Functions = "", nil, []functionJSON{f}
+				return fileText(kept) + "\nFrom " + source.Shown + "\n", true, nil
+			}
+			names = append(names, f.Name)
+		}
+		return "", true, fmt.Errorf("%s has no public function %q%s (alchem doc %s lists them)", source.Module, function, suggest(source.Module+"."+function, names), source.Module)
+	}
+	return "", false, nil
+}
+
 // FileDoc documents the module in a source file from its @moduledoc, @doc
 // and @typedoc text. Private functions and tests are left out.
 func FileDoc(path string, asJSON bool) (string, error) {
-	data, err := os.ReadFile(path)
+	out, err := fileData(path)
 	if err != nil {
 		return "", err
 	}
+	if asJSON {
+		return encode(out), nil
+	}
+	return fileText(out), nil
+}
+
+func fileData(path string) (moduleJSON, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return moduleJSON{}, err
+	}
 	program, err := syntax.ParseSyntax(string(data))
 	if err != nil {
-		return "", fmt.Errorf("%s:%w", path, err)
+		return moduleJSON{}, fmt.Errorf("%s:%w", path, err)
 	}
 	out := moduleJSON{Name: program.Module, Summary: strings.TrimSpace(program.ModuleDoc)}
 	for _, decl := range program.Types {
@@ -345,9 +441,10 @@ func FileDoc(path string, asJSON bool) (string, error) {
 			out.Functions[at].Summary = doc
 		}
 	}
-	if asJSON {
-		return encode(out), nil
-	}
+	return out, nil
+}
+
+func fileText(out moduleJSON) string {
 	var b strings.Builder
 	b.WriteString(out.Name + "\n")
 	if out.Summary != "" {
@@ -367,5 +464,5 @@ func FileDoc(path string, asJSON bool) (string, error) {
 			b.WriteString("\n" + indented(f.Summary) + "\n")
 		}
 	}
-	return b.String(), nil
+	return b.String()
 }

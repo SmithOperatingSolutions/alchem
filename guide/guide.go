@@ -31,8 +31,8 @@ type Flag struct {
 // Commands lists the subcommands in the order help shows them. The command
 // line fills in Flags from the flags it actually parses.
 var Commands = []Command{
-	{Name: "build", Usage: "alchem build [options] <entry.alc>", Summary: "Compile a program to a native executable."},
-	{Name: "run", Usage: "alchem run [options] <entry.alc> [-- arguments]", Summary: "Build a program and run it with the arguments that follow."},
+	{Name: "build", Usage: "alchem build [options] <entry.alc>", Summary: "Compile a program to a native executable. The entry may be a file of a package, written as an import writes it."},
+	{Name: "run", Usage: "alchem run [options] <entry.alc> [-- arguments]", Summary: "Build a program and run it with the arguments that follow. The entry may be a file of a package: host/owner/repo@v1.2.3/tools/name.alc."},
 	{Name: "alx", Usage: "alchem alx", Summary: "alx, the Alchem Language Executor: an interactive shell where each input is compiled and run with the definitions and statements before it."},
 	{Name: "lsp", Usage: "alchem lsp", Summary: "A language server over standard input and output: diagnostics, hover documentation, completion, definitions, symbols and formatting."},
 	{Name: "new", Usage: "alchem new <directory>", Summary: "Create a project: a library module, its test and a main program."},
@@ -40,7 +40,7 @@ var Commands = []Command{
 	{Name: "fmt", Usage: "alchem fmt [--check] <path>...", Summary: "Format .alc files in place."},
 	{Name: "test", Usage: "alchem test [options] <path>...", Summary: "Run *_test.alc files, with seeds, tags and coverage."},
 	{Name: "syntax", Usage: "alchem syntax [--all] [--group name] [--json] [topic]", Summary: "Explain a language construct, with a working example; without a topic, list them."},
-	{Name: "doc", Usage: "alchem doc [--all] [--group name] [--search text] [--json] [Module | Module.function | file.alc]", Summary: "Show library documentation, or the documentation written in a file."},
+	{Name: "doc", Usage: "alchem doc [--all] [--group name] [--search text] [--json] [Module | Module.function | file.alc]", Summary: "Show library documentation, or the documentation written in a file, in a file of a package (host/owner/repo@v1.2.3/lib/name.alc), or in a module of the project in the current directory and the packages it imports."},
 	{Name: "agent-guide", Usage: "alchem agent-guide [--json]", Summary: "Print the guide for coding agents: commands, topics, modules and how to learn more."},
 	{Name: "agent-install", Usage: "alchem agent-install [--scope project|user] [--dir path] [--force] [--json] <agent> | --list", Summary: "Install a short instruction file that points a coding agent at agent-guide."},
 	{Name: "docs", Usage: "alchem docs [--check] [--dir path]", Summary: "Write the generated reference files; --check fails if they are out of date."},

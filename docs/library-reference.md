@@ -7180,6 +7180,21 @@ alx> System.cmd("echo", ["hello"])
 {"hello\n", 0}
 ```
 
+### System.collect_garbage
+
+```
+System.collect_garbage()
+```
+
+Runs a full collection now and waits for it, so that System.memory then counts only what the program still refers to. Programs do not need it to run well; it is for measuring.
+
+```elixir
+alx> before = Map.fetch!(System.memory(), :collections)
+alx> System.collect_garbage()
+alx> Map.fetch!(System.memory(), :collections) > before
+true
+```
+
 ### System.convert_time_unit
 
 ```
@@ -7258,6 +7273,22 @@ System.halt(integer)
 ```
 
 Ends the program immediately with an exit status.
+
+### System.memory
+
+```
+System.memory() -> map[atom,integer]
+```
+
+The program's memory in bytes, as the runtime accounts for it: in_use is what its values occupy, including garbage not yet collected; held is what it has from the operating system and has not handed back; idle is the part of held that is free; stacks is what process stacks use; collections counts the collections run so far. in_use that keeps rising after System.collect_garbage is a leak; held far above in_use is an idle heap.
+
+```elixir
+alx> memory = System.memory()
+alx> Map.fetch!(memory, :in_use) > 0 and Map.fetch!(memory, :held) >= Map.fetch!(memory, :idle)
+true
+alx> Enum.sort(Map.keys(memory))
+[:collections, :held, :idle, :in_use, :stacks]
+```
 
 ### System.monotonic_time
 
@@ -8100,6 +8131,26 @@ alx> Process.cancel_timer(timer)
 true
 alx> Process.cancel_timer(timer)
 false
+```
+
+### Process.count
+
+```
+Process.count() -> integer
+```
+
+How many processes of the program are running, the caller among them. A request being handled, a task and a server each count as one.
+
+```elixir
+alx> before = Process.count()
+alx> worker: pid[integer] = Process.spawn(fn(inbox: pid[integer]): integer do
+...>   {_, value} = Process.receive(inbox, 1000)
+...>   value
+...> end, 1)
+alx> Process.count() == before + 1
+true
+alx> Process.send(worker, 0, 100)
+true
 ```
 
 ### Process.crash
@@ -12025,7 +12076,7 @@ true
 
 ## DiskStore
 
-A table of text under text keys, kept in one file so that it outlasts the program: a write is on the disk when it returns, keys are read in order by range or prefix, and any process may use it.
+A table of text under text keys, kept in one file so that it outlasts the program: a write is on the disk when it returns, keys are read in order by range or prefix, and any process may use it. Moving to a package: this builtin is dropped in v0.4.0. Import github.com/SmithOperatingSolutions/alchem-packages@v0.1.0/disk_store/disk_store.alc, which has the same functions under the same names; a program that imports it uses the package's, and its store type is DiskStore.Store.
 
 ### DiskStore.close
 
@@ -12670,7 +12721,7 @@ Crypto.hash_password(string) -> string
 Crypto.hash_password(string, list[tuple[atom,integer]]) -> string
 ```
 
-What to store in place of a password: its PBKDF2-HMAC-SHA256 key under a fresh random salt, written with the salt and the count of iterations as $pbkdf2-sha256$i=600000$salt$key, so that Crypto.verify_password needs nothing else. The same password gives a different result each time. [iterations: n] sets the count, 600,000 by default; passwords stored with an older count still verify.
+What to store in place of a password: its PBKDF2-HMAC-SHA256 key under a fresh random salt, written with the salt and the count of iterations as $pbkdf2-sha256$i=600000$salt$key, so that Crypto.verify_password needs nothing else. The same password gives a different result each time. [iterations: n] sets the count, 600,000 by default; passwords stored with an older count still verify. Moving to a package: this builtin is dropped in v0.4.0. Import github.com/SmithOperatingSolutions/alchem-packages@v0.1.0/password/password.alc and call Password.hash, which reads and writes the same stored text.
 
 ```elixir
 alx> stored = Crypto.hash_password("correct horse", [iterations: 1000])
@@ -12744,7 +12795,7 @@ false
 Crypto.verify_password(string, string) -> boolean
 ```
 
-Reports whether a password is the one Crypto.hash_password made a stored value from. Text that is not such a value matches no password.
+Reports whether a password is the one Crypto.hash_password made a stored value from. Text that is not such a value matches no password. Moving to a package: this builtin is dropped in v0.4.0. Import github.com/SmithOperatingSolutions/alchem-packages@v0.1.0/password/password.alc and call Password.verify, which reads and writes the same stored text.
 
 ```elixir
 alx> stored = Crypto.hash_password("correct horse", [iterations: 1000])

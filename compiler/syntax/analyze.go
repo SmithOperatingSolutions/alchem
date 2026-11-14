@@ -31,7 +31,7 @@ func analyze(p *ast.Program) (result error) {
 			if functionLocalName(f) == "main" {
 				return diagnostic(f.Line, f.Column, "main cannot be extern")
 			}
-			if !bindingName(functionLocalName(f)) {
+			if name := functionLocalName(f); !bindingName(name) && !builtinName(name) {
 				return diagnostic(f.Line, f.Column, "extern requires a valid name")
 			}
 			if len(generic(f)) > 0 {
@@ -43,7 +43,7 @@ func analyze(p *ast.Program) (result error) {
 			}
 		} else if f.Test != "" || f.Setup {
 			// Declared by test and setup blocks; nothing to validate.
-		} else if name := functionLocalName(f); !bindingName(strings.TrimRight(name, "?!")) || strings.Count(name, "?")+strings.Count(name, "!") > 1 {
+		} else if name := functionLocalName(f); !bindingName(strings.TrimRight(name, "?!")) && !builtinName(strings.TrimRight(name, "?!")) || strings.Count(name, "?")+strings.Count(name, "!") > 1 {
 			if memberName(name) {
 				return diagnostic(f.Line, f.Column, "%s is reserved for a builtin and cannot name a function", name)
 			}

@@ -110,6 +110,7 @@ func init() {
 			"defp defines a function private to its module.",
 			"A function that returns nothing omits the result type.",
 			"Names may end in ? or !. Recursion is the loop; Process.loop and Enum cover the rest.",
+			"A function may be named put, get, has_key, length, map, filter, reduce, prepend or concat, as library functions are. In the module that defines it a bare call then means that function, and the builtin is written Map.put, Enum.map and so on; in other modules it is called Module.put and the bare name keeps its meaning.",
 			"&name refers to a named function as a value.",
 			"name: type \\\\ value gives a trailing parameter a default, which a call may leave out. The value is a constant: literals, lists, tuples and maps of them, none, some(...), ok(...) or error(...).",
 			"A function has one number of parameters: there is no second definition with a different arity.",
@@ -342,11 +343,25 @@ func init() {
 		[]string{
 			"import takes a path relative to the importing file; call with the module's name: Math.double(3).",
 			"def is public, defp private. Imported types are written Module.Type.",
-			"Imports of a published package name a host path and version: import \"github.com/owner/repo@v1.2.0/lib/math.alc\"; versions are recorded in alchem.lock.",
+			"Imports of a published package name a host path and version: import \"github.com/owner/repo@v1.2.0/lib/math.alc\"; versions are recorded in alchem.lock. See alchem syntax packages.",
 			"Library modules (Enum, String, ...) need no import.",
-		}, []string{"program", "extern", "functions"},
+		}, []string{"program", "packages", "extern", "functions"},
 		Sample{Title: "two files", File: "defmodule ShapesTest do\n  import \"geometry.alc\"\n\n  test \"imported functions and types\" do\n    size = %Geometry.Size{width: 2, height: 3}\n    assert(Geometry.area(size) == 6)\n  end\nend\n",
 			Files: map[string]string{"geometry.alc": "defmodule Geometry do\n  struct Size do\n    width: integer\n    height: integer\n  end\n\n  def area(size: Size): integer do\n    size.width * size.height\n  end\nend\n"}})
+
+	topic("Modules", "packages", "A package is a tagged repository of .alc files, imported by host path and version.",
+		[]string{
+			"import \"github.com/owner/repo@v1.2.0/lib/math.alc\" names the repository, an exact tag, and a file inside it. Files of a package import each other with relative paths, which cannot leave the package, and may bind extern functions to Go code inside it.",
+			"alchem doc, run, build and check take the same path: alchem doc github.com/owner/repo@v1.2.0/lib/math.alc shows a file's documentation, and alchem run github.com/owner/repo@v1.2.0/tools/dev.alc -- arguments runs a program the package carries.",
+			"Inside a project, alchem doc Module, alchem doc Module.function and alchem doc --search text also cover the project's own files and the packages they import, once those have been fetched by a check or a build.",
+			"alchem.lock beside the entry file records the content of each package; commit it, and pass --locked in CI. A program run straight from a package keeps no lock file.",
+			"For a private repository set ALCHEM_PRIVATE to comma-separated patterns such as github.com/owner/*: matching packages are fetched with git from their own host, using the credentials git already has, and nothing about them is sent to the public Go proxy or checksum database.",
+			"require \"alchem\" \"v0.4.0\" in a file names the oldest Alchem release it works with; an older compiler reports that instead of an error about something it does not know. Releases before v0.3.8 do not know the line itself.",
+			"One program uses one version of a package; two are the compile error conflicting versions.",
+			"Module names are shared by the whole program, so a package's module and one of the program's cannot have the same name, and neither can take a library module's name. The exception is a library module that is moving to a package (DiskStore): a program that imports a module of that name uses it, and one that does not uses the builtin until it is dropped.",
+		}, []string{"modules", "extern", "comments"},
+		Sample{Title: "a library file that states the release it needs", File: "defmodule TemperatureTest do\n  import \"temperature.alc\"\n\n  test \"a module of a package is used like any other\" do\n    assert(Temperature.fahrenheit(100) == 212)\n  end\nend\n",
+			Files: map[string]string{"temperature.alc": "defmodule Temperature do\n  @moduledoc \"\"\"\n  Conversions between scales.\n  \"\"\"\n  require \"alchem\" \"v0.3.0\"\n\n  @doc \"Degrees Fahrenheit for degrees Celsius.\"\n  def fahrenheit(celsius: integer): integer do\n    div(celsius * 9, 5) + 32\n  end\nend\n"}})
 
 	topic("Text", "templates", "~h\"...\" and ~h\"\"\"...\"\"\" are HTML templates that escape what they interpolate.",
 		[]string{
@@ -410,6 +425,7 @@ func init() {
 			"The Alchem signature is checked against the Go one by alchem check.",
 			"A Go (T, error) result is declared result[T, string]; (T, bool) is option[T].",
 			"extern type Name = \"*package.Type\" names an opaque Go type; methods are \"package.Type.Method\" with the receiver first.",
+			"A handle stays with the process that has it and is not compared. extern shared type Name = \"*package.Type\" declares one whose Go value is safe to use from several goroutines at once: it can then be sent in messages and kept by servers, like a socket or a file.",
 			"require \"module/path\" \"v1.2.3\" adds a third-party Go module; \"./dir.Function\" refers to Go code beside the program.",
 		}, []string{"modules"},
 		Sample{Title: "calling the Go standard library", Defs: "extern shout(text: string): string = \"strings.ToUpper\"\nextern to_number(text: string): result[integer, string] = \"strconv.Atoi\"",

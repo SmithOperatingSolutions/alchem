@@ -23,8 +23,12 @@ type Program struct {
 	// the empty path holds the module's own (@moduletag).
 	GroupTags map[string][]string
 	// Constants are the module's @name value declarations, in source order.
-	Constants                []Constant
-	Remotes                  []Remote
+	Constants []Constant
+	Remotes   []Remote
+	// Fetched is set when the entry file itself comes from a versioned
+	// package: such a program keeps no lock file, its content being fixed by
+	// the version it was asked for.
+	Fetched                  bool
 	Types                    []TypeDecl
 	Requires                 []Require
 	Imports                  []string
@@ -129,7 +133,10 @@ type TypeDecl struct {
 	// Extern, for Kind "extern", is the Go type an opaque handle stands for
 	// ("*bytes.Buffer"); ExternDir is its resolved project-local package.
 	Extern, ExternDir string
-	Params            []string
+	// Shared marks an extern type whose Go value may be used by several
+	// processes at once, so the handle can be sent in a message.
+	Shared bool
+	Params []string
 	// Exception marks a struct declared with defexception: it can be raised,
 	// and has a message field.
 	Exception    bool

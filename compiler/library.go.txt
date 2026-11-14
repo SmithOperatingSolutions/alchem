@@ -4909,6 +4909,27 @@ func systemHalt(ctx *actor.Context, status int64, where string) {
 
 func systemPid() string { return strconv.Itoa(os.Getpid()) }
 
+// systemMemory reports the program's memory as the Go runtime accounts for
+// it, in bytes: what its values occupy, what it holds from the operating
+// system, and how much of that is free to be handed back.
+func systemMemory() actor.Map[actor.Atom, int64] {
+	var stats runtime.MemStats
+	runtime.ReadMemStats(&stats)
+	out := actor.NewMapBuilder(actor.Map[actor.Atom, int64]{})
+	out.Put("in_use", int64(stats.HeapAlloc))
+	out.Put("held", int64(stats.Sys-stats.HeapReleased))
+	out.Put("idle", int64(stats.HeapIdle-stats.HeapReleased))
+	out.Put("stacks", int64(stats.StackInuse))
+	out.Put("collections", int64(stats.NumGC))
+	return out.Map()
+}
+
+// systemCollect runs a full collection, so that what System.memory reports
+// as in use is what the program still refers to.
+func systemCollect() { runtime.GC() }
+
+func processCount(ctx *actor.Context) int64 { return actor.Count(ctx) }
+
 func ioWarn(text string) { os.Stderr.WriteString(text + "\n") }
 
 // ioRead reads from standard input: :line, :eof (all of it), or a count of

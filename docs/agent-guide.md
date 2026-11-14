@@ -6,8 +6,8 @@ Alchem is a statically typed, Elixir-inspired language compiled to native execut
 
 ## Commands
 
-- `alchem build [options] <entry.alc>`: Compile a program to a native executable.
-- `alchem run [options] <entry.alc> [-- arguments]`: Build a program and run it with the arguments that follow.
+- `alchem build [options] <entry.alc>`: Compile a program to a native executable. The entry may be a file of a package, written as an import writes it.
+- `alchem run [options] <entry.alc> [-- arguments]`: Build a program and run it with the arguments that follow. The entry may be a file of a package: host/owner/repo@v1.2.3/tools/name.alc.
 - `alchem alx`: alx, the Alchem Language Executor: an interactive shell where each input is compiled and run with the definitions and statements before it.
 - `alchem lsp`: A language server over standard input and output: diagnostics, hover documentation, completion, definitions, symbols and formatting.
 - `alchem new <directory>`: Create a project: a library module, its test and a main program.
@@ -15,7 +15,7 @@ Alchem is a statically typed, Elixir-inspired language compiled to native execut
 - `alchem fmt [--check] <path>...`: Format .alc files in place.
 - `alchem test [options] <path>...`: Run *_test.alc files, with seeds, tags and coverage.
 - `alchem syntax [--all] [--group name] [--json] [topic]`: Explain a language construct, with a working example; without a topic, list them.
-- `alchem doc [--all] [--group name] [--search text] [--json] [Module | Module.function | file.alc]`: Show library documentation, or the documentation written in a file.
+- `alchem doc [--all] [--group name] [--search text] [--json] [Module | Module.function | file.alc]`: Show library documentation, or the documentation written in a file, in a file of a package (host/owner/repo@v1.2.3/lib/name.alc), or in a module of the project in the current directory and the packages it imports.
 - `alchem agent-guide [--json]`: Print the guide for coding agents: commands, topics, modules and how to learn more.
 - `alchem agent-install [--scope project|user] [--dir path] [--force] [--json] <agent> | --list`: Install a short instruction file that points a coding agent at agent-guide.
 - `alchem docs [--check] [--dir path]`: Write the generated reference files; --check fails if they are out of date.
@@ -82,7 +82,7 @@ By group; `alchem syntax --group <group>` describes a group's topics and `alchem
 - **Functions** (`functions`): `functions`, `clauses`, `anonymous-functions`, `generics`
 - **Control flow** (`control-flow`): `if`, `case`, `cond`, `patterns`, `pipes`, `with`, `for`, `try`
 - **Data** (`data`): `lists`, `tuples`, `maps`, `structs`, `sum-types`, `option-result`, `atoms`, `ranges`, `streams`, `sigils`
-- **Modules** (`modules`): `modules`, `constants`, `protocols`, `macros`, `extern`
+- **Modules** (`modules`): `modules`, `packages`, `constants`, `protocols`, `macros`, `extern`
 - **Text** (`text`): `templates`
 - **Concurrency** (`concurrency`): `nodes`, `processes`
 - **Testing** (`testing`): `tests`, `properties`, `doctests`

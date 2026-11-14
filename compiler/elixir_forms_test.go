@@ -67,8 +67,7 @@ func TestOverloadErrors(t *testing.T) {
   def main() do IO.inspect(f(1)) end`: "both accept 1 arguments",
 		`def g(n: integer): integer do n end
   def main() do IO.inspect(Enum.map([1], &g/2)) end`: "g takes 1 arguments, not 2",
-		`def get(n: integer): integer do n end
-  def main() do IO.inspect(get(1)) end`: "get is reserved for a builtin",
+		`def main(n: integer): integer do n end`: "main must have zero parameters",
 	}
 	for body, want := range cases {
 		path := filepath.Join(t.TempDir(), "main.alc")

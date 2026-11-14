@@ -87,7 +87,11 @@ func Format(source string) (string, error) {
 		docstring("typedoc", decl.Doc, 1)
 		remark(p.Notes[fmt.Sprintf("documented:%d", decl.Line)], 1)
 		if decl.Kind == "extern" {
-			b.WriteString("  extern type " + decl.Local + " = " + strconv.Quote(decl.Extern) + "\n")
+			keyword := "  extern type "
+			if decl.Shared {
+				keyword = "  extern shared type "
+			}
+			b.WriteString(keyword + decl.Local + " = " + strconv.Quote(decl.Extern) + "\n")
 			continue
 		}
 		keyword := "struct"

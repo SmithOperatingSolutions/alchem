@@ -63,7 +63,17 @@ extern write(builder: Builder, text: string): result[integer, string] = "strings
 extern text(builder: Builder): string = "strings.Builder.String"
 ```
 
-`extern type` names a Go type, with a leading `*` for a pointer, as an opaque Alchem type. Values of it come from and go to `extern` functions and can be bound, passed, stored and returned, but have no fields or patterns. Because the Go value behind a handle may be mutable, handles cannot be compared with `==` and cannot be sent to another process. A handle is accepted wherever Go expects an interface its type implements, so a `*os.File` handle can be passed as an `io.Reader`. A pointer handle can call both pointer-receiver and value-receiver methods.
+`extern type` names a Go type, with a leading `*` for a pointer, as an opaque Alchem type. Values of it come from and go to `extern` functions and can be bound, passed, stored and returned, but have no fields or patterns. Because the Go value behind a handle may be mutable, handles cannot be compared with `==` and cannot be sent to another process, unless the type is declared shared (below). A handle is accepted wherever Go expects an interface its type implements, so a `*os.File` handle can be passed as an `io.Reader`. A pointer handle can call both pointer-receiver and value-receiver methods.
+
+### Shared handles
+
+```elixir
+extern shared type Counter = "*./native.Counter"
+```
+
+`extern shared type` declares a handle whose Go value may be used by several goroutines at once: one guarded by a mutex, built on atomics or channels, or immutable. Such a handle can be sent in messages, kept in a server's state and given to spawned processes, as the library's own sockets, files and stores can. The declaration is a promise the compiler cannot check: a Go type that is not safe for concurrent use and is declared shared has a data race. A shared handle is still not compared with `==`, and cannot be sent to another node.
+
+Sending a handle that was not declared shared is the compile error `mailbox messages cannot contain App.Counter: declare it with extern shared type if its Go value may be used by several processes at once`.
 
 ## Structs and callbacks
 
