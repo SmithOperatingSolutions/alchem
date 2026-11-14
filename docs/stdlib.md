@@ -56,6 +56,8 @@ Paths are relative to the working directory of the running program. Unless a tab
 
 ## Records that outlast the program
 
+> `DiskStore` is moving to a package and the builtin is dropped in v0.4.0. Add `import "github.com/SmithOperatingSolutions/alchem-packages@v0.1.0/disk_store/disk_store.alc"`: the functions and their names are the same, the store's type is `DiskStore.Store`, and files written by either are read by both. See [modules](modules.md#library-modules-that-are-moving-to-packages).
+
 `DiskStore.open(path)` opens a table of text under text keys, kept in one file. `DiskStore.put`, `delete` and `commit` return once the change is on the disk, so whatever was acknowledged is still there after a crash, and `commit(store, puts, deletes)` makes several changes that are kept together or not at all. `DiskStore.update(store, key, fun)` changes a key by a function of what it holds with no other write in between, which is how a counter or a balance is changed safely. Any process may use a store; when many write at once, their changes share one trip to the disk.
 
 Keys are kept in order: `DiskStore.prefix(store, "user:")` gives every `{key, value}` whose key begins that way and `DiskStore.range(store, from, to)` those between two keys, so keys written as `kind:id` make each kind a table of its own. Reads are answered from memory, which holds every key and value; a store suits the records of a program, not data larger than memory. Values of other types are kept as JSON:
@@ -281,6 +283,8 @@ end
 ```
 
 `WebSocket.upgrade(request, [compress: true])` accepts permessage-deflate (RFC 7692) from a client that offers it, as every browser does, and `WebSocket.connect(address, ms, [compress: "true"])` offers it; `WebSocket.compressed?(ws)` tells whether the two agreed. Messages of 256 bytes or more are then compressed, each on its own, so a connection holds no compressor between messages, and the limit of `max_message_bytes:` applies to what a message expands to. HTML that repeats itself, such as a long list sent whole, goes in a tenth of its size or less.
+
+> `Crypto.hash_password` and `Crypto.verify_password` are moving to a package and are dropped in v0.4.0. Import `github.com/SmithOperatingSolutions/alchem-packages@v0.1.0/password/password.alc` and call `Password.hash` and `Password.verify`, which read and write the same stored text. `Crypto.pbkdf2` stays.
 
 `Crypto.hash_password(password)` gives what to store in place of a password, and `Crypto.verify_password(password, stored)` checks one against it. The stored text, `$pbkdf2-sha256$i=600000$salt$key`, carries its random salt and its count of iterations, so the count can be raised later without losing the passwords already stored. `Crypto.pbkdf2(:sha256, password, salt, iterations, length)` is the function underneath, for deriving keys. A plain `Crypto.hash` is too fast to protect a password.
 

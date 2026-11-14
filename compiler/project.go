@@ -284,7 +284,7 @@ func loadProjectAs(ctx context.Context, entry string, library bool) (ast.Program
 		if previous := names[module.Module]; previous != "" {
 			return &Diagnostic{path, module.ModuleLine, module.ModuleColumn, fmt.Sprintf("duplicate module %s (also %s)", module.Module, previous)}
 		}
-		if reservedModule(module.Module) {
+		if reservedModule(module.Module) && !syntax.RetiringModule(module.Module) {
 			return &Diagnostic{path, module.ModuleLine, module.ModuleColumn, "reserved module name " + module.Module}
 		}
 		names[module.Module] = path

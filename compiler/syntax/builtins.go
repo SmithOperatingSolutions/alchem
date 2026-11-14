@@ -313,3 +313,9 @@ func ReservedModule(name string) bool {
 	}
 	return false
 }
+
+// RetiringModule reports a builtin namespace that a package now provides
+// and a later release drops. A program may have a module of that name,
+// whose functions are then the ones its calls reach; a program without one
+// uses the builtin as before.
+func RetiringModule(name string) bool { return name == "DiskStore" }

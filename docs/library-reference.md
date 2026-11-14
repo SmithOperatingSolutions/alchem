@@ -12076,7 +12076,7 @@ true
 
 ## DiskStore
 
-A table of text under text keys, kept in one file so that it outlasts the program: a write is on the disk when it returns, keys are read in order by range or prefix, and any process may use it.
+A table of text under text keys, kept in one file so that it outlasts the program: a write is on the disk when it returns, keys are read in order by range or prefix, and any process may use it. Moving to a package: this builtin is dropped in v0.4.0. Import github.com/SmithOperatingSolutions/alchem-packages@v0.1.0/disk_store/disk_store.alc, which has the same functions under the same names; a program that imports it uses the package's, and its store type is DiskStore.Store.
 
 ### DiskStore.close
 
@@ -12721,7 +12721,7 @@ Crypto.hash_password(string) -> string
 Crypto.hash_password(string, list[tuple[atom,integer]]) -> string
 ```
 
-What to store in place of a password: its PBKDF2-HMAC-SHA256 key under a fresh random salt, written with the salt and the count of iterations as $pbkdf2-sha256$i=600000$salt$key, so that Crypto.verify_password needs nothing else. The same password gives a different result each time. [iterations: n] sets the count, 600,000 by default; passwords stored with an older count still verify.
+What to store in place of a password: its PBKDF2-HMAC-SHA256 key under a fresh random salt, written with the salt and the count of iterations as $pbkdf2-sha256$i=600000$salt$key, so that Crypto.verify_password needs nothing else. The same password gives a different result each time. [iterations: n] sets the count, 600,000 by default; passwords stored with an older count still verify. Moving to a package: this builtin is dropped in v0.4.0. Import github.com/SmithOperatingSolutions/alchem-packages@v0.1.0/password/password.alc and call Password.hash, which reads and writes the same stored text.
 
 ```elixir
 alx> stored = Crypto.hash_password("correct horse", [iterations: 1000])
@@ -12795,7 +12795,7 @@ false
 Crypto.verify_password(string, string) -> boolean
 ```
 
-Reports whether a password is the one Crypto.hash_password made a stored value from. Text that is not such a value matches no password.
+Reports whether a password is the one Crypto.hash_password made a stored value from. Text that is not such a value matches no password. Moving to a package: this builtin is dropped in v0.4.0. Import github.com/SmithOperatingSolutions/alchem-packages@v0.1.0/password/password.alc and call Password.verify, which reads and writes the same stored text.
 
 ```elixir
 alx> stored = Crypto.hash_password("correct horse", [iterations: 1000])

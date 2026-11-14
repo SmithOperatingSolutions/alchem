@@ -69,6 +69,19 @@ require "alchem" "v0.4.0"
 
 In any module, this names the oldest Alchem release the file works with. An older compiler stops with `this file needs Alchem v0.4.0 or newer, and this is v0.3.9: upgrade alchem to build it` at that line. A compiler built from source has no release number and accepts every requirement. The line adds nothing to the build and nothing to the lock file. Releases before v0.3.8 do not know it.
 
+### Library modules that are moving to packages
+
+The library keeps what a package could not build for itself: the language's own types, processes, files, the network, JSON and the like. Modules that need none of that are moving to [alchem-packages](https://github.com/SmithOperatingSolutions/alchem-packages), where they are released on their own schedule:
+
+| Builtin, until v0.4.0 | Package file | Module |
+| --- | --- | --- |
+| `DiskStore` | `disk_store/disk_store.alc` | `DiskStore`, same functions; the type is `DiskStore.Store` |
+| `Crypto.hash_password`, `Crypto.verify_password` | `password/password.alc` | `Password.hash`, `Password.verify` |
+
+A builtin module's name is otherwise reserved, but a program may import a module named `DiskStore`: its calls then reach that module, and a program without one keeps using the builtin. So a program moves by adding the import, and by writing `DiskStore.Store` where it wrote the type `disk_store`.
+
+A module may name its functions `put`, `get`, `has_key`, `length`, `map`, `filter`, `reduce`, `prepend` and `concat`, which bare calls otherwise give to the oldest builtins. Inside such a module a bare call means its own function, and the builtin is written `Map.put`, `Enum.map` and so on.
+
 ## Lock file
 
 A program that uses remote packages or `require` gets an `alchem.lock` beside its entry file. It records the content hash of each remote package and the Go checksum lines of every required module, including indirect ones. Commit it.

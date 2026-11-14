@@ -110,6 +110,7 @@ func init() {
 			"defp defines a function private to its module.",
 			"A function that returns nothing omits the result type.",
 			"Names may end in ? or !. Recursion is the loop; Process.loop and Enum cover the rest.",
+			"A function may be named put, get, has_key, length, map, filter, reduce, prepend or concat, as library functions are. In the module that defines it a bare call then means that function, and the builtin is written Map.put, Enum.map and so on; in other modules it is called Module.put and the bare name keeps its meaning.",
 			"&name refers to a named function as a value.",
 			"name: type \\\\ value gives a trailing parameter a default, which a call may leave out. The value is a constant: literals, lists, tuples and maps of them, none, some(...), ok(...) or error(...).",
 			"A function has one number of parameters: there is no second definition with a different arity.",
@@ -357,6 +358,7 @@ func init() {
 			"For a private repository set ALCHEM_PRIVATE to comma-separated patterns such as github.com/owner/*: matching packages are fetched with git from their own host, using the credentials git already has, and nothing about them is sent to the public Go proxy or checksum database.",
 			"require \"alchem\" \"v0.4.0\" in a file names the oldest Alchem release it works with; an older compiler reports that instead of an error about something it does not know. Releases before v0.3.8 do not know the line itself.",
 			"One program uses one version of a package; two are the compile error conflicting versions.",
+			"Module names are shared by the whole program, so a package's module and one of the program's cannot have the same name, and neither can take a library module's name. The exception is a library module that is moving to a package (DiskStore): a program that imports a module of that name uses it, and one that does not uses the builtin until it is dropped.",
 		}, []string{"modules", "extern", "comments"},
 		Sample{Title: "a library file that states the release it needs", File: "defmodule TemperatureTest do\n  import \"temperature.alc\"\n\n  test \"a module of a package is used like any other\" do\n    assert(Temperature.fahrenheit(100) == 212)\n  end\nend\n",
 			Files: map[string]string{"temperature.alc": "defmodule Temperature do\n  @moduledoc \"\"\"\n  Conversions between scales.\n  \"\"\"\n  require \"alchem\" \"v0.3.0\"\n\n  @doc \"Degrees Fahrenheit for degrees Celsius.\"\n  def fahrenheit(celsius: integer): integer do\n    div(celsius * 9, 5) + 32\n  end\nend\n"}})
