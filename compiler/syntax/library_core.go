@@ -324,6 +324,9 @@ func init() {
 	lib("IO.ANSI.color", "integer -> string", "ansiColor")
 	lib("IO.ANSI.color_background", "integer -> string", "ansiColorBackground")
 	lib("System.pid", "-> string", "systemPid")
+	lib("System.memory", "-> map[atom,integer]", "systemMemory")
+	lib("System.collect_garbage", "-> void", "systemCollect")
+	lib("Process.count", "-> integer", "processCount ctx")
 
 	lib("IO.inspect", "a -> a", "ioInspect")
 	lib("IO.warn", "string -> void", "ioWarn")

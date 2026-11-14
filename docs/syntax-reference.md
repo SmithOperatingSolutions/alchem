@@ -12,7 +12,7 @@ One section per topic of `alchem syntax`. Every example is compiled and run by t
 
 **Data**: [lists](#lists), [tuples](#tuples), [maps](#maps), [structs](#structs), [sum-types](#sum-types), [option-result](#option-result), [atoms](#atoms), [ranges](#ranges), [streams](#streams), [sigils](#sigils)
 
-**Modules**: [modules](#modules), [constants](#constants), [protocols](#protocols), [macros](#macros), [extern](#extern)
+**Modules**: [modules](#modules), [packages](#packages), [constants](#constants), [protocols](#protocols), [macros](#macros), [extern](#extern)
 
 **Text**: [templates](#templates)
 
@@ -1037,7 +1037,7 @@ import "file.alc" brings another module's public functions and types.
 
 - import takes a path relative to the importing file; call with the module's name: Math.double(3).
 - def is public, defp private. Imported types are written Module.Type.
-- Imports of a published package name a host path and version: import "github.com/owner/repo@v1.2.0/lib/math.alc"; versions are recorded in alchem.lock.
+- Imports of a published package name a host path and version: import "github.com/owner/repo@v1.2.0/lib/math.alc"; versions are recorded in alchem.lock. See alchem syntax packages.
 - Library modules (Enum, String, ...) need no import.
 
 Example: two files
@@ -1065,7 +1065,46 @@ defmodule ShapesTest do
 end
 ```
 
-See also: alchem syntax program, alchem syntax extern, alchem syntax functions
+See also: alchem syntax program, alchem syntax packages, alchem syntax extern, alchem syntax functions
+
+## packages
+
+A package is a tagged repository of .alc files, imported by host path and version.
+
+- import "github.com/owner/repo@v1.2.0/lib/math.alc" names the repository, an exact tag, and a file inside it. Files of a package import each other with relative paths, which cannot leave the package, and may bind extern functions to Go code inside it.
+- alchem doc, run, build and check take the same path: alchem doc github.com/owner/repo@v1.2.0/lib/math.alc shows a file's documentation, and alchem run github.com/owner/repo@v1.2.0/tools/dev.alc -- arguments runs a program the package carries.
+- Inside a project, alchem doc Module, alchem doc Module.function and alchem doc --search text also cover the project's own files and the packages they import, once those have been fetched by a check or a build.
+- alchem.lock beside the entry file records the content of each package; commit it, and pass --locked in CI. A program run straight from a package keeps no lock file.
+- For a private repository set ALCHEM_PRIVATE to comma-separated patterns such as github.com/owner/*: matching packages are fetched with git from their own host, using the credentials git already has, and nothing about them is sent to the public Go proxy or checksum database.
+- require "alchem" "v0.4.0" in a file names the oldest Alchem release it works with; an older compiler reports that instead of an error about something it does not know. Releases before v0.3.8 do not know the line itself.
+- One program uses one version of a package; two are the compile error conflicting versions.
+
+Example: a library file that states the release it needs
+
+```elixir
+# temperature.alc
+defmodule Temperature do
+  @moduledoc """
+  Conversions between scales.
+  """
+  require "alchem" "v0.3.0"
+
+  @doc "Degrees Fahrenheit for degrees Celsius."
+  def fahrenheit(celsius: integer): integer do
+    div(celsius * 9, 5) + 32
+  end
+end
+
+defmodule TemperatureTest do
+  import "temperature.alc"
+
+  test "a module of a package is used like any other" do
+    assert(Temperature.fahrenheit(100) == 212)
+  end
+end
+```
+
+See also: alchem syntax modules, alchem syntax extern, alchem syntax comments
 
 ## templates
 
@@ -1279,6 +1318,7 @@ extern name(params): result = "package.Function" calls a Go function.
 - The Alchem signature is checked against the Go one by alchem check.
 - A Go (T, error) result is declared result[T, string]; (T, bool) is option[T].
 - extern type Name = "*package.Type" names an opaque Go type; methods are "package.Type.Method" with the receiver first.
+- A handle stays with the process that has it and is not compared. extern shared type Name = "*package.Type" declares one whose Go value is safe to use from several goroutines at once: it can then be sent in messages and kept by servers, like a socket or a file.
 - require "module/path" "v1.2.3" adds a third-party Go module; "./dir.Function" refers to Go code beside the program.
 
 Example: calling the Go standard library

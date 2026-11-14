@@ -113,6 +113,20 @@ func flagsFor(name string, s *settings, errOut io.Writer) *flag.FlagSet {
 }
 
 func init() {
+	compiler.Version = compilerVersion()
+	// Documentation also covers the modules of the project in the current
+	// directory and of the packages it imports.
+	guide.Sources = func() []guide.Source {
+		dir, err := os.Getwd()
+		if err != nil {
+			return nil
+		}
+		var out []guide.Source
+		for _, source := range compiler.ProjectSources(context.Background(), dir) {
+			out = append(out, guide.Source(source))
+		}
+		return out
+	}
 	for i := range guide.Commands {
 		command := &guide.Commands[i]
 		flagsFor(command.Name, &settings{}, io.Discard).VisitAll(func(f *flag.Flag) {
@@ -297,6 +311,12 @@ func help(command string, s *settings, arguments []string) (text string, err err
 		case s.group != "":
 			text, err = guide.DocGroup(s.group, s.jsonOutput)
 		default:
+			// A file of a package is named as an import names it.
+			if compiler.RemoteSource(name) {
+				if name, err = compiler.FetchSource(context.Background(), name); err != nil {
+					return "", err, true
+				}
+			}
 			text, err = guide.Doc(name, s.all, s.jsonOutput)
 		}
 		return text, err, true

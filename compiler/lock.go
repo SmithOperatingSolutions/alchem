@@ -70,6 +70,9 @@ func syncLock(program ast.Program, lock *lockFile, sums []string, locked bool) e
 	stale := func(what string) error {
 		return fmt.Errorf("%s has no entry for %s; run without --locked to update it", LockName, what)
 	}
+	if program.Fetched {
+		return nil
+	}
 	lines := []string{}
 	for _, remote := range program.Remotes {
 		key := remote.Path + " " + remote.Version

@@ -7180,6 +7180,21 @@ alx> System.cmd("echo", ["hello"])
 {"hello\n", 0}
 ```
 
+### System.collect_garbage
+
+```
+System.collect_garbage()
+```
+
+Runs a full collection now and waits for it, so that System.memory then counts only what the program still refers to. Programs do not need it to run well; it is for measuring.
+
+```elixir
+alx> before = Map.fetch!(System.memory(), :collections)
+alx> System.collect_garbage()
+alx> Map.fetch!(System.memory(), :collections) > before
+true
+```
+
 ### System.convert_time_unit
 
 ```
@@ -7258,6 +7273,22 @@ System.halt(integer)
 ```
 
 Ends the program immediately with an exit status.
+
+### System.memory
+
+```
+System.memory() -> map[atom,integer]
+```
+
+The program's memory in bytes, as the runtime accounts for it: in_use is what its values occupy, including garbage not yet collected; held is what it has from the operating system and has not handed back; idle is the part of held that is free; stacks is what process stacks use; collections counts the collections run so far. in_use that keeps rising after System.collect_garbage is a leak; held far above in_use is an idle heap.
+
+```elixir
+alx> memory = System.memory()
+alx> Map.fetch!(memory, :in_use) > 0 and Map.fetch!(memory, :held) >= Map.fetch!(memory, :idle)
+true
+alx> Enum.sort(Map.keys(memory))
+[:collections, :held, :idle, :in_use, :stacks]
+```
 
 ### System.monotonic_time
 
@@ -8100,6 +8131,26 @@ alx> Process.cancel_timer(timer)
 true
 alx> Process.cancel_timer(timer)
 false
+```
+
+### Process.count
+
+```
+Process.count() -> integer
+```
+
+How many processes of the program are running, the caller among them. A request being handled, a task and a server each count as one.
+
+```elixir
+alx> before = Process.count()
+alx> worker: pid[integer] = Process.spawn(fn(inbox: pid[integer]): integer do
+...>   {_, value} = Process.receive(inbox, 1000)
+...>   value
+...> end, 1)
+alx> Process.count() == before + 1
+true
+alx> Process.send(worker, 0, 100)
+true
 ```
 
 ### Process.crash

@@ -131,7 +131,7 @@ func CheckLocked(ctx context.Context, source string, locked bool) error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	environment := append(os.Environ(), "GOWORK=off")
+	environment := append(baseEnvironment(), "GOWORK=off")
 	if err := prepareModule(ctx, dir, program, environment, lock); err != nil {
 		return err
 	}

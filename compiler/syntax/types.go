@@ -198,7 +198,7 @@ func (c checker) wellFormed(t string, vars map[string]bool) string {
 	if head == "pid" || head == "supervisor" || head == "server" {
 		for _, arg := range args {
 			if !c.sendable(arg) {
-				return "mailbox messages cannot contain functions"
+				return c.unsent("mailbox messages", arg)
 			}
 		}
 	}
@@ -242,17 +242,24 @@ func (c checker) contains(t string, predicate func(string) bool, visited map[str
 func isFunction(t string) bool { _, _, ok := ast.FunctionParts(t); return ok }
 
 // opaque reports a handle to a Go value. Go values may be mutable, so handles
-// are neither compared nor sent between processes.
+// are not compared, and are sent between processes only when declared shared.
 func (c checker) opaque(t string) bool {
 	decl := c.types[t]
 	return decl != nil && decl.Kind == "extern"
 }
 
-// sendable types hold no functions and no undetermined type variables.
+// unshared reports a handle that was not declared with "extern shared type".
+func (c checker) unshared(t string) bool {
+	decl := c.types[t]
+	return decl != nil && decl.Kind == "extern" && !decl.Shared
+}
+
+// sendable types hold no functions, no undetermined type variables and no
+// handle to a Go value that one process at a time must use.
 func (c checker) sendable(t string) bool {
 	return !c.contains(t, func(t string) bool {
 		head, _ := ast.Split(t)
-		return isFunction(t) || ast.TypeVariable(t) || c.opaque(t) || head == "stream"
+		return isFunction(t) || ast.TypeVariable(t) || c.unshared(t) || head == "stream"
 	}, map[string]bool{})
 }
 
@@ -291,6 +298,22 @@ func (c checker) unread(t string) string {
 		return blocked
 	}, map[string]bool{})
 	return found
+}
+
+// unsent words the refusal of a type that cannot be sent: a handle that was
+// not declared shared is named, with how to declare it.
+func (c checker) unsent(what, t string) string {
+	handle := ""
+	c.contains("tuple["+t+"]", func(part string) bool {
+		if c.unshared(part) && handle == "" {
+			handle = part
+		}
+		return false
+	}, map[string]bool{})
+	if handle != "" {
+		return fmt.Sprintf("%s cannot contain %s: declare it with extern shared type if its Go value may be used by several processes at once", what, handle)
+	}
+	return what + " cannot contain functions"
 }
 
 // equatable types hold no functions, capabilities or type variables.
@@ -594,7 +617,7 @@ func (c checker) serverBuiltin(e *ast.Expr, scope map[string]string) (string, er
 			return fail("server handler must be fn[State,Request,tuple[State,Reply]]")
 		}
 		if !c.sendable(params[1]) || !c.sendable(parts[1]) {
-			return fail("server requests and replies cannot contain functions")
+			return fail(c.unsent("server requests and replies", params[1]+","+parts[1]))
 		}
 		if _, err = c.expr(e.Args[0], scope, params[0]); err != nil {
 			return "", err

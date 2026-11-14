@@ -79,7 +79,9 @@ type Runtime struct {
 	exitCode atomic.Int64
 	// live is an intrusive list of every process that has not ended, so
 	// registering and removing one is a few pointer writes with no hashing.
-	live    *Context
+	live *Context
+	// alive counts the processes in that list.
+	alive   int64
 	changed chan struct{}
 	closing bool
 	names   map[string]string
@@ -356,6 +358,7 @@ func (r *Runtime) register(c, parent *Context) {
 		r.live.previous = c
 	}
 	r.live = c
+	r.alive++
 	if parent != nil {
 		relate(&parent.owned, c.id, c)
 	}
@@ -370,6 +373,15 @@ func (r *Runtime) unregister(c *Context) {
 		c.following.previous = c.previous
 	}
 	c.previous, c.following = nil, nil
+	r.alive--
+}
+
+// Count is how many processes of the program have not ended, the caller
+// among them.
+func Count(c *Context) int64 {
+	c.rt.mu.Lock()
+	defer c.rt.mu.Unlock()
+	return c.rt.alive
 }
 
 // relate records an entry in a lazily created relationship table.

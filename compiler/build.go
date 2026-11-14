@@ -51,7 +51,7 @@ func build(ctx context.Context, sourcePath string, options BuildOptions) error {
 	if strings.ContainsAny(program.Source, "\r\n") {
 		return fmt.Errorf("source path contains a newline")
 	}
-	environment := append(os.Environ(), "GOWORK=off", "GOOS="+options.GOOS, "GOARCH="+options.GOARCH)
+	environment := append(baseEnvironment(), "GOWORK=off", "GOOS="+options.GOOS, "GOARCH="+options.GOARCH)
 	lock, err := readLock(program.Source)
 	if err != nil {
 		return err

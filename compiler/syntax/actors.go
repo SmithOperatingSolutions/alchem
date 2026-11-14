@@ -40,7 +40,7 @@ func (c checker) actorBuiltin(e *ast.Expr, scope map[string]string, want string)
 			return fail("Process.self requires an expected pid[T] type")
 		}
 		if !c.sendable(msg) {
-			return fail("mailbox messages cannot contain functions")
+			return fail(c.unsent("mailbox messages", msg))
 		}
 		if _, err := arg(0, "integer"); err != nil {
 			return "", err

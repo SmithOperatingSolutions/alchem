@@ -27,6 +27,7 @@ func init() {
 		"alx> Process.send(worker, 21, 1000)", "true", "alx> Process.receive(parent, 1000)", "{true, 42}")
 	doc("Process.id", "The process's unique positive identifier. Pids are compared by id.",
 		"alx> me: pid[integer] = Process.self(1)", "alx> Process.id(me) > 0", "true")
+	doc("Process.count", "How many processes of the program are running, the caller among them. A request being handled, a task and a server each count as one.", "alx> before = Process.count()", "alx> worker: pid[integer] = Process.spawn(fn(inbox: pid[integer]): integer do", "...>   {_, value} = Process.receive(inbox, 1000)", "...>   value", "...> end, 1)", "alx> Process.count() == before + 1", "true", "alx> Process.send(worker, 0, 100)", "true")
 	doc("Process.alive", "Reports whether the process is still running.",
 		"alx> me: pid[integer] = Process.self(1)", "alx> Process.alive(me)", "true")
 	doc("Process.send", "Queues a message for a process, waiting up to the given milliseconds for room. False when it timed out or the process has ended.",
