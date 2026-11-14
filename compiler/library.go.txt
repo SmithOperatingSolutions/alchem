@@ -11775,10 +11775,12 @@ type wsConn struct {
 	done chan struct{}
 	quit chan struct{}
 	mu   sync.Mutex
-	// closing is set once a close frame has been sent, closed once the
-	// connection has been closed from this end.
-	closing bool
-	closed  bool
+	// closing is set once a close frame has been sent, shutting once a caller
+	// has taken on closing the connection from this end, and closed once it
+	// has done so.
+	closing  bool
+	shutting bool
+	closed   bool
 	owner   *actor.Context
 	// receiver, active and pumping work as they do for TCP sockets.
 	receiver any
@@ -12432,13 +12434,16 @@ func wsSendBinary(ctx *actor.Context, ws *wsConn, data string) Tresult[struct{},
 }
 
 // shut starts the closing handshake and drops the connection, after waiting
-// up to a second for the other end's answer when wait is set.
+// up to a second for the other end's answer when wait is set. Of several
+// callers at once the first closes the socket and the rest are told that it
+// is closed already, without waiting for the first to finish.
 func (ws *wsConn) shut(code int, reason string, wait bool) bool {
 	ws.mu.Lock()
-	if ws.closed {
+	if ws.shutting {
 		ws.mu.Unlock()
 		return false
 	}
+	ws.shutting = true
 	sending := !ws.closing
 	ws.closing = true
 	ws.mu.Unlock()
