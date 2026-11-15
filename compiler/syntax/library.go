@@ -234,6 +234,7 @@ func (c checker) library(e *ast.Expr, entry Library, scope map[string]string, wa
 		case arg.Kind == "lambda" || arg.Kind == "capture":
 			t, err = c.lambdaArgument(arg, scope, param, vars, bindings)
 		default:
+			c.reference(arg, param, vars, bindings)
 			expected := ""
 			if resolved(param, vars, bindings) {
 				expected = instantiate(param, vars, bindings)

@@ -2,6 +2,7 @@ package syntax
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/SmithOperatingSolutions/alchem/compiler/ast"
 )
@@ -318,4 +319,33 @@ func ReservedModule(name string) bool {
 // and a later release drops. A program may have a module of that name,
 // whose functions are then the ones its calls reach; a program without one
 // uses the builtin as before.
-func RetiringModule(name string) bool { return name == "DiskStore" }
+func RetiringModule(name string) bool {
+	switch name {
+	case "DiskStore", "WebSocket", "Version", "OptionParser":
+		return true
+	}
+	return false
+}
+
+// replaced reports a builtin type that belongs to a retiring module the
+// program defines itself, whose own types take its place.
+func replaced(name string, modules []string) bool {
+	for _, module := range modules {
+		if name == module || strings.HasPrefix(name, module+".") {
+			return true
+		}
+	}
+	return false
+}
+
+// ProgramTypes are the builtin types of a program: all of them, less those
+// of the retiring modules it defines itself.
+func ProgramTypes(p *ast.Program) []ast.TypeDecl {
+	var out []ast.TypeDecl
+	for _, decl := range BuiltinTypes() {
+		if !replaced(decl.Name, p.Replaced) {
+			out = append(out, decl)
+		}
+	}
+	return out
+}

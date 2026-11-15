@@ -77,8 +77,19 @@ The library keeps what a package could not build for itself: the language's own 
 | --- | --- | --- |
 | `DiskStore` | `disk_store/disk_store.alc` | `DiskStore`, same functions; the type is `DiskStore.Store` |
 | `Crypto.hash_password`, `Crypto.verify_password` | `password/password.alc` | `Password.hash`, `Password.verify` |
+| `WebSocket` | `websocket/websocket.alc` | `WebSocket`, same functions; the type is `WebSocket.Socket` |
+| `Version` | `version/version.alc` | `Version`, same functions and types |
+| `OptionParser` | `option_parser/option_parser.alc` | `OptionParser`, same functions; arguments are a list |
 
-A builtin module's name is otherwise reserved, but a program may import a module named `DiskStore`: its calls then reach that module, and a program without one keeps using the builtin. So a program moves by adding the import, and by writing `DiskStore.Store` where it wrote the type `disk_store`.
+A builtin module's name is otherwise reserved, but a program may import a module with one of these names: its calls then reach that module, its types take the place of the builtin's, and a program without one keeps using the builtin. So a program moves by adding the import, and by writing `DiskStore.Store` where it wrote the type `disk_store` and `WebSocket.Socket` where it wrote `websocket`.
+
+The WebSocket package differs from the builtin in three ways, each because it is built on a TCP socket of the library:
+
+- When the process that owns a socket ends, the connection is dropped without a closing handshake, so the other end sees code 1006 where the builtin sent 1001. A handler that wants the other end told calls `WebSocket.close` before it returns.
+- Pings and the closing handshake are answered while the socket is being read, by `WebSocket.recv` or an active socket, not between reads.
+- `WebSocket.setopts(ws, [active: ...])` sends events to the process that calls it, and `WebSocket.controlling_process` takes a `pid[WebSocket.Event]`.
+
+What made these packages possible is in the library for any package to use: `HTTP.take_over` gives a handler its request's connection as a TCP socket, `TCP.connect_tls` opens an encrypted one, and a function may be [defined for arguments of several types](language-spec.md#functions-for-arguments-of-several-types).
 
 A module may name its functions `put`, `get`, `has_key`, `length`, `map`, `filter`, `reduce`, `prepend` and `concat`, which bare calls otherwise give to the oldest builtins. Inside such a module a bare call means its own function, and the builtin is written `Map.put`, `Enum.map` and so on.
 

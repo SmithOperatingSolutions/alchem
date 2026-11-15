@@ -65,7 +65,7 @@ func generateWithOptions(p ast.Program, options BuildOptions) string {
 // extern declarations by binding them against their Go packages.
 func generateProgram(p ast.Program, options BuildOptions, plan *externPlan) string {
 	g := generator{functions: map[string]string{}, source: p.Source, entry: p.Source, decls: map[string]ast.TypeDecl{}}
-	for _, decl := range append(syntax.BuiltinTypes(), p.Types...) {
+	for _, decl := range append(syntax.ProgramTypes(&p), p.Types...) {
 		g.decls[decl.Name] = decl
 	}
 	for _, f := range p.Functions {
@@ -94,7 +94,7 @@ func generateProgram(p ast.Program, options BuildOptions, plan *externPlan) stri
 	for _, adapter := range plan.adapters {
 		out.WriteString(adapter)
 	}
-	for _, decl := range append(syntax.BuiltinTypes(), p.Types...) {
+	for _, decl := range append(syntax.ProgramTypes(&p), p.Types...) {
 		if decl.Kind == "extern" {
 			out.WriteString("type " + mangle(decl.Name) + " = " + plan.types[decl.Name] + "\n")
 			continue
@@ -359,7 +359,7 @@ func typeNames(p ast.Program) string {
 		}
 		out.WriteString(fmt.Sprintf("%s: {%s, []string{%s}, %t},\n", strconv.Quote(key), strconv.Quote(name), strings.Join(labels, ","), record))
 	}
-	for _, decl := range append(syntax.BuiltinTypes(), p.Types...) {
+	for _, decl := range append(syntax.ProgramTypes(&p), p.Types...) {
 		switch decl.Kind {
 		case "struct":
 			entry(mangle(decl.Name), decl.Local, decl.Fields, true)

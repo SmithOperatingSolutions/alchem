@@ -1,0 +1,110 @@
+defmodule FormsTest do
+  @moduletag area: "functions"
+  struct Box do
+    side: integer
+  end
+
+  # One name defined for arguments of several types: each call takes the
+  # form its arguments fit.
+  def show(n: integer): string do
+    "integer " <> Integer.to_string(n)
+  end
+
+  def show(""): string do
+    "empty"
+  end
+
+  def show(text: string): string do
+    "text " <> text
+  end
+
+  def show(box: Box): string do
+    "box " <> Integer.to_string(box.side)
+  end
+
+  def show(items: list[a]): string do
+    "list of " <> Integer.to_string(length(items))
+  end
+
+  # Forms may differ in what they return, and take defaults.
+  def join(a: integer, b: integer \\ 1): integer do
+    a + b
+  end
+
+  def join(a: string, b: string): string do
+    a <> b
+  end
+
+  # A function written in place is told by its number of parameters.
+  def twice(f: fn[integer, integer], x: integer): integer do
+    f(f(x))
+  end
+
+  def twice(f: fn[integer, integer, integer], x: integer): integer do
+    f(f(x, x), x)
+  end
+
+  # Forms and arities together.
+  def size(text: string): integer do
+    byte_size(text)
+  end
+
+  def size(items: list[integer]): integer do
+    length(items)
+  end
+
+  def size(text: string, extra: integer): integer do
+    byte_size(text) + extra
+  end
+
+  # A form calls another, and itself.
+  def total(items: list[integer]): integer do
+    case items do
+      [] -> 0
+      [first | rest] -> first + total(rest)
+    end
+  end
+
+  def total(text: string): integer do
+    total(Enum.map(String.split(text, ","), fn part -> String.to_integer(part) end))
+  end
+
+  test "a call takes the form its arguments fit" do
+    assert(show(3) == "integer 3")
+    assert(show("") == "empty")
+    assert(show("hi") == "text hi")
+    assert(show(%Box{side: 4}) == "box 4")
+    assert(show([1, 2]) == "list of 2")
+    assert(show(["a"]) == "list of 1")
+    assert("piped" |> show() == "text piped")
+  end
+
+  test "forms with defaults and other results" do
+    assert(join(1) == 2)
+    assert(join(1, 2) == 3)
+    assert(join("a", "b") == "ab")
+  end
+
+  test "functions written in place" do
+    assert(twice(fn x -> x + 1 end, 1) == 3)
+    assert(twice(fn x, y -> x + y end, 3) == 9)
+    assert(twice(&(&1 * 2), 2) == 8)
+  end
+
+  test "forms and arities" do
+    assert(size("abc") == 3)
+    assert(size([1, 2]) == 2)
+    assert(size("abc", 2) == 5)
+    assert(total("1,2,3") == 6)
+    assert(total([4, 5]) == 9)
+  end
+
+  test "references take the form the expected type names" do
+    of_integer: fn[integer, string] = &show/1
+    of_text: fn[string, string] = &show/1
+    assert(of_integer(9) == "integer 9")
+    assert(of_text("x") == "text x")
+    assert(Enum.map(["a", "b"], &show/1) == ["text a", "text b"])
+    assert(Enum.map([1, 2], &show/1) == ["integer 1", "integer 2"])
+  end
+end

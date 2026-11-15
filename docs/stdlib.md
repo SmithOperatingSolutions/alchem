@@ -156,7 +156,7 @@ A `Duration` is an amount per unit, built with `Duration.months(1)`, `Duration.d
 
 A `DateTime` may be in any zone of the zone database, which is built into programs that use it, so they behave the same on a system without one. `DateTime.shift_zone(value, "Europe/Paris")` gives the same moment on that zone's wall clock, with `time_zone` and `utc_offset` set; `DateTime.now(zone)` and `DateTime.from_naive(naive, zone)` build one. Comparison, difference, `add` and Unix time work on the moment. Not available: `Duration` arithmetic between two values (`diff` returns seconds or days) and non-Gregorian calendars.
 
-`URI.parse` splits an address into a `URI` struct and `URI.to_string` writes one back. `Version.match?(version, requirement)` tests a requirement such as `"~> 2.1"` or `">= 1.0.0 and < 2.0.0"`. `Logger.debug`, `info`, `warning` and `error` write leveled lines to standard error, filtered by `Logger.configure(level)` or the `ALCHEM_LOG_LEVEL` variable. `OptionParser.parse(arguments, switches)` reads typed command-line switches into a map.
+`URI.parse` splits an address into a `URI` struct and `URI.to_string` writes one back. `Version.match?(version, requirement)` tests a requirement such as `"~> 2.1"` or `">= 1.0.0 and < 2.0.0"`. `Logger.debug`, `info`, `warning` and `error` write leveled lines to standard error, filtered by `Logger.configure(level)` or the `ALCHEM_LOG_LEVEL` variable. `OptionParser.parse(arguments, switches)` reads typed command-line switches into a map. `Version` and `OptionParser` are moving to packages and the builtins are dropped in v0.4.0: import `version/version.alc` or `option_parser/option_parser.alc` from `github.com/SmithOperatingSolutions/alchem-packages@v0.2.0`, which have the same functions. See [modules](modules.md#library-modules-that-are-moving-to-packages).
 
 ## Server
 
@@ -256,7 +256,13 @@ def main() do
 end
 ```
 
+`TCP.connect_tls(address, ms)` connects and makes the TLS handshake; the socket is then used like any other. It takes `[ca_file: path]`, `[insecure: "true"]` and `[server_name: name]`.
+
+`HTTP.take_over(request)`, called by a handler, gives it the connection of its request as a TCP socket, for a protocol that begins as HTTP and goes on as something else. The server writes nothing more to the connection and the handler's response is not sent. This is what a WebSocket package is built on.
+
 ## WebSockets and cryptography
+
+> `WebSocket` is moving to a package and the builtin is dropped in v0.4.0. Add `import "github.com/SmithOperatingSolutions/alchem-packages@v0.2.0/websocket/websocket.alc"`: the functions and their names are the same and the socket's type is `WebSocket.Socket`. See [modules](modules.md#library-modules-that-are-moving-to-packages) for the three ways it differs.
 
 A handler of `HTTP.serve` turns its request into a WebSocket with `WebSocket.upgrade(request)`; a request that is not a handshake gives `error(reason)`, and the handler answers it as usual. The response a handler returns after upgrading is not sent. `WebSocket.connect("ws://host:port/path", ms)` opens one from the client side, and `wss://` uses TLS with the same `ca_file:` and `insecure:` options as `HTTP.request`. A fourth argument is a list of headers to send with the handshake, as `HTTP.request` takes them: `WebSocket.connect(address, 2000, [origin: origin], [{"cookie", "session=..."}])`.
 

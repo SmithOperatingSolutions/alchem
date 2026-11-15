@@ -77,3 +77,88 @@ end
 		t.Fatalf("err=%v output=%s", err, output)
 	}
 }
+
+// A package that takes over a library module declares the module's types
+// itself: they take the place of the builtin ones, under the names the
+// library gave them, and the library's own are still there for a program
+// that has no such module.
+func TestPackagesReplaceLibraryTypes(t *testing.T) {
+	output, err := buildAndRun(t, map[string]string{
+		"main.alc": `defmodule Main do
+  import "version.alc"
+  import "websocket.alc"
+
+  def label(v: Version): string do
+    Version.to_string(v) <> " " <> Version.to_string("text")
+  end
+
+  def main() do
+    v = %Version{major: 1, minor: 2, patch: 3, note: "own"}
+    IO.puts(label(v) <> " " <> v.note)
+    req: Version.Requirement = Version.requirement(">= 1.0.0")
+    IO.puts(req.source)
+    event: WebSocket.Event = WebSocket.next("hi")
+    case event do
+      WebSocket.Event.text(text) -> IO.puts("text " <> text)
+      WebSocket.Event.gone -> IO.puts("gone")
+    end
+    IO.inspect(WebSocket.next(""))
+  end
+end
+`,
+		"version.alc": `defmodule Version do
+  struct Version do
+    major: integer
+    minor: integer
+    patch: integer
+    note: string
+  end
+
+  struct Requirement do
+    source: string
+  end
+
+  def to_string(v: Version): string do
+    Integer.to_string(v.major) <> "." <> Integer.to_string(v.minor) <> "." <> Integer.to_string(v.patch)
+  end
+
+  def to_string(text: string): string do
+    "(" <> text <> ")"
+  end
+
+  def requirement(text: string): Requirement do
+    %Requirement{source: text}
+  end
+end
+`,
+		"websocket.alc": `defmodule WebSocket do
+  type Event do
+    text(text: string)
+    gone
+  end
+
+  def next(""): Event do
+    Event.gone
+  end
+
+  def next(text: string): Event do
+    Event.text(text)
+  end
+end
+`})
+	if err != nil || output != "1.2.3 (text) own\n>= 1.0.0\ntext hi\nEvent.gone\n" {
+		t.Fatalf("err=%v output=%s", err, output)
+	}
+	output, err = buildAndRun(t, map[string]string{"main.alc": `defmodule Main do
+  def main() do
+    v = Version.parse!("1.2.3-rc.1")
+    IO.inspect({v.major, v.pre, Version.match?(v, "~> 1.2")})
+    {options, _, _} = OptionParser.parse(["--n", "3"], %{"n" => "integer"})
+    IO.inspect(options)
+  end
+end
+`})
+	if err != nil || output != "{1, [\"rc\", \"1\"], true}\n%{\"n\" => \"3\"}\n" {
+		t.Fatalf("err=%v output=%s", err, output)
+	}
+}

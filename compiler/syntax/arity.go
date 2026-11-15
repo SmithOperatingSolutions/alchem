@@ -47,6 +47,7 @@ func arityName(name string, arity int) string { return name + "/" + strconv.Itoa
 
 // plainName removes the arity from a name: size/2 is size.
 func plainName(name string) string {
+	name = firstForm(name)
 	if i := strings.LastIndex(name, "/"); i > 0 {
 		if _, err := strconv.Atoi(name[i+1:]); err == nil {
 			return name[:i]
@@ -158,7 +159,8 @@ func ResolveArities(p *ast.Program) error {
 	private := map[string]bool{}
 	for i := range p.Functions {
 		f := &p.Functions[i]
-		if !overloadable(f) || plainName(f.Name) == f.Name {
+		if !overloadable(f) || plainName(f.Name) == f.Name || firstForm(f.Name) != f.Name {
+			// The forms of one arity are chosen among by analysis.
 			continue
 		}
 		plain := plainName(f.Name)
