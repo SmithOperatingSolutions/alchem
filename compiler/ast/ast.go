@@ -28,7 +28,10 @@ type Program struct {
 	// Fetched is set when the entry file itself comes from a versioned
 	// package: such a program keeps no lock file, its content being fixed by
 	// the version it was asked for.
-	Fetched                  bool
+	Fetched bool
+	// Replaced names the retiring library modules the program defines
+	// itself: their builtin types give way to the program's.
+	Replaced                 []string
 	Types                    []TypeDecl
 	Requires                 []Require
 	Imports                  []string
@@ -88,6 +91,9 @@ type Statement struct {
 
 // Expr carries a source position and the type assigned by semantic analysis.
 type Expr struct {
+	// Chosen is set on a reference to a function defined for arguments of
+	// several types once the form it means has been picked.
+	Chosen               bool
 	Pipe                 bool
 	Kind, Type, Name, Op string
 	Value                Literal

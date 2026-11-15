@@ -1,0 +1,129 @@
+defmodule TakeOverTest do
+  @moduletag area: "network"
+
+  # A certificate for 127.0.0.1 and localhost, made for tests only.
+  def certificate(): string do
+    """
+    -----BEGIN CERTIFICATE-----
+    MIIBjzCCATagAwIBAgIBATAKBggqhkjOPQQDAjAWMRQwEgYDVQQDEwthbGNoZW0g
+    dGVzdDAgFw0yMDAxMDEwMDAwMDBaGA8yMTIwMDEwMTAwMDAwMFowFjEUMBIGA1UE
+    AxMLYWxjaGVtIHRlc3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARIC+lvIvgf
+    JOEBCt9+nIs8nA+OU1obxlvX2BZjYRMv6mmQa7ar7QhPapXW+pkSBEypVOAruQb4
+    AD13p1N4EFmoo3MwcTAOBgNVHQ8BAf8EBAMCAoQwEwYDVR0lBAwwCgYIKwYBBQUH
+    AwEwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQUu+JsepWLR5RdMkGpRguBTpgu
+    Pz4wGgYDVR0RBBMwEYIJbG9jYWxob3N0hwR/AAABMAoGCCqGSM49BAMCA0cAMEQC
+    IGNSAk/SP4P/5c9+VR/KHBIkbg9gavZ8hoSR4w/5XnJ1AiAZjZB2g88YxNem16mU
+    ZJS2sK5pvKLZPR2A1pja2zVssw==
+    -----END CERTIFICATE-----
+    """
+  end
+
+  def key(): string do
+    """
+    -----BEGIN EC PRIVATE KEY-----
+    MHcCAQEEIDW22l9S9inTAIWGK/lRXXkIaxitAj6Z2nyb3v2zKPyDoAoGCCqGSM49
+    AwEHoUQDQgAESAvpbyL4HyThAQrffpyLPJwPjlNaG8Zb19gWY2ETL+ppkGu2q+0I
+    T2qV1vqZEgRMqVTgK7kG+AA9d6dTeBBZqA==
+    -----END EC PRIVATE KEY-----
+    """
+  end
+
+  def is_error(result: result[socket, string]): boolean do
+    case result do
+      ok(_) -> false
+      error(_) -> true
+    end
+  end
+
+  def reason(result: result[socket, string]): string do
+    case result do
+      ok(_) -> "connected"
+      error(reason) -> reason
+    end
+  end
+
+  test "a handler takes over its connection and speaks another protocol" do
+    ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+      case HTTP.take_over(request) do
+        ok(conn) ->
+          again = case HTTP.take_over(request) do
+            ok(_) -> "taken twice"
+            error(reason) -> reason
+          end
+          TCP.send(conn, "HELLO " <> request.path <> "\n")
+          # What the client sent after its request is read first.
+          ok(early) = TCP.recv_line(conn, 2000)
+          TCP.send(conn, String.upcase(early) <> "\n" <> again <> "\n")
+          ok(late) = TCP.recv_line(conn, 2000)
+          TCP.send(conn, String.upcase(late) <> "\n")
+          TCP.close(conn)
+          HTTP.text(200, "not sent")
+        error(reason) -> HTTP.text(500, reason)
+      end
+    end)
+    ok(conn) = TCP.connect(HTTP.address(server), 1000)
+    TCP.send(conn, "GET /raw HTTP/1.1\r\nHost: test\r\n\r\nearly\n")
+    assert(TCP.recv_line(conn, 2000) == ok("HELLO /raw"))
+    assert(TCP.recv_line(conn, 2000) == ok("EARLY"))
+    assert(TCP.recv_line(conn, 2000) == ok("the connection has already been taken over"))
+    TCP.send(conn, "late\n")
+    assert(TCP.recv_line(conn, 2000) == ok("LATE"))
+    assert(TCP.recv_line(conn, 2000) == error("closed"))
+    TCP.close(conn)
+    # The server goes on serving.
+    ok(plain) = HTTP.serve("127.0.0.1:0", fn _ -> HTTP.text(200, "plain") end)
+    ok(reply) = HTTP.get("http://" <> HTTP.address(plain) <> "/")
+    assert(reply.body == "plain")
+    HTTP.stop(plain)
+    HTTP.stop(server)
+  end
+
+  test "a connection taken over belongs to the handler and closes when it ends" do
+    ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+      ok(conn) = HTTP.take_over(request)
+      TCP.send(conn, "bye\n")
+      HTTP.text(200, "")
+    end)
+    ok(conn) = TCP.connect(HTTP.address(server), 1000)
+    TCP.send(conn, "GET / HTTP/1.1\r\nHost: test\r\n\r\n")
+    assert(TCP.recv_line(conn, 2000) == ok("bye"))
+    assert(TCP.recv_line(conn, 2000) == error("closed"))
+    TCP.close(conn)
+    HTTP.stop(server)
+  end
+
+  test "only the process handling a request takes it over" do
+    request = %HTTP.Request{method: "GET", path: "/", query: "", headers: [], body: ""}
+    assert(reason(HTTP.take_over(request)) == "HTTP.take_over must be called by the process handling the request")
+  end
+
+  test "TLS connections" do
+    dir = System.tmp_dir!()
+    certfile = Path.join(dir, "alchem_tls_cert_" <> Integer.to_string(System.os_time()) <> ".pem")
+    keyfile = certfile <> ".key"
+    File.write(certfile, certificate())
+    File.write(keyfile, key())
+    ok(server) = HTTP.serve_tls("127.0.0.1:0", fn request -> HTTP.text(200, "secure " <> request.path) end, [certfile: certfile, keyfile: keyfile])
+    address = HTTP.address(server)
+    ok(conn) = TCP.connect_tls(address, 2000, [ca_file: certfile])
+    assert(TCP.send(conn, "GET /over-tls HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n") == ok({}))
+    assert(TCP.recv_line(conn, 2000) == ok("HTTP/1.1 200 OK"))
+    TCP.close(conn)
+    ok(named) = TCP.connect_tls(address, 2000, [ca_file: certfile, server_name: "localhost"])
+    TCP.close(named)
+    ok(trusting) = TCP.connect_tls(address, 2000, [insecure: "true"])
+    TCP.close(trusting)
+    assert(TCP.connect_tls(address, 2000) |> is_error())
+    assert(TCP.connect_tls(address, 2000, [ca_file: certfile, server_name: "other.test"]) |> is_error())
+    assert(TCP.connect_tls(address, 2000, [ca_file: "/alchem-no-such-file"]) |> is_error())
+    assert(reason(TCP.connect_tls(address, 2000, [ca_file: keyfile])) == "no certificates in " <> keyfile)
+    assert(TCP.connect_tls("no-port", 2000) |> is_error())
+    assert_raise("TCP.connect_tls: unknown option :verify", fn -> TCP.connect_tls(address, 2000, [verify: "none"]) end)
+    ok(plain) = HTTP.serve("127.0.0.1:0", fn _ -> HTTP.text(200, "plain") end)
+    assert(TCP.connect_tls(HTTP.address(plain), 2000, [insecure: "true"]) |> is_error())
+    HTTP.stop(plain)
+    HTTP.stop(server)
+    File.rm(certfile)
+    File.rm(keyfile)
+  end
+end

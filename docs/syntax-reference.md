@@ -202,7 +202,8 @@ def name(parameter: type): result do ... end.
 - A function may be named put, get, has_key, length, map, filter, reduce, prepend or concat, as library functions are. In the module that defines it a bare call then means that function, and the builtin is written Map.put, Enum.map and so on; in other modules it is called Module.put and the bare name keeps its meaning.
 - &name refers to a named function as a value.
 - name: type \\ value gives a trailing parameter a default, which a call may leave out. The value is a constant: literals, lists, tuples and maps of them, none, some(...), ok(...) or error(...).
-- A function has one number of parameters: there is no second definition with a different arity.
+- Definitions of one name with different numbers of parameters are different functions: size/1 and size/2. A call takes the one its number of arguments fits.
+- A function may also be defined for arguments of different types: def show(n: integer) and def show(text: string) are two forms of show/1, each with its own body and result type, and a call takes the first form its arguments fit. A reference, &show/1, is the form the expected function type names.
 
 Example: definitions and calls
 
@@ -1079,7 +1080,8 @@ A package is a tagged repository of .alc files, imported by host path and versio
 - For a private repository set ALCHEM_PRIVATE to comma-separated patterns such as github.com/owner/*: matching packages are fetched with git from their own host, using the credentials git already has, and nothing about them is sent to the public Go proxy or checksum database.
 - require "alchem" "v0.4.0" in a file names the oldest Alchem release it works with; an older compiler reports that instead of an error about something it does not know. Releases before v0.3.8 do not know the line itself.
 - One program uses one version of a package; two are the compile error conflicting versions.
-- Module names are shared by the whole program, so a package's module and one of the program's cannot have the same name, and neither can take a library module's name. The exception is a library module that is moving to a package (DiskStore): a program that imports a module of that name uses it, and one that does not uses the builtin until it is dropped.
+- What a package builds a protocol or a service on is in the library: HTTP.take_over gives a handler its request's connection as a TCP socket, TCP.connect_tls opens an encrypted one, extern binds Go code, and a function may be defined for arguments of several types, as library functions are.
+- Module names are shared by the whole program, so a package's module and one of the program's cannot have the same name, and neither can take a library module's name. The exception is a library module that is moving to a package (DiskStore, WebSocket, Version, OptionParser): a program that imports a module of that name uses it, and one that does not uses the builtin until it is dropped.
 
 Example: a library file that states the release it needs
 

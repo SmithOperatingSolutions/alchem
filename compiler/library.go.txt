@@ -9311,6 +9311,58 @@ func tcpConnect(ctx *actor.Context, address string, ms int64) Tresult[*socketHan
 	return okOf(newConnection(ctx, conn))
 }
 
+func tcpConnectTLS(ctx *actor.Context, address string, ms int64, where string) Tresult[*socketHandle, string] {
+	return tcpConnectTLSWith(ctx, address, ms, L[pair[actor.Atom, string]]{}, where)
+}
+
+// tcpConnectTLSWith connects and makes the TLS handshake, both within ms
+// milliseconds. The options are ca_file:, a PEM file of certificates to
+// trust, insecure: "true" to trust any, and server_name:, the name the
+// certificate must be for when it is not the host of the address.
+func tcpConnectTLSWith(ctx *actor.Context, address string, ms int64, options L[pair[actor.Atom, string]], where string) Tresult[*socketHandle, string] {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return errOf[*socketHandle](netProblem(err))
+	}
+	config := &tls.Config{ServerName: host}
+	for _, option := range fwd(options) {
+		switch option.E0 {
+		case "ca_file":
+			pem, err := os.ReadFile(option.E1)
+			if err != nil {
+				return errOf[*socketHandle](err.Error())
+			}
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(pem) {
+				return errOf[*socketHandle]("no certificates in " + option.E1)
+			}
+			config.RootCAs = pool
+		case "insecure":
+			config.InsecureSkipVerify = option.E1 == "true"
+		case "server_name":
+			config.ServerName = option.E1
+		default:
+			failAt(ctx, where, "TCP.connect_tls: unknown option :"+string(option.E0)+"; the options are ca_file:, insecure: and server_name:")
+		}
+	}
+	until, bounded := netDeadline(ms)
+	conn, err := netDial(ctx, address, ms)
+	if err != nil {
+		return errOf[*socketHandle](netProblem(err))
+	}
+	if bounded {
+		conn.SetDeadline(until)
+	}
+	encrypted := tls.Client(conn, config)
+	if err := encrypted.Handshake(); err != nil {
+		conn.Close()
+		actor.Check(ctx)
+		return errOf[*socketHandle](netProblem(err))
+	}
+	encrypted.SetDeadline(time.Time{})
+	return okOf(newConnection(ctx, encrypted))
+}
+
 // netDial connects to a TCP address, waiting up to ms milliseconds (negative
 // waits as long as the system allows); a process asked to stop while it waits
 // stops.
@@ -11279,12 +11331,16 @@ func httpDo(ctx *actor.Context, method, address string, headers L[pair[string, s
 	}
 	defer stopDeadline()
 	finished := make(chan struct{})
+	// finish may be reached more than once, and from more than one process
+	// when a streamed body is read by several.
+	var once sync.Once
+	finish := func() { once.Do(func() { close(finished) }) }
 	streaming := false
 	defer func() {
 		// A streamed body is read later, so its request stays open.
 		if !streaming {
 			cancel()
-			close(finished)
+			finish()
 		}
 	}()
 	go func() {
@@ -11316,11 +11372,7 @@ func httpDo(ctx *actor.Context, method, address string, headers L[pair[string, s
 			defer func() {
 				response.Body.Close()
 				cancel()
-				select {
-				case <-finished:
-				default:
-					close(finished)
-				}
+				finish()
 			}()
 			buffer := make([]byte, 32<<10)
 			for {
@@ -11620,6 +11672,37 @@ func (e *httpExchange) taken() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.hijacked
+}
+
+// httpTakeOver gives the process handling a request its connection, as a
+// TCP socket that reads first whatever the client sent after the request.
+// The server then writes nothing more to it.
+func httpTakeOver(ctx *actor.Context, request THTTP_oRequest) Tresult[*socketHandle, string] {
+	found, ok := httpExchanges.Load(ctx)
+	if !ok {
+		return errOf[*socketHandle]("HTTP.take_over must be called by the process handling the request")
+	}
+	exchange := found.(*httpExchange)
+	exchange.mu.Lock()
+	defer exchange.mu.Unlock()
+	if exchange.hijacked {
+		return errOf[*socketHandle]("the connection has already been taken over")
+	}
+	hijacker, ok := exchange.w.(http.Hijacker)
+	if !ok {
+		return errOf[*socketHandle]("the connection cannot be taken over")
+	}
+	conn, buffered, err := hijacker.Hijack()
+	if err != nil {
+		return errOf[*socketHandle](err.Error())
+	}
+	exchange.hijacked = true
+	close(exchange.upgraded)
+	// The server's own deadlines no longer apply.
+	conn.SetDeadline(time.Time{})
+	s := &socketHandle{conn: conn, reader: buffered.Reader}
+	s.own(ctx)
+	return okOf(s)
 }
 
 // httpHead writes a response's status and headers.

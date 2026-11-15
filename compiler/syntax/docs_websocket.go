@@ -1,7 +1,7 @@
 package syntax
 
 func init() {
-	module("WebSocket", "Network", "WebSockets, RFC 6455: a handler of HTTP.serve upgrades its request into a socket, and WebSocket.connect opens one to a server. Messages are text or binary; pings and the closing handshake are answered without the program's help. Calls that wait take milliseconds and give error(\"timeout\") or error(\"closed\"). A socket belongs to the process that made it and closes when that process ends, so a handler that upgrades either keeps the socket or hands it on with controlling_process.")
+	module("WebSocket", "Network", "Moving to a package: this builtin is dropped in v0.4.0. Import github.com/SmithOperatingSolutions/alchem-packages@v0.2.0/websocket/websocket.alc, which has the same functions; its socket is the type WebSocket.Socket. WebSockets, RFC 6455: a handler of HTTP.serve upgrades its request into a socket, and WebSocket.connect opens one to a server. Messages are text or binary; pings and the closing handshake are answered without the program's help. Calls that wait take milliseconds and give error(\"timeout\") or error(\"closed\"). A socket belongs to the process that made it and closes when that process ends, so a handler that upgrades either keeps the socket or hands it on with controlling_process.")
 	module("Crypto", "Text", "Cryptographic building blocks: random bytes from the operating system's secure source, hashes, HMAC signatures, password storage and a comparison that takes the same time however much of its input matches. Results are raw bytes; Base.encode16 or Base.encode64 makes them printable.")
 
 	// echo is a server whose handler upgrades its request, answers one

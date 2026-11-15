@@ -33,6 +33,14 @@ func init() {
 		"alx> TCP.setopts(conn, [packet: 4])", "ok({})")
 	doc("TCP.shutdown", "Closes one direction of a connection: :write tells the other end there is no more to read, :read stops reading, :read_write closes it.",
 		listen, echo, connect, "alx> TCP.send(conn, \"bye\\n\")", "ok({})", "alx> TCP.shutdown(conn, :write)", "ok({})", "alx> TCP.recv_line(conn, 1000)", "ok(\"BYE\")")
+	doc("TCP.connect_tls", "Connects to an address and makes the TLS handshake, both within the given milliseconds; the socket is then used as any other, and what it sends and receives is encrypted. The certificate must be for the host of the address and from an authority the system trusts. Options, as text: ca_file: a PEM file of certificates to trust instead, insecure: \"true\" to trust any, and server_name: the name the certificate must be for.",
+		"alx> ok(server) = HTTP.serve(\"127.0.0.1:0\", fn _ -> HTTP.text(200, \"plain\") end)",
+		"alx> case TCP.connect_tls(HTTP.address(server), 1000) do", "...>   ok(_) -> \"encrypted\"", "...>   error(_) -> \"not a TLS server\"", "...> end", "\"not a TLS server\"")
+	doc("HTTP.take_over", "Called by an HTTP.serve handler, gives it the connection of its request as a TCP socket, for a protocol that begins as HTTP and goes on as something else, as a WebSocket does. The server writes nothing more to the connection, the response the handler returns afterwards is not sent, and what the client sent after the request is what the socket reads first. The socket belongs to the handler's process and closes when it ends, unless TCP.controlling_process hands it on.",
+		"alx> ok(server) = HTTP.serve(\"127.0.0.1:0\", fn request ->", "...>   case HTTP.take_over(request) do", "...>     ok(conn) ->",
+		"...>       TCP.send(conn, \"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nhi\")", "...>       TCP.close(conn)", "...>       HTTP.text(200, \"\")",
+		"...>     error(reason) -> HTTP.text(500, reason)", "...>   end", "...> end)",
+		"alx> ok(reply) = HTTP.get(\"http://\" <> HTTP.address(server) <> \"/\")", "alx> reply.body", "\"hi\"")
 	doc("UDP.open", "Opens a UDP socket on an address, host:port; port 0 picks a free one, which UDP.address reports.",
 		"alx> ok(socket) = UDP.open(\"127.0.0.1:0\")", "alx> String.starts_with?(UDP.address(socket), \"127.0.0.1:\")", "true")
 	doc("UDP.send", "Sends a datagram to an address.",

@@ -15,6 +15,17 @@ func Qualify(m *ast.Program) {
 	for _, decl := range m.Types {
 		local[decl.Local] = true
 	}
+	// A package that takes over a library module names the type the module
+	// is known by as the library did: Version, not Version.Version.
+	qualified := func(n string) string {
+		if first, rest, _ := strings.Cut(n, "."); first == m.Module && RetiringModule(m.Module) {
+			if rest == "" {
+				return first
+			}
+			return first + "." + rest
+		}
+		return m.Module + "." + n
+	}
 	var typ func(string) string
 	typ = func(t string) string {
 		if t == "" {
@@ -22,7 +33,7 @@ func Qualify(m *ast.Program) {
 		}
 		head, args := ast.Split(t)
 		if local[head] {
-			head = m.Module + "." + head
+			head = qualified(head)
 		}
 		for i := range args {
 			args[i] = typ(args[i])
@@ -33,7 +44,7 @@ func Qualify(m *ast.Program) {
 	name := func(n string) string {
 		first, _, _ := strings.Cut(n, ".")
 		if local[first] {
-			return m.Module + "." + n
+			return qualified(n)
 		}
 		return n
 	}
@@ -105,7 +116,7 @@ func Qualify(m *ast.Program) {
 	}
 	for i := range m.Types {
 		decl := &m.Types[i]
-		decl.Name = m.Module + "." + decl.Local
+		decl.Name = qualified(decl.Local)
 		params(decl.Fields)
 		for _, variant := range decl.Variants {
 			params(variant.Fields)

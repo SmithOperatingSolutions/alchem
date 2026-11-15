@@ -630,6 +630,25 @@ func (c checker) expr(e *ast.Expr, scope map[string]string, expected ...string) 
 		if !ok || e.Name == "main" {
 			return fail("unknown function reference " + e.Name)
 		}
+		if !e.Chosen && c.functions[formName(e.Name, 2)] != nil {
+			// A reference to a function of several forms is the form the
+			// expected function type names.
+			var fitting *ast.Function
+			for _, form := range c.forms(e.Name) {
+				parts := []string{}
+				for _, p := range form.Params {
+					parts = append(parts, p.Type)
+				}
+				t := "fn[" + strings.Join(append(parts, form.Type), ",") + "]"
+				if want != "" && fitting == nil && unify(t, want, set(generic(form)), map[string]string{}) {
+					fitting = form
+				}
+			}
+			if fitting == nil {
+				return fail(fmt.Sprintf("%s is defined for arguments of several types, and a reference to it needs an expected function type: one of %s", functionLocalName(f), c.formList(e.Name)))
+			}
+			f, e.Name, e.Chosen = fitting, fitting.Name, true
+		}
 		if f.Type == "void" {
 			return fail(e.Name + " returns no value and cannot be referenced")
 		}
@@ -961,6 +980,13 @@ func (c checker) expr(e *ast.Expr, scope map[string]string, expected ...string) 
 			}
 			return fail("undefined function " + e.Name)
 		}
+		if c.functions[formName(e.Name, 2)] != nil {
+			chosen, err := c.form(e, scope)
+			if err != nil {
+				return "", err
+			}
+			f, e.Name = chosen, chosen.Name
+		}
 		// Trailing arguments a call leaves out take the parameters' default
 		// values, which are constants and so mean the same at every call.
 		for len(e.Args) < len(f.Params) && f.Params[len(e.Args)].Default != nil {
@@ -1198,5 +1224,140 @@ func place(e *ast.Expr, line, column int) {
 	place(e.Right, line, column)
 	for _, arg := range append(append([]*ast.Expr{}, e.Args...), e.Keys...) {
 		place(arg, line, column)
+	}
+}
+
+// forms lists the forms of a function defined for arguments of several
+// types, in the order they are written.
+func (c checker) forms(name string) []*ast.Function {
+	out := []*ast.Function{c.functions[name]}
+	for n := 2; c.functions[formName(name, n)] != nil; n++ {
+		out = append(out, c.functions[formName(name, n)])
+	}
+	return out
+}
+
+// formList names the parameter types of each form: (string, string) or
+// (Version, string).
+func (c checker) formList(name string) string {
+	parts := []string{}
+	for _, form := range c.forms(name) {
+		parts = append(parts, "("+parameterTypes(*form)+")")
+	}
+	return strings.Join(parts, " or ")
+}
+
+// form picks the form of a function that a call's arguments fit: the first
+// whose parameters take them, each argument typed on a copy so that typing it
+// again for the chosen form starts from the same expression.
+func (c checker) form(e *ast.Expr, scope map[string]string) (*ast.Function, error) {
+	forms := c.forms(e.Name)
+	found := make([]string, len(e.Args))
+	for _, form := range forms {
+		required := 0
+		for _, param := range form.Params {
+			if param.Default == nil {
+				required++
+			}
+		}
+		if len(e.Args) < required || len(e.Args) > len(form.Params) {
+			continue
+		}
+		vars, bindings, fits := set(generic(form)), map[string]string{}, true
+		for i, arg := range e.Args {
+			param := form.Params[i].Type
+			if arity, written := functionArity(arg); written {
+				head, parts := ast.Split(param)
+				if head != "fn" || len(parts)-1 != arity {
+					fits = false
+					break
+				}
+				continue
+			}
+			expected := ""
+			if resolved(param, vars, bindings) {
+				expected = instantiate(param, vars, bindings)
+			}
+			t, err := c.expr(cloneExpr(arg), cloneScope(scope), expected)
+			if err != nil {
+				if plain, plainErr := c.expr(cloneExpr(arg), cloneScope(scope)); plainErr == nil {
+					found[i] = plain
+				}
+				fits = false
+				break
+			}
+			found[i] = t
+			if !unify(param, t, vars, bindings) {
+				fits = false
+				break
+			}
+		}
+		if fits {
+			return form, nil
+		}
+	}
+	// An argument that is wrong whatever the form is reported as itself.
+	for _, arg := range e.Args {
+		if _, written := functionArity(arg); written {
+			continue
+		}
+		if _, err := c.expr(cloneExpr(arg), cloneScope(scope)); err != nil {
+			for _, form := range forms {
+				if len(form.Params) == len(e.Args) {
+					if _, typed := c.expr(cloneExpr(arg), cloneScope(scope), form.Params[indexOf(e.Args, arg)].Type); typed == nil {
+						err = nil
+					}
+				}
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	for i, t := range found {
+		if t == "" {
+			found[i] = "?"
+			if _, written := functionArity(e.Args[i]); written {
+				found[i] = "a function"
+			}
+		}
+	}
+	return nil, diagnostic(e.Line, e.Column, "%s takes %s, not (%s)", functionLocalName(forms[0]), c.formList(e.Name), strings.Join(found, ", "))
+}
+
+func indexOf(list []*ast.Expr, item *ast.Expr) int {
+	for i, other := range list {
+		if other == item {
+			return i
+		}
+	}
+	return -1
+}
+
+// reference picks, for a reference to a function of several forms passed
+// where a function is expected, the form whose parameters are those the
+// expected type already names.
+func (c checker) reference(arg *ast.Expr, param string, vars map[string]bool, bindings map[string]string) {
+	if arg.Kind != "funcref" || arg.Chosen || c.functions[arg.Name] == nil || c.functions[formName(arg.Name, 2)] == nil {
+		return
+	}
+	parts, _, ok := ast.FunctionParts(param)
+	if !ok {
+		return
+	}
+	for _, form := range c.forms(arg.Name) {
+		if len(form.Params) != len(parts) {
+			continue
+		}
+		own, bound, fits := set(generic(form)), map[string]string{}, true
+		for i, part := range parts {
+			if resolved(part, vars, bindings) {
+				fits = fits && unify(form.Params[i].Type, instantiate(part, vars, bindings), own, bound)
+			}
+		}
+		if fits {
+			arg.Name, arg.Chosen = form.Name, true
+			return
+		}
 	}
 }

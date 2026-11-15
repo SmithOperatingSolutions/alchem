@@ -421,6 +421,7 @@ func fileData(path string) (moduleJSON, error) {
 	}
 	// The clauses of one function are documented together.
 	index := map[string]int{}
+	declared, shown := map[string][]string{}, map[string]ast.Function{}
 	for _, f := range program.Functions {
 		if f.Private || f.Test != "" || f.Setup || f.Name == "main" {
 			continue
@@ -434,14 +435,39 @@ func fileData(path string) (moduleJSON, error) {
 		at, seen := index[key]
 		if !seen {
 			index[key] = len(out.Functions)
+			declared[key], shown[key] = syntax.Declared(nil, f), f
 			out.Functions = append(out.Functions, functionJSON{Name: program.Module + "." + f.Name, Module: program.Module, Signatures: []string{signature}, Summary: doc})
 			continue
 		}
 		if out.Functions[at].Summary == "" {
 			out.Functions[at].Summary = doc
 		}
+		// A clause that declares other parameter types than the clauses
+		// before it begins another form of the function.
+		signatures := out.Functions[at].Signatures
+		if syntax.NextForm(declared[key], f) {
+			signatures = append(signatures, signature)
+			declared[key] = nil
+		} else if typed(f) && !typed(shown[key]) {
+			// A form is shown by its first clause that names every type.
+			signatures[len(signatures)-1] = signature
+		} else {
+			f = shown[key]
+		}
+		out.Functions[at].Signatures, shown[key] = signatures, f
+		declared[key] = syntax.Declared(declared[key], f)
 	}
 	return out, nil
+}
+
+// typed reports a clause whose parameters are all names with types.
+func typed(f ast.Function) bool {
+	for _, param := range f.Params {
+		if param.Pattern != nil || param.Type == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func fileText(out moduleJSON) string {
@@ -457,7 +483,7 @@ func fileText(out moduleJSON) string {
 		}
 	}
 	for _, f := range out.Functions {
-		b.WriteString("\n" + f.Signatures[0] + "\n")
+		b.WriteString("\n" + strings.Join(f.Signatures, "\n") + "\n")
 		if f.Summary == "" {
 			b.WriteString("\n    (undocumented)\n")
 		} else {

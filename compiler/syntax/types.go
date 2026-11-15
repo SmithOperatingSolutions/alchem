@@ -83,7 +83,7 @@ func set(names []string) map[string]bool {
 func (c *checker) declare(p *ast.Program) error {
 	c.types = map[string]*ast.TypeDecl{}
 	c.variants = map[string]variantRef{}
-	builtin := BuiltinTypes()
+	builtin := ProgramTypes(p)
 	for i := range builtin {
 		c.types[builtin[i].Name] = &builtin[i]
 		for j, variant := range builtin[i].Variants {
@@ -102,7 +102,7 @@ func (c *checker) declare(p *ast.Program) error {
 		if c.types[decl.Name] != nil {
 			return located(decl, decl.Line, decl.Column, "duplicate type %s", decl.Local)
 		}
-		if ReservedModule(decl.Local) {
+		if ReservedModule(decl.Local) && !replaced(decl.Name, p.Replaced) {
 			return located(decl, decl.Line, decl.Column, "type name %s is reserved for the builtin %s functions", decl.Local, decl.Local)
 		}
 		c.types[decl.Name] = decl
@@ -384,6 +384,7 @@ func (c checker) arguments(e *ast.Expr, scope map[string]string, params []string
 		if arg.Kind == "lambda" || arg.Kind == "capture" {
 			t, err = c.lambdaArgument(arg, scope, params[i], vars, bindings)
 		} else {
+			c.reference(arg, params[i], vars, bindings)
 			t, err = c.expr(arg, scope, expected)
 		}
 		if err != nil {

@@ -2,6 +2,7 @@ package syntax
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/SmithOperatingSolutions/alchem/compiler/ast"
@@ -34,22 +35,124 @@ func mergeClauses(p *ast.Program) error {
 			return diagnostic(first.Line, first.Column, "clauses of %s must be adjacent", first.Name)
 		}
 		seen[first.Name] = true
-		plain := len(group) == 1 && first.Guard == nil
-		for _, param := range first.Params {
-			plain = plain && param.Pattern == nil && param.Type != ""
+		for n, form := range forms(group) {
+			merged := form[0]
+			plain := len(form) == 1 && merged.Guard == nil
+			for _, param := range merged.Params {
+				plain = plain && param.Pattern == nil && param.Type != ""
+			}
+			if !plain {
+				var err error
+				if merged, err = mergeGroup(form); err != nil {
+					return err
+				}
+			}
+			if merged.Private != first.Private {
+				return diagnostic(merged.Line, merged.Column, "clauses of %s must all be def or all be defp", first.Name)
+			}
+			if n > 0 {
+				merged.Name = formName(first.Name, n+1)
+			}
+			for _, earlier := range out[len(out)-n:] {
+				if sameParameters(earlier, merged) {
+					return diagnostic(form[0].Line, form[0].Column, "%s is defined twice for (%s)", plainName(first.Name), parameterTypes(merged))
+				}
+			}
+			out = append(out, merged)
 		}
-		if plain {
-			out = append(out, first)
-			continue
-		}
-		merged, err := mergeGroup(group)
-		if err != nil {
-			return err
-		}
-		out = append(out, merged)
 	}
 	p.Functions = out
 	return nil
+}
+
+// A function may be defined for arguments of different types: clauses of one
+// name and number of parameters whose declared types differ are forms of it,
+// and each call is given the form its arguments fit. The first form keeps the
+// function's name and the others are named name#2, name#3 and so on inside
+// the compiler; "#" cannot be written in a name.
+
+// formName is the name of the nth form of a function, counting from one.
+func formName(name string, n int) string { return name + "#" + strconv.Itoa(n) }
+
+// firstForm removes the form from a name: size#2 is size.
+func firstForm(name string) string {
+	if i := strings.LastIndex(name, "#"); i > 0 {
+		return name[:i]
+	}
+	return name
+}
+
+// clauseTypes is the type each parameter of a clause declares, or "" where
+// it declares none: a literal pattern declares the type of its literal.
+func clauseTypes(clause ast.Function) []string {
+	types := make([]string, len(clause.Params))
+	for i, param := range clause.Params {
+		types[i] = param.Type
+		if param.Type == "" && param.Pattern != nil && param.Pattern.Kind == "literal" {
+			types[i] = param.Pattern.Value.Kind
+		}
+	}
+	return types
+}
+
+// NextForm reports whether a clause begins another form of its function:
+// whether it declares a parameter with another type than the clauses so
+// far, whose declared types are given.
+func NextForm(types []string, clause ast.Function) bool {
+	declared := clauseTypes(clause)
+	if len(declared) != len(types) {
+		return false
+	}
+	for k, t := range declared {
+		if t != "" && types[k] != "" && t != types[k] {
+			return true
+		}
+	}
+	return false
+}
+
+// Declared adds the types a clause declares to those of the clauses of its
+// form so far.
+func Declared(types []string, clause ast.Function) []string {
+	declared := clauseTypes(clause)
+	if len(declared) != len(types) {
+		return declared
+	}
+	for k := range declared {
+		if types[k] != "" {
+			declared[k] = types[k]
+		}
+	}
+	return declared
+}
+
+// forms splits the clauses of one function into its forms: a clause that
+// declares a parameter with another type than the clauses before it begins
+// the next form, and a clause that declares nothing new continues the form.
+func forms(group []ast.Function) [][]ast.Function {
+	var out [][]ast.Function
+	var types []string
+	start := 0
+	for i, clause := range group {
+		if NextForm(types, clause) {
+			out = append(out, group[start:i])
+			start, types = i, nil
+		}
+		types = Declared(types, clause)
+	}
+	return append(out, group[start:])
+}
+
+func parameterTypes(f ast.Function) string {
+	parts := []string{}
+	for _, param := range f.Params {
+		parts = append(parts, param.Type)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func sameParameters(a, b ast.Function) bool {
+	return len(a.Params) == len(b.Params) && parameterTypes(a) == parameterTypes(b)
 }
 
 func mergeGroup(group []ast.Function) (ast.Function, error) {

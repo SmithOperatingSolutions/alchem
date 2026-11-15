@@ -7594,7 +7594,7 @@ alx> URI.to_string(%URI{uri | path: "/b", query: some("page=2")})
 
 ## Version
 
-Parsing and comparing semantic versions.
+Parsing and comparing semantic versions. Moving to a package: this builtin is dropped in v0.4.0. Import github.com/SmithOperatingSolutions/alchem-packages@v0.2.0/version/version.alc, which has the same functions and types.
 
 ### Version.compare
 
@@ -7727,7 +7727,7 @@ alx> Version.to_string(%Version{major: 2, minor: 0, patch: 1, pre: ["beta", "2"]
 
 ## OptionParser
 
-Reads command-line switches into a map.
+Reads command-line switches into a map. Moving to a package: this builtin is dropped in v0.4.0. Import github.com/SmithOperatingSolutions/alchem-packages@v0.2.0/option_parser/option_parser.alc, which has the same functions and takes the arguments as a list.
 
 ### OptionParser.parse
 
@@ -10138,6 +10138,24 @@ alx> TCP.recv_line(conn, 1000)
 ok("HI")
 ```
 
+### TCP.connect_tls
+
+```
+TCP.connect_tls(string, integer) -> result[socket,string]
+TCP.connect_tls(string, integer, list[tuple[atom,string]]) -> result[socket,string]
+```
+
+Connects to an address and makes the TLS handshake, both within the given milliseconds; the socket is then used as any other, and what it sends and receives is encrypted. The certificate must be for the host of the address and from an authority the system trusts. Options, as text: ca_file: a PEM file of certificates to trust instead, insecure: "true" to trust any, and server_name: the name the certificate must be for.
+
+```elixir
+alx> ok(server) = HTTP.serve("127.0.0.1:0", fn _ -> HTTP.text(200, "plain") end)
+alx> case TCP.connect_tls(HTTP.address(server), 1000) do
+...>   ok(_) -> "encrypted"
+...>   error(_) -> "not a TLS server"
+...> end
+"not a TLS server"
+```
+
 ### TCP.controlling_process
 
 ```
@@ -10690,6 +10708,29 @@ alx> base = "http://" <> HTTP.address(server)
 alx> ok(response) = HTTP.stream("GET", base <> "/s", [], "")
 alx> HTTP.read(response)
 "GET /s "
+```
+
+### HTTP.take_over
+
+```
+HTTP.take_over(HTTP.Request) -> result[socket,string]
+```
+
+Called by an HTTP.serve handler, gives it the connection of its request as a TCP socket, for a protocol that begins as HTTP and goes on as something else, as a WebSocket does. The server writes nothing more to the connection, the response the handler returns afterwards is not sent, and what the client sent after the request is what the socket reads first. The socket belongs to the handler's process and closes when it ends, unless TCP.controlling_process hands it on.
+
+```elixir
+alx> ok(server) = HTTP.serve("127.0.0.1:0", fn request ->
+...>   case HTTP.take_over(request) do
+...>     ok(conn) ->
+...>       TCP.send(conn, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi")
+...>       TCP.close(conn)
+...>       HTTP.text(200, "")
+...>     error(reason) -> HTTP.text(500, reason)
+...>   end
+...> end)
+alx> ok(reply) = HTTP.get("http://" <> HTTP.address(server) <> "/")
+alx> reply.body
+"hi"
 ```
 
 ### HTTP.text
@@ -12368,7 +12409,7 @@ ok({})
 
 ## WebSocket
 
-WebSockets, RFC 6455: a handler of HTTP.serve upgrades its request into a socket, and WebSocket.connect opens one to a server. Messages are text or binary; pings and the closing handshake are answered without the program's help. Calls that wait take milliseconds and give error("timeout") or error("closed"). A socket belongs to the process that made it and closes when that process ends, so a handler that upgrades either keeps the socket or hands it on with controlling_process.
+Moving to a package: this builtin is dropped in v0.4.0. Import github.com/SmithOperatingSolutions/alchem-packages@v0.2.0/websocket/websocket.alc, which has the same functions; its socket is the type WebSocket.Socket. WebSockets, RFC 6455: a handler of HTTP.serve upgrades its request into a socket, and WebSocket.connect opens one to a server. Messages are text or binary; pings and the closing handshake are answered without the program's help. Calls that wait take milliseconds and give error("timeout") or error("closed"). A socket belongs to the process that made it and closes when that process ends, so a handler that upgrades either keeps the socket or hands it on with controlling_process.
 
 ### WebSocket.close
 

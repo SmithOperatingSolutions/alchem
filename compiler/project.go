@@ -384,6 +384,12 @@ func loadProjectAs(ctx context.Context, entry string, library bool) (ast.Program
 	}
 	sort.Slice(remotes, func(i, j int) bool { return remotes[i].Path < remotes[j].Path })
 	out := ast.Program{Source: entry, Module: modules[entry].Module, Remotes: remotes, GroupTags: modules[entry].GroupTags, Fetched: entryRemote != nil}
+	for name := range names {
+		if syntax.RetiringModule(name) {
+			out.Replaced = append(out.Replaced, name)
+		}
+	}
+	sort.Strings(out.Replaced)
 	private := map[string]bool{}
 	for _, module := range modules {
 		for _, f := range module.Functions {
