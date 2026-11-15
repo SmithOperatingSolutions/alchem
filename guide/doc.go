@@ -147,6 +147,17 @@ func moduleData(module syntax.Module) moduleJSON {
 	return out
 }
 
+// replaces reports a query that names a library module a package can take
+// the place of, or a function of one.
+func replaces(query string) bool {
+	name, _, _ := strings.Cut(query, ".")
+	if index := strings.LastIndex(name, "/"); index > 0 {
+		name = name[:index]
+	}
+	module, ok := moduleNamed(name)
+	return ok && syntax.RetiringModule(module.Name)
+}
+
 // find resolves a query to a module or a function of the library.
 func find(query string) (syntax.Module, []syntax.Function, error) {
 	if module, ok := moduleNamed(query); ok {
@@ -197,6 +208,13 @@ func Doc(query string, all, asJSON bool) (string, error) {
 		}
 		return DocIndex(), nil
 	}
+	// A module the project imports in place of a library module of the same
+	// name is the one its programs use, so it is the one shown.
+	if replaces(query) {
+		if text, found, problem := sourceDoc(query, asJSON); found {
+			return text, problem
+		}
+	}
 	module, functions, err := find(query)
 	if err != nil {
 		// Not the library's: a module of this project, or of a package it
@@ -232,6 +250,15 @@ func Search(text string, asJSON bool) (string, error) {
 		Command string `json:"command"`
 	}
 	var hits []hit
+	// The library modules the project has a module of its own for are left
+	// out: its programs use the project's.
+	found := sources()
+	replaced := map[string]bool{}
+	for _, source := range found {
+		if syntax.RetiringModule(source.Module) {
+			replaced[source.Module] = true
+		}
+	}
 	matches := func(parts ...string) bool {
 		return strings.Contains(strings.ToLower(strings.Join(parts, " ")), needle)
 	}
@@ -241,7 +268,7 @@ func Search(text string, asJSON bool) (string, error) {
 		}
 	}
 	for _, module := range syntax.Modules {
-		if matches(module.Name, module.Summary) {
+		if !replaced[module.Name] && matches(module.Name, module.Summary) {
 			hits = append(hits, hit{"module", module.Name, module.Summary, "alchem doc " + module.Name})
 		}
 	}
@@ -249,6 +276,9 @@ func Search(text string, asJSON bool) (string, error) {
 	var described []hit
 	for _, f := range syntax.Functions() {
 		entry := hit{"function", f.Name, f.Summary, "alchem doc " + f.Name}
+		if replaced[f.Module] {
+			continue
+		}
 		if matches(f.Name) {
 			hits = append(hits, entry)
 		} else if matches(f.Summary) {
@@ -257,7 +287,7 @@ func Search(text string, asJSON bool) (string, error) {
 	}
 	hits = append(hits, described...)
 	// The project's own modules and those of the packages it imports.
-	for _, source := range sources() {
+	for _, source := range found {
 		data, err := fileData(source.File)
 		if err != nil {
 			continue
@@ -343,7 +373,8 @@ type Source struct {
 }
 
 // Sources lists the modules of the project a command runs in. It is set by
-// the command, and called only when a name is not the library's or text is
+// the command, and called only when a name is not the library's, when it is
+// a library module a package can take the place of, or when text is
 // searched for.
 var Sources func() []Source
 

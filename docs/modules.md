@@ -59,7 +59,7 @@ alchem check github.com/example/mathlib@v1.2.0/lib/math.alc
 
 `doc` shows the file's `@moduledoc`, `@doc` and `@typedoc` text. `run`, `build` and `check` treat the file as the entry: its imports stay inside its package, the executable `build` makes goes in the current directory, and no lock file is kept, since the version asked for fixes the content.
 
-Inside a project, `alchem doc Math`, `alchem doc Math.double` and `alchem doc --search text` also cover the project's own `.alc` files and the packages they import, each result naming the file it came from. A package is read from the module cache only, so it appears once a `check`, `build` or `run` has fetched it; looking something up never contacts the network.
+Inside a project, `alchem doc Math`, `alchem doc Math.double` and `alchem doc --search text` also cover the project's own `.alc` files and the packages they import, each result naming the file it came from. A package is read from the module cache only, so it appears once a `check`, `build` or `run` has fetched it; looking something up never contacts the network. When the project imports a module that takes the place of a library module of the same name, such as `DiskStore` or `WebSocket` from a package, these show the imported module, since that is the one the program is built with; outside such a project they show the library's.
 
 ### The release a package needs
 
