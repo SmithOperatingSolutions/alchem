@@ -33,6 +33,11 @@ SKIPPED = {
     # Under Wine a symbolic link Windows makes does not resolve, for the
     # pinned compiler's program too.
     'lib/File/File.ln_s/1',
+    # Named time zones: Windows has no zone files, and the pinned program
+    # carries Go's own database (time/tzdata), which these do not yet
+    # (spec/windows.md).
+    'lib/DateTime/DateTime.from_naive/1', 'lib/DateTime/DateTime.now/1', 'lib/DateTime/DateTime.shift/1',
+    'lib/DateTime/DateTime.shift_zone/1', 'lib/DateTime/DateTime.shift_zone!/1',
     # A copy of the program fails in earnest (fork), still to do
     # (spec/windows.md).
     'lib/Process/Process.report/1',
