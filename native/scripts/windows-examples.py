@@ -7,7 +7,9 @@
 prepare (on Linux) writes each example of scripts/upstream-examples.py that
 the native Linux compiler builds and runs to exit 0 into DIR as NNNN.alc,
 with what it printed as NNNN.out and its name in names.txt; the examples
-whose output is not the same on Windows (SKIPPED) are left out. What
+whose output is not the same on Windows (SKIPPED) are left out. The
+programs of the gates follow, with the status and output frozen in
+harness/ (NNNN.code), but those Windows prints otherwise (GATE_SKIPPED). What
 Linux prints is what the pinned compiler's windows/amd64 programs print for
 all the others, under Wine (scripts/run-windows). WINDOWS_ONLY adds
 programs for Windows alone, with what they print there.
@@ -62,6 +64,63 @@ WINDOWS_ONLY = [
 ]
 
 
+# The programs of the gates (harness/*.py, RUNS: program, status, output,
+# errors) whose output on Windows is not what was frozen on Linux, as the
+# pinned compiler's windows/amd64 programs print it too, by the start of
+# the SHA-1 of the program: Windows' texts for errors (connectex, File not
+# found., Invalid function., winapi error #N under Wine), and programs that
+# run Unix programs (sh, cat, sort, true).
+GATE_SKIPPED = {
+    '74cab8ea13a9dc90': 'diskstore: reading a directory is Invalid function.',
+    '8a682017d7e54e99': 'network: connectex, wsasendto, bind texts',
+    '3f099a2ec14c19d1': 'network: connectex texts',
+    'f7f9e01e4bba7af5': 'network: bind text',
+    'a228f4f023154423': 'network: connectex texts',
+    '12f31b3e08f968ed': 'network: wsasend text',
+    '6dfc963e00010c6f': 'network: connectex, open texts, a reset read',
+    '17b06680c1383be9': 'network: connectex texts',
+    'c73676a8ef191eae': 'nodes: connectex texts',
+    '9930ad7067555640': 'processes: runs sh',
+    '5bc42070a9b52aec': 'processes: runs sort',
+    '3dc7ee2df1372fb7': 'processes: runs sh',
+    'e5b8b7905852c2b3': 'processes: runs cat',
+    '198bb5fcd83a9dab': 'processes: runs cat',
+    '700cda0a9b6edf51': 'processes: runs cat',
+    '76c2f246990f4c5e': 'processes: runs sh and true',
+    '73394fb268f5d365': 'processes: runs sh and cat; Windows exec texts',
+    '4a81a1ee499b93b7': 'streams: Path not found.',
+    'ab02f2126653ce3f': 'streams: Path not found.',
+    '701e8cffd0b1edf7': 'streams: Path not found.',
+    '9f29bbbc4aa73180': 'streams: Path not found.',
+    '89358ba4d72c650c': 'tls: connectex texts',
+    'f228da4432c4b763': 'tls: connectex, File not found. texts',
+    'e82096a75dc06a41': 'tls: connectex texts',
+}
+
+
+def gate_runs():
+    """(name, program, status, output) of every gate program frozen as
+    (program, status, output, errors) that Windows prints alike."""
+    import hashlib
+    import importlib.util
+    sys.path.insert(0, str(ROOT / 'harness'))
+    found = []
+    for path in sorted((ROOT / 'harness').glob('*.py')):
+        text = path.read_text()
+        if '\nRUNS=' not in text and '\nRUNS =' not in text:
+            continue
+        spec = importlib.util.spec_from_file_location('gate_' + path.stem, path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for i, run in enumerate(getattr(module, 'RUNS', None) or []):
+            if len(run) != 4 or not isinstance(run[0], str) or not isinstance(run[1], int):
+                continue
+            if hashlib.sha1(run[0].encode()).hexdigest()[:16] in GATE_SKIPPED:
+                continue
+            found.append((f'gate/{path.stem}/{i}', run[0], run[1], run[2]))
+    return found
+
+
 def load_examples():
     import importlib.util
     spec = importlib.util.spec_from_file_location('upstream_examples', ROOT / 'scripts/upstream-examples.py')
@@ -87,6 +146,12 @@ def prepare(out, compiler):
         (out / (number + '.alc')).write_text(source)
         (out / (number + '.out')).write_text(result[2])
         names.append(name)
+    for name, source, status, printed in gate_runs():
+        number = f'{len(names):04}'
+        (out / (number + '.alc')).write_text(source)
+        (out / (number + '.out')).write_bytes(printed)
+        (out / (number + '.code')).write_text(str(status))
+        names.append(name)
     for name, source, printed in WINDOWS_ONLY:
         number = f'{len(names):04}'
         (out / (number + '.alc')).write_text(source)
@@ -99,8 +164,13 @@ def prepare(out, compiler):
 def check_one(directory, compiler, number, name, runner):
     source = (directory / (number + '.alc')).read_bytes()
     want = (directory / (number + '.out')).read_bytes()
+    coded = directory / (number + '.code')
+    status = int(coded.read_text()) if coded.exists() else 0
     with tempfile.TemporaryDirectory() as d:
         d = Path(d)
+        # A temporary directory of its own: gate programs name files there.
+        (d / 'tmp').mkdir()
+        env = dict(os.environ, TMP=str(d / 'tmp'), TEMP=str(d / 'tmp'))
         built = subprocess.run([*runner, compiler], input=source, capture_output=True, timeout=300)
         if built.returncode:
             return name, f'did not build: {built.stderr.decode(errors="replace")[:300]}'
@@ -109,10 +179,10 @@ def check_one(directory, compiler, number, name, runner):
         run = d / 'run'
         run.mkdir()
         try:
-            got = subprocess.run([*runner, str(program)], capture_output=True, timeout=60, cwd=run, stdin=subprocess.DEVNULL)
+            got = subprocess.run([*runner, str(program)], capture_output=True, timeout=120, cwd=run, stdin=subprocess.DEVNULL, env=env)
         except subprocess.TimeoutExpired:
             return name, 'timed out'
-        if got.returncode != 0 or got.stdout != want:
+        if got.returncode != status or got.stdout != want:
             return name, (f'exit {got.returncode}\n  want {want[:300]!r}\n  got  {got.stdout[:300]!r}\n'
                           f'  stderr {got.stderr.decode(errors="replace")[:300]!r}')
     return name, None
@@ -127,7 +197,7 @@ def check(directory, compiler, jobs, runner):
     failed = [(n, why) for n, why in results if why]
     for name, why in failed:
         print(f'FAIL {name}: {why}')
-    print(f'{len(names) - len(failed)} of {len(names)} examples print on Windows what they print on Linux')
+    print(f'{len(names) - len(failed)} of {len(names)} programs print on Windows what they print on Linux')
     return 1 if failed else 0
 
 

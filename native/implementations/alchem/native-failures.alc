@@ -56,10 +56,11 @@ defmodule NativeFailures do
   def zf_panic(table: bytes, text: bytes): bytes do
     nc_join(b[191,254,255,255,127],Enum.concat(xa_mark(8+Enum.count(text),b[72,141,53,9,0,0,0]),nc_call(nz_slot(table))),Enum.concat(nt_word(Enum.count(text)),text))
   end
-  # 1 when the twelve bytes at at are such an exit.
+  # 1 when the twelve bytes at at are such an exit (its system call 0F 0B
+  # in a Windows program: nc_sc).
   def zf_exit(code: bytes, at: integer): integer do
     status = Enum.at(code,at+1,0)
-    if (status-80)*(99-status) < 0 do 0 else if Enum.at(code,at+5,0)*256+Enum.at(code,at+6,0) != 47164 do 0 else if Enum.at(code,at+10,0)*256+Enum.at(code,at+11,0) != 3845 do 0 else
+    if (status-80)*(99-status) < 0 do 0 else if Enum.at(code,at+5,0)*256+Enum.at(code,at+6,0) != 47164 do 0 else if Enum.at(code,at+10,0)*256+Enum.at(code,at+11,0) != 3840+nc_sc() do 0 else
       if Enum.at(code,at+2,0)+Enum.at(code,at+3,0)+Enum.at(code,at+4,0)+Enum.at(code,at+7,0)+Enum.at(code,at+8,0)+Enum.at(code,at+9,0) == 0 do 1 else 0 end
     end end end
   end

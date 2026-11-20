@@ -69,10 +69,10 @@
   end
 # exec.Command(c, a...) started as a port of the process o; h and m as
 # above, k how its output is cut (0 lines, 1 as it comes, 2 packets).
-#: _start/4 needs Enum.any?/2 String.contains?/2 Sys.env/0 Sys.fail/3 Sys.keep/2 Sys.pad/0 Sys.push/2 Sys.which/1 Sys.z/1 _opened/4 _spawn/4 Sys._wcommand/1 Sys._notfound/1
+#: _start/4 needs Enum.any?/2 String.contains?/2 Sys.env/0 Sys.fail/3 Sys.keep/2 Sys.pad/0 Sys.push/2 Sys.which/1 Sys.z/1 _opened/4 _spawn/4 Sys._wcommand/2 Sys._notfound/1
   def _start(c: string, a: list[string], o: integer, v: tuple[integer, integer, integer]): result[port, string] do
     {k, h, m} = v
-    w = if c == "" do {0, c} else if Sys.windows() == 1 do Sys._wcommand(c) else if String.contains?(c, "/") do {0, c} else Sys.which(c) end end end
+    w = if c == "" do {0, c} else if Sys.windows() == 1 do Sys._wcommand(c, "") else if String.contains?(c, "/") do {0, c} else Sys.which(c) end end end
     if c == "" do error("exec: no command") else
       if elem(w, 0) >= 2 do error("exec: " <> inspect(c) <> ": " <> Sys._notfound(elem(w, 0))) else
         if elem(w, 0) == 1 do error("exec: " <> inspect(c) <> ": cannot run executable found relative to current directory") else

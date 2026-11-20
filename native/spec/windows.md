@@ -102,7 +102,10 @@ those not in KERNEL32).
   error (`last_error`).
 - **Paths** are UTF-8, given to the `...W` calls in UTF-16; `/dev/null` is
   `NUL`. A directory opens with `FILE_FLAG_BACKUP_SEMANTICS`, and a file
-  created without write permission is read-only.
+  created without write permission is read-only. A file is shared for
+  reading and writing, not for deleting, as Go's `syscall.Open` opens it:
+  one that is open cannot be removed or renamed over, as for the pinned
+  programs; an empty path is `ERROR_FILE_NOT_FOUND`, as there.
 
 The calls made so far:
 
@@ -244,14 +247,20 @@ succeeds, 856 of 857 print what it prints. The other is `File.ln`, whose
 reference read another example's file in the shared temporary directory.
 
 Wine's error texts are its own (`File not found.`, and none for Winsock's
-errors); the reference for them is Windows (CI).
+errors); the reference for them is Windows (CI). CI's Windows job
+(`.github/workflows/native.yml`, `windows-2025`) runs the Windows compiler
+the Linux job builds: it must make itself again byte for byte, and build
+every upstream example and every program of the gates that print the same
+on Linux and Windows into one that prints there what was frozen on Linux
+(`scripts/windows-examples.py`: `prepare` on Linux, `check` on Windows, or
+`check --wine` under Wine): 2,632 programs.
 
 ## Still to do
 
-- The gates on Windows. CI (`.github/workflows/native.yml`, job Windows
-  x64 on `windows-2025`) runs the Windows compiler the Linux job builds:
-  it must make itself again byte for byte, make a program that runs, and
-  build every upstream example that prints the same on Linux and Windows
-  into a program that prints there what the Linux program prints
-  (`scripts/windows-examples.py`: `prepare` on Linux, `check` on Windows,
-  or `check --wine` under Wine; `SKIPPED` names the others).
+- The gates whose checks are code of their own rather than programs with
+  their frozen results: they drive the Linux compilers and tools
+  (`scripts/limited`, `/bin/sh`, `/proc`, `ptrace`), and run on Linux.
+  CI's Windows job runs every program of the gates that keep them (38 of
+  them, 1,768 programs) on Windows, with the examples
+  (`scripts/windows-examples.py`; `GATE_SKIPPED` names the 24 whose output
+  Windows gives otherwise, as the pinned compiler's Windows programs do).

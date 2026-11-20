@@ -1592,6 +1592,16 @@ static i64 socket_call(i64 nr, unsigned char *c) {
   return NOT_MINE;
 }
 
+/* Go's syscall.Open on Windows refuses an empty path as
+   ERROR_FILE_NOT_FOUND (CreateFileW would say the path is not found). */
+static int empty_path(i64 p) {
+  if (!p) return 0;
+  commit_range((void *)p, 1);
+  if (*(const char *)p) return 0;
+  last_error = 2;
+  return 1;
+}
+
 /* The system call in the CONTEXT at c (its number in RAX): its result, or
    NOT_MINE for the assembly to make. */
 i64 layer_call(unsigned char *c) {
@@ -1622,6 +1632,7 @@ i64 layer_call(unsigned char *c) {
   case 0: case 1: case 5: case 16:
     return is_socket(ARG(c, 0)) ? socket_call(nr, c) : NOT_MINE;
   case 72: return is_socket(ARG(c, 0)) ? socket_call(nr, c) : sys_fcntl(ARG(c, 0), ARG(c, 1), ARG(c, 2));
+  case 2: return empty_path(ARG(c, 0)) ? -ENOENT : NOT_MINE;  /* open */
   case 32: return sys_dup(ARG(c, 0), 3);
   case 33: case 292: return sys_dup2(ARG(c, 0), ARG(c, 1));
   case 17: return sys_pio(ARG(c, 0), ARG(c, 1), ARG(c, 2), ARG(c, 3), 0);
@@ -1644,7 +1655,9 @@ i64 layer_call(unsigned char *c) {
     return sys_chmod(path, mode);
   }
   case 319: return sys_memfd();
-  case 257: case 258: case 262: case 263: return at_call(c, 0);   /* openat, mkdirat, newfstatat, unlinkat */
+  case 257: case 258: case 262: case 263:                     /* openat, mkdirat, newfstatat, unlinkat */
+    if (nr == 257 && empty_path(ARG(c, 1))) return -ENOENT;
+    return at_call(c, 0);
   case 264: case 316: {                                        /* renameat, renameat2 */
     if (ARG(c, 2) != -100 && ARG(c, 0) == -100) {
       /* Only the second is relative to a directory: not made. */

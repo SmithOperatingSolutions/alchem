@@ -1053,7 +1053,7 @@ emulate:
         mov [rsp+40], rax
         mov qword ptr [rsp+48], 0
         lea rcx, [rip+wpath1]
-        mov r8d, 7              # FILE_SHARE_READ | WRITE | DELETE
+        mov r8d, 3              # FILE_SHARE_READ | WRITE, as Go's syscall.Open
         xor r9d, r9d
         call [rip+imp_CreateFileW]
         cmp rax, -1
