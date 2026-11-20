@@ -20,7 +20,7 @@ defmodule NativeArm64 do
   # A call to libSystem function i from the entry: X12 to X15 kept (the
   # arena, the initial stack pointer, a size being asked for).
   def a_libc(i: integer): bytes do
-    keep = nc_join(Enum.concat(a_mov(21,12),a_mov(22,13)),Enum.concat(a_mov(23,14),a_mov(24,15)),Enum.concat(a_ldur(16,26,a_got(i),8,0),a4(3594452992+16*32)))
+    keep = nc_join(Enum.concat(a_mov(21,12),a_mov(22,13)),Enum.concat(a_mov(23,14),a_mov(24,15)),Enum.concat(a_ldr(16,26,a_got(i)),a4(3594452992+16*32)))
     nc_join(keep,Enum.concat(a_mov(12,21),a_mov(13,22)),Enum.concat(a_mov(14,23),a_mov(15,24)))
   end
   # The words from 0x400420 and the table at 0x400480 (one slot for each of
@@ -231,10 +231,19 @@ defmodule NativeArm64 do
   # translated as a function is (native-x86arm.alc); padded to the 1024
   # bytes of the entry, which must hold it.
   def a_entry(rest: bytes): bytes do
-    # On macOS the entry is called as main is: argv in X1, a word past argc.
-    start = nc_join(if nc_pic() == 1 do a_relocate() else b[] end,if nc_darwin() == 1 do a_sub_imm(14,1,8,0) else a_add_imm(14,31,0,0) end,a_sub_imm(31,31,2048,0))
+    start = nc_join(if nc_pic() == 1 do a_relocate() else b[] end,if nc_darwin() == 1 do a_darwin_args() else a_add_imm(14,31,0,0) end,a_sub_imm(31,if nc_darwin() == 1 do 14 else 31 end,2048,0))
     made = nc_join(nc_join(start,a_arena_init(),a_stack_init()),xa_function(rest),b[])
     if Enum.count(made) > 928 do b[] else Enum.concat(made,nc_zeros(1024-Enum.count(made))) end
+  end
+  # On macOS the entry is called as main is, argv in X1 and envp in X2, and
+  # dyld's frames lie between the stack pointer and argv: argc, argv and envp
+  # are copied below the stack pointer, two zero words after them, and X14
+  # is the copy's argc, as the initial stack pointer is on Linux.
+  def a_darwin_args(): bytes do
+    count = nc_join(a_mov(3,2),a_ldr_post(4,3,8,8),a_cbnz(4,-4,8))
+    room = nc_join(nc_join(a_sub_imm(5,1,8,0),a_sub(15,3,5,0),a_add_imm(16,31,0,0)),nc_join(a_sub(14,16,15,0),a_sub_imm(14,14,16,0),a_mov_imm(17,-16)),Enum.concat(a_and(14,14,17,0),a_mov(6,14)))
+    copy = nc_join(nc_join(a_ldr_post(4,5,8,8),a_str_post(4,6,8,8),a_cmp(5,3)),a_bcond(1,-12),Enum.concat(a_str(31,6,0),a_str(31,6,8)))
+    nc_join(count,room,copy)
   end
   # mmap(0, size in X1, read and write, private, anonymous, no reserve).
   def a_mmap(): bytes do

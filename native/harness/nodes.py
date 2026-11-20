@@ -1665,8 +1665,9 @@ def build(compiler,source,path):
 
 
 def killed(process):
+    # macOS gives EPERM, not ESRCH, for a group that has only zombies left.
     try:os.killpg(process.pid,signal.SIGKILL)
-    except ProcessLookupError:pass
+    except (ProcessLookupError,PermissionError):pass
     process.wait()
 
 

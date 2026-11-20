@@ -1477,9 +1477,18 @@ mk_ask:
  push r11
  mov r10,r8
  shr r10,1
+.ifdef PIC
+# Code is what stands less than 1 GiB and the head below the copy of the
+# entry's words (spec/darwin-arm64.md); anything else a function value.
+ lea rax,[0x400420]
+ sub rax,r10
+ cmp rax,0x40001000
+ jae 6f
+.else
  mov rax,r10
  shr rax,32
  jnz 6f
+.endif
  call r10
  jmp 7f
 6:

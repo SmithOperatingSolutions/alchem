@@ -296,7 +296,7 @@ defmodule NativeFailures do
   # The code: a jump over the handler, the restorer, that code and its
   # message; then rt_sigaction.
   def zf_guard(table: bytes): bytes do
-    if nz_on(table) == 0 do b[] else if nc_a64() == 1 do xa_raw(zf_guard_arm(table)) else nc_join(b[233,187,0,0,0,72,139,70,16,72,61,0,16,0,0,115,15,72,141,5,68,0,0,0,72,137,130,168,0,0,0,195,72,131,236,32,49,192,72,137,4,36,72,137,68,36,8,72,137,68,36,16,72,137,68,36,24,191,11,0,0,0,72,137,230,49,210,65,186,8,0,0,0,184,13,0,0,0,15,5,72,131,196,32,195,184,15,0,0,0,15,5,72,141,53,14,0,0,0,191,254,255,255,127],nc_call(nz_slot(table)),Enum.concat(b[71,0,0,0,0,0,0,0,112,97,110,105,99,58,32,114,117,110,116,105,109,101,32,101,114,114,111,114,58,32,105,110,118,97,108,105,100,32,109,101,109,111,114,121,32,97,100,100,114,101,115,115,32,111,114,32,110,105,108,32,112,111,105,110,116,101,114,32,100,101,114,101,102,101,114,101,110,99,101,72,131,236,32,72,141,5,58,255,255,255,72,137,4,36,72,199,68,36,8,4,0,0,4,72,141,5,118,255,255,255,72,137,68,36,16,72,199,68,36,24],b[0,0,0,0,191,11,0,0,0,72,137,230,49,210,65,186,8,0,0,0,184,13,0,0,0,15,5,72,131,196,32])) end end
+    if nz_on(table) == 0 do b[] else if nc_a64() == 1 do xa_raw(if nc_darwin() == 1 do zf_guard_darwin(table) else zf_guard_arm(table) end) else nc_join(b[233,187,0,0,0,72,139,70,16,72,61,0,16,0,0,115,15,72,141,5,68,0,0,0,72,137,130,168,0,0,0,195,72,131,236,32,49,192,72,137,4,36,72,137,68,36,8,72,137,68,36,16,72,137,68,36,24,191,11,0,0,0,72,137,230,49,210,65,186,8,0,0,0,184,13,0,0,0,15,5,72,131,196,32,195,184,15,0,0,0,15,5,72,141,53,14,0,0,0,191,254,255,255,127],nc_call(nz_slot(table)),Enum.concat(b[71,0,0,0,0,0,0,0,112,97,110,105,99,58,32,114,117,110,116,105,109,101,32,101,114,114,111,114,58,32,105,110,118,97,108,105,100,32,109,101,109,111,114,121,32,97,100,100,114,101,115,115,32,111,114,32,110,105,108,32,112,111,105,110,116,101,114,32,100,101,114,101,102,101,114,101,110,99,101,72,131,236,32,72,141,5,58,255,255,255,72,137,4,36,72,199,68,36,8,4,0,0,4,72,141,5,118,255,255,255,72,137,68,36,16,72,199,68,36,24],b[0,0,0,0,191,11,0,0,0,72,137,230,49,210,65,186,8,0,0,0,184,13,0,0,0,15,5,72,131,196,32])) end end
   end
   # The same on ARM64, as ARM64 code among the translated (xa_raw): a
   # signal handler is called with the signal, the information and the
@@ -316,6 +316,28 @@ defmodule NativeFailures do
     body = nc_join(handler,Enum.concat(default,restorer),fail)
     install = zf_guard_install(4+Enum.count(body),4+Enum.count(handler)+Enum.count(default))
     nc_join(a_b(4+Enum.count(body)),body,install)
+  end
+  # The same on macOS: the handler is libSystem's (sigaction, through the
+  # routine of system calls, which converts rt_sigaction's record), which
+  # returns from it itself; the fault's address is at 24 of the
+  # information, and the program counter at 272 of the registers the
+  # context points to at 48.
+  def zf_guard_darwin(table: bytes): bytes do
+    fail = zf_guard_fail(nz_slot(table))
+    default = nc_join(nc_join(a_sub_imm(31,31,48,0),a_str(30,31,32),zf_guard_clear()),zf_guard_sigaction(),nc_join(a_ldr(30,31,32),a_add_imm(31,31,48,0),a_br(30)))
+    check = Enum.concat(a_ldr(17,1,24),a_cmp_value(17,4096))
+    handler = nc_join(nc_join(check,a_bcond(2,20),a_ldr(17,2,48)),nc_join(a_adr(16,12+Enum.count(default)),a_str(16,17,272),a_br(30)),b[])
+    body = nc_join(handler,default,fail)
+    save = nc_join(nc_join(a_sub_imm(31,31,80,0),a_str(2,31,32),a_str(4,31,40)),nc_join(a_str(5,31,48),a_str(10,31,56),a_adr(16,0-Enum.count(body)-20)),nc_join(a_str(16,31,0),a_mov_imm(16,4),a_str(16,31,8)))
+    restore = nc_join(nc_join(a_ldr(2,31,32),a_ldr(4,31,40),a_ldr(5,31,48)),Enum.concat(a_ldr(10,31,56),a_add_imm(31,31,80,0)),b[])
+    install = nc_join(save,nc_join(a_str(31,31,16),a_str(31,31,24),zf_guard_sigaction()),restore)
+    nc_join(a_b(4+Enum.count(body)),body,install)
+  end
+  # rt_sigaction(SIGSEGV, the record at SP, 0, 8) by the routine of system
+  # calls (the word at 0x400420), which keeps every register but X0, X1 and
+  # X11; X2, X4, X5, X10 and X30 are lost.
+  def zf_guard_sigaction(): bytes do
+    nc_join(nc_join(a_mov_imm(0,13),a_mov_imm(5,11),a_add_imm(4,31,0,0)),nc_join(a_mov_imm(2,0),a_mov_imm(10,8),a_adr(30,12)),Enum.concat(a_ldr(16,26,0),a_br(16)))
   end
   def zf_guard_clear(): bytes do nc_join(Enum.concat(a_str(31,31,0),a_str(31,31,8)),Enum.concat(a_str(31,31,16),a_str(31,31,24)),b[]) end
   # The failure: Sys.panic (the function at slot) with the position
@@ -492,7 +514,15 @@ defmodule NativeFailures do
     count = nc_long(code,at-8)
     call = zf_cover_arm_call(zf_cover_slot(table))
     points = zf_arm_sites(code,call,0,a_div(start,4))
-    if Enum.count(points) != count*8 do b[] else nc_join(nc_slice(code,0,at),points,nc_slice(code,at+count*8,Enum.count(code))) end
+    head = if nc_pic() == 1 do zf_cover_pic(nc_slice(code,0,at),at-16,nc_length_sum(meta,0,nz_slot(table)),start) else nc_slice(code,0,at) end
+    if Enum.count(points) != count*8 do b[] else nc_join(head,points,nc_slice(code,at+count*8,Enum.count(code))) end
+  end
+  # A position-independent program's code up to the routine's list of
+  # calls, whose head at d says where the trace runtime and the routine
+  # stand from the start of the code, in place of the trace runtime's table
+  # entry and where the code starts (Testing._covered).
+  def zf_cover_pic(code: bytes, d: integer, trace: integer, start: integer): bytes do
+    nc_join(nc_slice(code,0,d),nc_u32(trace),Enum.concat(nc_slice(code,d+4,d+12),nc_u32(start)))
   end
   # The calls in the words first..stop of code: for each, where its word
   # stands less 9, and the word.

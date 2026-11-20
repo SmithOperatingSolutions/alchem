@@ -647,8 +647,10 @@ class Translator:
             # (bit 12 of ECX), OSXSAVE (27), AVX (28) always; AES (25), PCLMULQDQ
             # (1) and SSSE3 (9) where the processor has AES and PMULL (field
             # AES of ID_AA64ISAR0_EL1 at 2, which Linux lets a program read).
-            # The flags are left alone, as cpuid leaves them.
-            self.emit('mrs x16,ID_AA64ISAR0_EL1', 'ubfx x16,x16,#5,#1', 'neg x16,x16',
+            # The flags are left alone, as cpuid leaves them. macOS lets no
+            # program read the register, and every Mac on ARM64 has both.
+            read = 'mov x16,#0x20' if 'DARWIN' in self.symbols else 'mrs x16,ID_AA64ISAR0_EL1'
+            self.emit(read, 'ubfx x16,x16,#5,#1', 'neg x16,x16',
                       'movz w17,#0x0202', 'movk w17,#0x0200,lsl #16', 'and w17,w17,w16',
                       'movz w1,#0x1000', 'movk w1,#0x1800,lsl #16', 'orr w1,w1,w17',
                       'mov x0,#0', 'mov x2,#0', 'mov x3,#0')
@@ -1438,7 +1440,7 @@ def translate(text, defines=()):
     # runtime's tables).
     out.append('.text')
     out.append('.balign 4')
-    out.extend((DARWIN_SYSCALL if 'DARWIN' in t.symbols else SYSCALL).split('\n'))
+    out.extend(((darwin_syscall() if 'DARWIN_ROUTINE' in t.symbols else DARWIN_STUB) if 'DARWIN' in t.symbols else SYSCALL).split('\n'))
     out.extend(f'{p}:' for p in pending)
     return '\n'.join(out) + '\n'
 
@@ -1449,110 +1451,788 @@ def translate(text, defines=()):
 
 # On macOS (DARWIN defined, spec/darwin-arm64.md) x86-64's system calls are
 # calls of libSystem's functions, through the words dyld binds before the
-# copy of the entry's words (X26 less 80: _exit, _mmap, _write, _read,
-# _close, _munmap, _mprotect, ___error). Every register x86-64 keeps is kept,
-# the vector registers too, which libSystem need not keep; a function's -1
-# is x86-64's -errno.
-DARWIN_SYSCALL = '''x86_syscall:
- sub sp,sp,#384
- stp x2,x3,[sp,#0]
- stp x4,x5,[sp,#16]
- stp x6,x7,[sp,#32]
- stp x8,x9,[sp,#48]
- stp x10,x12,[sp,#64]
- stp x13,x14,[sp,#80]
- stp x15,x16,[sp,#96]
- stp x17,x30,[sp,#112]
- stp q0,q1,[sp,#128]
- stp q2,q3,[sp,#160]
- stp q4,q5,[sp,#192]
- stp q6,q7,[sp,#224]
- stp q8,q9,[sp,#256]
- stp q10,q11,[sp,#288]
- stp q12,q13,[sp,#320]
- stp q14,q15,[sp,#352]
+# copy of the entry's words: word i of DARWIN_IMPORTS is at X26 less
+# darwin_head() plus 8 i. The collector holds the routine (DARWIN_ROUTINE
+# defined); every other runtime goes to it through the word at 0x400420, as
+# translated functions do.
+DARWIN_IMPORTS = ['_exit', '_mmap', '_write', '_read', '_close', '_munmap', '_mprotect', '___error',
+                  '_openat', '_fstat', '_fstatat', '_lseek', '_pread', '_pwrite', '_dup', '_dup2', '_nanosleep',
+                  '_fork', '_execve', '_wait4', '_kill', '_fcntl', '_fsync', '_ftruncate', '_getcwd', '_chdir',
+                  '_readlink', '_rename', '_mkdir', '_rmdir', '_unlink', '_link', '_symlink', '_chmod', '_access',
+                  '_pipe', '___getdirentries64', '_clock_gettime', '_getentropy', '_poll', '_sigaction', '_mkstemp',
+                  '_getpid', '_socket', '_connect', '_bind', '_listen', '_accept', '_sendto', '_recvfrom',
+                  '_shutdown', '_setsockopt', '_getsockopt', '_getsockname', '_getpeername', '_mkdirat',
+                  '_unlinkat', '_readlinkat', '_fchmodat', '_utimensat', '_faccessat']
+
+
+def darwin_head():
+    """How far before X26 the first bound word is: the words, then the count
+    of the copy and a word kept free."""
+    return 16 + 8 * len(DARWIN_IMPORTS)
+
+
+# What each x86-64 system call is on macOS: (number, function, how its
+# arguments and result convert: one of DARWIN_KINDS). Any other is -ENOSYS.
+DARWIN_CALLS = [
+    (0, '_read', 'plain'), (1, '_write', 'plain'), (2, '_openat', 'open'), (3, '_close', 'plain'),
+    (4, '_fstatat', 'stat'), (5, '_fstat', 'fstat'), (6, '_fstatat', 'lstat'), (7, '_poll', 'plain'),
+    (8, '_lseek', 'plain'), (9, '_mmap', 'mmap'), (10, '_mprotect', 'plain'), (11, '_munmap', 'plain'),
+    (13, '_sigaction', 'sigaction'), (17, '_pread', 'plain'), (18, '_pwrite', 'plain'), (21, '_access', 'plain'),
+    (22, '_pipe', 'plain'), (25, '_mmap', 'mremap'), (32, '_dup', 'plain'), (33, '_dup2', 'plain'),
+    (35, '_nanosleep', 'plain'), (39, '_getpid', 'plain'), (41, '_socket', 'socket'), (42, '_connect', 'sain'),
+    (43, '_accept', 'accept'), (44, '_sendto', 'sendto'), (45, '_recvfrom', 'recvfrom'), (48, '_shutdown', 'plain'),
+    (49, '_bind', 'sain'), (50, '_listen', 'plain'), (51, '_getsockname', 'saout'), (52, '_getpeername', 'saout'),
+    (54, '_setsockopt', 'sockopt'), (55, '_getsockopt', 'getsockopt'), (57, '_fork', 'plain'), (59, '_execve', 'plain'),
+    (60, '_exit', 'plain'), (61, '_wait4', 'wait4'), (62, '_kill', 'kill'), (72, '_fcntl', 'fcntl'),
+    (74, '_fsync', 'plain'), (77, '_ftruncate', 'plain'), (79, '_getcwd', 'getcwd'), (80, '_chdir', 'plain'),
+    (82, '_rename', 'plain'), (83, '_mkdir', 'plain'), (84, '_rmdir', 'plain'), (86, '_link', 'plain'),
+    (87, '_unlink', 'plain'), (88, '_symlink', 'plain'), (89, '_readlink', 'plain'), (90, '_chmod', 'plain'),
+    (217, '___getdirentries64', 'dents'), (228, '_clock_gettime', 'clock'), (231, '_exit', 'plain'),
+    (257, '_openat', 'openat'), (258, '_mkdirat', 'atfd'), (262, '_fstatat', 'fstatat'), (263, '_unlinkat', 'unlinkat'),
+    (267, '_readlinkat', 'atfd'), (268, '_fchmodat', 'atflags'), (271, '_poll', 'ppoll'),
+    (280, '_utimensat', 'utimensat'), (288, '_accept', 'accept4'), (293, '_pipe', 'pipe2'),
+    (318, '_getentropy', 'random'), (319, '_mkstemp', 'memfd'), (439, '_faccessat', 'atflags'),
+]
+DARWIN_KINDS = ['plain', 'mmap', 'open', 'openat', 'stat', 'lstat', 'fstat', 'fstatat', 'fcntl', 'getcwd', 'dents',
+                'clock', 'random', 'ppoll', 'pipe2', 'mremap', 'sigaction', 'memfd', 'kill', 'wait4', 'atfd',
+                'atflags', 'unlinkat', 'utimensat', 'socket', 'sain', 'saout', 'accept', 'accept4', 'sendto',
+                'recvfrom', 'sockopt', 'getsockopt']
+# What is done with a call's result once it is no -1 (X19 holds the index).
+DARWIN_POSTS = ['back', 'stat', 'getfl', 'getcwd', 'dents', 'wait4', 'sockfl', 'saout', 'accept4', 'sigact', 'pipe2',
+                'soerror']
+# macOS's errno as Linux's, 0 to 106.
+DARWIN_ERRNOS = list(range(11)) + [35] + list(range(12, 35)) + [
+    11, 115, 114, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109,
+    110, 111, 40, 36, 112, 113, 39, 11, 87, 122, 116, 66, 71, 71, 71, 71, 71, 37, 38, 22, 13, 13, 19, 5, 75, 8, 8, 8,
+    8, 125, 43, 42, 84, 61, 74, 72, 61, 67, 63, 60, 71, 62, 95, 1, 131, 130, 105]
+# Linux's signals as macOS's, and back, 0 to 31.
+DARWIN_SIGNALS = [0, 1, 2, 3, 4, 5, 6, 10, 8, 9, 30, 11, 31, 13, 14, 15, 0, 20, 19, 17, 18, 21, 22, 16, 24, 25, 26, 27,
+                  28, 23, 0, 12]
+DARWIN_SIGNALS_BACK = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 7, 11, 31, 13, 14, 15, 23, 19, 20, 18, 17, 21, 22, 29, 24, 25, 26,
+                       27, 28, 29, 10, 12]
+
+
+def darwin_call(name):
+    """A call of libSystem function name; X0 to X18 lost."""
+    return f' sub x16,x26,#{darwin_head()}\n ldr x16,[x16,#{8 * DARWIN_IMPORTS.index(name)}]\n blr x16'
+
+
+def darwin_syscall():
+    """The routine, from DARWIN_ROUTINE with the calls, tables and kinds put in."""
+    assert len(DARWIN_ERRNOS) == 107 and len(DARWIN_SIGNALS) == 32 == len(DARWIN_SIGNALS_BACK)
+    text = DARWIN_ROUTINE
+    for name in DARWIN_IMPORTS:
+        text = text.replace(f'@call {name}\n', darwin_call(name) + '\n')
+    for index, post in enumerate(DARWIN_POSTS):
+        text = text.replace(f'#@{post}\n', f'#{index}\n')
+    table = ', '.join(str(number | DARWIN_IMPORTS.index(name) << 16 | DARWIN_KINDS.index(kind) << 24)
+                      for number, name, kind in DARWIN_CALLS)
+    return (text.replace('@head', str(darwin_head()))
+            .replace('@kinds', '\n'.join(f' b xd_k_{kind}' for kind in DARWIN_KINDS))
+            .replace('@posts', '\n'.join(f' b xd_p_{post}' for post in DARWIN_POSTS))
+            .replace('@errnos', ', '.join(map(str, DARWIN_ERRNOS)))
+            .replace('@signals_back', ', '.join(map(str, DARWIN_SIGNALS_BACK)))
+            .replace('@signals', ', '.join(map(str, DARWIN_SIGNALS)))
+            .replace('@table', table))
+
+
+# The frame: the outgoing word of a variadic argument at 0, X2 to X17 and
+# X30 at 16, Q0 to Q15 at 144, X19 to X22 at 400, a link at 432, a word at
+# 440, and 256 bytes at 448 for what is converted. X19 says what is done
+# with the result (DARWIN_POSTS), X20 and X21 keep what that needs, X22 is
+# the function's word.
+DARWIN_ROUTINE = '''x86_syscall:
+ sub sp,sp,#704
+ stp x2,x3,[sp,#16]
+ stp x4,x5,[sp,#32]
+ stp x6,x7,[sp,#48]
+ stp x8,x9,[sp,#64]
+ stp x10,x12,[sp,#80]
+ stp x13,x14,[sp,#96]
+ stp x15,x16,[sp,#112]
+ stp x17,x30,[sp,#128]
+ stp q0,q1,[sp,#144]
+ stp q2,q3,[sp,#176]
+ stp q4,q5,[sp,#208]
+ stp q6,q7,[sp,#240]
+ stp q8,q9,[sp,#272]
+ stp q10,q11,[sp,#304]
+ stp q12,q13,[sp,#336]
+ stp q14,q15,[sp,#368]
+ stp x19,x20,[sp,#400]
+ stp x21,x22,[sp,#416]
  mov x17,x0
  mov x0,x5
  mov x1,x4
  mov x3,x10
  mov x4,x8
  mov x5,x9
- cmp x17,#0
- b.eq xd_read
- cmp x17,#1
- b.eq xd_write
- cmp x17,#3
- b.eq xd_close
- cmp x17,#9
- b.eq xd_mmap
- cmp x17,#10
- b.eq xd_mprotect
- cmp x17,#11
- b.eq xd_munmap
- cmp x17,#60
- b.eq xd_exit
- cmp x17,#231
- b.eq xd_exit
+ mov x19,#0
+ adr x16,xd_table
+xd_find:
+ ldr w6,[x16],#4
+ cbz w6,xd_nosys
+ and w7,w6,#0xffff
+ cmp x7,x17
+ b.ne xd_find
+ ubfx x22,x6,#16,#8
+ lsr w6,w6,#24
+ adr x7,xd_kinds
+ add x7,x7,x6,lsl #2
+ br x7
+xd_nosys:
  mov x0,#-38
  b xd_back
-xd_read:
- ldur x16,[x26,#-56]
- b xd_call
-xd_write:
- ldur x16,[x26,#-64]
- b xd_call
-xd_close:
- ldur x16,[x26,#-48]
- b xd_call
-xd_mprotect:
- ldur x16,[x26,#-32]
- b xd_call
-xd_munmap:
- ldur x16,[x26,#-40]
- b xd_call
-xd_mmap:
- // Linux's MAP_SHARED, MAP_PRIVATE and MAP_FIXED are macOS's; MAP_ANONYMOUS
- // 0x20 is 0x1000; MAP_NORESERVE has no meaning there.
+xd_kinds:
+@kinds
+xd_call:
+ sub x16,x26,#@head
+ ldr x16,[x16,x22,lsl #3]
+ blr x16
+ cmn x0,#1
+ b.eq xd_errno
+ adr x7,xd_posts
+ add x7,x7,x19,lsl #2
+ br x7
+xd_posts:
+@posts
+xd_errno:
+@call ___error
+ ldrsw x0,[x0]
+ cmp x0,#106
+ b.hi xd_errno_1
+ adr x1,xd_errnos
+ ldrb w0,[x1,x0]
+xd_errno_1:
+ neg x0,x0
+xd_p_back:
+xd_back:
+ ldp x2,x3,[sp,#16]
+ ldp x4,x5,[sp,#32]
+ ldp x6,x7,[sp,#48]
+ ldp x8,x9,[sp,#64]
+ ldp x10,x12,[sp,#80]
+ ldp x13,x14,[sp,#96]
+ ldp x15,x16,[sp,#112]
+ ldp q0,q1,[sp,#144]
+ ldp q2,q3,[sp,#176]
+ ldp q4,q5,[sp,#208]
+ ldp q6,q7,[sp,#240]
+ ldp q8,q9,[sp,#272]
+ ldp q10,q11,[sp,#304]
+ ldp q12,q13,[sp,#336]
+ ldp q14,q15,[sp,#368]
+ ldp x19,x20,[sp,#400]
+ ldp x21,x22,[sp,#416]
+ ldp x17,x30,[sp,#128]
+ add sp,sp,#704
+ br x30
+// Linux's MAP_SHARED, MAP_PRIVATE and MAP_FIXED are macOS's; MAP_ANONYMOUS
+// 0x20 is 0x1000; MAP_NORESERVE has no meaning there.
+xd_k_mmap:
  mov x7,#0x13
  and x6,x3,x7
  tst x3,#0x20
- b.eq 1f
+ b.eq xd_k_mmap_1
  orr x6,x6,#0x1000
-1:
+xd_k_mmap_1:
  mov x3,x6
- ldur x16,[x26,#-72]
+xd_k_plain:
  b xd_call
-xd_exit:
- ldur x16,[x26,#-80]
- blr x16
-xd_call:
- blr x16
+// open(path, flags, mode) is openat(AT_FDCWD, ...); the mode is variadic,
+// so on the stack.
+xd_k_open:
+ mov x3,x2
+ mov x2,x1
+ mov x1,x0
+ mov x0,#-100
+xd_k_openat:
+ bl xd_fd
+ bl xd_oflags
+ str x3,[sp]
+ b xd_call
+xd_k_stat:
+ mov x3,#0
+ b xd_k_stat_1
+xd_k_lstat:
+ mov x3,#0x20
+xd_k_stat_1:
+ mov x20,x1
+ mov x2,x1
+ mov x1,x0
+ mov x0,#-2
+ mov x19,#@stat
+ b xd_call
+xd_k_fstat:
+ mov x20,x1
+ mov x19,#@stat
+ b xd_call
+xd_k_fstatat:
+ bl xd_fd
+ bl xd_atflags
+ mov x20,x2
+ mov x19,#@stat
+ b xd_call
+// F_DUPFD_CLOEXEC is 67; F_SETFL's and F_GETFL's flags convert.
+xd_k_fcntl:
+ cmp x1,#1030
+ b.ne xd_k_fcntl_1
+ mov x1,#67
+xd_k_fcntl_1:
+ cmp x1,#4
+ b.ne xd_k_fcntl_2
+ bl xd_oflags
+xd_k_fcntl_2:
+ cmp x1,#3
+ b.ne xd_k_fcntl_3
+ mov x19,#@getfl
+xd_k_fcntl_3:
+ str x2,[sp]
+ b xd_call
+xd_k_getcwd:
+ mov x20,x0
+ mov x19,#@getcwd
+ b xd_call
+// getdents64 is __getdirentries64, whose fourth argument is where it keeps
+// the position.
+xd_k_dents:
+ mov x20,x1
+ add x3,sp,#448
+ mov x19,#@dents
+ b xd_call
+xd_k_clock:
+ cmp x0,#7
+ b.hi xd_call
+ adr x6,xd_clocks
+ ldrb w0,[x6,x0]
+ b xd_call
+// getrandom is getentropy, 256 bytes at a time.
+xd_k_random:
+ mov x20,x0
+ mov x21,x1
+xd_k_random_1:
+ cbz x21,xd_k_random_2
+ mov x1,#256
+ cmp x21,x1
+ csel x1,x21,x1,lo
+ mov x0,x20
+ add x20,x20,x1
+ sub x21,x21,x1
+@call _getentropy
  cmn x0,#1
- b.ne xd_back
- ldur x16,[x26,#-24]
- blr x16
- ldrsw x0,[x0]
- neg x0,x0
-xd_back:
- ldp x2,x3,[sp,#0]
- ldp x4,x5,[sp,#16]
- ldp x6,x7,[sp,#32]
- ldp x8,x9,[sp,#48]
- ldp x10,x12,[sp,#64]
- ldp x13,x14,[sp,#80]
- ldp x15,x16,[sp,#96]
- ldp q0,q1,[sp,#128]
- ldp q2,q3,[sp,#160]
- ldp q4,q5,[sp,#192]
- ldp q6,q7,[sp,#224]
- ldp q8,q9,[sp,#256]
- ldp q10,q11,[sp,#288]
- ldp q12,q13,[sp,#320]
- ldp q14,q15,[sp,#352]
- ldp x17,x30,[sp,#112]
- add sp,sp,#384
- br x30
-'''
+ b.eq xd_errno
+ b xd_k_random_1
+xd_k_random_2:
+ ldr x0,[sp,#32]
+ b xd_back
+// ppoll's timespec is poll's milliseconds, rounded up; none is -1.
+xd_k_ppoll:
+ mov x6,x2
+ mov x2,#-1
+ cbz x6,xd_call
+ ldp x6,x7,[x6]
+ mov x8,#1000
+ mul x6,x6,x8
+ movz x8,#0x4240
+ movk x8,#0xf,lsl #16
+ add x7,x7,x8
+ sub x7,x7,#1
+ udiv x7,x7,x8
+ add x2,x6,x7
+ b xd_call
+xd_k_pipe2:
+ mov x20,x0
+ mov x21,x1
+ mov x19,#@pipe2
+ b xd_call
+// mremap(MREMAP_MAYMOVE): a new mapping, the old one's bytes copied to it.
+xd_k_mremap:
+ cmp x2,x1
+ b.ls xd_back
+ mov x20,x0
+ mov x21,x1
+ mov x0,#0
+ mov x1,x2
+ mov x2,#3
+ mov x3,#0x1002
+ mov x4,#-1
+ mov x5,#0
+@call _mmap
+ cmn x0,#1
+ b.eq xd_errno
+ mov x6,#0
+xd_k_mremap_1:
+ cmp x6,x21
+ b.hs xd_k_mremap_2
+ ldr x7,[x20,x6]
+ str x7,[x0,x6]
+ add x6,x6,#8
+ b xd_k_mremap_1
+xd_k_mremap_2:
+ str x0,[sp,#440]
+ mov x0,x20
+ mov x1,x21
+@call _munmap
+ ldr x0,[sp,#440]
+ b xd_back
+// rt_sigaction's handler and flags as macOS's struct sigaction.
+xd_k_sigaction:
+ mov x6,x0
+ bl xd_sig
+ mov x0,x6
+ mov x20,x2
+ cbz x1,xd_k_sigaction_3
+ ldp x6,x7,[x1]
+ add x1,sp,#448
+ str x6,[x1]
+ mov x8,#0
+ tbz x7,#28,xd_k_sigaction_1
+ orr x8,x8,#2
+xd_k_sigaction_1:
+ tbz x7,#2,xd_k_sigaction_2
+ orr x8,x8,#0x40
+xd_k_sigaction_2:
+ str wzr,[x1,#8]
+ str w8,[x1,#12]
+xd_k_sigaction_3:
+ cbz x2,xd_k_sigaction_4
+ add x2,sp,#464
+xd_k_sigaction_4:
+ mov x19,#@sigact
+ b xd_call
+// memfd_create: a file made by mkstemp and unlinked at once.
+xd_k_memfd:
+ add x0,sp,#448
+ adr x6,xd_template
+ ldp x7,x8,[x6]
+ stp x7,x8,[x0]
+ ldp x7,x8,[x6,#16]
+ stp x7,x8,[x0,#16]
+@call _mkstemp
+ cmn x0,#1
+ b.eq xd_errno
+ str x0,[sp,#440]
+ add x0,sp,#448
+@call _unlink
+ ldr x0,[sp,#440]
+ mov x21,#0x80000
+ bl xd_fdflags
+ b xd_back
+xd_k_kill:
+ mov x6,x1
+ bl xd_sig
+ mov x1,x6
+ b xd_call
+xd_k_wait4:
+ mov x20,x1
+ mov x19,#@wait4
+ b xd_call
+xd_k_atfd:
+ bl xd_fd
+ b xd_call
+xd_k_atflags:
+ bl xd_fd
+ bl xd_atflags
+ b xd_call
+// AT_REMOVEDIR 0x200 is 0x80.
+xd_k_unlinkat:
+ bl xd_fd
+ and x6,x2,#0x200
+ lsr x2,x6,#2
+ b xd_call
+// UTIME_NOW and UTIME_OMIT are -1 and -2.
+xd_k_utimensat:
+ bl xd_fd
+ bl xd_atflags
+ cbz x2,xd_call
+ ldp x7,x8,[x2]
+ ldp x9,x10,[x2,#16]
+ mov x11,#0x3fffffff
+ sub x12,x11,#1
+ mov x13,#-2
+ cmp x8,x11
+ csinv x8,x8,xzr,ne
+ cmp x8,x12
+ csel x8,x13,x8,eq
+ cmp x10,x11
+ csinv x10,x10,xzr,ne
+ cmp x10,x12
+ csel x10,x13,x10,eq
+ add x2,sp,#448
+ stp x7,x8,[x2]
+ stp x9,x10,[x2,#16]
+ b xd_call
+// AF_INET6 is 30; SOCK_NONBLOCK and SOCK_CLOEXEC are set after.
+xd_k_socket:
+ cmp x0,#10
+ b.ne xd_k_socket_1
+ mov x0,#30
+xd_k_socket_1:
+ movz x6,#0x800
+ movk x6,#0x8,lsl #16
+ and x21,x1,x6
+ and x1,x1,#0xf
+ mov x19,#@sockfl
+ b xd_call
+xd_k_sain:
+ mov x8,x1
+ mov x9,x2
+ bl xd_sain
+ mov x1,x8
+ mov x2,x9
+ b xd_call
+xd_k_saout:
+ mov x20,x1
+ mov x19,#@saout
+ b xd_call
+xd_k_accept:
+ mov x3,#0
+xd_k_accept4:
+ mov x20,x1
+ mov x21,x3
+ mov x19,#@accept4
+ b xd_call
+xd_k_sendto:
+ bl xd_msgflags
+ mov x8,x4
+ mov x9,x5
+ bl xd_sain
+ mov x4,x8
+ mov x5,x9
+ b xd_call
+xd_k_recvfrom:
+ bl xd_msgflags
+ mov x20,x4
+ mov x19,#@saout
+ b xd_call
+// SO_ERROR's value is an errno.
+xd_k_getsockopt:
+ mov x20,#0
+ cmp x1,#1
+ b.ne xd_k_sockopt
+ cmp x2,#4
+ b.ne xd_k_sockopt
+ mov x20,x3
+ mov x19,#@soerror
+// SOL_SOCKET is 0xffff, and its options and TCP's and IPV6_V6ONLY convert.
+xd_k_sockopt:
+ adr x6,xd_sockopts
+ cmp x1,#1
+ b.ne xd_k_sockopt_1
+ mov x1,#0xffff
+ b xd_k_sockopt_3
+xd_k_sockopt_1:
+ adr x6,xd_tcpopts
+ cmp x1,#6
+ b.eq xd_k_sockopt_3
+ cmp x1,#41
+ b.ne xd_call
+ cmp x2,#26
+ b.ne xd_call
+ mov x2,#27
+ b xd_call
+xd_k_sockopt_3:
+ ldp w7,w8,[x6],#8
+ cbz w7,xd_call
+ cmp x2,x7
+ b.ne xd_k_sockopt_3
+ mov x2,x8
+ b xd_call
+// A stat record of macOS's in place of x86-64 Linux's.
+xd_p_stat:
+ ldr w8,[x20]
+ ldrh w9,[x20,#4]
+ ldrh w10,[x20,#6]
+ ldr x11,[x20,#8]
+ ldp w12,w13,[x20,#16]
+ ldr w14,[x20,#24]
+ ldp x15,x17,[x20,#32]
+ ldp x6,x7,[x20,#48]
+ ldp x1,x2,[x20,#64]
+ ldp x3,x4,[x20,#96]
+ ldr w5,[x20,#112]
+ str x8,[x20]
+ str x11,[x20,#8]
+ str x10,[x20,#16]
+ str w9,[x20,#24]
+ stp w12,w13,[x20,#28]
+ str wzr,[x20,#36]
+ str x14,[x20,#40]
+ str x3,[x20,#48]
+ str x5,[x20,#56]
+ str x4,[x20,#64]
+ stp x15,x17,[x20,#72]
+ stp x6,x7,[x20,#88]
+ stp x1,x2,[x20,#104]
+ stp xzr,xzr,[x20,#120]
+ str xzr,[x20,#136]
+ mov x0,#0
+ b xd_back
+xd_p_getfl:
+ bl xd_oback
+ b xd_back
+xd_p_getcwd:
+ cbz x0,xd_errno
+ mov x6,x20
+xd_p_getcwd_1:
+ ldrb w7,[x6],#1
+ cbnz w7,xd_p_getcwd_1
+ sub x0,x6,x20
+ b xd_back
+// Each record of macOS's (its length at 16, type at 20, name at 21) as
+// Linux's (type at 18, name at 19).
+xd_p_dents:
+ mov x8,x20
+ add x9,x20,x0
+xd_p_dents_1:
+ cmp x8,x9
+ b.hs xd_back
+ ldrh w10,[x8,#16]
+ ldrb w11,[x8,#20]
+ strb w11,[x8,#18]
+ add x12,x8,#21
+ add x13,x8,#19
+xd_p_dents_2:
+ ldrb w11,[x12],#1
+ strb w11,[x13],#1
+ cbnz w11,xd_p_dents_2
+ add x8,x8,x10
+ b xd_p_dents_1
+// The signal of a status that has one, as Linux numbers it.
+xd_p_wait4:
+ cbz x20,xd_back
+ cbz x0,xd_back
+ ldr w8,[x20]
+ and w6,w8,#0x7f
+ cbz w6,xd_back
+ cmp w6,#0x7f
+ b.eq xd_p_wait4_1
+ bl xd_sigback
+ and w8,w8,#0xffffff80
+ orr w8,w8,w6
+ str w8,[x20]
+ b xd_back
+xd_p_wait4_1:
+ ubfx x6,x8,#8,#8
+ bl xd_sigback
+ and w8,w8,#0xffff00ff
+ orr w8,w8,w6,lsl #8
+ str w8,[x20]
+ b xd_back
+xd_p_accept4:
+ bl xd_saout
+// A socket: SO_NOSIGPIPE, as Linux's sends with MSG_NOSIGNAL, and the
+// flags X21 holds.
+xd_p_sockfl:
+ bl xd_fdflags
+ str x0,[sp,#696]
+ mov x1,#1
+ str w1,[sp,#688]
+ mov x1,#0xffff
+ mov x2,#0x1022
+ add x3,sp,#688
+ mov x4,#4
+@call _setsockopt
+ ldr x0,[sp,#696]
+ b xd_back
+xd_p_saout:
+ bl xd_saout
+ b xd_back
+xd_p_sigact:
+ cbz x20,xd_back
+ ldr x6,[sp,#464]
+ str x6,[x20]
+ stp xzr,xzr,[x20,#8]
+ str xzr,[x20,#24]
+ b xd_back
+xd_p_soerror:
+ ldr w6,[x20]
+ cmp w6,#106
+ b.hi xd_back
+ adr x7,xd_errnos
+ ldrb w6,[x7,x6]
+ str w6,[x20]
+ b xd_back
+xd_p_pipe2:
+ ldr w0,[x20]
+ bl xd_fdflags
+ ldr w0,[x20,#4]
+ bl xd_fdflags
+ mov x0,#0
+ b xd_back
+// AT_FDCWD (X0) is -2.
+xd_fd:
+ cmn x0,#100
+ b.ne xd_fd_1
+ mov x0,#-2
+xd_fd_1:
+ ret
+// AT_SYMLINK_NOFOLLOW, AT_EACCESS and AT_SYMLINK_FOLLOW (X3).
+xd_atflags:
+ mov x6,#0
+ tbz x3,#8,xd_atflags_1
+ orr x6,x6,#0x20
+xd_atflags_1:
+ tbz x3,#9,xd_atflags_2
+ orr x6,x6,#0x10
+xd_atflags_2:
+ tbz x3,#10,xd_atflags_3
+ orr x6,x6,#0x40
+xd_atflags_3:
+ mov x3,x6
+ ret
+// open's flags (X2), and back (X0).
+xd_oflags:
+ and x6,x2,#3
+ adr x7,xd_open_flags
+xd_oflags_1:
+ ldp w8,w9,[x7],#8
+ cbz w8,xd_oflags_2
+ tst x2,x8
+ b.eq xd_oflags_1
+ orr x6,x6,x9
+ b xd_oflags_1
+xd_oflags_2:
+ mov x2,x6
+ ret
+xd_oback:
+ and x6,x0,#3
+ adr x7,xd_open_flags
+xd_oback_1:
+ ldp w8,w9,[x7],#8
+ cbz w8,xd_oback_2
+ tst x0,x9
+ b.eq xd_oback_1
+ orr x6,x6,x8
+ b xd_oback_1
+xd_oback_2:
+ mov x0,x6
+ ret
+// The flags of send and recv (X3): MSG_DONTWAIT and MSG_WAITALL move;
+// MSG_NOSIGNAL is the socket's SO_NOSIGPIPE.
+xd_msgflags:
+ and x6,x3,#7
+ tbz x3,#6,xd_msgflags_1
+ orr x6,x6,#0x80
+xd_msgflags_1:
+ tbz x3,#8,xd_msgflags_2
+ orr x6,x6,#0x40
+xd_msgflags_2:
+ mov x3,x6
+ ret
+// A signal (X6) as macOS numbers it, and back.
+xd_sig:
+ cmp x6,#31
+ b.hi xd_sig_1
+ adr x7,xd_signals
+ ldrb w6,[x7,x6]
+xd_sig_1:
+ ret
+xd_sigback:
+ cmp x6,#31
+ b.hi xd_sigback_1
+ adr x7,xd_signals_back
+ ldrb w6,[x7,x6]
+xd_sigback_1:
+ ret
+// The address X8 of X9 bytes as macOS's, at 448: its length in its first
+// byte, the family in the second (AF_INET6 30); a path of at most 104.
+xd_sain:
+ cbz x8,xd_sain_4
+ cmp x9,#128
+ b.ls xd_sain_1
+ mov x9,#128
+xd_sain_1:
+ add x10,sp,#448
+ mov x11,#0
+xd_sain_2:
+ cmp x11,x9
+ b.hs xd_sain_3
+ ldrb w12,[x8,x11]
+ strb w12,[x10,x11]
+ add x11,x11,#1
+ b xd_sain_2
+xd_sain_3:
+ ldrh w12,[x8]
+ cmp w12,#10
+ b.ne xd_sain_5
+ mov w12,#30
+xd_sain_5:
+ cmp w12,#1
+ b.ne xd_sain_6
+ cmp x9,#106
+ b.ls xd_sain_6
+ mov x9,#106
+xd_sain_6:
+ strb w9,[x10]
+ strb w12,[x10,#1]
+ mov x8,x10
+xd_sain_4:
+ ret
+// The address at X20 as Linux's: the family a 16-bit word.
+xd_saout:
+ cbz x20,xd_saout_1
+ ldrb w6,[x20,#1]
+ cmp w6,#30
+ b.ne xd_saout_2
+ mov w6,#10
+xd_saout_2:
+ strh w6,[x20]
+xd_saout_1:
+ ret
+// FD_CLOEXEC and O_NONBLOCK on the descriptor X0 as Linux's flags X21 ask;
+// X0 kept.
+xd_fdflags:
+ str x30,[sp,#432]
+ str x0,[sp,#440]
+ tbz x21,#19,xd_fdflags_1
+ mov x1,#2
+ mov x2,#1
+ str x2,[sp]
+@call _fcntl
+xd_fdflags_1:
+ tbz x21,#11,xd_fdflags_2
+ ldr x0,[sp,#440]
+ mov x1,#4
+ mov x2,#4
+ str x2,[sp]
+@call _fcntl
+xd_fdflags_2:
+ ldr x0,[sp,#440]
+ ldr x30,[sp,#432]
+ ret
+xd_errnos:
+ .byte @errnos
+xd_signals:
+ .byte @signals
+xd_signals_back:
+ .byte @signals_back
+xd_clocks:
+ .byte 0, 6, 12, 16, 4, 0, 6, 6
+ .balign 8
+xd_template:
+ .ascii "/tmp/alchem.XXXXXX"
+ .space 14
+// Linux's open flags and macOS's: O_CREAT, O_EXCL, O_NOCTTY, O_TRUNC,
+// O_APPEND, O_NONBLOCK, O_DIRECTORY, O_NOFOLLOW, O_CLOEXEC, O_DSYNC, O_SYNC.
+xd_open_flags:
+ .word 0x40, 0x200, 0x80, 0x800, 0x100, 0x20000, 0x200, 0x400, 0x400, 0x8, 0x800, 0x4
+ .word 0x10000, 0x100000, 0x20000, 0x100, 0x80000, 0x1000000, 0x1000, 0x400000, 0x100000, 0x80, 0, 0
+// SO_REUSEADDR, SO_TYPE, SO_ERROR, SO_BROADCAST, SO_SNDBUF, SO_RCVBUF,
+// SO_KEEPALIVE, SO_LINGER, SO_REUSEPORT, SO_RCVTIMEO, SO_SNDTIMEO.
+xd_sockopts:
+ .word 2, 4, 3, 0x1008, 4, 0x1007, 6, 0x20, 7, 0x1001, 8, 0x1002, 9, 8, 13, 0x1080, 15, 0x200
+ .word 20, 0x1006, 21, 0x1005, 0, 0
+// TCP_NODELAY, TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT.
+xd_tcpopts:
+ .word 1, 1, 4, 0x10, 5, 0x101, 6, 0x102, 0, 0
+xd_table:
+ .word @table, 0
+ .balign 4'''
+# Every runtime but the collector goes to the collector's routine.
+DARWIN_STUB = '''x86_syscall:
+ ldr x16,[x26]
+ br x16'''
 SYSCALL = '''x86_syscall:
  stp x1,x2,[sp,#-112]!
  stp x3,x4,[sp,#16]

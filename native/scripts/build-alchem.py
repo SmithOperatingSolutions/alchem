@@ -6,6 +6,10 @@ rather than by running it.
 
     build-alchem.py --compiler build/dev/A2 --output build/dev/alchem
 
+With --darwin the compiler inside makes macOS programs (spec/darwin-arm64.md):
+built by the compiler for macOS that runs on macOS, `alchem` is a macOS
+program whose test, run and build commands work there.
+
 The program is three modules: tools/alchem.alc; the bundler without its
 main, as an imported module may not define one; and AlchemCompiler, the
 compiler's source as the bootstrap assembles it (implementations/alchem,
@@ -35,10 +39,16 @@ def _load(name, path):
     return module
 
 
-def compiler_module():
+def compiler_module(darwin=False):
     """The compiler as the module AlchemCompiler, with no entry and no main."""
     bootstrap = _load('alchem_bootstrap', ROOT / 'scripts/bootstrap-alchem-compiler.py')
-    text = bootstrap.source_text('functions', True)
+    text = bootstrap.source_text('functions', False)
+    if darwin:
+        switch = '  def nc_arm(): integer do 0 end\n'
+        if text.count(switch) != 1:
+            raise ValueError('the compiler source has no single nc_arm()')
+        text = text.replace(switch, '  def nc_arm(): integer do 3 end\n')
+    text = bootstrap.compact_identifiers(bootstrap.compact_source(text))
     head, rest = text.split('\n', 1)
     if head != 'defmodule NativeSourceCompiler do':
         raise ValueError('the compiler source is not one NativeSourceCompiler module')
@@ -57,14 +67,14 @@ def bundler_module():
     return text[:-len(BUNDLER_MAIN)] + 'end\n'
 
 
-def program():
+def program(darwin=False):
     """The bundle of the three modules, with the paths it names those of the repository."""
     bundle = _load('alchem_bundle', ROOT / 'scripts/bundle-alchem.py')
     with tempfile.TemporaryDirectory(prefix='alchem-program-') as directory:
         work = Path(directory)
         (work / 'alchem.alc').write_text((ROOT / 'tools/alchem.alc').read_text())
         (work / 'alchem-bundle.alc').write_text(bundler_module())
-        (work / 'alchem-compiler.alc').write_text(compiler_module())
+        (work / 'alchem-compiler.alc').write_text(compiler_module(darwin))
         before = os.getcwd()
         os.chdir(work)
         try:
@@ -84,10 +94,10 @@ def program():
     return head + b'\n' + b'\n'.join(lines)
 
 
-def build(compiler, output):
-    source = program()
+def build(compiler, output, darwin=False):
+    source = program(darwin)
     made = subprocess.run([str(compiler)], input=source, capture_output=True, env={'PATH': ''}, timeout=600)
-    if made.returncode or made.stderr or made.stdout[:4] != b'\x7fELF':
+    if made.returncode or made.stderr or made.stdout[:4] not in (b'\x7fELF', b'\xcf\xfa\xed\xfe'):
         raise RuntimeError(f'the compiler did not build alchem: {made.returncode} {made.stderr.decode(errors="replace").strip()}')
     output = Path(output)
     staged = output.with_name('.' + output.name + '.new')
@@ -101,9 +111,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--compiler', type=Path, default=ROOT / 'build/dev/A2')
     parser.add_argument('--output', type=Path, default=ROOT / 'build/dev/alchem')
+    parser.add_argument('--darwin', action='store_true', help='the compiler inside makes macOS programs')
     args = parser.parse_args()
     try:
-        source, image = build(args.compiler.resolve(), args.output)
+        source, image = build(args.compiler.resolve(), args.output, args.darwin)
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f'E_BUILD: {error}', file=sys.stderr)
         return 1

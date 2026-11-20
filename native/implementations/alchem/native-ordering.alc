@@ -74,10 +74,10 @@ defmodule NativeOrdering do
   def od_variable(name: bytes, vars: bytes): bytes do
     slot = nq_slot(vars,name,0)
     load = if slot < 0 do b[] else if slot < 16777216 do nc_slot(b[76,139,85],slot) else Enum.concat(b[76,139,85,248,77,139,146],nc_u32((slot-16777216)*8)) end end
-    words = nc_join(nc_join(b[73,131,250,1,15,135],nq_rel(82),nq_jz(20)),od_int(),nq_jmp(123))
-    texts = nc_join(od_text(),nq_jmp(67),Enum.concat(b[73,131,250,12],nq_jnz(35)))
+    words = nc_join(nc_join(b[73,131,250,1,15,135],nq_rel(82),nq_jz(20)),od_int(),nq_jmp(123+nq_grown()))
+    texts = nc_join(od_text(),nq_jmp(67+nq_grown()),Enum.concat(b[73,131,250,12],nq_jnz(35)))
     if slot < 0 do b[] else
-      nc_join(nc_join(load,words,texts),Enum.concat(od_float(),nq_jmp(22)),b[186,1,0,0,0,77,137,211,73,193,235,32,117,5,65,255,210,235,3,65,255,18])
+      nc_join(nc_join(load,words,texts),Enum.concat(od_float(),nq_jmp(22+nq_grown())),Enum.concat(b[186,1,0,0,0],nq_call()))
     end
   end
   # The comparator of a type for an ordered type variable. A list or tuple

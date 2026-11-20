@@ -32,7 +32,16 @@ made does the code change.
   (scripts/x86-to-arm64.py, `in_block`), and their sizes do not change.
 
 The image's code has no other absolute address: everything else was
-RIP-relative already.
+RIP-relative already. Two things read one out of data:
+
+- a float's node in what inspect describes names the float runtime's table
+  entry (`ins_float`, spec/integer-parse-x86_64.s), which is read through
+  the copy;
+- a comparator (equality, ordering, the collector's `mk_ask`) is a function's
+  code where it stands below 4 GiB, else a function value whose first word
+  is the code. A position-independent program's code stands above 4 GiB, so
+  there code is what stands less than 1 GiB and the head below X26
+  (`nq_call`); dyld and the kernel keep that gigabyte for the image.
 
 ## The executable
 
@@ -52,33 +61,78 @@ of xor, and and the shifts of a byte (`sh_tables`). That is slow: the compiler
 builds itself in 26 seconds on an M3 Max, where the position-independent
 Linux build of it, unsigned, takes 13.
 
-The entry is called as `main` is, with argv in X1: the initial stack pointer
-the program reads (X14) is the word before it, argc.
+The entry is called as `main` is, with argv in X1 and envp in X2, and dyld's
+frames lie between the stack pointer and argv, where the program keeps words
+of its own below its initial stack pointer. So the entry copies argc, argv
+and envp below the stack pointer, with two zero words after them, and that
+copy's argc is the initial stack pointer the program reads (X14,
+`a_darwin_args`).
 
 ## Calls to the system
 
 There is no stable system-call interface on macOS. The routine every
 translated system call goes through (`x86_syscall`, the word at 0x400420) is,
 with DARWIN defined, calls of libSystem's functions through the words dyld
-binds (scripts/x86-to-arm64.py, `DARWIN_SYSCALL`): it keeps every register
-x86-64 keeps, the vector registers too, converts what differs (`mmap`'s
-flags), and gives `-errno` where a function gives -1. The entry's own calls
-(the arena, the stack, exit) call libSystem directly (`a_libc`). The
-collector for macOS is native-memory-data-darwin.alc.
+binds (scripts/x86-to-arm64.py, `DARWIN_ROUTINE`). The collector holds it
+(DARWIN_ROUTINE defined, native-memory-data-darwin.alc); the other runtimes
+go to it through the word at 0x400420, as translated functions do. It keeps
+every register x86-64 keeps, the vector registers too, finds the call in a
+table (`DARWIN_CALLS`: the number, the function, how it converts) and gives
+-ENOSYS for any other. What differs is converted both ways:
 
-So far `read`, `write`, `close`, `mmap`, `munmap`, `mprotect` and `exit` are
-calls; any other call gives -ENOSYS (-38).
+- errno: a function's -1 is `-errno` in Linux's numbers;
+- open's flags, `AT_FDCWD` and the `*at` flags; fcntl's `F_DUPFD_CLOEXEC`
+  and status flags; a variadic argument (open's mode, fcntl's) goes on the
+  stack, as Apple's calling convention has it;
+- stat records, and directory records (`getdents64` is
+  `__getdirentries64`);
+- the clocks, `getrandom` (`getentropy`, 256 bytes at a time), `ppoll`
+  (`poll`), `pipe2` (`pipe` and fcntl), `mremap` (a new mapping and a copy),
+  `memfd_create` (a file of `mkstemp` unlinked at once);
+- signals' numbers (kill, wait4's status, sigaction's record);
+- sockets: the families, addresses (a length byte, then the family), the
+  options of SOL_SOCKET, TCP and IPV6_V6ONLY, the flags of send and recv;
+  every socket gets SO_NOSIGPIPE, as Linux's sends ask with MSG_NOSIGNAL.
+
+The words dyld binds are those of `DARWIN_IMPORTS`, which the collector's
+module gives the Mach-O writer (`gd_import_count`, `gd_import_data`). The
+entry's own calls (the arena, the stack, exit) call libSystem directly
+(`a_libc`).
+
+A runtime asks for AES and PMULL by cpuid, which reads ID_AA64ISAR0_EL1 on
+Linux; macOS lets no program read it, and every Mac on ARM64 has both.
+
+The handler of SIGSEGV is installed by sigaction through the routine
+(`zf_guard_darwin`): libSystem calls it and returns from it, the fault's
+address is at 24 of the information, and the program counter at 272 of the
+registers the context points to at 48.
 
 ## State
 
-Every program of examples/ runs on macOS as its Linux ARM64 build does, and
-the compiler built for macOS compiles its own source on macOS to itself, byte
-for byte. Not yet done:
+Every program of examples/ runs on macOS as its Linux ARM64 build does, the
+corpus of scripts/upstream-examples.py (871 examples) passes on macOS with
+the compiler built for macOS, and that compiler compiles its own source on
+macOS to itself, byte for byte. scripts/verify-darwin.py checks that on
+macOS, with the gates of harness/ that run there; the native workflow's
+macOS job runs it with the compiler the x86-64 job makes
+(`build-arm64.py --darwin --macos`).
 
-- the rest of the system calls (files, time, processes, sockets, signals),
-  with macOS's numbers for errors, flags and structures;
-- the handler of SIGSEGV (`zf_guard_arm`), which installs itself with Linux's
-  `rt_sigaction`;
-- coverage (`zf_shared`) and inspected function values (native-inspect.alc),
-  which keep a slot's address in 32 bits;
-- the corpus and the gates on macOS, and a job for them on `macos-15`.
+Coverage works as on Linux: a position-independent program's coverage
+routine holds, in place of the trace runtime's table entry and where the
+code starts, where the trace runtime and the routine stand from the start
+of the code (`zf_cover_pic`), and Testing._covered reads them so when the
+routine stands above 4 GiB.
+
+Not done:
+
+- signing is slow: SHA-256 in the compiler's source works on bytes through
+  tables, without bitwise operators, which the seed has none of (about 2 s a
+  megabyte); with the translation of large programs to ARM64, a program of
+  tens of megabytes takes minutes to compile, which keeps the gates modules
+  and gaps from running on macOS in their time;
+- `alchem run` gives the program its own standard input through /proc,
+  which macOS has not: there the program has none (test_driver);
+- the gates that cap a program's address space to make its arena small
+  (RLIMIT_AS, which macOS neither lowers nor enforces), that trace it with
+  Linux's ptrace, or that need /dev/full or Linux's file system and kernel,
+  do not run on macOS (scripts/verify-darwin.py names them).

@@ -165,11 +165,11 @@ defmodule NativeMacho do
   end
   # The functions of libSystem the program calls, in the order of their
   # words (a_got): their names as the symbols dyld binds.
-  def m_import_count(): integer do 8 end
+  def m_import_count(): integer do gd_import_count() end
   # DYLD_CHAINED_IMPORT words (library ordinal 1, libSystem; the name's
-  # offset << 9) and the pool of names: _exit, _mmap, _write, _read, _close,
-  # _munmap, _mprotect, ___error.
-  def m_import_data(): bytes do b"AQIAAAEOAAABGgAAASgAAAE0AAABQgAAAVIAAAFmAAAAX2V4aXQAX21tYXAAX3dyaXRlAF9yZWFkAF9jbG9zZQBfbXVubWFwAF9tcHJvdGVjdABfX19lcnJvcgA=" end
+  # offset << 9) and the pool of names, which the collector's routine of
+  # system calls makes (native-memory-data-darwin.alc).
+  def m_import_data(): bytes do gd_import_data() end
   # Mach-O, from the image gm_image makes (from the 128th byte of the ELF
   # layout): a page of headers, then the image 128 bytes into the next page
   # so that every offset of it is the one of Linux; the copy of the words
@@ -206,11 +206,11 @@ defmodule NativeMacho do
       Enum.concat(Enum.concat(m_u32(i),m_u32(2147483648+next*524288)),m_got(count,i+1))
     end
   end
-  # LC_DYLD_CHAINED_FIXUPS: the header, the starts of the four segments (only
-  # __DATA, the third, has fixups: its first page from its start), the
+  # LC_DYLD_CHAINED_FIXUPS: the header, the starts of the five segments (only
+  # __DATA, the fourth, has fixups: its first page from its start), the
   # imports (from libSystem, the first library) and their names.
   def m_fixups(pages: integer, offset: integer): bytes do
-    starts = nc_join(m_u32(4),nc_join(m_u32(0),m_u32(0),Enum.concat(m_u32(24),m_u32(0))),m_u32(0))
+    starts = nc_join(m_u32(5),nc_join(m_u32(0),m_u32(0),m_u32(0)),Enum.concat(m_u32(24),m_u32(0)))
     segment = nc_join(nc_join(m_u32(22+2*pages),b[0,64,6,0],m_u64(offset)),Enum.concat(m_u32(0),b[pages-256*a_div(pages,256),a_div(pages,256)]),Enum.concat(b[0,0],m_page_none(pages-1)))
     in_image = Enum.concat(starts,segment)
     padded = Enum.concat(in_image,nc_zeros(m_round(Enum.count(in_image),8)-Enum.count(in_image)))
@@ -221,7 +221,7 @@ defmodule NativeMacho do
     Enum.concat(made,nc_zeros(m_round(Enum.count(made),8)-Enum.count(made)))
   end
   def m_page_none(count: integer): bytes do if count <= 0 do b[] else Enum.concat(b[255,255],m_page_none(count-1)) end end
-  def m_command_count(): integer do 13 end
+  def m_command_count(): integer do 14 end
   # layout: the text's size, the copy's address and size, the link edit's
   # offset and size, the fixups' size, the signature's offset and size, as
   # 4-byte words.
@@ -237,6 +237,9 @@ defmodule NativeMacho do
     sig_size = nc_long(layout,28)
     zero = m_segment(b"X19QQUdFWkVSTw==",0,base,0,0,0)
     text = nc_join(m_segment(b"X19URVhU",base,text_size,0,text_size,261),m_name(b"X190ZXh0"),Enum.concat(m_name(b"X19URVhU"),m_section(base+16384+128,text_size-16384-128,16384+128,2147484672)))
+    # The gigabyte between the image and the copy, kept from every mapping:
+    # what stands there is code (nq_call).
+    gap = m_segment(b"X19HQVA=",base+text_size,data_vm-text_size,0,0,0)
     data = m_segment(b"X19EQVRB",base+data_vm,data_size,text_size,data_size,3)
     link = m_segment(b"X19MSU5LRURJVA==",base+data_vm+data_size,m_round(linkedit_size,16384),linkedit_off,linkedit_size,1)
     dyld = nc_join(m_u32(14),m_u32(32),Enum.concat(m_u32(12),Enum.concat(b"L3Vzci9saWIvZHlsZA==",nc_zeros(7))))
@@ -246,7 +249,7 @@ defmodule NativeMacho do
     starting = nc_join(m_u32(2147483688),m_u32(24),Enum.concat(m_u64(16384+128),m_u64(0)))
     build = nc_join(nc_join(m_u32(50),m_u32(24),m_u32(1)),nc_join(m_u32(720896),m_u32(720896),m_u32(0)),b[])
     sign = nc_join(m_u32(29),m_u32(16),Enum.concat(m_u32(sig_off),m_u32(sig_size)))
-    nc_join(nc_join(nc_join(zero,text,data),nc_join(link,linking,symbols),nc_join(dyld,starting,system)),Enum.concat(build,sign),b[])
+    nc_join(nc_join(nc_join(zero,text,Enum.concat(gap,data)),nc_join(link,linking,symbols),nc_join(dyld,starting,system)),Enum.concat(build,sign),b[])
   end
   # A section of 80 bytes after its two names: address, size, offset, align
   # 2^2, no relocations, flags; the rest 0.
