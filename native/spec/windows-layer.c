@@ -107,6 +107,8 @@ extern W u32 (*imp_WaitForSingleObject)(u64, u32);
 extern W i32 (*imp_GetExitCodeProcess)(u64, u32 *);
 extern W i32 (*imp_TerminateProcess)(u64, u32);
 extern W void (*imp_ExitProcess)(u32);
+extern W i32 (*imp_CreateTimerQueueTimer)(u64 *, u64, W void (*)(void *, u8), void *, u32, u32, u32);
+extern W i32 (*imp_DeleteTimerQueueTimer)(u64, u64, u64);
 extern W void (*imp_RtlRestoreContext)(void *, void *);
 extern void copy_resume(void);
 extern W u64 (*imp_VirtualQuery)(const void *, void *, u64);
@@ -1066,6 +1068,15 @@ void copy_resume_c(void) {
 #define CHILDREN 256
 static u32 child_pid[CHILDREN];
 static u64 child_handle[CHILDREN];
+static u64 child_timer[CHILDREN];
+
+/* A timer of the timer queue ends the process it was set for (flag 16 of
+   spawn); it runs on a thread of the pool, and touches nothing but the
+   process. */
+static W void end_child(void *process, u8 fired) {
+  (void)fired;
+  imp_TerminateProcess((u64)process, 1);
+}
 
 static int child_of(i64 pid) {
   for (int i = 0; i < CHILDREN; i++)
@@ -1124,10 +1135,16 @@ static int same_key(const char *a, const char *b) {
    and the environment envp (zero-ended lists of UTF-8 strings), in dir
    unless it is 0, as Go's os.StartProcess makes it on Windows. flags: 1 its
    input is a pipe (else NUL); 2 its errors go with its output, 4 to NUL,
-   else where the program's own go. out gets the descriptor its output is
-   read from and the one its input is written to. The process's number, or
-   -errno. */
+   8 to the file named at out[0] (made anew), else where the program's own
+   go; 16 it is ended after out[1] milliseconds; 32 its input, output and
+   errors are the program's own (no pipes). out gets the descriptor its
+   output is read from (-1 with 32) and the one its input is written to.
+   The process's number, or -errno. */
 static i64 sys_spawn(i64 path, i64 argv, i64 envp, i64 dir, i64 flags, i64 out) {
+  i64 *given = (i64 *)out;
+  commit_range(given, 16);
+  const char *err_path = (flags & 8) ? (const char *)given[0] : 0;
+  i64 kill_ms = (flags & 16) ? given[1] : 0;
   if (!spawn_wide && !(spawn_wide = imp_VirtualAlloc(0, SPAWN_UNITS * 2, 0x3000, 4))) return -ENOMEM;
   if (!spawn_text && !(spawn_text = imp_VirtualAlloc(0, SPAWN_UNITS, 0x3000, 4))) return -ENOMEM;
   char **args = (char **)argv, **env = (char **)envp;
@@ -1178,6 +1195,14 @@ static i64 sys_spawn(i64 path, i64 argv, i64 envp, i64 dir, i64 flags, i64 out) 
   u64 sa[3] = {24, 0, 1};                      /* SECURITY_ATTRIBUTES, inherited */
   u64 out_read = 0, out_write = 0, in_read = 0, in_write = 0, null_in = 0, null_err = 0, err = 0;
   i64 r = 0;
+  u64 me = imp_GetCurrentProcess();
+  if (flags & 32) {
+    /* The program's own three, inherited. */
+    imp_DuplicateHandle(me, handle_of(0), me, &in_read, 0, 1, 2);
+    imp_DuplicateHandle(me, handle_of(1), me, &out_write, 0, 1, 2);
+    imp_DuplicateHandle(me, handle_of(2), me, &null_err, 0, 1, 2);
+    err = null_err;
+  } else {
   if (!imp_CreatePipe(&out_read, &out_write, sa, 0)) return fail();
   imp_SetHandleInformation(out_read, 1, 0);
   if (flags & 1) {
@@ -1189,10 +1214,17 @@ static i64 sys_spawn(i64 path, i64 argv, i64 envp, i64 dir, i64 flags, i64 out) 
   }
   if (flags & 2) err = out_write;
   else if (flags & 4) { null_err = imp_CreateFileW(u"NUL", 0x40000000, 3, sa, 3, 0, 0); err = null_err; }
-  else {
-    u64 me = imp_GetCurrentProcess();
+  else if (flags & 8) {
+    /* GENERIC_WRITE, sharing all, CREATE_ALWAYS. */
+    u16 *name = block + used + 8;
+    if (imp_MultiByteToWideChar(65001, 0, err_path, -1, name, 32768) <= 0) { r = -ENOENT; goto close; }
+    null_err = imp_CreateFileW(name, 0x40000000, 7, sa, 2, 0x80, 0);
+    if (null_err == (u64)-1) { null_err = 0; r = fail(); goto close; }
+    err = null_err;
+  } else {
     if (!imp_DuplicateHandle(me, handle_of(2), me, &null_err, 0, 1, 2)) null_err = 0;
     err = null_err;
+  }
   }
   /* STARTUPINFOW: cb, ..., dwFlags STARTF_USESTDHANDLES at 60, the
      handles at 80, 88 and 96. */
@@ -1216,8 +1248,10 @@ static i64 sys_spawn(i64 path, i64 argv, i64 envp, i64 dir, i64 flags, i64 out) 
   }
   child_pid[slot] = (u32)info[2];
   child_handle[slot] = info[0];
+  child_timer[slot] = 0;
+  if (kill_ms > 0) imp_CreateTimerQueueTimer(&child_timer[slot], 0, end_child, (void *)info[0], (u32)kill_ms, 0, 8);   /* WT_EXECUTEONLYONCE */
   {
-    i64 reader = new_fd(out_read);
+    i64 reader = out_read ? new_fd(out_read) : -1;
     out_read = 0;
     i64 writer = -1;
     if (flags & 1) { writer = new_fd(in_write); in_write = 0; }
@@ -1269,6 +1303,9 @@ static i64 sys_wait4(i64 pid, i64 status, i64 options) {
   if (w == 0x102) return 0;                    /* WAIT_TIMEOUT */
   u32 code = 0;
   imp_GetExitCodeProcess(child_handle[i], &code);
+  /* The timer goes first, its callback over (INVALID_HANDLE_VALUE): the
+     handle is closed below. */
+  if (child_timer[i]) { imp_DeleteTimerQueueTimer(0, child_timer[i], (u64)-1); child_timer[i] = 0; }
   if (status) {
     commit_range((void *)status, 8);
     *(u64 *)status = (u64)code << 8;

@@ -134,7 +134,8 @@ The calls made so far:
   kept), the directory, and pipes whose child ends alone are inherited
   (`System.cmd`: output, and errors with it or where the program's go;
   `Port`: input too, errors with the output, to `NUL` or where the
-  program's go). `wait4` waits on the process (with `WNOHANG`, not), and
+  program's go; and for `alchem.exe`, errors to a file, an end at a
+  deadline, or the program's own three handles). `wait4` waits on the process (with `WNOHANG`, not), and
   gives the whole 32-bit exit code in a word, as Go's `ExitCode` has it
   there; `kill` with SIGKILL is `TerminateProcess` (exit code 1, as Go's
   `Process.Kill`), and Windows has no other signal to send. `pipe2` is an
@@ -197,6 +198,20 @@ branch never taken.
   Go's net makes on Windows (`connectex`, `wsarecv`, `wsasend`,
   `acceptex`, `wsasendto`: `TCP._sysop`).
 
+## alchem.exe
+
+`scripts/build-alchem.py --windows --compiler build/dev/alchem-compiler-windows-cross`
+builds the `alchem` command (tools/alchem.alc) with the compiler that makes
+Windows programs inside, as a Windows program: its `test`, `run`, `build`,
+`check` and `new` work on Windows, and take `-target windows/amd64` (each
+`alchem` builds for the system it runs on, as the one for macOS does). There
+it names what it builds as the pinned command does (`.exe`), and starts
+programs without `/bin/sh` (`wexec`, the layer's spawn): `run` gives the
+program its own input, output and errors; a fixture's input is `NUL`, its
+errors go to a file and it is ended at its deadline (a timer of the timer
+queue calls `TerminateProcess`). CI runs its `test`, `build` and `run` on
+Windows.
+
 ## Checking
 
 `scripts/run-windows PROGRAM.exe` runs a program under Wine with a seccomp
@@ -222,7 +237,6 @@ errors); the reference for them is Windows (CI).
 - Stacks: a 1 GiB stack is committed at once. The exception dispatcher
   pushes its record on the faulting stack, so a stack committed as it is
   touched would need room there.
-- `alchem build -target windows/amd64` in tools/alchem.alc.
 - The gates on Windows. CI (`.github/workflows/native.yml`, job Windows
   x64 on `windows-2025`) runs the Windows compiler the Linux job builds:
   it must make itself again byte for byte, make a program that runs, and

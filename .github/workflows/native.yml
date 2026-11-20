@@ -108,6 +108,8 @@ jobs:
           cp examples/hello-native.alc build/windows/hello.alc
           cp scripts/windows-examples.py build/windows/
           python3 scripts/windows-examples.py prepare build/windows/examples
+          python3 scripts/build-alchem.py --windows --compiler build/dev/alchem-compiler-windows-cross --output build/windows/alchem.exe
+          cp -r ../examples/testing build/windows/testing
       - name: Keep the Windows compiler
         if: matrix.gates == ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -206,3 +208,17 @@ jobs:
       - name: The upstream examples
         # Each prints on Windows what it prints on Linux (spec/windows.md).
         run: python windows-examples.py check examples ./alchem-compiler-windows.exe --jobs 4
+      - name: alchem.exe
+        # The test, run and build commands on Windows (build-alchem.py --windows).
+        run: |
+          ./alchem.exe test -seed 7 testing/test/cart_test.alc | tee test.txt
+          grep -q '^8 tests, 0 failures$' test.txt
+          ./alchem.exe build -o built.exe hello.alc
+          test "$(./built.exe)" = 'Hello from native Alchem!'
+          set +e
+          printf 'defmodule T do\n  def main() do\n    IO.puts(inspect(System.argv()))\n    System.halt(3)\n  end\nend\n' > argv.alc
+          out="$(./alchem.exe run argv.alc a 'b c')"
+          status=$?
+          set -e
+          test "$out" = '["a", "b c"]'
+          test "$status" = 3
