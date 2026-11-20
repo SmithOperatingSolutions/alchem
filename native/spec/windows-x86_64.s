@@ -55,6 +55,20 @@ linux_stack:
         inc r13
         jmp .Lwl
 .Lwl_done:
+        # An empty command line: the one argument is the program's path, as
+        # Go's os.Args has it (os.Executable), quoted so it stays one.
+        test r13, r13
+        jnz .Lwl_given
+        xor ecx, ecx
+        lea rdx, [rip+wpath1+2]
+        mov r8d, 32760
+        call [rip+imp_GetModuleFileNameW]
+        lea r12, [rip+wpath1]
+        mov word ptr [r12], 0x22
+        mov word ptr [r12+rax*2+2], 0x22
+        mov word ptr [r12+rax*2+4], 0
+        lea r13, [rax+2]
+.Lwl_given:
         call [rip+imp_GetEnvironmentStringsW]
         mov r14, rax
         xor r15d, r15d          # the block's length, its last NUL excluded

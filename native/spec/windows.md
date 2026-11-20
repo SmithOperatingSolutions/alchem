@@ -66,7 +66,9 @@ those not in KERNEL32).
   stack Windows started the thread with, builds a Linux initial stack and
   jumps to 0x400080. The arguments come from `GetCommandLineW`, split as
   Go's `os` package splits it on Windows, and the environment from
-  `GetEnvironmentStringsW`, both in UTF-8. 64 KiB of stack lie below that
+  `GetEnvironmentStringsW`, both in UTF-8; an empty command line gives
+  the program's path as the one argument (`GetModuleFileNameW`), as Go's
+  `os.Args` there. 64 KiB of stack lie below that
   block, for the exception records Windows pushes there until the program
   has switched to its own stack.
 - **System calls.** `ud2` raises an illegal-instruction exception. The
@@ -217,8 +219,6 @@ errors); the reference for them is Windows (CI).
 
 - Local time: Go takes it on Windows from the system's zone
   (`GetDynamicTimeZoneInformation`); the library takes `$TZ` or UTC.
-- An empty command line: Go then takes the executable's path as the one
-  argument.
 - Stacks: a 1 GiB stack is committed at once. The exception dispatcher
   pushes its record on the faulting stack, so a stack committed as it is
   touched would need room there.
