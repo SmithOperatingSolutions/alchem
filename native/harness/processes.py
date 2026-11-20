@@ -28,6 +28,33 @@ RUNS=[('defmodule Example do\n'
   0,
   b'{true, "bad input"}\n<stdin>:3:73: bad input\n  at Example.main <closure> (<stdin>:3)\n',
   b''),
+ # Two processes fail at once: each report is its own (the parent read
+ # its trace onto a pad another process used meanwhile).
+ ('defmodule Example do\n'
+  '  def main() do\n'
+  'a: pid[integer] = Process.spawn(fn(self: pid[integer]): integer do Process.crash("first") end, 1)\n'
+  'b: pid[integer] = Process.spawn(fn(self: pid[integer]): integer do Process.crash("second") end, 1)\n'
+  'Process.await(a, 1000)\n'
+  'Process.await(b, 1000)\n'
+  'IO.puts(Process.report(a))\n'
+  'IO.puts(Process.report(b))\n'
+  '  end\n'
+  'end\n',
+  0,
+  b'<stdin>:3:68: first\n  at Example.main <closure> (<stdin>:3)\n<stdin>:4:68: second\n  at Example.main <closure> (<stdin>:4)\n',
+  b''),
+ # Two commands at once: each gets its own output.
+ ('defmodule Example do\n'
+  '  def main() do\n'
+  'a = Task.async(fn -> System.cmd("sh", ["-c", "sleep 0.3; echo AAAA"]) end)\n'
+  'b = Task.async(fn -> System.cmd("sh", ["-c", "sleep 0.1; echo BBBB; sleep 0.4; echo bbbb"]) end)\n'
+  'IO.puts(inspect(Task.await(a, 5000)))\n'
+  'IO.puts(inspect(Task.await(b, 5000)))\n'
+  '  end\n'
+  'end\n',
+  0,
+  b'{"AAAA\\n", 0}\n{"BBBB\\nbbbb\\n", 0}\n',
+  b''),
  ('defmodule Example do\n'
   '  def main() do\n'
   'worker: pid[integer] = Process.spawn(fn(self: pid[integer]): integer do 3 end, 1)\n'

@@ -24,7 +24,17 @@ no zone. Any other NAME is the first zone file among `$ZONEINFO/NAME`
 magic, a version other than 1 to 3, cut short, a transition of a type it
 does not have, an abbreviation outside its table, more than 10 MB) is
 passed over for the next directory, as `LoadLocationFromTZData` failing
-does there.
+does there. When none has it, the zone comes from the database built into
+the library, as it does from `time/tzdata` for the pinned program, which
+carries it: Go's own copy of the pinned toolchain
+(`lib/time/zoneinfo.zip`), kept in `library/Date.alc` as one deflate stream
+in base64 (an index of names, where each file starts and its length, then
+the files; `scripts/generate-tzdata.py` writes it, 80 KB for 598 zones).
+It is inflated at its first use into mapped memory that word 112 of the
+state block points at (`tzdb`), with the inflater of HTTP given tables of
+its own (`HTTP._inflate_at`, `_kinit`). On Windows there are no zone
+files, and Go looks in no directory but `$ZONEINFO` before its own copy;
+the library does the same.
 
 A file is read once, into mapped memory behind 512 bytes that say where
 its parts stand, and kept for the life of the program: word 80 of the
@@ -66,12 +76,6 @@ as elapsed time.
 
 ## Differences that remain
 
-- The pinned runtime carries Go's own copy of the zone database
-  (`time/tzdata`) for a machine that has none installed. Here a machine
-  without zone files knows only UTC and the zones of one offset that
-  `Date.dv` names (`Etc/GMT+12` to `Etc/GMT-14`, the names of GMT and
-  UTC): embedding the database would add about 400 KB to every compiler,
-  whose source text holds the library.
 - `$ZONEINFO` may name a zip archive for Go; here it is a directory.
 - Go reads `$ZONEINFO` once; here it is read at each first use of a zone,
   so a `System.put_env` between two zones takes effect.

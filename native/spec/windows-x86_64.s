@@ -14,8 +14,8 @@
 # in RDI, RSI, RDX, R10, R8 and R9, the result or -errno in RAX, RCX the
 # address after the call and R11 the flags, every other register kept.
         .intel_syntax noprefix
-        .set IMAGE_BASE, 0x3C0000
-        .set REGIONS, 64        # the reservations committed as touched
+        .set IMAGE_BASE, 0x380000
+        .set REGIONS, 1024      # the program's memory: reservations and allocations
         .set FDS, 1024          # descriptors
 
         .text
@@ -55,6 +55,20 @@ linux_stack:
         inc r13
         jmp .Lwl
 .Lwl_done:
+        # An empty command line: the one argument is the program's path, as
+        # Go's os.Args has it (os.Executable), quoted so it stays one.
+        test r13, r13
+        jnz .Lwl_given
+        xor ecx, ecx
+        lea rdx, [rip+wpath1+2]
+        mov r8d, 32760
+        call [rip+imp_GetModuleFileNameW]
+        lea r12, [rip+wpath1]
+        mov word ptr [r12], 0x22
+        mov word ptr [r12+rax*2+2], 0x22
+        mov word ptr [r12+rax*2+4], 0
+        lea r13, [rax+2]
+.Lwl_given:
         call [rip+imp_GetEnvironmentStringsW]
         mov r14, rax
         xor r15d, r15d          # the block's length, its last NUL excluded
@@ -83,6 +97,16 @@ linux_stack:
         call [rip+imp_VirtualAlloc]
         test rax, rax
         jz .Lls_fail
+        # A region of the program's memory, as mmap's are: it writes words
+        # below its first stack pointer (a copy, windows-layer.c, keeps them).
+        mov ecx, [rip+region_count]
+        shl ecx, 4
+        lea rdx, [rip+regions]
+        mov [rdx+rcx], rax
+        imul r8, rbx, 24
+        add r8, 65536+4096
+        mov [rdx+rcx+8], r8
+        inc dword ptr [rip+region_count]
         lea rsi, [rax+65536]
         lea rdi, [rsi+rbx*8+64] # the command line
         mov rcx, r12
@@ -264,6 +288,11 @@ handler:
         xor eax, eax            # EXCEPTION_CONTINUE_SEARCH
         jmp .Ldone
 .Laccess:
+        # A copy of the program (windows-layer.c, fork) first.
+        mov rdi, rbx
+        call copy_fault
+        test eax, eax
+        jnz .Lcontinue
         mov rcx, [rbx+0x28]     # the address
         call region_of
         test rax, rax
@@ -364,11 +393,22 @@ region_of:
 commit_range:
         push rbx
         push rsi
-        sub rsp, 40
+        push rdi
+        sub rsp, 32
         test rdx, rdx
         jz .Lcr
         mov rsi, rdx
         mov rbx, rcx
+        # While a copy of the program runs, what is written here is kept
+        # for the parent first (windows-layer.c, copy_write).
+        cmp dword ptr [rip+copy_running], 0
+        je .Lcr_plain
+        mov rdi, rbx
+        mov [rsp], rsi
+        call copy_write
+        mov rsi, [rsp]
+.Lcr_plain:
+        mov rcx, rbx
         call region_of
         test rax, rax
         jz .Lcr
@@ -389,13 +429,15 @@ commit_range:
         mov r9d, 4
         call [rip+imp_VirtualAlloc]
 .Lcr:
-        add rsp, 40
+        add rsp, 32
+        pop rdi
         pop rsi
         pop rbx
         ret
 
 # Wait for the time in the timespec at rcx, on a high-resolution waitable
 # timer, rounded up to 100 ns.
+        .globl wait_for
 wait_for:
         push rbx
         push rsi
@@ -599,6 +641,14 @@ fill_stat:
         mov [r9+8], rdx
         pop rdx
         ret
+
+# Where a copy of the program that exited goes on, on the layer's stack, to
+# put the parent back (windows-layer.c, copy_resume_c, which does not
+# return).
+        .globl copy_resume
+copy_resume:
+        call copy_resume_c
+        ud2
 
 # The system call in the CONTEXT at r12; its result in rax.
 emulate:
@@ -1299,6 +1349,7 @@ unknown: .ascii "E_RUNTIME_WINDOWS: unsupported system call 0x"
 win_rsp: .quad 0
 segv_handler: .quad 0
 sleep_timer: .quad 0
+        .globl region_count
 region_count: .long 0
         .globl last_error
 last_error: .long 0
@@ -1309,6 +1360,7 @@ busy:   .byte 0
         .balign 16
 siginfo: .space 128
 ucontext: .space 1024
+        .globl regions
 regions: .space REGIONS*16
         .globl handles
 handles: .space FDS*8

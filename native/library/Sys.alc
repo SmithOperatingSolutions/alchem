@@ -52,18 +52,37 @@
   def got(): string do
     Sys.text(Sys.peek(Sys.state() + 56), Sys.peek(Sys.state() + 64))
   end
-# Reads descriptor fd to its end onto the pad; 0 or the error.
-#: load/1 needs ready/1 room/1 state/0
+# Reads descriptor fd to its end onto the pad; 0 or the error. While it
+# waits, other processes run and may use the pad: what is read is kept
+# apart and goes onto the pad, after what was there, once it is all read.
+#: load/1 needs room/1 state/0 _gather/4
   def load(fd: integer): integer do
     s = Sys.state()
     n = Sys.peek(s + 64)
-    k = if n < 65536 do 65536 else n end
-    Sys.ready(fd)
-    r = Sys.call(0, fd, Sys.room(k), k)
-    if r == -4 do Sys.load(fd) else if r <= 0 do r else
-      Sys.poke(s + 64, n + r)
-      Sys.load(fd)
-    end end
+    c = if n < 32768 do 65536 else n * 2 end
+    m = Sys.call(9, 0, c, 3, 34, -1, 0)
+    if m < 0 do System.halt(71) end
+    if n > 0 do Sys.copy(m, Sys.peek(s + 56), n) end
+    {r, b, k, z} = Sys._gather(fd, m, n, c)
+    Sys.poke(s + 64, 0)
+    Sys.copy(Sys.room(k), b, k)
+    Sys.poke(s + 64, k)
+    Sys.call(11, b, z)
+    r
+  end
+# fd read into the buffer at b of c bytes, n of them used, grown as needed:
+# the last result, the buffer, its bytes used and its size.
+#: _gather/4 needs ready/1
+  def _gather(fd: integer, b: integer, n: integer, c: integer): tuple[integer, integer, integer, integer] do
+    if n == c do
+      m = Sys.call(25, b, c, c * 2, 1)
+      if m < 0 do System.halt(71) end
+      Sys._gather(fd, m, n, c * 2)
+    else
+      Sys.ready(fd)
+      r = Sys.call(0, fd, b + n, c - n)
+      if r == -4 do Sys._gather(fd, b, n, c) else if r <= 0 do {r, b, n, c} else Sys._gather(fd, b, n + r, c) end end
+    end
   end
 # Writes n bytes at a to descriptor fd; 0 or the error.
 #: put/3
@@ -450,32 +469,38 @@
 #: spawn/5 needs state/0 wait/4
   def spawn(p: integer, a: integer, e: integer, d: integer, m: integer): tuple[integer, integer] do
     s = Sys.state() + 512
-    Sys.call(293, s, 0x80000)
-    Sys.call(293, s + 8, 0x80000)
-    i = Sys.call(257, -100, Sys.addr("/dev/null\x00"), 0x80000, 0)
-    o = rem(div(Sys.peek(s), 4294967296), 4294967296)
-    w = rem(div(Sys.peek(s + 8), 4294967296), 4294967296)
-    x = rem(Sys.peek(s + 8), 4294967296)
-    c = Sys.call(57)
-    if c == 0 do
-      r = if d == 0 do 0 else Sys.call(80, d) end
-      y = Sys.call(72, o, 1030, 3)
-      Sys.call(33, Sys.call(72, i, 1030, 3), 0)
-      Sys.call(33, y, 1)
-      if m == 1 do Sys.call(33, y, 2) end
-      f = if r < 0 do r else Sys.call(59, p, a, e) end
-      Sys.poke(s + 16, 0 - f)
-      Sys.call(1, w, s + 16, 8)
-      Sys.call(60, 253)
+    if Sys.windows() == 1 do
+      # CreateProcessW (pseudo call 1000104, spec/windows.md).
+      c = Sys.call(1000104, p, a, e, d, if m == 1 do 2 else 0 end, s)
+      {c, if c < 0 do -1 else Sys.peek(s) end}
+    else
+      Sys.call(293, s, 0x80000)
+      Sys.call(293, s + 8, 0x80000)
+      i = Sys.call(257, -100, Sys.addr("/dev/null\x00"), 0x80000, 0)
+      o = rem(div(Sys.peek(s), 4294967296), 4294967296)
+      w = rem(div(Sys.peek(s + 8), 4294967296), 4294967296)
+      x = rem(Sys.peek(s + 8), 4294967296)
+      c = Sys.call(57)
+      if c == 0 do
+        r = if d == 0 do 0 else Sys.call(80, d) end
+        y = Sys.call(72, o, 1030, 3)
+        Sys.call(33, Sys.call(72, i, 1030, 3), 0)
+        Sys.call(33, y, 1)
+        if m == 1 do Sys.call(33, y, 2) end
+        f = if r < 0 do r else Sys.call(59, p, a, e) end
+        Sys.poke(s + 16, 0 - f)
+        Sys.call(1, w, s + 16, 8)
+        Sys.call(60, 253)
+      end
+      Sys.call(3, i)
+      Sys.call(3, o)
+      Sys.call(3, w)
+      n = if c < 0 do 0 else Sys.wait(0, x, s + 16, 8) end
+      Sys.call(3, x)
+      if c < 0 or n > 0 do Sys.call(3, rem(Sys.peek(s), 4294967296)) end
+      if n > 0 do Sys.wait(61, c, s + 24, 0) end
+      {if c < 0 do c else if n > 0 do 0 - Sys.peek(s + 16) else c end end, rem(Sys.peek(s), 4294967296)}
     end
-    Sys.call(3, i)
-    Sys.call(3, o)
-    Sys.call(3, w)
-    n = if c < 0 do 0 else Sys.wait(0, x, s + 16, 8) end
-    Sys.call(3, x)
-    if c < 0 or n > 0 do Sys.call(3, rem(Sys.peek(s), 4294967296)) end
-    if n > 0 do Sys.wait(61, c, s + 24, 0) end
-    {if c < 0 do c else if n > 0 do 0 - Sys.peek(s + 16) else c end end, rem(Sys.peek(s), 4294967296)}
   end
 # read (n 0) or wait4 (n 61), again when a signal interrupted it.
 #: wait/4
@@ -633,4 +658,108 @@
 #: flat_kids/3 needs flat_walk/2
   def flat_kids(a: integer, m: integer, d: integer): integer do
     if m == 0 do d else Sys.flat_kids(a + 16, m - 1, Sys.flat_walk(Sys.peek(a + 8), d)) end
+  end
+# exec.LookPath on Windows (spec/windows.md): 0 and the path, 1 and a path
+# found relative to the working directory (ErrDot), 2 for none.
+#: _wwhich/1 needs _wexts/0 _wfind/2 _wdirs/1 _wfirst/4 Path._wjoin/1 String.contains?/2
+  def _wwhich(f: string): tuple[integer, string] do
+    exts = Sys._wexts()
+    if String.contains?(f, ":") or String.contains?(f, "\\") or String.contains?(f, "/") do
+      p = Sys._wfind(f, exts)
+      if p == "" do {2, ""} else {0, p} end
+    else
+      dot = if System.get_env("NoDefaultCurrentDirectoryInExePath") != none do "" else Sys._wfind(Path._wjoin([".", f]), exts) end
+      Sys._wfirst(Sys._wdirs(System.get_env("path", "")), f, exts, dot)
+    end
+  end
+# The first program of the directories: as LookPath goes on past one found
+# relative to the working directory, and prefers what the path names to
+# what the working directory holds only when they are the same file.
+#: _wfirst/4 needs _wfind/2 _wsame/2 Path._wjoin/1 Path._wabs/1
+  def _wfirst(dirs: list[string], f: string, exts: list[string], dot: string): tuple[integer, string] do
+    if dirs == [] do (if dot == "" do {2, ""} else {1, dot} end) else
+      d = hd(dirs)
+      m = if d == "" do "" else Sys._wfind(Path._wjoin([d, f]), exts) end
+      if m == "" do Sys._wfirst(tl(dirs), f, exts, dot) else
+        if dot != "" and not Sys._wsame(dot, m) do {1, dot} else
+          if not Path._wabs(m) do Sys._wfirst(tl(dirs), f, exts, if dot == "" do m else dot end) else {0, m} end
+        end
+      end
+    end
+  end
+#: _wsame/2 needs Path._wfull/1 Path._wsame/2
+  def _wsame(a: string, b: string): boolean do
+    Path._wsame(Path._wfull(a), Path._wfull(b))
+  end
+# PATHEXT, lower case, each with its dot; Go's four when it is not set.
+#: _wexts/0 needs Enum.map/2 Enum.filter/2 String.split/2 String.starts_with?/2
+  def _wexts(): list[string] do
+    x = System.get_env("PATHEXT", "")
+    if x == "" do [".com", ".exe", ".bat", ".cmd"] else
+      Enum.map(Enum.filter(String.split(String.downcase(x), ";"), fn e -> e != "" end), fn e -> if String.starts_with?(e, ".") do e else "." <> e end end)
+    end
+  end
+# findExecutable: the file itself when it has an extension and is a
+# program, else the first of it with an extension of exts that is; "".
+#: _wfind/2 needs _wchk/1 _wext/1
+  def _wfind(f: string, exts: list[string]): string do
+    if Sys._wext(f) and Sys._wchk(f) do f else
+      Enum.reduce(exts, "", fn e, r -> if r != "" do r else if Sys._wchk(f <> e) do f <> e else "" end end end)
+    end
+  end
+# chkStat: there, and not a directory.
+#: _wchk/1 needs stat/2 kind/0
+  def _wchk(p: string): boolean do
+    Sys.stat(p, 1) == 0 and Sys.kind() != 4
+  end
+# hasExt: a dot after the last of : \ /.
+#: _wext/1 needs _wlast/3 _wlast_sep/2
+  def _wext(f: string): boolean do
+    a = Sys.addr(f)
+    i = Sys._wlast(a, byte_size(f) - 1, 46)
+    j = Sys._wlast_sep(a, byte_size(f) - 1)
+    i >= 0 and j < i
+  end
+#: _wlast/3
+  def _wlast(a: integer, i: integer, c: integer): integer do
+    if i < 0 or Sys.byte(a + i) == c do i else Sys._wlast(a, i - 1, c) end
+  end
+#: _wlast_sep/2
+  def _wlast_sep(a: integer, i: integer): integer do
+    if i < 0 do i else
+      c = Sys.byte(a + i)
+      if c == 58 or c == 92 or c == 47 do i else Sys._wlast_sep(a, i - 1) end
+    end
+  end
+# filepath.SplitList on Windows: ; outside quotes separates, the quotes go.
+#: _wdirs/1 needs _wsplit/5 Enum.map/2 String.replace/3
+  def _wdirs(v: string): list[string] do
+    if v == "" do [] else Enum.map(Sys._wsplit(v, 0, 0, false, []), fn d -> String.replace(d, "\"", "") end) end
+  end
+#: _wsplit/5 needs Enum.reverse/1
+  def _wsplit(v: string, i: integer, start: integer, quoted: boolean, done: list[string]): list[string] do
+    if i >= byte_size(v) do Enum.reverse([Sys.text(Sys.addr(v) + start, i - start) | done]) else
+      c = Sys.byte(Sys.addr(v) + i)
+      if c == 34 do Sys._wsplit(v, i + 1, start, not quoted, done) else
+        if c == 59 and not quoted do Sys._wsplit(v, i + 1, i + 1, quoted, [Sys.text(Sys.addr(v) + start, i - start) | done]) else Sys._wsplit(v, i + 1, start, quoted, done) end
+      end
+    end
+  end
+# The program's name as exec.Command finds it on Windows: looked for in the
+# path when it is a bare name; when it is absolute, as it is if its
+# extension is one of PATHEXT, else with one (lookExtensions); as it is
+# otherwise. What _wwhich gives.
+#: _wcommand/1 needs _wwhich/1 _wexts/0 Path._wbase/1 Path._wabs/1 Path._wext/1 Enum.member?/2
+  def _wcommand(c: string): tuple[integer, string] do
+    if Path._wbase(c) == c do Sys._wwhich(c) else
+      if Path._wabs(c) do
+        e = String.downcase(Path._wext(c))
+        if e != "" and Enum.member?(Sys._wexts(), e) do {0, c} else Sys._wwhich(c) end
+      else {0, c} end
+    end
+  end
+# Why exec found no program: Go's ErrNotFound (%PATH% on Windows).
+#: _notfound/1
+  def _notfound(k: integer): string do
+    if Sys.windows() == 1 do "executable file not found in %PATH%" else "executable file not found in $PATH" end
   end

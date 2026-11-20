@@ -2026,9 +2026,15 @@
 # they come to at most limit bytes: the text and 0, or "" and 1 (they are
 # no deflate stream) or 2 (they come to more). s + 0 says where the stream
 # ended.
-#: _inflate/3 needs _blocks/1 _k/0
+#: _inflate/3 needs _inflate_at/4 _k/0
   def _inflate(p: integer, n: integer, limit: integer): tuple[string, integer] do
-    s = HTTP._k() + 68096
+    HTTP._inflate_at(HTTP._k(), p, n, limit)
+  end
+# The same with the tables at k (_kinit), for a program that has no
+# processes' block to keep them in (the zone database, Date).
+#: _inflate_at/4 needs _blocks/1
+  def _inflate_at(k: integer, p: integer, n: integer, limit: integer): tuple[string, integer] do
+    s = k + 68096
     cap = 65536
     m = Sys.call(9, 0, cap, 3, 34, -1, 0)
     if m < 0 do System.halt(71) end

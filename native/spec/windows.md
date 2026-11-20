@@ -34,14 +34,14 @@ every offset, jump and fixed address of the Linux image holds.
 
 ## The PE file
 
-ImageBase is 0x3C0000, and nothing is relocated (no `DYNAMIC_BASE`):
+ImageBase is 0x380000, and nothing is relocated (no `DYNAMIC_BASE`):
 
 | RVA | Address | Section | |
 | --- | --- | --- | --- |
-| 0 | 0x3C0000 | headers | |
-| 0x1000 | 0x3C1000 | `.wtext`, RX | the Windows layer's code, the import tables |
-| 0x10000 | 0x3D0000 | `.wdata`, RW | its data, the import address table |
-| 0x40000 | 0x400000 | `.text`, RX | the image: the ELF header and code of Linux |
+| 0 | 0x380000 | headers | |
+| 0x1000 | 0x381000 | `.wtext`, RX | the Windows layer's code, the import tables |
+| 0x10000 | 0x390000 | `.wdata`, RW | its data, the import address table |
+| 0x80000 | 0x400000 | `.text`, RX | the image: the ELF header and code of Linux |
 
 The bytes before the image are a constant, `nw_prefix()`
 (native-windows-data.alc, made by scripts/generate-windows-runtime.py);
@@ -66,7 +66,9 @@ those not in KERNEL32).
   stack Windows started the thread with, builds a Linux initial stack and
   jumps to 0x400080. The arguments come from `GetCommandLineW`, split as
   Go's `os` package splits it on Windows, and the environment from
-  `GetEnvironmentStringsW`, both in UTF-8. 64 KiB of stack lie below that
+  `GetEnvironmentStringsW`, both in UTF-8; an empty command line gives
+  the program's path as the one argument (`GetModuleFileNameW`), as Go's
+  `os.Args` there. 64 KiB of stack lie below that
   block, for the exception records Windows pushes there until the program
   has switched to its own stack.
 - **System calls.** `ud2` raises an illegal-instruction exception. The
@@ -123,6 +125,46 @@ The calls made so far:
   `SO_REUSEADDR` is not set (Go sets nothing on a Windows listener), and
   a non-blocking connect's `WSAEWOULDBLOCK` is `EINPROGRESS`.
 
+## Processes
+
+- **Starting a program** is a pseudo call (1000104, `sys_spawn`) in place
+  of fork and execve: `CreateProcessW` with the command line Go's
+  `syscall.EscapeArg` makes of the arguments, the environment block of
+  `os/exec` (each name once, its last value, in either case; `SYSTEMROOT`
+  kept), the directory, and pipes whose child ends alone are inherited
+  (`System.cmd`: output, and errors with it or where the program's go;
+  `Port`: input too, errors with the output, to `NUL` or where the
+  program's go; and for `alchem.exe`, errors to a file, an end at a
+  deadline, or the program's own three handles). `wait4` waits on the process (with `WNOHANG`, not), and
+  gives the whole 32-bit exit code in a word, as Go's `ExitCode` has it
+  there; `kill` with SIGKILL is `TerminateProcess` (exit code 1, as Go's
+  `Process.Kill`), and Windows has no other signal to send. `pipe2` is an
+  anonymous pipe of 1 MiB.
+- **Finding it** is Go's `exec.LookPath` for Windows (`Sys._wwhich`):
+  `PATHEXT`, the working directory first and refused when it is what is
+  found (`ErrDot`), `filepath.SplitList`'s quotes, and `executable file
+  not found in %PATH%`; `exec.Command`'s rules for a name with a separator
+  or an absolute one (`Sys._wcommand`).
+- **ppoll** waits on sockets with `WSAPoll` and looks at pipes with
+  `PeekNamedPipe`, each millisecond on the high-resolution timer while a
+  pipe is waited for, so a `Port` does not hold the one thread up.
+- **A copy of the program.** The library forks for one thing: a failing
+  process has a copy of the program fail in earnest, its errors on a pipe,
+  for the trace. `fork` here returns 0 and the program goes on as the
+  copy, with the parent kept: its CONTEXT, the descriptor table (a close
+  only leaves the table; what the copy opens is closed after), the stack
+  it runs on from just below its pointer up (copied whole: Windows writes
+  its exception records on the stack that faults), and every other page of
+  the program's memory, made read-only and copied the first time the copy
+  writes to it (`copy_fault`, and `commit_range` for what the layer
+  writes). Pages the copy commits are decommitted after, as free memory
+  must be zero. When the copy exits, the layer puts that back on a stack of
+  its own (`copy_resume`: Windows' records of the exception lie on the
+  program's) and resumes the parent with `RtlRestoreContext`, its fork
+  giving the copy's number, which `wait4` reaps. The memory is the
+  program's regions: what `mmap` and the layer map for it, and the block
+  of the initial stack (1024 at most).
+
 ## The library's view of Windows
 
 What Go's packages do differently on Windows, the library does when
@@ -156,6 +198,20 @@ branch never taken.
   Go's net makes on Windows (`connectex`, `wsarecv`, `wsasend`,
   `acceptex`, `wsasendto`: `TCP._sysop`).
 
+## alchem.exe
+
+`scripts/build-alchem.py --windows --compiler build/dev/alchem-compiler-windows-cross`
+builds the `alchem` command (tools/alchem.alc) with the compiler that makes
+Windows programs inside, as a Windows program: its `test`, `run`, `build`,
+`check` and `new` work on Windows, and take `-target windows/amd64` (each
+`alchem` builds for the system it runs on, as the one for macOS does). There
+it names what it builds as the pinned command does (`.exe`), and starts
+programs without `/bin/sh` (`wexec`, the layer's spawn): `run` gives the
+program its own input, output and errors; a fixture's input is `NUL`, its
+errors go to a file and it is ended at its deadline (a timer of the timer
+queue calls `TerminateProcess`). CI runs its `test`, `build` and `run` on
+Windows.
+
 ## Checking
 
 `scripts/run-windows PROGRAM.exe` runs a program under Wine with a seccomp
@@ -168,26 +224,19 @@ The reference is the pinned compiler's own windows/amd64 program
 (`alchem build -target windows/amd64`), which also runs under Wine. Under
 Wine, the Windows compiler builds itself to the same bytes, and of the
 upstream examples (scripts/upstream-examples.py) whose reference program
-succeeds, 855 of 857 print what it prints. The others: `File.ln`, whose
-reference read another example's file in the shared temporary directory,
-and `Process.report`, which needs processes.
+succeeds, 856 of 857 print what it prints. The other is `File.ln`, whose
+reference read another example's file in the shared temporary directory.
 
 Wine's error texts are its own (`File not found.`, and none for Winsock's
 errors); the reference for them is Windows (CI).
 
 ## Still to do
 
-- Processes: `fork`, `execve`, `pipe2` and `wait4` (`System.cmd`, `Port`,
-  `System.find_executable` with `PATHEXT`, and `Process.report`, whose copy
-  of the program fails in earnest).
-- Time zones: the pinned program carries Go's zone database, and Windows
-  has no zone files to read (spec/alchem-time-zones.md).
-- An empty command line: Go then takes the executable's path as the one
-  argument.
+- Local time: Go takes it on Windows from the system's zone
+  (`GetDynamicTimeZoneInformation`); the library takes `$TZ` or UTC.
 - Stacks: a 1 GiB stack is committed at once. The exception dispatcher
   pushes its record on the faulting stack, so a stack committed as it is
   touched would need room there.
-- `alchem build -target windows/amd64` in tools/alchem.alc.
 - The gates on Windows. CI (`.github/workflows/native.yml`, job Windows
   x64 on `windows-2025`) runs the Windows compiler the Linux job builds:
   it must make itself again byte for byte, make a program that runs, and

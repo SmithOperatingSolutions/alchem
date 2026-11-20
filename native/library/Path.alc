@@ -337,11 +337,11 @@
   def _wsub(p: string, i: integer, n: integer): string do
     if n <= 0 do "" else Sys.text(Sys.addr(p) + i, n) end
   end
-#: _wslash/1
+#: _wslash/1 needs String.replace/3
   def _wslash(p: string): string do
     String.replace(p, "\\", "/")
   end
-#: _wfrom/1
+#: _wfrom/1 needs String.replace/3
   def _wfrom(p: string): string do
     String.replace(p, "/", "\\")
   end
@@ -418,7 +418,7 @@
     end
   end
 # filepath.Clean, with \ between the parts.
-#: _wclean/1 needs _wat/2 _wsep/1 _wsub/3 _wvlen/1 _wfrom/1 _wpost/2 _wkeep/3
+#: _wclean/1 needs _wat/2 _wsep/1 _wsub/3 _wvlen/1 _wfrom/1 _wpost/2 _wkeep/3 Enum.reverse/1 String.split/2 Enum.join/2
   def _wclean(p: string): string do
     v = Path._wvlen(p)
     rest = Path._wsub(p, v, byte_size(p) - v)
@@ -453,7 +453,7 @@
   end
 # postClean when there is no volume: .\ before a first part with a colon,
 # \. before \??, unless the path came out as it went in (Go's lazybuf).
-#: _wpost/2 needs _wat/2 _wsep/1 _wnext/2 _wsub/3
+#: _wpost/2 needs _wat/2 _wsep/1 _wnext/2 _wsub/3 String.starts_with?/2 String.contains?/2
   def _wpost(out: string, given: string): string do
     if String.starts_with?(given, out) do out else
       first = Path._wnext(out, 0)
@@ -469,7 +469,7 @@
     t = Path._wjoin_text(parts, "")
     if t == "" do "" else Path._wclean(t) end
   end
-#: _wjoin_text/2 needs _wat/2 _wsep/1 _wtrim/1
+#: _wjoin_text/2 needs _wat/2 _wsep/1 _wtrim/1 String.starts_with?/2
   def _wjoin_text(parts: list[string], b: string): string do
     if parts == [] do b else
       e = hd(parts)
@@ -526,7 +526,7 @@
   end
 # filepath.Rel: the relative path, or "" with false when there is none.
 # Parts compare without regard to case (strings.EqualFold).
-#: _wrel/2 needs _wclean/1 _wvlen/1 _wsub/3 _wat/2 _wsame/2 _wrel_parts/2
+#: _wrel/2 needs _wclean/1 _wvlen/1 _wsub/3 _wat/2 _wsame/2 _wrel_parts/2 Enum.filter/2 String.split/2
   def _wrel(base_path: string, target_path: string): tuple[boolean, string] do
     base_vol = Path._wsub(base_path, 0, Path._wvlen(base_path))
     target_vol = Path._wsub(target_path, 0, Path._wvlen(target_path))
@@ -545,7 +545,7 @@
       end
     end
   end
-#: _wrel_parts/2 needs _wsame/2 _wups/2
+#: _wrel_parts/2 needs _wsame/2 _wups/2 Enum.join/2
   def _wrel_parts(left: list[string], right: list[string]): tuple[boolean, string] do
     if left != [] and right != [] and Path._wsame(hd(left), hd(right)) do Path._wrel_parts(tl(left), tl(right)) else
       if left != [] and hd(left) == ".." do {false, ""} else
@@ -562,7 +562,7 @@
     a == b or String.downcase(a) == String.downcase(b)
   end
 # pathType on Windows.
-#: _wtype/1 needs _wabs/1 _wvlen/1
+#: _wtype/1 needs _wabs/1 _wvlen/1 String.starts_with?/2
   def _wtype(p: string): atom do
     if Path._wabs(p) do :absolute else
       if Path._wvlen(p) > 0 or String.starts_with?(p, "\\") or String.starts_with?(p, "/") do :volumerelative else :relative end
@@ -582,7 +582,7 @@
     System.get_env("USERPROFILE", "")
   end
 # pathSafeRelative on Windows.
-#: _wsafe/1 needs _wtype/1 _wclean/1 _wslash/1
+#: _wsafe/1 needs _wtype/1 _wclean/1 _wslash/1 String.starts_with?/2
   def _wsafe(path: string): option[string] do
     if Path._wtype(path) != :relative do none else
       clean = Path._wslash(Path._wclean(path))

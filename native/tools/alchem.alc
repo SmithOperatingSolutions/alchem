@@ -471,7 +471,7 @@ defmodule AlchemCommand do
     started = System.monotonic_time(:nanosecond)
     none: map[string, map[integer, integer]] = %{}
     {totals, hits, last} = Enum.reduce(order, {[0, 0, 0, 0, 0], none, 0}, fn file, {sums, sofar, i} ->
-      binary = work <> "/test#{i}"
+      binary = work <> "/test#{i}" <> exe()
       got = one(file, binary, s, seed)
       broken = Enum.at(got, 4, 0) == 1
       {Enum.map(Enum.zip(sums, got), fn {a, b} -> a + b end), if s.cover and not broken do read_cover(binary <> ".cover", sofar) else sofar end, i + 1}
@@ -515,15 +515,22 @@ defmodule AlchemCommand do
       ok(expected_code) ->
         if expected_code < 0 do name <> ": invalid exitcode" else
           if not native and not told do name <> ": expected stdout: open " <> joined(directory, base <> ".stdout") <> ": no such file or directory" else
-            binary = work <> "/" <> base
+            binary = work <> "/" <> base <> exe()
             problem = build(Path.expand(joined(directory, name)), binary, false)
             if problem != "" do name <> ": compile: " <> problem else
-              limit = if System.find_executable("timeout") == none do "" else "timeout -s KILL #{div(timeout_ms + 999, 1000)} " end
-              {actual, status} = System.cmd("/bin/sh", ["-c", limit <> "\"$0\" < /dev/null 2> \"$0.stderr\"", binary], [cd: work])
+              # On Windows there is no /bin/sh: the program is started with
+              # its errors in the file and ended at the deadline by the
+              # Windows layer (spec/windows.md).
+              limit = if Sys.windows() == 1 do "windows" else if System.find_executable("timeout") == none do "" else "timeout -s KILL #{div(timeout_ms + 999, 1000)} " end end
+              ran = if Sys.windows() == 1 do wexec(binary, [], work, binary <> ".stderr", timeout_ms, false) else
+                {said, code} = System.cmd("/bin/sh", ["-c", limit <> "\"$0\" < /dev/null 2> \"$0.stderr\"", binary], [cd: work])
+                {code, said, code == 137}
+              end
+              {status, actual, late} = ran
               {_, stderr} = slurp(binary <> ".stderr")
               File.rm(binary)
               File.rm(binary <> ".stderr")
-              if limit != "" and status == 137 do name <> ": execute: fixture execution: context deadline exceeded" else
+              if limit != "" and late do name <> ": execute: fixture execution: context deadline exceeded" else
                 if byte_size(actual) > 1048576 or byte_size(stderr) > 1048576 do name <> ": execute: fixture output exceeds 1 MiB per stream" else
                   if status != expected_code do "#{name}: exit code #{status}, expected #{expected_code}; output: #{actual}#{stderr}" else
                     if not native and actual != expected do name <> ": output mismatch: got " <> inspect(actual) <> " want " <> inspect(expected) else
@@ -615,9 +622,14 @@ defmodule AlchemCommand do
       given = if tl(paths) != [] and hd(tl(paths)) == "--" do tl(tl(paths)) else tl(paths) end
       if not String.ends_with?(entry, ".alc") do complain("source must have .alc extension", 1) else
         work = fresh("alchem-run-")
-        binary = work <> "/" <> Path.basename(entry, ".alc")
+        binary = work <> "/" <> Path.basename(entry, ".alc") <> exe()
         problem = build(entry, binary, false)
-        status = if problem != "" do complain(problem, 1) else
+        status = if problem != "" do complain(problem, 1) else if Sys.windows() == 1 do
+          # On Windows the program has this program's input, output and
+          # errors as they are (spec/windows.md).
+          {code, _, _} = wexec(binary, given, "", "", 0, true)
+          code
+        else
           # The program reads this program's standard input and writes to
           # its standard output as it runs: /bin/sh opens both again from
           # /proc (System.cmd gives a program no input and collects what it
@@ -629,10 +641,60 @@ defmodule AlchemCommand do
           {said, code} = System.cmd("/bin/sh", ["-c", script, binary] ++ given)
           IO.write(said)
           if code < 0 do 255 else code end
-        end
+        end end
         File.rm_rf(work)
         status
       end
+    end
+  end
+
+  # What this alchem's compiler makes: linux/amd64, or windows/amd64 for the
+  # alchem built for Windows (build-alchem.py --windows), whose programs end
+  # in .exe as the pinned command names them there.
+  def own_target(): string do
+    if Sys.windows() == 1 do "windows/amd64" else "linux/amd64" end
+  end
+  def exe(): string do
+    if Sys.windows() == 1 do ".exe" else "" end
+  end
+
+  # Windows: the program at path started with the arguments args, in dir
+  # unless it is "", its input NUL and its output gathered, its errors to
+  # the file errs, or where this program's go when errs is ""; ended after
+  # ms milliseconds when ms is more than 0; with own, its input, output and
+  # errors are this program's (pseudo call 1000104 of the Windows layer,
+  # spec/windows.md). Its exit code, what it wrote, and whether the time
+  # ran out.
+  def wexec(path: string, args: list[string], dir: string, errs: string, ms: integer, own: boolean): tuple[integer, string, boolean] do
+    g = [path] ++ args
+    s = Sys.pad()
+    Enum.reduce(g, 0, fn x, i -> Sys.push(Sys.z(x), 8) end)
+    Sys.push(0, 8)
+    n = Sys.peek(Sys.env() + 8)
+    Sys.keep(Sys.peek(s), n * 8)
+    Sys.push(0, 8)
+    y = Sys.peek(s + 56) + 8 * length(g) + 8
+    flags = (if own do 32 else if errs != "" do 8 else 0 end end) + (if ms > 0 do 16 else 0 end)
+    file = if errs == "" do 0 else Sys.z(errs) end
+    program = Sys.z(path)
+    here = if dir == "" do 0 else Sys.z(dir) end
+    # The clock writes where the call's words go (the state block's small
+    # results): it is read first.
+    started = System.monotonic_time(:millisecond)
+    o = Sys.state() + 512
+    Sys.poke(o, file)
+    Sys.poke(o + 8, ms)
+    c = Sys.call(1000104, program, Sys.peek(s + 56), y, here, flags, o)
+    if c < 0 do {-1, "", false} else
+      said = if own do "" else
+        r = Sys.peek(o)
+        Sys.pad()
+        Sys.load(r)
+        Sys.call(3, r)
+        Sys.got()
+      end
+      Sys.wait(61, c, o + 16, 0)
+      {div(Sys.peek(o + 16), 256), said, ms > 0 and System.monotonic_time(:millisecond) - started >= ms}
     end
   end
 
@@ -651,7 +713,7 @@ defmodule AlchemCommand do
 
   # alchem build [-o OUT] [-locked] FILE: the executable, named after the
   # file when no name is given. The pinned command's other flags are read:
-  # -target must be linux/amd64, the one the compiler makes; -json, -race,
+  # -target must be the one the compiler makes (own_target); -json, -race,
   # -trace, -timeout, -shutdown-timeout and -max-call-depth change nothing.
   def build_command(args: list[string], out: string, locked: boolean): integer do
     case args do
@@ -668,7 +730,7 @@ defmodule AlchemCommand do
                 ok(t) -> t
                 error(_) -> "def main("
               end
-              problem = if text =~ ~r/(^|\n)[ \t]*def[ \t]+main[ \t]*\(/ do build(entry, if out == "" do Path.basename(entry, ".alc") else out end, locked) else entry <> ":1:1: missing main/0" end
+              problem = if text =~ ~r/(^|\n)[ \t]*def[ \t]+main[ \t]*\(/ do build(entry, if out == "" do Path.basename(entry, ".alc") <> exe() else out end, locked) else entry <> ":1:1: missing main/0" end
               if problem == "" do 0 else complain(problem, 1) end
             end
           end
@@ -683,7 +745,7 @@ defmodule AlchemCommand do
             if name == "locked" do build_command(rest, out, true) else
               if not (name in ["o", "target", "timeout", "shutdown-timeout", "max-call-depth"]) do complain("flag provided but not defined: -" <> name <> "\n" <> build_usage(), 2) else
                 if not valued and rest == [] do complain("flag needs an argument: -" <> name <> "\n" <> build_usage(), 2) else
-                  if name == "target" and value != "linux/amd64" do complain("the self-hosted compiler builds linux/amd64 alone, not " <> value, 2) else
+                  if name == "target" and value != own_target() do complain("the self-hosted compiler builds " <> own_target() <> " alone, not " <> value, 2) else
                     build_command(after_value, if name == "o" do value else out end, locked)
                   end
                 end

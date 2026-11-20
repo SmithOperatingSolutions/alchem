@@ -8,7 +8,10 @@ rather than by running it.
 
 With --darwin the compiler inside makes macOS programs (spec/darwin-arm64.md):
 built by the compiler for macOS that runs on macOS, `alchem` is a macOS
-program whose test, run and build commands work there.
+program whose test, run and build commands work there. With --windows it
+makes Windows programs (spec/windows.md): built by the Windows cross
+compiler (build-windows.py), `alchem.exe` is a Windows program whose
+commands work there.
 
 The program is three modules: tools/alchem.alc; the bundler without its
 main, as an imported module may not define one; and AlchemCompiler, the
@@ -39,10 +42,15 @@ def _load(name, path):
     return module
 
 
-def compiler_module(darwin=False):
+def compiler_module(darwin=False, windows=False):
     """The compiler as the module AlchemCompiler, with no entry and no main."""
     bootstrap = _load('alchem_bootstrap', ROOT / 'scripts/bootstrap-alchem-compiler.py')
     text = bootstrap.source_text('functions', False)
+    if windows:
+        switch = '  def nc_win(): integer do 0 end\n'
+        if text.count(switch) != 1:
+            raise ValueError('the compiler source has no single nc_win()')
+        text = text.replace(switch, '  def nc_win(): integer do 1 end\n')
     if darwin:
         switch = '  def nc_arm(): integer do 0 end\n'
         if text.count(switch) != 1:
@@ -67,14 +75,14 @@ def bundler_module():
     return text[:-len(BUNDLER_MAIN)] + 'end\n'
 
 
-def program(darwin=False):
+def program(darwin=False, windows=False):
     """The bundle of the three modules, with the paths it names those of the repository."""
     bundle = _load('alchem_bundle', ROOT / 'scripts/bundle-alchem.py')
     with tempfile.TemporaryDirectory(prefix='alchem-program-') as directory:
         work = Path(directory)
         (work / 'alchem.alc').write_text((ROOT / 'tools/alchem.alc').read_text())
         (work / 'alchem-bundle.alc').write_text(bundler_module())
-        (work / 'alchem-compiler.alc').write_text(compiler_module(darwin))
+        (work / 'alchem-compiler.alc').write_text(compiler_module(darwin, windows))
         before = os.getcwd()
         os.chdir(work)
         try:
@@ -94,10 +102,10 @@ def program(darwin=False):
     return head + b'\n' + b'\n'.join(lines)
 
 
-def build(compiler, output, darwin=False):
-    source = program(darwin)
+def build(compiler, output, darwin=False, windows=False):
+    source = program(darwin, windows)
     made = subprocess.run([str(compiler)], input=source, capture_output=True, env={'PATH': ''}, timeout=600)
-    if made.returncode or made.stderr or made.stdout[:4] not in (b'\x7fELF', b'\xcf\xfa\xed\xfe'):
+    if made.returncode or made.stderr or made.stdout[:4] not in (b'\x7fELF', b'\xcf\xfa\xed\xfe') and made.stdout[:2] != b'MZ':
         raise RuntimeError(f'the compiler did not build alchem: {made.returncode} {made.stderr.decode(errors="replace").strip()}')
     output = Path(output)
     staged = output.with_name('.' + output.name + '.new')
@@ -112,9 +120,10 @@ def main():
     parser.add_argument('--compiler', type=Path, default=ROOT / 'build/dev/A2')
     parser.add_argument('--output', type=Path, default=ROOT / 'build/dev/alchem')
     parser.add_argument('--darwin', action='store_true', help='the compiler inside makes macOS programs')
+    parser.add_argument('--windows', action='store_true', help='the compiler inside makes Windows programs (build with the Windows cross compiler)')
     args = parser.parse_args()
     try:
-        source, image = build(args.compiler.resolve(), args.output, args.darwin)
+        source, image = build(args.compiler.resolve(), args.output, args.darwin, args.windows)
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f'E_BUILD: {error}', file=sys.stderr)
         return 1

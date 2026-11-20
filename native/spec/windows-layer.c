@@ -41,7 +41,16 @@ extern W u64 handle_of(u64 fd);
 extern W i64 new_fd(u64 handle);
 extern W i64 fail(void);
 extern W i32 wide(const char *path, u16 *to);
+extern W void wait_for(const i64 *timespec);
 extern u16 wpath1[32768], wpath2[32768];
+extern u64 regions[][2];
+extern u32 region_count;
+#define REGIONS 1024
+void region_add(u64 at, u64 size);
+/* Set while a copy of the program runs (fork, below); the assembly's
+   commit_range looks at it. */
+int copy_running;
+#define copying copy_running
 
 /* Imports (the generator's IMPORTS). */
 typedef u64 SOCKET;
@@ -86,6 +95,24 @@ extern W u64 (*imp_GetCurrentProcess)(void);
 extern W i32 (*imp_CloseHandle)(u64);
 extern W u32 (*imp_FormatMessageW)(u32, const void *, u32, u32, u16 *, u32, void *);
 extern W u32 (*imp_GetFullPathNameW)(const u16 *, u32, u16 *, u16 **);
+extern W u32 (*imp_GetFileType)(u64);
+extern W i32 (*imp_PeekNamedPipe)(u64, void *, u32, u32 *, u32 *, u32 *);
+extern W u64 (*imp_GetTickCount64)(void);
+extern W i32 (*imp_MultiByteToWideChar)(u32, u32, const char *, i32, u16 *, i32);
+extern W u32 (*imp_GetEnvironmentVariableW)(const u16 *, u16 *, u32);
+extern W i32 (*imp_CreatePipe)(u64 *, u64 *, void *, u32);
+extern W i32 (*imp_SetHandleInformation)(u64, u32, u32);
+extern W i32 (*imp_CreateProcessW)(const u16 *, u16 *, void *, void *, i32, u32, void *, const u16 *, void *, void *);
+extern W u32 (*imp_WaitForSingleObject)(u64, u32);
+extern W i32 (*imp_GetExitCodeProcess)(u64, u32 *);
+extern W i32 (*imp_TerminateProcess)(u64, u32);
+extern W void (*imp_ExitProcess)(u32);
+extern W i32 (*imp_CreateTimerQueueTimer)(u64 *, u64, W void (*)(void *, u8), void *, u32, u32, u32);
+extern W i32 (*imp_DeleteTimerQueueTimer)(u64, u64, u64);
+extern W void (*imp_RtlRestoreContext)(void *, void *);
+extern void copy_resume(void);
+extern W u64 (*imp_VirtualQuery)(const void *, void *, u64);
+extern W i32 (*imp_VirtualProtect)(void *, u64, u32, u32 *);
 extern W u64 (*imp_CreateFileW)(const u16 *, u32, u32, void *, u32, u32, u64);
 
 /* gcc may call these even in freestanding code. */
@@ -374,64 +401,84 @@ static i64 sys_getsockopt(i64 fd, i64 level, i64 name, i64 value, i64 room) {
   return 0;
 }
 
-/* --- ppoll over sockets ------------------------------------------- */
+/* --- ppoll ------------------------------------------------------------- */
 
 struct linux_pollfd { i32 fd; i16 events, revents; };
 struct windows_pollfd { SOCKET fd; i16 events, revents; };
 static struct windows_pollfd polled[FDS];
 
-/* ppoll(fds, count, timeout, mask) when a descriptor is a socket; NOT_MINE
-   otherwise. A descriptor that is not a socket is taken as ready for what
-   it waits for, as the assembly takes it. */
+/* What a descriptor that is not a socket is ready for: a pipe is ready to
+   read when it holds bytes or its writer has gone (PeekNamedPipe); any
+   other, and a pipe to write to, is ready for what it waits for. */
+static i16 other_ready(i32 fd, i16 events) {
+  u64 h = handle_of((u64)fd);
+  if (!h) return 0x20;                         /* POLLNVAL */
+  if (!(events & 1) || imp_GetFileType(h) != 3) return events & 5;   /* FILE_TYPE_PIPE */
+  u32 avail = 0;
+  if (imp_PeekNamedPipe(h, 0, 0, 0, &avail, 0)) return avail ? (i16)((events & 5)) : (i16)(events & 4);
+  return (imp_GetLastError() == 109) ? (i16)(1 | 0x10) : (i16)8;     /* broken: the end; else POLLERR */
+}
+
+/* ppoll(fds, count, timeout, mask). With no descriptor it is the
+   assembly's sleep (NOT_MINE). Sockets wait in WSAPoll; while a pipe is
+   waited for, the descriptors are looked at again each millisecond, on the
+   assembly's high-resolution timer, until the timeout. */
 static i64 sys_ppoll(i64 fds, i64 count, i64 timeout) {
   if (count <= 0 || count > FDS) return NOT_MINE;
   struct linux_pollfd *p = (struct linux_pollfd *)fds;
   commit_range(p, (u64)count * 8);
-  int sockets = 0, others = 0;
-  for (i64 i = 0; i < count; i++) {
-    if (is_socket(p[i].fd)) sockets++;
-    else if (p[i].fd >= 0) others++;
-  }
-  if (!sockets) return NOT_MINE;
-  i32 wait = -1;
-  if (others) wait = 0;
-  else if (timeout) {
+  i64 limit = -1;                              /* ms; -1 for ever */
+  if (timeout) {
     i64 *t = (i64 *)timeout;
     commit_range(t, 16);
-    i64 ms = t[0] * 1000 + (t[1] + 999999) / 1000000;
-    wait = ms > 0x7FFFFFFF ? 0x7FFFFFFF : (i32)ms;
+    limit = t[0] * 1000 + (t[1] + 999999) / 1000000;
   }
-  u32 n = 0;
-  for (i64 i = 0; i < count; i++) {
-    if (!is_socket(p[i].fd)) continue;
-    polled[n].fd = handles[p[i].fd];
-    polled[n].events = (i16)(((p[i].events & 1) ? 0x100 : 0)    /* POLLRDNORM */
-                             | ((p[i].events & 4) ? 0x10 : 0));  /* POLLWRNORM */
-    polled[n].revents = 0;
-    n++;
-  }
-  i32 r = imp_WSAPoll(polled, n, wait);
-  if (r < 0) return wsa_fail();
-  i64 ready = 0;
-  n = 0;
-  for (i64 i = 0; i < count; i++) {
-    i16 got = 0;
-    if (is_socket(p[i].fd)) {
-      i16 w = polled[n++].revents;
-      if (w & 0x300) got |= 1;         /* POLLRDNORM, POLLRDBAND: POLLIN */
-      if (w & 0x10) got |= 4;          /* POLLWRNORM: POLLOUT */
-      if (w & 0x1) got |= 8;           /* POLLERR */
-      if (w & 0x2) got |= 0x10;        /* POLLHUP */
-      if (w & 0x4) got |= 0x20;        /* POLLNVAL */
-    } else if (p[i].fd >= 0) {
-      got = p[i].events & 5;
+  u64 start = imp_GetTickCount64();
+  for (;;) {
+    u32 n = 0;
+    int pipes = 0;
+    i64 ready = 0;
+    for (i64 i = 0; i < count; i++) {
+      p[i].revents = 0;
+      if (p[i].fd < 0) continue;
+      if (is_socket(p[i].fd)) {
+        polled[n].fd = handles[p[i].fd];
+        polled[n].events = (i16)(((p[i].events & 1) ? 0x100 : 0) | ((p[i].events & 4) ? 0x10 : 0));
+        polled[n].revents = 0;
+        n++;
+      } else {
+        p[i].revents = other_ready(p[i].fd, p[i].events);
+        if (p[i].revents) ready++;
+        else pipes = 1;
+      }
     }
-    p[i].revents = got;
-    if (got) ready++;
+    i64 spent = (i64)(imp_GetTickCount64() - start);
+    i64 left = limit < 0 ? -1 : (limit > spent ? limit - spent : 0);
+    i32 wait = ready ? 0 : pipes ? (left == 0 ? 0 : 1) : (i32)(left > 0x7FFFFFFF ? 0x7FFFFFFF : left);
+    if (n) {
+      i32 r = imp_WSAPoll(polled, n, wait);
+      if (r < 0) return wsa_fail();
+      u32 k = 0;
+      for (i64 i = 0; i < count; i++) {
+        if (p[i].fd < 0 || !is_socket(p[i].fd)) continue;
+        i16 w = polled[k++].revents, got = 0;
+        if (w & 0x300) got |= 1;               /* POLLRDNORM, POLLRDBAND: POLLIN */
+        if (w & 0x10) got |= 4;                /* POLLWRNORM: POLLOUT */
+        if (w & 0x1) got |= 8;                 /* POLLERR */
+        if (w & 0x2) got |= 0x10;              /* POLLHUP */
+        if (w & 0x4) got |= 0x20;              /* POLLNVAL */
+        p[i].revents = got;
+        if (got) ready++;
+      }
+    } else if (!ready && wait > 0) {
+      i64 pause[2] = {0, 1000000};             /* a millisecond */
+      if (!pipes) { pause[0] = wait / 1000; pause[1] = (wait % 1000) * 1000000; }
+      wait_for(pause);
+    }
+    if (ready) return ready;
+    if (limit >= 0 && (i64)(imp_GetTickCount64() - start) >= limit) return 0;
   }
-  return ready;
 }
-
 
 /* --- Files ---------------------------------------------------------- */
 
@@ -493,6 +540,7 @@ static i64 sys_mmap_file(i64 length, i64 fd, i64 offset) {
     if (r == 0) break;
     got += r;
   }
+  region_add((u64)m, (u64)length);
   return (i64)m;
 }
 
@@ -507,6 +555,7 @@ static i64 sys_mremap(i64 old, i64 size, i64 grown, i64 flags) {
   memcpy(m, (void *)old, (u64)size);
   if (!imp_VirtualFree((void *)old, 0, 0x8000))           /* MEM_RELEASE */
     imp_VirtualFree((void *)old, (u64)size, 0x4000);       /* MEM_DECOMMIT */
+  region_add((u64)m, (u64)grown);
   return (i64)m;
 }
 
@@ -662,6 +711,7 @@ static i64 duplicate(i64 fd, u64 *out) {
 
 static void release(i64 fd) {
   if (!handles[fd]) return;
+  if (copying) { handles[fd] = 0; socket_fd[fd] = 0; return; }   /* the parent's */
   if (socket_fd[fd]) imp_closesocket(handles[fd]);
   else imp_CloseHandle(handles[fd]);
   handles[fd] = 0;
@@ -770,6 +820,512 @@ static i64 temp_dir(void) {
   return utf8(wpath2, (i32)n, text, sizeof text) < 0 ? -EINVAL : (i64)text;
 }
 
+/* --- A copy of the program (fork) ---------------------------------------
+
+   Windows has no fork. The library forks for one thing: a failing process
+   has a copy of the program fail in earnest, its standard error on a pipe,
+   for the trace (Process._trace); the copy then exits. Here fork returns 0
+   and the program goes on as the copy, with the parent kept: the CONTEXT of
+   the call, the descriptor table, the stack it runs on from just below its
+   stack pointer up (copied whole: Windows writes its exception records on
+   the stack that faults), and every other page of the program's memory,
+   made read-only and copied the first time the copy writes to it
+   (copy_fault, and commit_range for what the layer writes). Pages the copy
+   commits are decommitted after, as free memory must be zero. When the
+   copy exits, all that is put back and fork returns in the parent, the copy
+   a process that has ended with its status (wait4). */
+
+#define COPY_PID 0x7FFF0001
+static u8 copy_context[0x4D0] __attribute__((aligned(16)));
+static u64 copy_handles[FDS];
+static u8 copy_sockets[FDS];
+static u32 copy_regions;
+static i64 copy_status = -1;
+/* Pages saved (address, then 4096 bytes), ranges made read-only (address,
+   size) and ranges committed (address, size), in one VirtualAlloc'd store. */
+#define COPY_STORE (256u << 20)
+static u8 *copy_store;
+static u64 copy_used;
+static u64 *protected_ranges, protected_count;
+static u64 *committed_ranges, committed_count;
+#define RANGES 65536
+static u64 stack_low, stack_high;
+static u8 *stack_copy;
+static u8 *resume_stack;
+
+void region_add(u64 at, u64 size) {
+  if (region_count < REGIONS) {
+    regions[region_count][0] = at;
+    regions[region_count][1] = size;
+    region_count++;
+  }
+}
+
+static int region_index(u64 a) {
+  for (u32 i = 0; i < region_count; i++)
+    if (a >= regions[i][0] && a < regions[i][0] + regions[i][1]) return (int)i;
+  return -1;
+}
+
+static int is_protected(u64 page) {
+  for (u64 i = 0; i < protected_count; i++)
+    if (page >= protected_ranges[2 * i] && page < protected_ranges[2 * i] + protected_ranges[2 * i + 1]) return 1;
+  return 0;
+}
+
+/* The page at page, saved and writable again; 0 when there is no room. */
+static u64 store_committed;
+static int save_page(u64 page) {
+  if (copy_used + 8 + 4096 > COPY_STORE) return 0;
+  if (copy_used + 8 + 4096 > store_committed) {
+    if (!imp_VirtualAlloc(copy_store + store_committed, 1 << 20, 0x1000, 4)) return 0;
+    store_committed += 1 << 20;
+  }
+  u8 *to = copy_store + copy_used;
+  *(u64 *)to = page;
+  memcpy(to + 8, (void *)page, 4096);
+  copy_used += 8 + 4096;
+  u32 old;
+  imp_VirtualProtect((void *)page, 4096, 4, &old);
+  return 1;
+}
+
+static int page_saved(u64 page) {
+  for (u64 at = 0; at < copy_used; at += 8 + 4096)
+    if (*(u64 *)(copy_store + at) == page) return 1;
+  return 0;
+}
+
+int copy_fault(u8 *record);
+
+/* What the copy writes, from the layer: saved first. */
+void copy_write(u64 at, u64 length) {
+  if (!copying || !length) return;
+  for (u64 page = at & ~4095ull; page < at + length; page += 4096) {
+    if (is_protected(page)) { if (!page_saved(page)) save_page(page); continue; }
+    /* Reserved memory the layer is about to commit: committed here, to be
+       decommitted after. */
+    u8 record[0x30];
+    *(u64 *)(record + 0x28) = page;
+    copy_fault(record);
+  }
+}
+
+/* An access violation while a copy runs (the EXCEPTION_RECORD): a write to
+   a page kept for the parent saves it; a touch of reserved memory commits
+   it, to be decommitted after. 1 when it is handled. */
+int copy_fault(u8 *record) {
+  if (!copying) return 0;
+  u64 address = *(u64 *)(record + 0x28);
+  u64 page = address & ~4095ull;
+  if (is_protected(page)) {
+    if (page_saved(page)) return 0;
+    return save_page(page);
+  }
+  int r = region_index(address);
+  if (r < 0) return 0;
+  u8 info[48];
+  if (!imp_VirtualQuery((void *)page, info, sizeof info)) return 0;
+  if (*(u32 *)(info + 32) != 0x2000) return 0;              /* MEM_RESERVE */
+  u64 end = regions[r][0] + regions[r][1];
+  u64 size = (end - page) < 65536 ? ((end - page + 4095) & ~4095ull) : 65536;
+  if (!imp_VirtualAlloc((void *)page, size, 0x1000, 4)) return 0;
+  if (committed_count < RANGES) {
+    committed_ranges[2 * committed_count] = page;
+    committed_ranges[2 * committed_count + 1] = size;
+    committed_count++;
+  }
+  return 1;
+}
+
+/* fork: the copy starts (0), or -errno. */
+static i64 sys_fork(unsigned char *c) {
+  if (copying) return -11;                                   /* EAGAIN */
+  if (!copy_store && !(copy_store = imp_VirtualAlloc(0, COPY_STORE, 0x2000, 4))) return -12;
+  if (!protected_ranges) {
+    protected_ranges = imp_VirtualAlloc(0, RANGES * 16, 0x3000, 4);
+    committed_ranges = imp_VirtualAlloc(0, RANGES * 16, 0x3000, 4);
+    if (!protected_ranges || !committed_ranges) return -12;
+  }
+  copy_used = 0;
+  store_committed = 0;
+  protected_count = committed_count = 0;
+  memcpy(copy_context, c, sizeof copy_context);
+  memcpy(copy_handles, handles, sizeof copy_handles);
+  memcpy(copy_sockets, socket_fd, sizeof copy_sockets);
+  copy_regions = region_count;
+  /* The stack it runs on, from just below its pointer to its region's end. */
+  u64 rsp = *(u64 *)(c + 0x98);
+  int s = region_index(rsp);
+  stack_low = (rsp - 4096) & ~4095ull;
+  stack_high = s < 0 ? ((rsp + 65536) & ~4095ull) : regions[s][0] + regions[s][1];
+  if (s >= 0 && stack_low < regions[s][0]) stack_low = regions[s][0];
+  u64 stack_size = stack_high - stack_low;
+  stack_copy = imp_VirtualAlloc(0, stack_size, 0x3000, 4);
+  if (!stack_copy) return -12;
+  /* Only what is committed of it is there to keep. */
+  for (u64 a = stack_low; a < stack_high;) {
+    u8 info[48];
+    if (!imp_VirtualQuery((void *)a, info, sizeof info)) break;
+    u64 base = *(u64 *)info, size = *(u64 *)(info + 24);
+    u64 end = base + size > stack_high ? stack_high : base + size;
+    if (*(u32 *)(info + 32) == 0x1000) memcpy(stack_copy + (a - stack_low), (void *)a, end - a);
+    a = end;
+  }
+  /* Every other committed, writable page of the program's memory. */
+  for (u32 i = 0; i < region_count; i++) {
+    for (u64 a = regions[i][0], e = regions[i][0] + regions[i][1]; a < e;) {
+      u8 info[48];
+      if (!imp_VirtualQuery((void *)a, info, sizeof info)) break;
+      u64 base = *(u64 *)info, size = *(u64 *)(info + 24);
+      u64 end = base + size > e ? e : base + size;
+      if (*(u32 *)(info + 32) == 0x1000 && *(u32 *)(info + 36) == 4) {
+        /* Not the stack kept whole. */
+        u64 lo = a, hi = end;
+        u64 parts[2][2] = {{lo, hi < stack_low ? hi : stack_low}, {lo > stack_high ? lo : stack_high, hi}};
+        for (int k = 0; k < 2; k++) {
+          if (parts[k][0] >= parts[k][1] || protected_count >= RANGES) continue;
+          u32 old;
+          if (imp_VirtualProtect((void *)parts[k][0], parts[k][1] - parts[k][0], 2, &old)) {
+            protected_ranges[2 * protected_count] = parts[k][0];
+            protected_ranges[2 * protected_count + 1] = parts[k][1] - parts[k][0];
+            protected_count++;
+          }
+        }
+      }
+      a = end;
+    }
+  }
+  copying = 1;
+  return 0;
+}
+
+/* The copy exits with status: the parent is put back and its fork returns
+   the copy's number. */
+static i64 copy_exit(unsigned char *c, i64 status) {
+  /* Descriptors: the parent's table; what the copy opened is closed. */
+  for (int fd = 0; fd < FDS; fd++) {
+    if (!handles[fd]) continue;
+    int kept_one = 0;
+    for (int k = 0; k < FDS; k++) if (copy_handles[k] == handles[fd]) { kept_one = 1; break; }
+    if (!kept_one) { if (socket_fd[fd]) imp_closesocket(handles[fd]); else imp_CloseHandle(handles[fd]); }
+  }
+  memcpy(handles, copy_handles, sizeof copy_handles);
+  memcpy(socket_fd, copy_sockets, sizeof copy_sockets);
+  /* Memory: the saved pages, the protection, the stack; what was committed
+     is decommitted, what was mapped is let go. */
+  for (u64 i = 0; i < protected_count; i++) {
+    u32 old;
+    imp_VirtualProtect((void *)protected_ranges[2 * i], protected_ranges[2 * i + 1], 4, &old);
+  }
+  for (u64 at = 0; at < copy_used; at += 8 + 4096)
+    memcpy((void *)*(u64 *)(copy_store + at), copy_store + at + 8, 4096);
+  for (u64 i = 0; i < committed_count; i++)
+    imp_VirtualFree((void *)committed_ranges[2 * i], committed_ranges[2 * i + 1], 0x4000);
+  for (u32 i = copy_regions; i < region_count; i++)
+    imp_VirtualFree((void *)regions[i][0], 0, 0x8000);
+  region_count = copy_regions;
+  if (store_committed) imp_VirtualFree(copy_store, store_committed, 0x4000);
+  copying = 0;
+  copy_status = status & 0xFF;
+  /* The stack is put back once Windows is done with this exception, whose
+     records lie on it: the thread goes on in copy_resume, on a stack of the
+     layer's (the handler moves RIP past the call it took this for). */
+  if (!resume_stack && !(resume_stack = imp_VirtualAlloc(0, 65536, 0x3000, 4))) imp_ExitProcess(70);
+  *(u64 *)(c + 0xF8) = (u64)copy_resume - 2;
+  *(u64 *)(c + 0x98) = (u64)resume_stack + 65536;
+  return 0;
+}
+
+/* On the layer's stack: the parent's stack as it was, then the parent at
+   its fork, which gives the copy's number. */
+void copy_resume_c(void) {
+  for (u64 a = stack_low; a < stack_high;) {
+    u8 info[48];
+    if (!imp_VirtualQuery((void *)a, info, sizeof info)) break;
+    u64 base = *(u64 *)info, size = *(u64 *)(info + 24);
+    u64 end = base + size > stack_high ? stack_high : base + size;
+    if (*(u32 *)(info + 32) == 0x1000) memcpy((void *)a, stack_copy + (a - stack_low), end - a);
+    a = end;
+  }
+  imp_VirtualFree(stack_copy, 0, 0x8000);
+  u8 *c = copy_context;
+  u64 rip = *(u64 *)(c + 0xF8) + 2;
+  *(u64 *)(c + 0xF8) = rip;
+  *(u64 *)(c + 0x78) = COPY_PID;                 /* RAX */
+  *(u64 *)(c + 0x80) = rip;                      /* RCX */
+  *(u64 *)(c + 0xD0) = *(u32 *)(c + 0x44);       /* R11: EFlags */
+  /* CONTEXT_AMD64 | CONTROL | INTEGER | FLOATING_POINT: the extended state
+     the handler's CONTEXT may name is not in this copy of it. */
+  *(u32 *)(c + 0x30) = 0x10000B;
+  imp_RtlRestoreContext(c, 0);
+}
+
+/* --- Processes -------------------------------------------------------- */
+
+/* The processes started (pid, handle); a pid is looked up here for wait4
+   and kill. */
+#define CHILDREN 256
+static u32 child_pid[CHILDREN];
+static u64 child_handle[CHILDREN];
+static u64 child_timer[CHILDREN];
+
+/* A timer of the timer queue ends the process it was set for (flag 16 of
+   spawn); it runs on a thread of the pool, and touches nothing but the
+   process. */
+static W void end_child(void *process, u8 fired) {
+  (void)fired;
+  imp_TerminateProcess((u64)process, 1);
+}
+
+static int child_of(i64 pid) {
+  for (int i = 0; i < CHILDREN; i++)
+    if (child_handle[i] && child_pid[i] == (u32)pid) return i;
+  return -1;
+}
+
+/* What is built for CreateProcessW: the command line, the environment
+   block and the directory, in UTF-16; and UTF-8 room to build them in. */
+#define SPAWN_UNITS (1 << 20)
+static u16 *spawn_wide;
+static char *spawn_text;
+
+/* Go's syscall.appendEscapeArg: s as one argument of a command line. */
+static i64 escape_arg(char *b, i64 at, i64 room, const char *s) {
+  i64 n = 0;
+  int needs_backslash = 0, has_space = 0;
+  for (; s[n]; n++) {
+    if (s[n] == '"' || s[n] == '\\') needs_backslash = 1;
+    if (s[n] == ' ' || s[n] == '\t') has_space = 1;
+  }
+  if (at + 2 * n + 4 >= room) return -1;
+  if (n == 0) { b[at++] = '"'; b[at++] = '"'; return at; }
+  if (!needs_backslash && !has_space) { memcpy(b + at, s, (u64)n); return at + n; }
+  if (!needs_backslash) {
+    b[at++] = '"'; memcpy(b + at, s, (u64)n); at += n; b[at++] = '"';
+    return at;
+  }
+  if (has_space) b[at++] = '"';
+  i64 slashes = 0;
+  for (i64 i = 0; i < n; i++) {
+    char c = s[i];
+    if (c == '\\') slashes++;
+    else if (c == '"') { for (; slashes > 0; slashes--) b[at++] = '\\'; b[at++] = '\\'; }
+    else slashes = 0;
+    b[at++] = c;
+  }
+  if (has_space) { for (; slashes > 0; slashes--) b[at++] = '\\'; b[at++] = '"'; }
+  return at;
+}
+
+static int same_key(const char *a, const char *b) {
+  /* The names of two "key=value" entries, in either case (dedupEnvCase). */
+  i64 i = 0;
+  if (a[0] == '=' && b[0] == '=') i = 1;
+  for (;; i++) {
+    char x = a[i], y = b[i];
+    if (x >= 'A' && x <= 'Z') x += 32;
+    if (y >= 'A' && y <= 'Z') y += 32;
+    if (x != y) return 0;
+    if (x == '=' || x == 0) return x == '=';
+  }
+}
+
+/* spawn (pseudo call 1000104): the program at path with the arguments argv
+   and the environment envp (zero-ended lists of UTF-8 strings), in dir
+   unless it is 0, as Go's os.StartProcess makes it on Windows. flags: 1 its
+   input is a pipe (else NUL); 2 its errors go with its output, 4 to NUL,
+   8 to the file named at out[0] (made anew), else where the program's own
+   go; 16 it is ended after out[1] milliseconds; 32 its input, output and
+   errors are the program's own (no pipes). out gets the descriptor its
+   output is read from (-1 with 32) and the one its input is written to.
+   The process's number, or -errno. */
+static i64 sys_spawn(i64 path, i64 argv, i64 envp, i64 dir, i64 flags, i64 out) {
+  i64 *given = (i64 *)out;
+  commit_range(given, 16);
+  const char *err_path = (flags & 8) ? (const char *)given[0] : 0;
+  i64 kill_ms = (flags & 16) ? given[1] : 0;
+  if (!spawn_wide && !(spawn_wide = imp_VirtualAlloc(0, SPAWN_UNITS * 2, 0x3000, 4))) return -ENOMEM;
+  if (!spawn_text && !(spawn_text = imp_VirtualAlloc(0, SPAWN_UNITS, 0x3000, 4))) return -ENOMEM;
+  char **args = (char **)argv, **env = (char **)envp;
+  /* The command line. */
+  i64 at = 0;
+  for (i64 i = 0; args && args[i]; i++) {
+    if (i) spawn_text[at++] = ' ';
+    at = escape_arg(spawn_text, at, SPAWN_UNITS / 4, args[i]);
+    if (at < 0) return -7;                     /* E2BIG */
+  }
+  spawn_text[at] = 0;
+  u16 *line = spawn_wide;
+  i32 n = imp_MultiByteToWideChar(65001, 0, spawn_text, -1, line, SPAWN_UNITS / 4);
+  if (n <= 0) return -7;
+  /* The environment: each name once, its last value (dedupEnvCase), and
+     SYSTEMROOT, which Windows programs need (addCriticalEnv). */
+  u16 *block = line + n;
+  u64 left = SPAWN_UNITS - (u64)n - 8;
+  u64 used = 0;
+  int has_root = 0;
+  for (i64 i = 0; env && env[i]; i++) {
+    int later = 0;
+    for (i64 j = i + 1; env[j]; j++) if (same_key(env[i], env[j])) { later = 1; break; }
+    if (later) continue;
+    if (same_key(env[i], "SYSTEMROOT=")) has_root = 1;
+    i32 m = imp_MultiByteToWideChar(65001, 0, env[i], -1, block + used, (i32)(left - used));
+    if (m <= 0) return -7;
+    used += (u64)m;
+  }
+  if (!has_root) {
+    const char *name = "SYSTEMROOT=";
+    u64 k = 0;
+    for (; name[k]; k++) block[used + k] = (u16)name[k];
+    u16 *value = block + used + k;
+    u32 v = imp_GetEnvironmentVariableW(u"SYSTEMROOT", value, (u32)(left - used - k - 2));
+    if (v) used += k + v + 1;
+  }
+  if (!used) block[used++] = 0;
+  block[used++] = 0;
+  /* The program's path and its directory. */
+  if (!wide((const char *)path, wpath1)) return -ENOENT;
+  u16 *directory = 0;
+  if (dir) {
+    if (!wide((const char *)dir, wpath2)) return -ENOENT;
+    directory = wpath2;
+  }
+  /* The pipes, their child's ends inherited. */
+  u64 sa[3] = {24, 0, 1};                      /* SECURITY_ATTRIBUTES, inherited */
+  u64 out_read = 0, out_write = 0, in_read = 0, in_write = 0, null_in = 0, null_err = 0, err = 0;
+  i64 r = 0;
+  u64 me = imp_GetCurrentProcess();
+  if (flags & 32) {
+    /* The program's own three, inherited. */
+    imp_DuplicateHandle(me, handle_of(0), me, &in_read, 0, 1, 2);
+    imp_DuplicateHandle(me, handle_of(1), me, &out_write, 0, 1, 2);
+    imp_DuplicateHandle(me, handle_of(2), me, &null_err, 0, 1, 2);
+    err = null_err;
+  } else {
+  if (!imp_CreatePipe(&out_read, &out_write, sa, 0)) return fail();
+  imp_SetHandleInformation(out_read, 1, 0);
+  if (flags & 1) {
+    if (!imp_CreatePipe(&in_read, &in_write, sa, 0)) { r = fail(); goto close; }
+    imp_SetHandleInformation(in_write, 1, 0);
+  } else {
+    null_in = imp_CreateFileW(u"NUL", 0x80000000, 3, sa, 3, 0, 0);
+    in_read = null_in;
+  }
+  if (flags & 2) err = out_write;
+  else if (flags & 4) { null_err = imp_CreateFileW(u"NUL", 0x40000000, 3, sa, 3, 0, 0); err = null_err; }
+  else if (flags & 8) {
+    /* GENERIC_WRITE, sharing all, CREATE_ALWAYS. */
+    u16 *name = block + used + 8;
+    if (imp_MultiByteToWideChar(65001, 0, err_path, -1, name, 32768) <= 0) { r = -ENOENT; goto close; }
+    null_err = imp_CreateFileW(name, 0x40000000, 7, sa, 2, 0x80, 0);
+    if (null_err == (u64)-1) { null_err = 0; r = fail(); goto close; }
+    err = null_err;
+  } else {
+    if (!imp_DuplicateHandle(me, handle_of(2), me, &null_err, 0, 1, 2)) null_err = 0;
+    err = null_err;
+  }
+  }
+  /* STARTUPINFOW: cb, ..., dwFlags STARTF_USESTDHANDLES at 60, the
+     handles at 80, 88 and 96. */
+  u8 startup[104];
+  memset(startup, 0, sizeof startup);
+  *(u32 *)startup = sizeof startup;
+  *(u32 *)(startup + 60) = 0x100;
+  *(u64 *)(startup + 80) = in_read;
+  *(u64 *)(startup + 88) = out_write;
+  *(u64 *)(startup + 96) = err;
+  u64 info[3] = {0};                           /* PROCESS_INFORMATION */
+  /* CREATE_UNICODE_ENVIRONMENT */
+  if (!imp_CreateProcessW(wpath1, line, 0, 0, 1, 0x400, block, directory, startup, info)) { r = fail(); goto close; }
+  imp_CloseHandle(info[1]);
+  int slot = -1;
+  for (int i = 0; i < CHILDREN; i++) if (!child_handle[i]) { slot = i; break; }
+  if (slot < 0) {
+    imp_CloseHandle(info[0]);
+    r = -11;                                   /* EAGAIN: too many */
+    goto close;
+  }
+  child_pid[slot] = (u32)info[2];
+  child_handle[slot] = info[0];
+  child_timer[slot] = 0;
+  if (kill_ms > 0) imp_CreateTimerQueueTimer(&child_timer[slot], 0, end_child, (void *)info[0], (u32)kill_ms, 0, 8);   /* WT_EXECUTEONLYONCE */
+  {
+    i64 reader = out_read ? new_fd(out_read) : -1;
+    out_read = 0;
+    i64 writer = -1;
+    if (flags & 1) { writer = new_fd(in_write); in_write = 0; }
+    i64 *o = (i64 *)out;
+    commit_range(o, 16);
+    o[0] = reader;
+    o[1] = writer;
+  }
+  r = (i64)(u32)info[2];
+close:
+  if (out_read) imp_CloseHandle(out_read);
+  if (out_write) imp_CloseHandle(out_write);
+  if (in_write) imp_CloseHandle(in_write);
+  if (in_read) imp_CloseHandle(in_read);
+  if (null_err) imp_CloseHandle(null_err);
+  return r;
+}
+
+/* pipe2(fds, flags): an anonymous pipe, not inherited; 1 MiB of room, so
+   that a writer seldom waits on the one thread for a reader. */
+static i64 sys_pipe2(i64 fds) {
+  u64 r = 0, w = 0;
+  if (!imp_CreatePipe(&r, &w, 0, 1 << 20)) return fail();
+  i64 a = new_fd(r);
+  if (a < 0) { imp_CloseHandle(w); return a; }
+  i64 b = new_fd(w);
+  if (b < 0) { handles[a] = 0; imp_CloseHandle(r); return b; }
+  commit_range((void *)fds, 8);
+  ((i32 *)fds)[0] = (i32)a;
+  ((i32 *)fds)[1] = (i32)b;
+  return 0;
+}
+
+/* wait4(pid, status, options): the exit code where Linux puts it in the
+   status (code << 8), but the whole 32 bits of it in a word, as Go's
+   ExitCode has it there; with WNOHANG, 0 while it runs. */
+static i64 sys_wait4(i64 pid, i64 status, i64 options) {
+  if (pid == COPY_PID && copy_status >= 0) {
+    if (status) {
+      commit_range((void *)status, 8);
+      *(u64 *)status = (u64)copy_status << 8;
+    }
+    copy_status = -1;
+    return pid;
+  }
+  int i = child_of(pid);
+  if (i < 0) return -10;                       /* ECHILD */
+  u32 w = imp_WaitForSingleObject(child_handle[i], (options & 1) ? 0 : 0xFFFFFFFF);
+  if (w == 0x102) return 0;                    /* WAIT_TIMEOUT */
+  u32 code = 0;
+  imp_GetExitCodeProcess(child_handle[i], &code);
+  /* The timer goes first, its callback over (INVALID_HANDLE_VALUE): the
+     handle is closed below. */
+  if (child_timer[i]) { imp_DeleteTimerQueueTimer(0, child_timer[i], (u64)-1); child_timer[i] = 0; }
+  if (status) {
+    commit_range((void *)status, 8);
+    *(u64 *)status = (u64)code << 8;
+  }
+  imp_CloseHandle(child_handle[i]);
+  child_handle[i] = 0;
+  return pid;
+}
+
+/* kill(pid, signal): SIGKILL ends it as Go's Process.Kill does there
+   (TerminateProcess, exit code 1); 0 asks whether it is there; any other
+   signal Windows has no way to send. */
+static i64 sys_kill(i64 pid, i64 signal) {
+  int i = child_of(pid);
+  if (i < 0) return -3;                        /* ESRCH */
+  if (signal == 0) return 0;
+  if (signal != 9) return -EINVAL;
+  return imp_TerminateProcess(child_handle[i], 1) ? 0 : fail();
+}
+
 /* --- Calls on a descriptor that is a socket ------------------------- */
 
 static i64 socket_call(i64 nr, unsigned char *c) {
@@ -824,12 +1380,27 @@ i64 layer_call(unsigned char *c) {
   i64 nr = *(i64 *)(c + 0x78);
   last_error = 0;
   switch (nr) {
+  case 57: case 58: return sys_fork(c);                      /* fork, vfork */
+  case 60: case 231: return copying ? copy_exit(c, ARG(c, 0)) : NOT_MINE;
+  case 3: case 11: case 28:
+    /* While a copy runs, closing only leaves the table, and memory is
+       neither unmapped nor let go: the parent has it. */
+    if (copying) {
+      if (nr == 3) { i64 fd = ARG(c, 0); if (fd >= 0 && fd < FDS) { handles[fd] = 0; socket_fd[fd] = 0; } return 0; }
+      return 0;
+    }
+    if (nr == 3) return is_socket(ARG(c, 0)) ? socket_call(nr, c) : NOT_MINE;
+    return NOT_MINE;
   case 1000101: return error_text(ARG(c, 0));
   case 1000102: return full_path(ARG(c, 0));
   case 1000103: return temp_dir();
+  case 1000104: return sys_spawn(ARG(c, 0), ARG(c, 1), ARG(c, 2), ARG(c, 3), ARG(c, 4), ARG(c, 5));
+  case 61: return sys_wait4(ARG(c, 0), ARG(c, 1), ARG(c, 2));
+  case 22: case 293: return sys_pipe2(ARG(c, 0));             /* pipe, pipe2 */
+  case 62: return sys_kill(ARG(c, 0), ARG(c, 1));
   case 41: return sys_socket(ARG(c, 0), ARG(c, 1), ARG(c, 2));
   case 271: return sys_ppoll(ARG(c, 0), ARG(c, 1), ARG(c, 2));
-  case 0: case 1: case 3: case 5: case 16:
+  case 0: case 1: case 5: case 16:
     return is_socket(ARG(c, 0)) ? socket_call(nr, c) : NOT_MINE;
   case 72: return is_socket(ARG(c, 0)) ? socket_call(nr, c) : sys_fcntl(ARG(c, 0), ARG(c, 1), ARG(c, 2));
   case 32: return sys_dup(ARG(c, 0), 3);

@@ -6,7 +6,7 @@
 Wine runs on Linux, so a `syscall` left in a Windows image would make a
 Linux system call there and seem to work, where Windows would take it for
 its own. A seccomp filter therefore ends the process (SIGSYS) at any system
-call made from the program's image, 0x3C0000 up to its SizeOfImage: every
+call made from the program's image, 0x380000 up to its SizeOfImage: every
 one must be ud2, made by the Windows layer with kernel32.
 
 Any other PE file (the pinned compiler's windows/amd64 programs, which are
@@ -21,7 +21,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = 0x3C0000
+BASE = 0x380000
 
 PR_SET_NO_NEW_PRIVS = 38
 SECCOMP_SET_MODE_FILTER = 1
