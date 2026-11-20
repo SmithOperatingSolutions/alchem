@@ -3,6 +3,8 @@
 
     windows-examples.py prepare DIR [--compiler build/dev/A2]
     windows-examples.py check DIR COMPILER.exe [--jobs N] [--wine]
+    windows-examples.py pinned OUT.exe
+    windows-examples.py reference DIR PINNED.exe COMPILER.exe [--wine]
 
 prepare (on Linux) writes each example of scripts/upstream-examples.py that
 the native Linux compiler builds and runs to exit 0 into DIR as NNNN.alc,
@@ -16,7 +18,14 @@ programs for Windows alone, with what they print there.
 
 check (on Windows) builds each with the Windows compiler, runs it in an
 empty directory and compares what it prints; it ends 1 if any differs.
-With --wine it runs them under Wine (scripts/run-windows) on Linux."""
+With --wine it runs them under Wine (scripts/run-windows) on Linux.
+
+What Windows prints otherwise (SKIPPED, GATE_SKIPPED) is not passed over:
+prepare writes those programs into DIR/reference too, and reference (on
+Windows, with the Go toolchain the pinned compiler builds with) builds each
+with the pinned compiler as its windows/amd64 program and with the Windows
+compiler, runs both in the same directory, and compares their status and
+output. pinned (on Linux) builds the pinned compiler as a Windows program."""
 import os
 from pathlib import Path
 import shutil
@@ -121,6 +130,80 @@ def gate_runs():
     return found
 
 
+def skipped_gate_runs():
+    """(name, program) of the gate programs GATE_SKIPPED names."""
+    import hashlib
+    import importlib.util
+    sys.path.insert(0, str(ROOT / 'harness'))
+    found = []
+    for path in sorted((ROOT / 'harness').glob('*.py')):
+        text = path.read_text()
+        if '\nRUNS=' not in text and '\nRUNS =' not in text:
+            continue
+        spec = importlib.util.spec_from_file_location('gate_' + path.stem, path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for i, run in enumerate(getattr(module, 'RUNS', None) or []):
+            if len(run) == 4 and isinstance(run[0], str) and hashlib.sha1(run[0].encode()).hexdigest()[:16] in GATE_SKIPPED:
+                found.append((f'gate/{path.stem}/{i}', run[0]))
+    assert len(found) == len(GATE_SKIPPED), 'a program of GATE_SKIPPED is gone: take it out'
+    return found
+
+
+def pinned(out):
+    """The pinned compiler built from the module cache as a Windows program."""
+    examples = load_examples()
+    env = dict(examples.env, GOOS='windows', GOARCH='amd64')
+    subprocess.run(['go', 'build', '-o', str(Path(out).resolve()), './cmd/alchem'], cwd=examples.U, env=env, check=True)
+    print(f'built {out}')
+
+
+def normal(text, where):
+    """Output with what differs from run to run as N: ports, the directory."""
+    import re
+    text = text.replace(str(where).encode(), b'DIR').replace(str(where).replace('\\', '/').encode(), b'DIR')
+    return re.sub(rb'(127\.0\.0\.1|\[::1\]|localhost):\d+', rb'\1:N', text)
+
+
+def reference(directory, pinned_compiler, compiler, runner):
+    directory = Path(directory)
+    names = (directory / 'reference' / 'names.txt').read_text().split('\n')[:-1]
+    failed = []
+    for i, name in enumerate(names):
+        source = directory / 'reference' / f'{i:04}.alc'
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / 'p.alc').write_bytes(source.read_bytes())
+            # Under Wine the pinned compiler is the Linux one (it has a Go
+            # toolchain there), which builds windows/amd64 programs as well.
+            made = subprocess.run([*([] if runner and not str(pinned_compiler).endswith('.exe') else runner), str(pinned_compiler), 'build', '-target', 'windows/amd64', '-o', str(d / 'pinned.exe'), str(d / 'p.alc')],
+                                  capture_output=True, timeout=600)
+            ours = subprocess.run([*runner, str(compiler)], input=source.read_bytes(), capture_output=True, timeout=300)
+            if made.returncode or ours.returncode:
+                failed.append((name, f'did not build: {made.stderr[:200]!r} {ours.stderr[:200]!r}'))
+                continue
+            (d / 'native.exe').write_bytes(ours.stdout)
+            got = []
+            for program in ('pinned.exe', 'native.exe'):
+                run = d / 'run'
+                if run.exists():
+                    shutil.rmtree(run)
+                run.mkdir()
+                (run / 'tmp').mkdir()
+                env = dict(os.environ, TMP=str(run / 'tmp'), TEMP=str(run / 'tmp'))
+                try:
+                    r = subprocess.run([*runner, str(d / program)], capture_output=True, timeout=120, cwd=run, stdin=subprocess.DEVNULL, env=env)
+                    got.append((r.returncode, normal(r.stdout, run).replace(str(d / 'p.alc').encode(), b'<stdin>')))
+                except subprocess.TimeoutExpired:
+                    got.append(('timed out', b''))
+            if got[0] != got[1]:
+                failed.append((name, f'pinned {got[0][0]} {got[0][1][:300]!r}\n  native {got[1][0]} {got[1][1][:300]!r}'))
+    for name, why in failed:
+        print(f'FAIL {name}: {why}')
+    print(f'{len(names) - len(failed)} of {len(names)} print what the pinned compiler\'s Windows programs print')
+    return 1 if failed else 0
+
+
 def load_examples():
     import importlib.util
     spec = importlib.util.spec_from_file_location('upstream_examples', ROOT / 'scripts/upstream-examples.py')
@@ -158,7 +241,14 @@ def prepare(out, compiler):
         (out / (number + '.out')).write_text(printed)
         names.append(name)
     (out / 'names.txt').write_text(''.join(n + '\n' for n in names))
-    print(f'{len(names)} examples in {out}')
+    # What Windows prints otherwise, for reference.
+    others = [(n, s) for n, s in examples.cases() if n in SKIPPED] + skipped_gate_runs()
+    against = out / 'reference'
+    against.mkdir()
+    for i, (name, source) in enumerate(others):
+        (against / f'{i:04}.alc').write_text(source)
+    (against / 'names.txt').write_text(''.join(n + '\n' for n, _ in others))
+    print(f'{len(names)} programs in {out}, {len(others)} to compare with the pinned compiler\'s')
 
 
 def check_one(directory, compiler, number, name, runner):
@@ -209,6 +299,12 @@ def main():
             compiler = Path(args[args.index('--compiler') + 1])
         prepare(args[1], compiler.resolve())
         return 0
+    if len(args) == 2 and args[0] == 'pinned':
+        pinned(args[1])
+        return 0
+    if len(args) >= 4 and args[0] == 'reference':
+        runner = [str(ROOT / 'scripts/run-windows')] if '--wine' in args else []
+        return reference(args[1], Path(args[2]).resolve(), Path(args[3]).resolve(), runner)
     if len(args) >= 3 and args[0] == 'check':
         jobs = int(args[args.index('--jobs') + 1]) if '--jobs' in args else 4
         runner = [str(ROOT / 'scripts/run-windows')] if '--wine' in args else []

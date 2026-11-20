@@ -253,7 +253,12 @@ the Linux job builds: it must make itself again byte for byte, and build
 every upstream example and every program of the gates that print the same
 on Linux and Windows into one that prints there what was frozen on Linux
 (`scripts/windows-examples.py`: `prepare` on Linux, `check` on Windows, or
-`check --wine` under Wine): 2,632 programs.
+`check --wine` under Wine): 2,632 programs. The 33 whose output Windows
+gives otherwise (`SKIPPED`, `GATE_SKIPPED`: Windows' error texts, Unix
+programs) are not passed over: the job builds each also with the pinned
+compiler there (`pinned` builds it for Windows on Linux; the Go toolchain
+it builds with is set up on the runner) and both programs must print the
+same (`reference`).
 
 ## Still to do
 
@@ -261,6 +266,6 @@ on Linux and Windows into one that prints there what was frozen on Linux
   their frozen results: they drive the Linux compilers and tools
   (`scripts/limited`, `/bin/sh`, `/proc`, `ptrace`), and run on Linux.
   CI's Windows job runs every program of the gates that keep them (38 of
-  them, 1,768 programs) on Windows, with the examples
-  (`scripts/windows-examples.py`; `GATE_SKIPPED` names the 24 whose output
-  Windows gives otherwise, as the pinned compiler's Windows programs do).
+  them, 1,792 programs) on Windows, with the examples
+  (`scripts/windows-examples.py`), 24 of them against the pinned compiler's
+  Windows programs there.
