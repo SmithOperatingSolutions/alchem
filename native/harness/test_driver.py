@@ -50,7 +50,7 @@ def tools(compiler,base):
     made={'alchem':base/'alchem'};builder.build(compiler,made['alchem'])
     built=subprocess.run([str(compiler)],input=(ROOT/'tools/alchem-bundle.alc').read_bytes(),capture_output=True,env={'PATH':''},timeout=300)
     assert (built.returncode,built.stderr)==(0,b''),('alchem-bundle',built.returncode,built.stderr)
-    made['alchem-bundle']=base/'alchem-bundle';made['alchem-bundle'].write_bytes(built.stdout);made['alchem-bundle'].chmod(0o700)
+    made['alchem-bundle']=base/'alchem-bundle';made['alchem-bundle'].unlink(missing_ok=True);made['alchem-bundle'].write_bytes(built.stdout);made['alchem-bundle'].chmod(0o700)
     return made
 
 
@@ -66,7 +66,7 @@ def covered(compiler,made,root,temporary,test):
     assert bundle.returncode==0,(test,bundle.stderr)
     built=subprocess.run([str(compiler)],input=bundle.stdout,capture_output=True,env={'PATH':''},timeout=300)
     assert (built.returncode,built.stderr)==(0,b''),(test,built.returncode,built.stderr)
-    out=temporary/'covered';out.write_bytes(built.stdout);out.chmod(0o700);cover=temporary/'cover'
+    out=temporary/'covered';out.unlink(missing_ok=True);out.write_bytes(built.stdout);out.chmod(0o700);cover=temporary/'cover'
     if cover.exists():cover.unlink()
     subprocess.run([str(out)],capture_output=True,cwd=root,env={'PATH':'','ALCHEM_SEED':'7','ALCHEM_COVER_FILE':str(cover),'ALCHEM_TEST_TIMEOUT':'30000'},timeout=300)
     return cover.read_text().replace(str(root)+'/','') if cover.exists() else ''

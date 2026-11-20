@@ -32,7 +32,7 @@ def verify(frontend,backends):
                 data=result.stdout
                 assert struct.unpack_from('<Q',data,96)[0]==len(data),(name,'file size')
                 if wide:assert len(data)>65535,(name,len(data))
-                target=root/'target';target.write_bytes(data);target.chmod(0o700)
+                target=root/'target';target.unlink(missing_ok=True);target.write_bytes(data);target.chmod(0o700)
                 run=subprocess.run([str(target)],capture_output=True,env={'PATH':''},timeout=120)
                 assert (run.returncode,run.stdout,run.stderr)==(42,b'',b''),(name,run)
                 repeat=subprocess.run([str(compiler)],input=native_bytes(source.encode()),capture_output=True,env={'PATH':''},timeout=120)

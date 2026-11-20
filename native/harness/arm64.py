@@ -77,7 +77,7 @@ def encoders(root,compiler):
     source=f'defmodule ArmEncoders do\n{helpers}{body}  def native_compile(source: bytes): bytes do {expression} end\n  def main() do System.halt(0) end\nend\n'
     built=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=300)
     assert (built.returncode,built.stderr)==(0,b''),('encoder program',built.returncode,built.stderr)
-    program=root/'encoders';program.write_bytes(built.stdout);program.chmod(0o700)
+    program=root/'encoders';program.unlink(missing_ok=True);program.write_bytes(built.stdout);program.chmod(0o700)
     got=subprocess.run([str(program)],input=b'',capture_output=True,timeout=60)
     assert got.returncode==0,('encoder run',got)
     (root/'want.s').write_text('\n'.join(text for _,text in CASES)+'\n')
@@ -104,7 +104,7 @@ def compiler_entry(root,compiler,arm):
     for name,which in (('x86',compiler),('arm',arm)):
         made=subprocess.run([str(which)],input=ENTRY.encode(),capture_output=True,env={'PATH':''},timeout=120)
         assert made.returncode==0,('compiler entry build',name,made.returncode,made.stderr)
-        path=root/f'entry-{name}';path.write_bytes(made.stdout);path.chmod(0o700);built.append(path)
+        path=root/f'entry-{name}';path.unlink(missing_ok=True);path.write_bytes(made.stdout);path.chmod(0o700);built.append(path)
     for given in INPUTS:
         want=subprocess.run([str(built[0])],input=given,capture_output=True,timeout=120)
         got=subprocess.run([*ARM64_RUN,str(built[1])],input=given,capture_output=True,timeout=120)
@@ -119,7 +119,7 @@ def self_hosted(root,compiler,arm):
     source=bootstrap.source_text('functions').encode()
     made=subprocess.run([str(arm)],input=source,capture_output=True,env={'PATH':''},timeout=600)
     assert made.returncode==0 and made.stdout[18:20]==b'\xb7\x00',('the compiler built for ARM64',made.returncode,made.stderr[:200])
-    hosted=root/'compiler-arm64-hosted';hosted.write_bytes(made.stdout);hosted.chmod(0o700)
+    hosted=root/'compiler-arm64-hosted';hosted.unlink(missing_ok=True);hosted.write_bytes(made.stdout);hosted.chmod(0o700)
     again=subprocess.run([*ARM64_RUN,str(hosted)],input=source,capture_output=True,timeout=1200)
     reference=subprocess.run([str(compiler)],input=source,capture_output=True,env={'PATH':''},timeout=600)
     assert (again.returncode,again.stderr)==(0,b'') and again.stdout==reference.stdout,('the compiler under QEMU',again.returncode,again.stderr[:200],len(again.stdout),len(reference.stdout))
@@ -136,12 +136,12 @@ def verify(compiler):
         ran=0
         for source in RUNS:
             native=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
-            reference=root/'reference';reference.write_bytes(native.stdout);reference.chmod(0o700)
+            reference=root/'reference';reference.unlink(missing_ok=True);reference.write_bytes(native.stdout);reference.chmod(0o700)
             done=subprocess.run([str(reference)],capture_output=True,env={'PATH':''},timeout=120)
             expected=(done.returncode,done.stdout,done.stderr)
             made=subprocess.run([str(arm)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
             assert made.returncode==0 and made.stdout[:4]==b'\x7fELF' and made.stdout[18:20]==b'\xb7\x00',('ARM64 compiler output',source,made.returncode,made.stdout[:20])
-            program=root/'program';program.write_bytes(made.stdout);program.chmod(0o700)
+            program=root/'program';program.unlink(missing_ok=True);program.write_bytes(made.stdout);program.chmod(0o700)
             run=subprocess.run([*ARM64_RUN,str(program)],capture_output=True,env={'PATH':''},timeout=120)
             assert (run.returncode,run.stdout,run.stderr)==expected,('ARM64 run',source,run.returncode,run.stdout,run.stderr[:300])
             ran+=1

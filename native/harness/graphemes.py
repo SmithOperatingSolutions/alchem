@@ -76,7 +76,7 @@ def verify(compiler):
                 source=('defmodule M do def main() do IO.puts(String.slice('+literal(data)+f',{start},{count})) System.halt(0) end end').encode()
                 built=subprocess.run([str(compiler)],input=native_bytes(source),capture_output=True,env={'PATH':''},timeout=120)
                 assert built.returncode==0,(source,built.returncode,built.stderr)
-                target=root/'slice';target.write_bytes(built.stdout);target.chmod(0o700)
+                target=root/'slice';target.unlink(missing_ok=True);target.write_bytes(built.stdout);target.chmod(0o700)
                 run=subprocess.run([str(target)],capture_output=True,env={'PATH':''},timeout=120)
                 assert (run.returncode,run.stdout,run.stderr)==(0,expected+b'\n',b''),(data,start,count,run,expected)
                 slices+=1
@@ -87,7 +87,7 @@ def verify(compiler):
                 source=('defmodule M do def text(v: option[string]): string do case v do some(s) -> s none -> "NONE" end end def main() do IO.puts(text(String.'+name+'('+literal(data)+'))) System.halt(0) end end').encode()
                 built=subprocess.run([str(compiler)],input=native_bytes(source),capture_output=True,env={'PATH':''},timeout=120)
                 assert built.returncode==0,(name,built.returncode,built.stderr)
-                target=root/'option';target.write_bytes(built.stdout);target.chmod(0o700)
+                target=root/'option';target.unlink(missing_ok=True);target.write_bytes(built.stdout);target.chmod(0o700)
                 run=subprocess.run([str(target)],capture_output=True,env={'PATH':''},timeout=120)
                 assert (run.returncode,run.stdout,run.stderr)==(0,expected+b'\n',b''),(name,data,run,expected)
                 option_calls+=1

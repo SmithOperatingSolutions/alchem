@@ -129,7 +129,7 @@ def verify(frontend,backends,saved_compilers=None):
             for source,expected in valid:
                 result=subprocess.run([str(compiler)],input=native_bytes(source.encode()),capture_output=True,env={'PATH':''},timeout=120)
                 assert result.returncode==0 and not result.stderr,(source,result.returncode,result.stderr)
-                target=root/'target';target.write_bytes(result.stdout);target.chmod(0o700)
+                target=root/'target';target.unlink(missing_ok=True);target.write_bytes(result.stdout);target.chmod(0o700)
                 run=subprocess.run([str(target)],capture_output=True,env={'PATH':''},timeout=120)
                 assert (run.returncode,run.stdout,run.stderr)==(expected,b'',b''),(source,run)
                 repeat=subprocess.run([str(compiler)],input=native_bytes(source.encode()),capture_output=True,env={'PATH':''},timeout=120)
@@ -149,7 +149,7 @@ def verify(frontend,backends,saved_compilers=None):
             for source,expected in coded:
                 result=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
                 assert result.returncode==0 and not result.stderr,(source[:120],result.returncode,result.stderr)
-                target=root/'coded';target.write_bytes(result.stdout);target.chmod(0o700)
+                target=root/'coded';target.unlink(missing_ok=True);target.write_bytes(result.stdout);target.chmod(0o700)
                 run=subprocess.run([str(target)],capture_output=True,env={'PATH':''},timeout=120)
                 assert (run.returncode,run.stdout,run.stderr)==(expected,b'',b''),(source[:120],run)
                 if index==0:
@@ -167,7 +167,7 @@ def verify(frontend,backends,saved_compilers=None):
             for source,status in errors+budgets:
                 result=subprocess.run([str(compiler)],input=native_bytes(source.encode()),capture_output=True,env={'PATH':''},timeout=120)
                 assert result.returncode==0,result
-                target=root/'bad';target.write_bytes(result.stdout);target.chmod(0o700)
+                target=root/'bad';target.unlink(missing_ok=True);target.write_bytes(result.stdout);target.chmod(0o700)
                 run=subprocess.run([str(target)],capture_output=True,env={'PATH':''},timeout=120,preexec_fn=floor_arena(target) if 'fill(' in source or 'grow(' in source else None)
                 # Status 2: the runtime stopped a call nested past the depth limit.
                 stopped=run.stderr.split(b'\n')[0].endswith(b': call depth exceeded') if status==2 else run.stderr==b''
@@ -175,7 +175,7 @@ def verify(frontend,backends,saved_compilers=None):
             source=module(factory+inspect,'System.halt(inspect(make(42)))')
             result=subprocess.run([str(compiler)],input=native_bytes(source.encode()),capture_output=True,env={'PATH':''},timeout=120)
             assert result.returncode==0,result
-            target=root/'mmap-test';target.write_bytes(result.stdout);target.chmod(0o700)
+            target=root/'mmap-test';target.unlink(missing_ok=True);target.write_bytes(result.stdout);target.chmod(0o700)
             tracer=shutil.which('strace')
             if tracer:
                 # The arena is asked for in halves from 16 GiB down to 4 MiB: refused every time

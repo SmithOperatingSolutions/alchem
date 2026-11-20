@@ -33,14 +33,14 @@ def verify(compiler):
             assert (built.returncode,built.stderr)==(0,b''),('string compilation',source,built)
             again=subprocess.run([str(compiler)],input=native_bytes(source),capture_output=True,env={'PATH':''},timeout=120)
             assert (again.returncode,again.stdout,again.stderr)==(0,built.stdout,b''),'string determinism'
-            target=root/'target';target.write_bytes(built.stdout);target.chmod(0o700)
+            target=root/'target';target.unlink(missing_ok=True);target.write_bytes(built.stdout);target.chmod(0o700)
             result=subprocess.run([str(target)],capture_output=True,env={'PATH':''},timeout=120)
             assert (result.returncode,result.stdout,result.stderr)==(status,expected,b''),(source,result,expected)
         # Real output failures and both payload/newline interrupted writes.
         source=b'defmodule M do def main() do IO.puts("hello") System.halt(42) end end'
         built=subprocess.run([str(compiler)],input=native_bytes(source),capture_output=True,env={'PATH':''},timeout=120)
         assert built.returncode==0,built.stderr
-        target=root/'errors';target.write_bytes(built.stdout);target.chmod(0o700)
+        target=root/'errors';target.unlink(missing_ok=True);target.write_bytes(built.stdout);target.chmod(0o700)
         closed=subprocess.run([str(target)],capture_output=True,preexec_fn=lambda:os.close(1),timeout=120)
         assert (closed.returncode,closed.stdout,closed.stderr)==(74,b'',b''),closed
         with open('/dev/full','wb') as full:
@@ -61,7 +61,7 @@ def verify(compiler):
             source=('defmodule M do def main() do s='+expression+'\nSystem.halt(0) end end').encode()
             built=subprocess.run([str(compiler)],input=native_bytes(source),capture_output=True,env={'PATH':''},timeout=120)
             assert built.returncode==0,built.stderr
-            target=root/'arena';target.write_bytes(built.stdout);target.chmod(0o700)
+            target=root/'arena';target.unlink(missing_ok=True);target.write_bytes(built.stdout);target.chmod(0o700)
             try:
                 status,data,errors,charged=profile(target,b'')
                 assert (status,data,errors,charged)==(0,b'',b'',charge),(expression,charged,charge)

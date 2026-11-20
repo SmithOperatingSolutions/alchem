@@ -58,7 +58,7 @@ def verify(compiler):
             counts['expressions']+=1;counts['arithmetic']+=1
         for status in range(256):
             image=run(output/'alchem-elf-emitter',bytes([status]));validate_elf(image,status)
-            target=root/'target';target.write_bytes(image);target.chmod(0o700)
+            target=root/'target';target.unlink(missing_ok=True);target.write_bytes(image);target.chmod(0o700)
             executed=subprocess.run([str(target)],capture_output=True,env={'PATH':''},timeout=120)
             assert (executed.returncode,executed.stdout,executed.stderr)==(status,b'',b'')
             counts['encoder']+=1

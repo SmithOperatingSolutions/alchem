@@ -49,7 +49,7 @@ def verify(compiler):
             source=('defmodule M do def main() do p='+expression+'\nSystem.halt(0) end end').encode()
             built=subprocess.run([str(compiler)],input=native_bytes(source),capture_output=True,env={'PATH':''},timeout=120)
             assert built.returncode==0,built.stderr
-            target=root/'arena';target.write_bytes(built.stdout);target.chmod(0o700)
+            target=root/'arena';target.unlink(missing_ok=True);target.write_bytes(built.stdout);target.chmod(0o700)
             try:
                 status,data,errors,charged=profile(target,b'')
                 assert (status,data,errors,charged)==(0,b'',b'',charge),(expression,charged,charge)

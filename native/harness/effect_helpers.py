@@ -57,7 +57,7 @@ def verify(compiler):
             source=('defmodule M do '+helpers+'def main() do '+body+' end end').encode()
             r=subprocess.run([str(compiler)],input=source,capture_output=True,env={'PATH':''},timeout=120)
             assert (r.returncode,r.stderr)==(0,b''),(helpers,r.returncode,r.stderr)
-            out=root/'out';out.write_bytes(r.stdout);out.chmod(0o700)
+            out=root/'out';out.unlink(missing_ok=True);out.write_bytes(r.stdout);out.chmod(0o700)
             run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
             assert (run.returncode,run.stdout,run.stderr)==(status,stdout,b''),(helpers,body,run)
         # Output failure inside a helper exits 74 like main-body output.
@@ -67,7 +67,7 @@ def verify(compiler):
             source=('defmodule M do '+helpers+'def main() do '+body+' end end').encode()
             r=subprocess.run([str(compiler)],input=source,capture_output=True,env={'PATH':''},timeout=120)
             assert (r.returncode,r.stderr)==(0,b''),(helpers,r.returncode,r.stderr)
-            out=root/'out';out.write_bytes(r.stdout);out.chmod(0o700)
+            out=root/'out';out.unlink(missing_ok=True);out.write_bytes(r.stdout);out.chmod(0o700)
             run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
             assert (run.returncode,run.stdout,run.stderr)==(status,stdout,stderr),(helpers,body,run)
         # A failed write to standard error is ignored, as the pinned runtime does: closed or full.

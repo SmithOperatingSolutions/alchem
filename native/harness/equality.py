@@ -113,7 +113,7 @@ def verify(compiler):
             return subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
         def ran(result,label):
             assert (result.returncode,result.stderr)==(0,b''),(label,result.returncode,result.stderr)
-            out=root/'out';out.write_bytes(result.stdout);out.chmod(0o700)
+            out=root/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
             return subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
         for body,stdout in CASES:
             run=ran(built('defmodule M do '+DECLARATIONS+'def main() do '+body+'\nSystem.halt(0) end end'),body[:60])

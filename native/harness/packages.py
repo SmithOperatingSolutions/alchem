@@ -56,7 +56,7 @@ def verify(compiler):
             hashed=cache/'cache/download'/bundler.escaped(name)/'@v'/(version+'.ziphash');hashed.parent.mkdir(parents=True,exist_ok=True);hashed.write_text(sum_)
         built=subprocess.run([str(compiler)],input=(ROOT/'tools/alchem-bundle.alc').read_bytes(),capture_output=True,env={'PATH':''},timeout=120)
         assert (built.returncode,built.stderr)==(0,b''),('bundler build',built.returncode,built.stderr)
-        tool=base/'alchem-bundle';tool.write_bytes(built.stdout);tool.chmod(0o700)
+        tool=base/'alchem-bundle';tool.unlink(missing_ok=True);tool.write_bytes(built.stdout);tool.chmod(0o700)
         env={'PATH':'','GOMODCACHE':str(cache)};previous=os.environ.get('GOMODCACHE');os.environ['GOMODCACHE']=str(cache)
         try:
             def both(directory,arguments):
@@ -78,7 +78,7 @@ def verify(compiler):
             assert (project/'alchem.lock').read_text()==lock,(project/'alchem.lock').read_text()
             image=subprocess.run([str(compiler)],input=done.stdout,capture_output=True,env={'PATH':''},timeout=120)
             assert (image.returncode,image.stderr)==(0,b''),(image.returncode,image.stderr)
-            out=base/'out';out.write_bytes(image.stdout);out.chmod(0o700)
+            out=base/'out';out.unlink(missing_ok=True);out.write_bytes(image.stdout);out.chmod(0o700)
             run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
             trace=f'{math}:13:5: pattern match failed\n  at MathKit.first ({math}:13)\n  at App.main ({project}/app.alc:7)\n'.encode()
             assert (run.returncode,run.stdout,run.stderr)==(2,b'43\n',trace),run

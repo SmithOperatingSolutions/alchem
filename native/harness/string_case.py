@@ -64,7 +64,7 @@ def verify(compiler):
         def build(source):
             r=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
             assert (r.returncode,r.stderr)==(0,b''),(source[:300],r.returncode,r.stderr)
-            out=root/'out';out.write_bytes(r.stdout);out.chmod(0o700);return out
+            out=root/'out';out.unlink(missing_ok=True);out.write_bytes(r.stdout);out.chmod(0o700);return out
         def check(calls,wanted,label):
             for first in range(0,len(calls),16):
                 source='defmodule M do def main() do\n'+''.join(f'IO.puts({call})\n' for call in calls[first:first+16])+'System.halt(0) end end'
@@ -94,7 +94,7 @@ def verify(compiler):
         helpers=lambda count:''.join(f'def f{i}(n: integer): integer do n+1 end ' for i in range(count))
         full=at_limit([str(compiler)],input=('defmodule M do '+helpers(FUNCTION_LIMIT-1)+f'def main() do System.halt(f{FUNCTION_LIMIT-2}(byte_size(String.upcase("abc")))+String.to_integer("38")) end end').encode(),capture_output=True,env={'PATH':''},timeout=600)
         assert (full.returncode,full.stderr)==(0,b''),('65535 functions with String.upcase and String.to_integer',full.returncode,full.stderr)
-        out=root/'full';out.write_bytes(full.stdout);out.chmod(0o700)
+        out=root/'full';out.unlink(missing_ok=True);out.write_bytes(full.stdout);out.chmod(0o700)
         run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
         assert run.returncode==42,('65535 functions with String.upcase and String.to_integer',run.returncode)
         rejections=['x = String.upcase(1)','x = String.upcase("a","b")','x = String.downcase()','x = String.to_integer(1)','x = String.to_integer("1","2")',

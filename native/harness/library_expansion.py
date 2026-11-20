@@ -59,7 +59,7 @@ def verify(compiler):
             assert (r.returncode,r.stderr)==(0,b''),(body,r.returncode,r.stderr)
             again=subprocess.run([str(compiler)],input=source,capture_output=True,env={'PATH':''},timeout=120)
             assert (again.returncode,again.stdout,again.stderr)==(0,r.stdout,b''),'library determinism'
-            output=root/'out';output.write_bytes(r.stdout);output.chmod(0o700);return output
+            output=root/'out';output.unlink(missing_ok=True);output.write_bytes(r.stdout);output.chmod(0o700);return output
         for helpers,body,expected,status in cases:
             out=build(helpers,body);r=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
             if status==2:assert (r.returncode,r.stdout,r.stderr)==(2,b'',expected),(body,r.returncode,r.stdout,r.stderr,status,expected);continue

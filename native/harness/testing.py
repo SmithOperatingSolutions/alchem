@@ -2229,7 +2229,7 @@ def verify(compiler):
             source=bundler.bundle(d/entry) if mode=='bundle' else files[entry].encode()
             built=subprocess.run([str(compiler)],input=source,capture_output=True,env={'PATH':''},timeout=120)
             assert (built.returncode,built.stderr)==(0,b''),(entry,env,built.returncode,built.stderr)
-            out=d/'out';out.write_bytes(built.stdout);out.chmod(0o700)
+            out=d/'out';out.unlink(missing_ok=True);out.write_bytes(built.stdout);out.chmod(0o700)
             run=subprocess.run([str(out)],capture_output=True,env={'PATH':'',**env},cwd=d,timeout=120)
             seen=(run.returncode,re.sub(rb'\(\d+\.\dms\)',b'(Xms)',run.stdout),run.stderr,(d/'result.txt').read_bytes() if 'ALCHEM_TEST_RESULT' in env else b'')
             assert seen==(status,stdout,stderr,result),(entry,env,mode,seen)

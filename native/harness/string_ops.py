@@ -106,7 +106,7 @@ def verify(compiler):
         def build(source):
             r=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
             assert (r.returncode,r.stderr)==(0,b''),(source[:300],r.returncode,r.stderr)
-            out=root/'out';out.write_bytes(r.stdout);out.chmod(0o700);return out
+            out=root/'out';out.unlink(missing_ok=True);out.write_bytes(r.stdout);out.chmod(0o700);return out
         for first in range(0,len(all_cases),16):
             batch=all_cases[first:first+16]
             source='defmodule M do '+FLAG+'def main() do\n'+''.join(f'IO.puts({expression(*case)})\n' for case in batch)+'System.halt(0) end end'

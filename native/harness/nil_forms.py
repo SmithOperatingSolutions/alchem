@@ -38,7 +38,7 @@ def verify(compiler):
                 assert (built.returncode,built.stdout)==(65,b''),(source,built.returncode)
                 return 0
             assert (built.returncode,built.stderr)==(0,b''),(source,built.returncode,built.stderr)
-            out=Path(d)/f'p{number}';out.write_bytes(built.stdout);out.chmod(0o700)
+            out=Path(d)/f'p{number}';out.unlink(missing_ok=True);out.write_bytes(built.stdout);out.chmod(0o700)
             for attempt in range(50):
                 try:run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},cwd=d,stdin=subprocess.DEVNULL,timeout=120);break
                 except OSError as error:

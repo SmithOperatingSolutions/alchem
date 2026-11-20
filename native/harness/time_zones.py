@@ -867,7 +867,7 @@ def verify(compiler):
         for source,status,stdout,stderr,env,stdin in RUNS:
             result=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
             assert (result.returncode,result.stderr)==(0,b''),(source,result.returncode,result.stderr)
-            out.write_bytes(result.stdout);out.chmod(0o700)
+            out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
             run=subprocess.run([str(out)],capture_output=True,env={'PATH':'',**env},input=stdin,cwd=d,timeout=120)
             assert (run.returncode,run.stdout,run.stderr)==(status,stdout,stderr),(source,run)
         for source in REJECTS:

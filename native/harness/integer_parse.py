@@ -109,7 +109,7 @@ def compile_program(compiler,source,root,name='out'):
     assert (result.returncode,result.stderr)==(0,b''),(source[:200],result.returncode,result.stderr)
     again=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
     assert again.stdout==result.stdout,'Integer.parse determinism'
-    output=root/name;output.write_bytes(result.stdout);output.chmod(0o700)
+    output=root/name;output.unlink(missing_ok=True);output.write_bytes(result.stdout);output.chmod(0o700)
     return output
 
 
@@ -156,7 +156,7 @@ def verify(compiler):
         source='defmodule M do '+full+f'def main() do System.halt(case Integer.parse("41") do ok(n) -> f{FUNCTION_LIMIT-2}(n) error(e) -> 1 end) end end'
         result=at_limit([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=600)
         assert (result.returncode,result.stderr)==(0,b''),('65535 functions calling Integer.parse',result.returncode,result.stderr)
-        output=root/'full';output.write_bytes(result.stdout);output.chmod(0o700)
+        output=root/'full';output.unlink(missing_ok=True);output.write_bytes(result.stdout);output.chmod(0o700)
         run=subprocess.run([str(output)],capture_output=True,env={'PATH':''},timeout=120)
         assert run.returncode==42,('65535 functions calling Integer.parse',run.returncode)
         rejections=['Integer.parse(1)','Integer.parse("1","2")','Integer.parse("1",true)','Integer.parse()','Integer.parse("1",10,1)','Integer.parse(b[49])']

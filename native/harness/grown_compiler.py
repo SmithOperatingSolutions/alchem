@@ -50,14 +50,14 @@ def verify(frontend,backend,compiler):
         for stage in (1,2):
             built=subprocess.run([str(previous)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=600)
             assert (built.returncode,built.stderr)==(0,b'') and built.stdout[:4]==b'\x7fELF',('grown self-build',stage,built.returncode,built.stderr)
-            image=root/f'A{stage}';image.write_bytes(built.stdout);image.chmod(0o700);images.append(built.stdout);previous=image
+            image=root/f'A{stage}';image.unlink(missing_ok=True);image.write_bytes(built.stdout);image.chmod(0o700);images.append(built.stdout);previous=image
         assert images[0]==images[1],'grown A1/A2 mismatch'
         # The functions added are data nothing calls: programs compile as they do
         # with the compiler built from the source as it is.
         want=subprocess.run([str(compiler)],input=PROBE,capture_output=True,env={'PATH':''},timeout=120)
         got=subprocess.run([str(previous)],input=PROBE,capture_output=True,env={'PATH':''},timeout=120)
         assert want.returncode==0 and (got.returncode,got.stdout,got.stderr)==(0,want.stdout,b''),('grown compiler output',got.returncode,got.stderr)
-        program=root/'probe';program.write_bytes(got.stdout);program.chmod(0o700)
+        program=root/'probe';program.unlink(missing_ok=True);program.write_bytes(got.stdout);program.chmod(0o700)
         run=subprocess.run([str(program)],capture_output=True,env={'PATH':''},timeout=120)
         assert (run.returncode,run.stdout,run.stderr)==(42,b'grown\n',b''),run
         over=subprocess.run([str(previous)],input=source.encode()+b' ',capture_output=True,env={'PATH':''},timeout=120)

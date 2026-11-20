@@ -104,7 +104,7 @@ def verify(compiler):
         bundle=bundler.bundle(entry)
         built=subprocess.run([str(compiler)],input=bundle,capture_output=True,env={'PATH':''},timeout=120)
         assert (built.returncode,built.stderr)==(0,b''),(built.returncode,built.stderr)
-        out=root/'out';out.write_bytes(built.stdout);out.chmod(0o700)
+        out=root/'out';out.unlink(missing_ok=True);out.write_bytes(built.stdout);out.chmod(0o700)
         for mode,(stdout,stderr) in EXPECTED.items():
             run=subprocess.run([str(out),mode],capture_output=True,env={'PATH':''},timeout=120)
             want=stderr.format(a=entry,u=root/'lib/util.alc').encode()

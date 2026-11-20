@@ -21,7 +21,7 @@ def verify(frontend,backends):
    assert built.returncode==0,built.stderr
    result=subprocess.run([str(compiler)],input=native_bytes(SOURCE),capture_output=True,env={'PATH':''},timeout=120)
    assert result.returncode==0,result
-   output=root/f'pipeline{i}';output.write_bytes(result.stdout);output.chmod(0o700);images.append(result.stdout)
+   output=root/f'pipeline{i}';output.unlink(missing_ok=True);output.write_bytes(result.stdout);output.chmod(0o700);images.append(result.stdout)
    for data in [b'',b'abc',bytes(range(256)),b'x'*65535,b'x'*65536,b'x'*1048575,b'x'*1048576,bytes(range(256))*16383+bytes(range(255)),b'x'*4194304,bytes(range(256))*65531+bytes(range(255))]:
     run=subprocess.run([str(output)],input=data,capture_output=True,env={'PATH':''},timeout=120)
     assert (run.returncode,run.stdout,run.stderr)==(0,data if data else b'\0\xff',b''),run

@@ -77,7 +77,7 @@ def verify(compiler):
         def build(source):
             r=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
             assert (r.returncode,r.stderr)==(0,b''),(source[:300],r.returncode,r.stderr)
-            out=root/'out';out.write_bytes(r.stdout);out.chmod(0o700);return out
+            out=root/'out';out.unlink(missing_ok=True);out.write_bytes(r.stdout);out.chmod(0o700);return out
         for first in range(0,len(all_cases),16):
             batch=all_cases[first:first+16]
             source='defmodule M do def main() do\n'+''.join(f'IO.puts({call(kind,data,width,fill)})\n' for kind,data,width,fill in batch)+'System.halt(0) end end'
@@ -103,7 +103,7 @@ def verify(compiler):
         helpers=lambda count:''.join(f'def f{i}(n: integer): integer do n+1 end ' for i in range(count))
         full=at_limit([str(compiler)],input=('defmodule M do '+helpers(FUNCTION_LIMIT-1)+f'def main() do System.halt(f{FUNCTION_LIMIT-2}(String.length("e\\xcc\\x81"))+40) end end').encode(),capture_output=True,env={'PATH':''},timeout=600)
         assert (full.returncode,full.stderr)==(0,b''),('65535 functions with String.length',full.returncode,full.stderr)
-        out=root/'full';out.write_bytes(full.stdout);out.chmod(0o700)
+        out=root/'full';out.unlink(missing_ok=True);out.write_bytes(full.stdout);out.chmod(0o700)
         run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
         assert run.returncode==42,('65535 functions with String.length',run.returncode)
         rejections=['x = String.reverse(1)','x = String.reverse("a","b")','x = String.capitalize()','x = String.capitalize("a","b")','x = String.pad_leading("a")',

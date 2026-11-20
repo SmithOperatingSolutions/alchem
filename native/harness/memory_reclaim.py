@@ -759,7 +759,7 @@ def unmapped(root,path):
     import struct
     code=UNMAPPED+collector(root);base=0x10000;size=120+len(code)
     head=b'\x7fELF\x02\x01\x01'+bytes(9)+struct.pack('<HHIQQQIHHHHHH',2,62,1,base+120,64,0,0,64,56,1,0,0,0)
-    path.write_bytes(head+struct.pack('<IIQQQQQQ',1,7,0,base,base,size,size,4096)+code);path.chmod(0o700)
+    path.unlink(missing_ok=True);path.write_bytes(head+struct.pack('<IIQQQQQQ',1,7,0,base,base,size,size,4096)+code);path.chmod(0o700)
     return subprocess.run([str(path)],stdin=subprocess.DEVNULL,capture_output=True,timeout=60)
 
 
@@ -792,7 +792,7 @@ def run(executable,limit=True):
 def build(compiler,source,path):
     result=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=180)
     assert (result.returncode,result.stderr)==(0,b''),(source,result.returncode,result.stderr)
-    path.write_bytes(result.stdout);path.chmod(0o700)
+    path.unlink(missing_ok=True);path.write_bytes(result.stdout);path.chmod(0o700)
     return path
 
 

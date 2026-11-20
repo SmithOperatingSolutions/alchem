@@ -1660,7 +1660,7 @@ def bounds(directory,seconds):
 def build(compiler,source,path):
     built=subprocess.run([str(compiler)],input=source,capture_output=True,env={'PATH':''},timeout=180)
     assert (built.returncode,built.stderr)==(0,b''),(source,built.returncode,built.stderr)
-    path.write_bytes(built.stdout);path.chmod(0o700)
+    path.unlink(missing_ok=True);path.write_bytes(built.stdout);path.chmod(0o700)
     return path
 
 

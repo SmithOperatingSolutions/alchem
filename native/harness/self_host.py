@@ -108,7 +108,7 @@ def verify(frontend,backends):
                 image=root/f'A{stage}-{index}'
                 result=subprocess.run([str(previous)],input=text,capture_output=True,env={'PATH':''},timeout=120)
                 assert result.returncode==0 and not result.stderr,('self rebuild',index,stage,result.returncode,result.stderr)
-                image.write_bytes(result.stdout);image.chmod(0o700)
+                image.unlink(missing_ok=True);image.write_bytes(result.stdout);image.chmod(0o700)
                 if index==0:stages.append(image)
                 else:assert image.read_bytes()==stages[stage-1].read_bytes(),('backend self rebuild differs',stage)
                 try:

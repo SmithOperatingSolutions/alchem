@@ -47,7 +47,7 @@ def verify(compiler):
                 assert (built.returncode,built.stdout)==(65,b''),(source,built.returncode)
                 return 0
             assert (built.returncode,built.stderr)==(0,b''),(source,built.returncode,built.stderr)
-            out=Path(d)/f'p{number}';out.write_bytes(built.stdout);out.chmod(0o700)
+            out=Path(d)/f'p{number}';out.unlink(missing_ok=True);out.write_bytes(built.stdout);out.chmod(0o700)
             for attempt in range(50):
                 try:run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},cwd=d,stdin=subprocess.DEVNULL,timeout=120);break
                 except OSError as error:
@@ -66,7 +66,7 @@ def verify(compiler):
         source,status,stdout=CALLED
         built=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
         assert built.returncode==0 and len(built.stdout)>sizes[0],('an interpolated call appended nothing',built.returncode,len(built.stdout),sizes)
-        out=Path(d)/'called';out.write_bytes(built.stdout);out.chmod(0o700)
+        out=Path(d)/'called';out.unlink(missing_ok=True);out.write_bytes(built.stdout);out.chmod(0o700)
         run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
         assert (run.returncode,run.stdout)==(status,stdout),run
     print(f'PASS gaps: {ran} programs run as the pinned compiler runs them, {len(held)-ran} rejected; lambdas wherever a type is expected, bodies held to the result expected, calls of any function value, function values through generic functions, bitwise operators, the functions kept without a module, put_elem, String.normalize, binding names, fixed limits, and library names in comments and strings')

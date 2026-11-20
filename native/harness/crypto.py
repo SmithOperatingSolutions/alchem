@@ -564,7 +564,7 @@ def differential(compiler, d):
     for line in lines:
         built=subprocess.run([str(compiler)],input=(source+'  def main() do\n'+line+'  end\nend\n').encode(),capture_output=True,env={'PATH':''},timeout=120)
         assert (built.returncode,built.stderr)==(0,b''),(built.returncode,built.stderr)
-        out=d/'differential';out.write_bytes(built.stdout);out.chmod(0o700)
+        out=d/'differential';out.unlink(missing_ok=True);out.write_bytes(built.stdout);out.chmod(0o700)
         run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},cwd=d,timeout=120)
         assert (run.returncode,run.stderr)==(0,b''),(line,run.returncode,run.stderr)
         got=run.stdout.decode().split('\n')[:-1]
@@ -579,7 +579,7 @@ def verify(compiler):
         for source,status,stdout,stderr,env,stdin in RUNS:
             result=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
             assert (result.returncode,result.stderr)==(0,b''),(source,result.returncode,result.stderr)
-            out.write_bytes(result.stdout);out.chmod(0o700)
+            out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
             run=subprocess.run([str(out)],capture_output=True,env={'PATH':'',**env},input=stdin,cwd=d,timeout=120)
             assert (run.returncode,run.stdout,run.stderr)==(status,stdout,stderr),(source,run)
         for source in REJECTS:

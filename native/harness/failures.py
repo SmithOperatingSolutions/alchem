@@ -7048,7 +7048,7 @@ def report(text,cwd):
 def build(compiler,source,out):
     built=subprocess.run([str(compiler)],input=source,capture_output=True,env={'PATH':''},timeout=300)
     assert (built.returncode,built.stderr)==(0,b''),(source[:200],built.returncode,built.stderr)
-    out.write_bytes(built.stdout);out.chmod(0o700)
+    out.unlink(missing_ok=True);out.write_bytes(built.stdout);out.chmod(0o700)
 
 
 def verify(compiler):

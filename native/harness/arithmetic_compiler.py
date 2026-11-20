@@ -34,7 +34,7 @@ def verify(frontend,compilers):
                 validate_elf(result.stdout,expected)
                 repeat=subprocess.run([str(compiler)],input=source,capture_output=True,timeout=120,env={'PATH':''})
                 assert result.stdout==repeat.stdout,'nondeterministic image'
-                target=root/'program';target.write_bytes(result.stdout);target.chmod(0o700)
+                target=root/'program';target.unlink(missing_ok=True);target.write_bytes(result.stdout);target.chmod(0o700)
                 run=subprocess.run([str(target)],capture_output=True,timeout=120,env={'PATH':''})
                 assert (run.returncode,run.stdout,run.stderr)==(expected,b'',b''),(source,run)
             invalid=[b'',b' ',b'1+',b'1 2',b'nope',b'1/2',b'256',b'-1',b'9223372036854775808',b'\0',b'\xff',b'('*17+b'1'+b')'*17]

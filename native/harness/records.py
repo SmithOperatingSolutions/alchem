@@ -149,13 +149,13 @@ def verify(compiler):
             result=compiled(body)
             assert (result.returncode,result.stderr)==(0,b''),(body[:100],result.returncode,result.stderr)
             assert compiled(body).stdout==result.stdout,'record determinism'
-            out=root/'out';out.write_bytes(result.stdout);out.chmod(0o700)
+            out=root/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
             run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
             assert (run.returncode,run.stdout,run.stderr)==(0,stdout,b''),(body[:100],run)
         # Values come from the arena: a tree of 2^17 nodes exhausts it at its 4 MiB floor
         # (floor_arena) and fits the 16 GiB an unlimited run reserves.
         result=compiled('IO.puts(Integer.to_string(sum(grow(17))))')
-        out=root/'out';out.write_bytes(result.stdout);out.chmod(0o700)
+        out=root/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
         run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120,preexec_fn=floor_arena(out))
         assert (result.returncode,run.returncode,run.stdout)==(0,71,b''),('tree arena',result.returncode,run.returncode)
         run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)

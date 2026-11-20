@@ -414,7 +414,7 @@ def run(compiler,source,base,number):
     that is also its TMPDIR, in a session of its own that is killed whole."""
     built=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
     assert (built.returncode,built.stderr)==(0,b''),(source,built.returncode,built.stderr)
-    program=Path(base)/f'p{number}';program.write_bytes(built.stdout);program.chmod(0o700)
+    program=Path(base)/f'p{number}';program.unlink(missing_ok=True);program.write_bytes(built.stdout);program.chmod(0o700)
     directory=Path(base)/f'd{number}';directory.mkdir(0o700)
     bounds=dict(PATH=os.environ.get('PATH','/usr/bin:/bin'),ALCHEM_SECONDS='60',ALCHEM_MEMORY='3G',TMPDIR=str(directory))
     for name in ('XDG_RUNTIME_DIR','DBUS_SESSION_BUS_ADDRESS'):

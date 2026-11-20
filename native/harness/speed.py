@@ -18527,7 +18527,7 @@ def verify(compiler):
         for name,source,stdout in RUNS:
             result=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=300)
             assert (result.returncode,result.stderr)==(0,b''),(name,result.returncode,result.stderr)
-            out.write_bytes(result.stdout);out.chmod(0o700)
+            out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
             run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=300)
             assert (run.returncode,run.stderr)==(0,b''),(name,run.returncode,run.stderr[:400])
             if run.stdout!=stdout:

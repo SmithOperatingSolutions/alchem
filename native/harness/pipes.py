@@ -60,13 +60,13 @@ def verify(compiler):
             result=compiled(body)
             assert (result.returncode,result.stderr)==(0,b''),(body[:120],result.returncode,result.stderr)
             assert compiled(body).stdout==result.stdout,'pipe determinism'
-            out=root/'out';out.write_bytes(result.stdout);out.chmod(0o700)
+            out=root/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
             run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
             assert (run.returncode,run.stdout,run.stderr)==(0,stdout,stderr),(body[:120],run)
         # Pipes nest inside arguments up to the expression nesting limit: seven deep, not eight.
         result=compiled('IO.puts(Integer.to_string('+'1 |> add('*7+'1'+')'*7+'))')
         assert result.returncode==0,('nested pipes',result.returncode)
-        out=root/'out';out.write_bytes(result.stdout);out.chmod(0o700)
+        out=root/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
         run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
         assert (run.returncode,run.stdout)==(0,b'8\n'),('nested pipes',run)
         # Each nested pipe holds its value in a frame slot.
@@ -83,7 +83,7 @@ def verify(compiler):
         # A chain is not nesting: forty calls in one pipeline.
         result=compiled('IO.puts(Integer.to_string(0'+' |> inc()'*40+'))')
         assert result.returncode==0,('pipe chain',result.returncode)
-        out=root/'out';out.write_bytes(result.stdout);out.chmod(0o700)
+        out=root/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
         run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
         assert (run.returncode,run.stdout)==(0,b'40\n'),('pipe chain',run)
         for body,label in REJECTIONS:

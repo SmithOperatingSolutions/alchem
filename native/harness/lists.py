@@ -764,7 +764,7 @@ def verify(compiler):
             out=root/f'out{index}'
             result=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
             assert (result.returncode,result.stderr)==(0,b''),(source,result.returncode,result.stderr)
-            out.write_bytes(result.stdout);out.chmod(0o700)
+            out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
             run=started(out)
             assert (run.returncode,run.stdout,run.stderr)==(status,stdout,stderr),(source,run,status,stdout,stderr)
             out.unlink()
@@ -776,7 +776,7 @@ def verify(compiler):
         for body,expected,bound in CHARGES:
             result=subprocess.run([str(compiler)],input=HEAD.replace('BODY','    '+body).encode(),capture_output=True,env={'PATH':''},timeout=120)
             assert (result.returncode,result.stderr)==(0,b''),(body,result.returncode,result.stderr)
-            target=root/'charged';target.write_bytes(result.stdout);target.chmod(0o700)
+            target=root/'charged';target.unlink(missing_ok=True);target.write_bytes(result.stdout);target.chmod(0o700)
             try:
                 status,data,errors,charged=profile(target,b'')
                 assert (status,data,errors,charged)==(0,b'',b'',expected),(body,status,errors,charged,expected)

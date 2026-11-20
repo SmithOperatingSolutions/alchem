@@ -58,7 +58,7 @@ def verify(frontend,backends,saved_compilers=None):
                 assert result.returncode==0 and not result.stderr,(source,result.returncode,result.stderr)
                 assert result.stdout[:4]==b'\x7fELF' and len(result.stdout)>140,'expected generated function code'
                 assert struct.unpack_from('<Q',result.stdout,96)[0]==len(result.stdout),'ELF size mismatch'
-                target=root/'target';target.write_bytes(result.stdout);target.chmod(0o700)
+                target=root/'target';target.unlink(missing_ok=True);target.write_bytes(result.stdout);target.chmod(0o700)
                 run=subprocess.run([str(target)],capture_output=True,env={'PATH':''},timeout=120)
                 assert (run.returncode,run.stdout,run.stderr)==(expected,b'',b''),(source,run.returncode,run.stderr)
                 repeated=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
@@ -80,7 +80,7 @@ def verify(frontend,backends,saved_compilers=None):
             fresh=images[-1] not in images[:-1]
             result=at_limit([str(compiler)],input=boundary.encode() if fresh else basic.encode(),capture_output=True,env={'PATH':''},timeout=600)
             assert result.returncode==0 and not result.stderr,('65535 functions',result.stderr)
-            target=root/'boundary';target.write_bytes(result.stdout);target.chmod(0o700)
+            target=root/'boundary';target.unlink(missing_ok=True);target.write_bytes(result.stdout);target.chmod(0o700)
             run=subprocess.run([str(target)],capture_output=True,env={'PATH':''},timeout=120)
             assert (run.returncode,run.stdout,run.stderr)==(42,b'',b''),('65535 functions execution',run)
             repeated=at_limit([str(compiler)],input=boundary.encode() if fresh else basic.encode(),capture_output=True,env={'PATH':''},timeout=600)
@@ -113,7 +113,7 @@ def verify(frontend,backends,saved_compilers=None):
             for source in errors:
                 result=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
                 assert result.returncode==0 and not result.stderr,result
-                target=root/'limited';target.write_bytes(result.stdout);target.chmod(0o700)
+                target=root/'limited';target.unlink(missing_ok=True);target.write_bytes(result.stdout);target.chmod(0o700)
                 run=subprocess.run([str(target)],capture_output=True,env={'PATH':''},timeout=120)
                 # A status outside 0..255 and calls nested past the depth limit stop
                 # (0+f(x+1): a call that is the function's whole value would loop, harness/tail_calls.py)

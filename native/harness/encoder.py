@@ -48,7 +48,7 @@ def verify(frontend,rust,go):
                 if 0<=value<=255:
                     assert result.returncode==0 and result.stderr==b'',(value,index,result)
                     validate_elf(result.stdout,value)
-                    executable=root/'artifact';executable.write_bytes(result.stdout);executable.chmod(0o700)
+                    executable=root/'artifact';executable.unlink(missing_ok=True);executable.write_bytes(result.stdout);executable.chmod(0o700)
                     run=subprocess.run([str(executable)],capture_output=True,timeout=120)
                     assert (run.returncode,run.stdout,run.stderr)==(value,b'',b''),(value,index,'encoded fragment failed')
                 else:assert (result.returncode,result.stdout,result.stderr)==(72,b'',MESSAGE),(value,index,result)
@@ -68,7 +68,7 @@ def verify(frontend,rust,go):
         reused=subprocess.run([str(root/'saved-emitter')],env=dict(os.environ,PATH=''),capture_output=True,timeout=120)
         assert reused.returncode==0 and reused.stderr==b''
         validate_elf(reused.stdout,42)
-        output.write_bytes(reused.stdout);output.chmod(0o700)
+        output.unlink(missing_ok=True);output.write_bytes(reused.stdout);output.chmod(0o700)
         run=subprocess.run([str(output)],env=dict(os.environ,PATH=''),capture_output=True,timeout=120)
         assert (run.returncode,run.stdout,run.stderr)==(42,b'',b'')
         output.write_bytes(b'existing image')

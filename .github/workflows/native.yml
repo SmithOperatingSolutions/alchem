@@ -56,7 +56,7 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q strace
           if [[ "$(uname -m)" == aarch64 ]]; then
-            sudo apt-get install -y -q qemu-user-static binfmt-support
+            sudo apt-get install -y -q qemu-user-static binfmt-support binutils-x86-64-linux-gnu
             test -e /proc/sys/fs/binfmt_misc/qemu-x86_64
           fi
           bash scripts/fetch-arm64-tools.sh
@@ -77,6 +77,13 @@ jobs:
           exit 1
       - name: Dependencies
         run: mise run fetch
+      - name: Go compiler reference
+        # build/dev/alchem-upstream, the Go compiler native/ is pinned to:
+        # the tls gate also compares with the programs it builds.
+        if: matrix.gates == ''
+        run: |
+          python3 -c "import importlib.util as u; s = u.spec_from_file_location('upstream', 'scripts/upstream-examples.py'); m = u.module_from_spec(s); s.loader.exec_module(m); m.build_upstream()"
+          test -x build/dev/alchem-upstream.bin
       - name: Fixpoint and gates
         if: github.event_name == 'pull_request' || matrix.gates != ''
         env:

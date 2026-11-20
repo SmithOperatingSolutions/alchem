@@ -11,6 +11,7 @@ what the compiler emits: a program built from the compiler's source with
 that function as its entry turns the x86-64 bytes of a sequence into ARM64
 bytes, which run between a start and an end translated by the first."""
 from pathlib import Path
+import os
 import random
 import subprocess
 import sys
@@ -22,6 +23,9 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 import arm64_runtime  # noqa: E402
 
 TOOLS = ROOT / 'build/arm64-tools/bin'
+# The host's binutils assemble the x86-64 side; on an ARM64 host they are
+# the cross tools of binutils-x86-64-linux-gnu.
+X86 = '' if os.uname().machine == 'x86_64' else 'x86_64-linux-gnu-'
 # Registers the sequences use: not RSP, RBP (frame), R14 (the program's)
 # or R11 (RCX and R11 are what syscall takes; kept simple).
 REGS = ['rax', 'rcx', 'rdx', 'rbx', 'rsi', 'rdi', 'r8', 'r9', 'r10', 'r12', 'r13', 'r15']
@@ -225,8 +229,8 @@ def program(lines, registers, memory):
 
 def build_x86(root, source):
     (root / 'x.s').write_text(source)
-    subprocess.run(['as', '--64', '-o', str(root / 'x.o'), str(root / 'x.s')], check=True)
-    subprocess.run(['ld', '-Tdata=0x480000', '-o', str(root / 'x'), str(root / 'x.o')], check=True)
+    subprocess.run([X86 + 'as', '--64', '-o', str(root / 'x.o'), str(root / 'x.s')], check=True)
+    subprocess.run([X86 + 'ld', '-Tdata=0x480000', '-o', str(root / 'x'), str(root / 'x.o')], check=True)
     return root / 'x'
 
 
@@ -275,8 +279,8 @@ def build_compiled(root, source, xa):
     head, rest = source.split(' fuzz_body:\n')
     body, tail = rest.split(' fuzz_end:\n')
     (root / 'b.s').write_text('.intel_syntax noprefix\n.text\n' + body + ' mov r11,r11\n')
-    subprocess.run(['as', '--64', '-o', str(root / 'b.o'), str(root / 'b.s')], check=True)
-    subprocess.run(['objcopy', '-O', 'binary', '-j', '.text', str(root / 'b.o'), str(root / 'b.bin')], check=True)
+    subprocess.run([X86 + 'as', '--64', '-o', str(root / 'b.o'), str(root / 'b.s')], check=True)
+    subprocess.run([X86 + 'objcopy', '-O', 'binary', '-j', '.text', str(root / 'b.o'), str(root / 'b.bin')], check=True)
     made = subprocess.run([str(xa)], input=(root / 'b.bin').read_bytes(), capture_output=True, timeout=60)
     assert made.returncode == 0 and len(made.stdout) % 4 == 0, ('compiler translation', made.returncode, made.stderr[:200])
     words = [int.from_bytes(made.stdout[i:i + 4], 'little') for i in range(0, len(made.stdout), 4)]

@@ -1988,7 +1988,7 @@ def verify(compiler):
         for source,status,stdout,stderr in RUNS:
             result=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
             assert (result.returncode,result.stderr)==(0,b''),(source,result.returncode,result.stderr)
-            out.write_bytes(result.stdout);out.chmod(0o700)
+            out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
             run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
             assert (run.returncode,run.stdout,run.stderr)==(status,stdout,stderr),(source,run)
         for source,_ in REJECTS:
@@ -2000,7 +2000,7 @@ def verify(compiler):
                 (home/path).parent.mkdir(parents=True,exist_ok=True);(home/path).write_text(text)
             result=subprocess.run([str(compiler)],input=bundler.bundle(home/entry),capture_output=True,env={'PATH':''},timeout=120)
             assert (result.returncode,result.stderr)==(0,b''),(entry,result.returncode,result.stderr)
-            out.write_bytes(result.stdout);out.chmod(0o700)
+            out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
             run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},cwd=home,timeout=120)
             assert (run.returncode,re.sub(rb'\(\d+\.\dms\)',b'(Xms)',run.stdout),run.stderr)==(status,stdout,stderr),(entry,run)
     print(f'PASS described: {len(RUNS)} programs and {len(TESTS)} test files run as the pinned compiler runs them, {len(REJECTS)} rejected; inspect, JSON.encode and JSON.decode_as through type variables, generic structs, generic callers, fns, references, the types a read variable may not take, assertions in functions')

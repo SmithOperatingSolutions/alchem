@@ -77,7 +77,7 @@ def deep(compiler,root,total):
     source=deep_conds(3);source=' '*(total-len(source))+source
     built=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=300)
     assert (built.returncode,built.stderr)==(0,b''),('deep line count compile',total,built.returncode,built.stderr)
-    out=root/f'deep-{total}';out.write_bytes(built.stdout);out.chmod(0o700)
+    out=root/f'deep-{total}';out.unlink(missing_ok=True);out.write_bytes(built.stdout);out.chmod(0o700)
     run=started(out)
     assert (run.returncode,run.stdout,run.stderr.decode())==(2,b'',DEEP_TRACE),('deep line count',total,run.returncode,run.stderr)
 
@@ -96,7 +96,7 @@ def traced(compiler,root,total):
     source,trace=late_program(total)
     built=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=300)
     assert (built.returncode,built.stderr)==(0,b''),('late trace compile',total,built.returncode,built.stderr)
-    out=root/f'late-{total}';out.write_bytes(built.stdout);out.chmod(0o700)
+    out=root/f'late-{total}';out.unlink(missing_ok=True);out.write_bytes(built.stdout);out.chmod(0o700)
     run=started(out)
     assert (run.returncode,run.stdout,run.stderr.decode())==(2,b'start\n',trace),('late trace',total,run.returncode,run.stdout,run.stderr,trace)
     return trace
@@ -114,7 +114,7 @@ def verify(compiler):
         def exact_runs():
             built=subprocess.run([str(compiler)],input=exact.encode(),capture_output=True,env={'PATH':''},timeout=300)
             assert (built.returncode,built.stderr)==(0,b''),('exact limit compile',built.returncode,built.stderr)
-            out=root/'exact';out.write_bytes(built.stdout);out.chmod(0o700)
+            out=root/'exact';out.unlink(missing_ok=True);out.write_bytes(built.stdout);out.chmod(0o700)
             run=started(out)
             assert (run.returncode,run.stdout,run.stderr)==(42,b'',b''),('exact limit run',run)
         def refused(bad,message):
@@ -148,7 +148,7 @@ def verify(compiler):
         built=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=300)
         assert (built.returncode,built.stderr)==(0,b''),('large image',built.returncode,built.stderr)
         assert len(built.stdout)>(16<<20)+1000000,('large image size',len(built.stdout))
-        out=root/'large';out.write_bytes(built.stdout);out.chmod(0o700)
+        out=root/'large';out.unlink(missing_ok=True);out.write_bytes(built.stdout);out.chmod(0o700)
         run=started(out)
         assert (run.returncode,run.stdout,run.stderr)==(15,b'',b''),('large image run',run.returncode,len(run.stdout))
         # 100 functions of about 13KB each (100 statements of 128 bytes), the last ones called above the 1 MiB mark.
@@ -159,7 +159,7 @@ def verify(compiler):
         assert (small.returncode,small.stderr)==(0,b''),('1 MiB image',small.returncode,small.stderr)
         assert len(small.stdout)>(1<<20)+200000,('1 MiB image size',len(small.stdout))
         assert subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120).stdout==small.stdout,'image determinism'
-        out=root/'calls';out.write_bytes(small.stdout);out.chmod(0o700)
+        out=root/'calls';out.unlink(missing_ok=True);out.write_bytes(small.stdout);out.chmod(0o700)
         run=started(out)
         assert (run.returncode,run.stdout,run.stderr)==(42,f'{count-1}\n'.encode()*lines,b''),('1 MiB image run',run.returncode,len(run.stdout))
     print(f'PASS widened source cursors: declarations, bindings, calls, Unicode and failure traces up to the {LIMIT}-byte limit, refusal past it; a {len(built.stdout)}-byte image with one function above 16 MiB')

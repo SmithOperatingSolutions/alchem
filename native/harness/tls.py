@@ -574,7 +574,7 @@ def bounds(directory,seconds,more=None):
 def build(compiler,source,path):
     built=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=180)
     assert (built.returncode,built.stderr)==(0,b''),(source[:200],built.returncode,built.stderr)
-    path.write_bytes(built.stdout);path.chmod(0o700)
+    path.unlink(missing_ok=True);path.write_bytes(built.stdout);path.chmod(0o700)
     return path
 
 

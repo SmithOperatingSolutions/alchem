@@ -124,7 +124,7 @@ def verify(compiler):
             result=compiled(body)
             assert (result.returncode,result.stderr)==(0,b''),(body[:100],result.returncode,result.stderr)
             assert compiled(body).stdout==result.stdout,'generic determinism'
-            out=root/'out';out.write_bytes(result.stdout);out.chmod(0o700)
+            out=root/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
             run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
             assert (run.returncode,run.stdout,run.stderr)==(0,stdout,b''),(body[:100],run)
         # Up to six type parameters compare; comparators for concrete compound types
@@ -140,7 +140,7 @@ def verify(compiler):
                '    row = grow([1], 10)\n    a = [1, 2, 3]\n    b = [1, 2, 3]\n    total = Enum.reduce(row, 0, fn i, acc -> acc + inner(row, a, b) end)\n    IO.puts(Integer.to_string(total))\n    System.halt(0)\n  end\nend\n')
         result=subprocess.run([str(compiler)],input=extra.encode(),capture_output=True,env={'PATH':''},timeout=120)
         assert (result.returncode,result.stderr)==(0,b''),('six parameters and comparators',result.returncode,result.stderr)
-        out=root/'out';out.write_bytes(result.stdout);out.chmod(0o700)
+        out=root/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
         run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
         assert (run.returncode,run.stdout,run.stderr)==(0,b'ynyn\nynyn\n1048576\n',b''),('six parameters and comparators',run)
         # More than six type parameters: comparators travel as an array on the
@@ -163,7 +163,7 @@ def verify(compiler):
               '    IO.puts(yes(p == p) <> yes(p == q) <> yes(p == r) <> yes(r == r) <> yes(same(p, q)))\n    System.halt(0)\n  end\nend\n')
         result=subprocess.run([str(compiler)],input=nine.encode(),capture_output=True,env={'PATH':''},timeout=120)
         assert (result.returncode,result.stderr)==(0,b''),('nine parameters',result.returncode,result.stderr)
-        out=root/'out';out.write_bytes(result.stdout);out.chmod(0o700)
+        out=root/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
         run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
         assert (run.returncode,run.stdout,run.stderr)==(0,b'ynnynyn\n97y\nyn\nynnyn\n',b''),('nine parameters',run)
         for body,label in REJECTIONS:

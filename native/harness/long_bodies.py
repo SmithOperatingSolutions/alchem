@@ -24,7 +24,7 @@ def verify(compiler):
         def built(source):
             result=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
             assert (result.returncode,result.stderr)==(0,b''),(source[:120],result.returncode,result.stderr)
-            out=root/'out';out.write_bytes(result.stdout);out.chmod(0o700)
+            out=root/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
             return subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
         for kind in ['branch','helper','main']:
             for count in [17,120,600]+([20000] if kind!='helper' else []):

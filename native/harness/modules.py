@@ -100,7 +100,7 @@ def native_bundler(compiler,base):
     as the Python bundler for every project and path spelling, and its errors."""
     built=subprocess.run([str(compiler)],input=(ROOT/'tools/alchem-bundle.alc').read_bytes(),capture_output=True,env={'PATH':''},timeout=120)
     assert (built.returncode,built.stderr)==(0,b''),('bundler build',built.returncode,built.stderr)
-    tool=base/'alchem-bundle';tool.write_bytes(built.stdout);tool.chmod(0o700)
+    tool=base/'alchem-bundle';tool.unlink(missing_ok=True);tool.write_bytes(built.stdout);tool.chmod(0o700)
     bundles=0
     for index,(files,_) in enumerate(PROJECTS+REJECTED):
         entry=write(base/f'native{index}',files)
@@ -139,7 +139,7 @@ def verify(compiler):
             result=compiled(source)
             assert (result.returncode,result.stderr)==(0,b''),(label,result.returncode,result.stderr)
             assert compiled(source).stdout==result.stdout,(label,'determinism')
-            out=base/'out';out.write_bytes(result.stdout);out.chmod(0o700)
+            out=base/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
             return subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
         tool,bundles=native_bundler(compiler,base)
         for index,(files,stdout) in enumerate(PROJECTS):
@@ -204,7 +204,7 @@ def verify(compiler):
             return ''.join(parts).encode()
         result=at_limit([str(compiler)],input=spread(0),capture_output=True,env={'PATH':''},timeout=600)
         assert (result.returncode,result.stderr)==(0,b''),('spread',result.returncode,result.stderr)
-        out=base/'out';out.write_bytes(result.stdout);out.chmod(0o700)
+        out=base/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
         done=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=10)
         assert done.returncode==42,('65472 functions in 64 modules',done.returncode)
         result=at_limit([str(compiler)],input=spread(1),capture_output=True,env={'PATH':''},timeout=600)

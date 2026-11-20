@@ -44,13 +44,13 @@ def verify(compiler):
         for declarations,body,stdout in CASES:
             result=subprocess.run([str(compiler)],input=('defmodule M do\n'+declarations+'  def main() do\n'+body+'\n  end\nend\n').encode(),capture_output=True,env={'PATH':''},timeout=120)
             assert (result.returncode,result.stderr)==(0,b''),(body[:100],result.returncode,result.stderr)
-            out=root/'out';out.write_bytes(result.stdout);out.chmod(0o700)
+            out=root/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
             run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
             assert (run.returncode,run.stdout,run.stderr)==(0,stdout,b''),(body[:100],run)
         many='defmodule M do\n  def main() do\n'+'\n'.join(f'    v{i} = {i}' for i in range(251))+'\n    IO.puts(Integer.to_string(v0))\n  end\nend\n'
         result=subprocess.run([str(compiler)],input=many.encode(),capture_output=True,env={'PATH':''},timeout=120)
         assert (result.returncode,result.stderr)==(0,b''),('251 live bindings',result.returncode)
-        out=root/'out';out.write_bytes(result.stdout);out.chmod(0o700)
+        out=root/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
         run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
         assert (run.returncode,run.stdout,run.stderr)==(0,b'0\n',b''),('251 live bindings',run)
     print(f'PASS wide: {len(CASES)} programs with 7 to 30 parameters, lambdas and function values of 7 to 9, tuples of 9, 200 live bindings, and 251 (once refused)')

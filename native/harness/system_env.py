@@ -71,7 +71,7 @@ def execute(path,argv,envp,limit=None):
 def build(compiler,source,root,name):
     r=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
     assert (r.returncode,r.stderr)==(0,b''),(source[:200],r.returncode,r.stderr)
-    out=root/name;out.write_bytes(r.stdout);out.chmod(0o700);return out
+    out=root/name;out.unlink(missing_ok=True);out.write_bytes(r.stdout);out.chmod(0o700);return out
 
 
 def verify(compiler):

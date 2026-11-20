@@ -90,7 +90,7 @@ def verify(compiler):
             result=compiled(body)
             assert (result.returncode,result.stderr)==(0,b''),(body[:100],result.returncode,result.stderr)
             assert compiled(body).stdout==result.stdout,'pattern determinism'
-            out=root/'out';out.write_bytes(result.stdout);out.chmod(0o700)
+            out=root/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
             run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
             assert (run.returncode,run.stdout,run.stderr)==(status,stdout,stderr),(body[:100],run)
         for body,label in REJECTIONS:

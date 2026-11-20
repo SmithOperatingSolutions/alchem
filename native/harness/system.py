@@ -960,7 +960,7 @@ def verify(compiler):
             if os.getuid()==0 and not root:skipped+=1;continue
             built=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
             assert built.returncode==0,(source,built.returncode,built.stderr)
-            program=Path(base)/f'p{number}';program.write_bytes(built.stdout);program.chmod(0o700)
+            program=Path(base)/f'p{number}';program.unlink(missing_ok=True);program.write_bytes(built.stdout);program.chmod(0o700)
             directory=Path(base)/f'd{number}';directory.mkdir(0o700)
             try:got=run(str(program),stdin,str(directory))
             finally:

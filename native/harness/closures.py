@@ -132,7 +132,7 @@ def verify(compiler):
             result=compiled(helpers,body)
             assert (result.returncode,result.stderr)==(0,b''),(body[:120],result.returncode,result.stderr)
             assert compiled(helpers,body).stdout==result.stdout,'closure determinism'
-            out=root/'out';out.write_bytes(result.stdout);out.chmod(0o700)
+            out=root/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
             run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
             assert (run.returncode,run.stdout,run.stderr)==(status,stdout,b''),(body[:120],run)
         # Closure records come from the arena; unbounded recursion through a value stops at the call depth limit
@@ -142,7 +142,7 @@ def verify(compiler):
             ('def spin(n: integer, f: fn[integer, integer]): integer do 0 + spin(f(n), f) end ','System.halt(spin(0, fn x -> x + 1 end))',2)]:
             result=compiled(helpers,body)
             assert (result.returncode,result.stderr)==(0,b''),(body,result.returncode)
-            out=root/'out';out.write_bytes(result.stdout);out.chmod(0o700)
+            out=root/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
             run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
             assert (run.returncode,run.stdout)==(status,b''),(body,run.returncode)
             assert run.stderr==b'' if status!=2 else run.stderr.split(b'\n')[:2]==[b'<stdin>:1:138: call depth exceeded',b'  at M.spin (<stdin>:1)'],(body,run.stderr[:120])

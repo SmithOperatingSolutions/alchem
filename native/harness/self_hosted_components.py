@@ -24,7 +24,7 @@ def verify_program(source,compiler,root,label,status=0):
     assert result.stdout[:4]==b'\x7fELF',(label,'not ELF')
     repeated=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
     assert (repeated.returncode,repeated.stdout,repeated.stderr)==(0,result.stdout,b''),(label,'self-host determinism')
-    output=Path(root)/'self-hosted-component';output.write_bytes(result.stdout);output.chmod(0o700)
+    output=Path(root)/'self-hosted-component';output.unlink(missing_ok=True);output.write_bytes(result.stdout);output.chmod(0o700)
     # Status 71 is an exhausted arena: the run is held to the arena's 4 MiB floor
     # (an unlimited run reserves 16 GiB lazily and would take that much first).
     from native_memory import floor_arena

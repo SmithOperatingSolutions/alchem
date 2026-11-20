@@ -4285,7 +4285,7 @@ def verify(compiler):
             for source,expected in sources:
                 result=subprocess.run([str(compiler)],input=source,capture_output=True,env={'PATH':''},timeout=120)
                 assert (result.returncode,result.stderr)==(0,b''),(files['main.alc'],result.returncode,result.stderr)
-                out.write_bytes(result.stdout);out.chmod(0o700)
+                out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
                 run=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)
                 assert (run.returncode,run.stdout,run.stderr)==(status,stdout,expected),(files['main.alc'],run,expected)
         for index,files in enumerate(REJECTS):
