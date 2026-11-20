@@ -113,6 +113,13 @@ extern W void (*imp_RtlRestoreContext)(void *, void *);
 extern void copy_resume(void);
 extern W u64 (*imp_VirtualQuery)(const void *, void *, u64);
 extern W i32 (*imp_VirtualProtect)(void *, u64, u32, u32 *);
+extern W u32 (*imp_GetTimeZoneInformation)(void *);
+extern W void (*imp_GetSystemTime)(u16 *);
+extern W i32 (*imp_RegOpenKeyExW)(u64, const u16 *, u32, u32, u64 *);
+extern W i32 (*imp_RegEnumKeyExW)(u64, u32, u16 *, u32 *, void *, void *, void *, void *);
+extern W i32 (*imp_RegQueryValueExW)(u64, const u16 *, void *, u32 *, void *, u32 *);
+extern W i32 (*imp_RegLoadMUIStringW)(u64, const u16 *, u16 *, u32, u32 *, u32, const u16 *);
+extern W i32 (*imp_RegCloseKey)(u64);
 extern W u64 (*imp_CreateFileW)(const u16 *, u32, u32, void *, u32, u32, u64);
 
 /* gcc may call these even in freestanding code. */
@@ -759,6 +766,217 @@ static i64 sys_fcntl(i64 fd, i64 command, i64 value) {
   return -EINVAL;
 }
 
+/* --- Local time ----------------------------------------------------------
+
+   Go's time.Local on Windows (time/zoneinfo_windows.go): the system's zone
+   from GetTimeZoneInformation, one zone when it has no summer time, else
+   two and their transitions for the hundred years around now (pseudoUnix),
+   the abbreviations from Go's table of Windows zone names (generated from
+   the pinned toolchain's zoneinfo_abbrs_windows.go: abbrs.h), else from the
+   table under the zone's English name in the registry, else the capitals
+   of its name. Pseudo call 1000105 (Date.dl) is Location.lookup. */
+
+#include "abbrs.h"
+
+static struct {
+  int ready, zones;
+  i64 offset[2];
+  int dst[2];
+  char name[2][64];
+  u32 length[2];
+  int count;
+  i64 when[400];
+  u8 index[400];
+} local;
+
+static int same_name(const u16 *w, const char *a) {
+  for (; *a; w++, a++) if (*w != (u16)(u8)*a) return 0;
+  return *w == 0;
+}
+
+static void caps(const u16 *w, int z) {
+  u32 n = 0;
+  for (; *w && n < 63; w++) if (*w >= 'A' && *w <= 'Z') local.name[z][n++] = (char)*w;
+  local.name[z][n] = 0;
+  local.length[z] = n;
+}
+
+static void named(int z, const char *a) {
+  u32 n = 0;
+  for (; a[n] && n < 63; n++) local.name[z][n] = a[n];
+  local.name[z][n] = 0;
+  local.length[z] = n;
+}
+
+/* Go's table, by a name. */
+static int from_table(const u16 *name) {
+  for (u32 k = 0; k < sizeof abbrs / sizeof abbrs[0]; k++)
+    if (same_name(name, abbrs[k][0])) {
+      named(0, abbrs[k][1]);
+      named(1, abbrs[k][2]);
+      return 1;
+    }
+  return 0;
+}
+
+static int same_wide(const u16 *a, const u16 *b) {
+  for (; *a && *a == *b; a++, b++) {}
+  return *a == *b;
+}
+
+/* toEnglishName: the key under Time Zones whose standard and summer names
+   (MUI_Std and MUI_Dlt, else Std and Dlt) are these, in name. */
+static int english(const u16 *std, const u16 *dlt, u16 *name) {
+  u64 zones;
+  if (imp_RegOpenKeyExW(0xFFFFFFFF80000002ull, u"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Time Zones", 0, 0x20019, &zones)) return 0;
+  int found = 0;
+  for (u32 i = 0; !found; i++) {
+    u32 n = 256;
+    if (imp_RegEnumKeyExW(zones, i, name, &n, 0, 0, 0, 0)) break;
+    u64 key;
+    if (imp_RegOpenKeyExW(zones, name, 0, 0x20019, &key)) continue;
+    u16 a[256], b[256];
+    u32 an = 0, bn = 0;
+    int ok = !imp_RegLoadMUIStringW(key, u"MUI_Std", a, sizeof a, &an, 0, 0) && !imp_RegLoadMUIStringW(key, u"MUI_Dlt", b, sizeof b, &bn, 0, 0);
+    if (!ok) {
+      u32 type, size = sizeof a;
+      ok = !imp_RegQueryValueExW(key, u"Std", 0, &type, a, &size);
+      a[255] = 0;
+      size = sizeof b;
+      ok = ok && !imp_RegQueryValueExW(key, u"Dlt", 0, &type, b, &size);
+      b[255] = 0;
+    }
+    if (ok && same_wide(a, std) && (same_wide(b, dlt) || same_wide(dlt, std))) found = 1;
+    imp_RegCloseKey(key);
+  }
+  imp_RegCloseKey(zones);
+  return found;
+}
+
+static i64 days_from_civil(i64 y, i64 m, i64 d) {
+  y -= m <= 2;
+  i64 era = (y >= 0 ? y : y - 399) / 400;
+  i64 yoe = y - era * 400;
+  i64 doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  i64 doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + doe - 719468;
+}
+
+static int days_in(int m, i64 y) {
+  static const u8 n[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if (m == 2 && ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0)) return 29;
+  return n[m - 1];
+}
+
+/* pseudoUnix: the moment in year the SYSTEMTIME rule d names (the day-th
+   weekday of the month, 5 the last), as seconds since 1970 read as UTC. */
+static i64 pseudo_unix(i64 year, const u16 *d) {
+  i64 first = days_from_civil(year, d[1], 1);
+  i64 weekday = ((first % 7) + 11) % 7;          /* 1970-01-01 was a Thursday */
+  i64 day = 1;
+  i64 i = (i64)d[2] - weekday;
+  if (i < 0) i += 7;
+  day += i;
+  i64 week = (i64)d[3] - 1;
+  if (week < 4) day += week * 7;
+  else {
+    day += 4 * 7;
+    if (day > days_in(d[1], year)) day -= 7;
+  }
+  return (first + day - 1) * 86400 + (i64)d[4] * 3600 + (i64)d[5] * 60 + d[6];
+}
+
+static void local_init(void) {
+  u8 info[172];
+  memset(info, 0, sizeof info);
+  local.ready = 1;
+  if (imp_GetTimeZoneInformation(info) == 0xFFFFFFFF) {
+    local.zones = 0;
+    return;
+  }
+  i32 bias = *(i32 *)info, standard_bias = *(i32 *)(info + 84), daylight_bias = *(i32 *)(info + 168);
+  const u16 *std_name = (u16 *)(info + 4), *dst_name = (u16 *)(info + 88);
+  u16 *std_date = (u16 *)(info + 68), *dst_date = (u16 *)(info + 152);
+  /* The names may fill their 32 units without an end. */
+  u16 std[33], dst[33];
+  memcpy(std, std_name, 64); std[32] = 0;
+  memcpy(dst, dst_name, 64); dst[32] = 0;
+  if (!from_table(std)) {
+    u16 key[256];
+    if (!english(std, dst, key) || !from_table(key)) { caps(std, 0); caps(dst, 1); }
+  }
+  local.dst[0] = 0;
+  local.dst[1] = 1;
+  if (std_date[1] == 0) {
+    local.zones = 1;
+    local.offset[0] = -(i64)bias * 60;
+    local.count = 1;
+    local.when[0] = -9223372036854775807LL - 1;
+    local.index[0] = 0;
+    return;
+  }
+  local.zones = 2;
+  local.offset[0] = -(i64)(bias + standard_bias) * 60;
+  local.offset[1] = -(i64)(bias + daylight_bias) * 60;
+  u16 *d0 = std_date, *d1 = dst_date;
+  int i0 = 0, i1 = 1;
+  if (d0[1] > d1[1]) { u16 *t = d0; d0 = d1; d1 = t; i0 = 1; i1 = 0; }
+  u16 now[8];
+  imp_GetSystemTime(now);
+  i64 year = now[0];
+  int n = 0;
+  for (i64 y = year - 100; y < year + 100; y++) {
+    local.when[n] = pseudo_unix(y, d0) - local.offset[i1];
+    local.index[n++] = (u8)i0;
+    local.when[n] = pseudo_unix(y, d1) - local.offset[i0];
+    local.index[n++] = (u8)i1;
+  }
+  local.count = n;
+}
+
+/* Location.lookup of Local at sec: out gets the offset, where its span
+   starts and ends, and the abbreviation's address and length. */
+static i64 local_lookup(i64 sec, i64 out) {
+  if (!local.ready) local_init();
+  i64 *o = (i64 *)out;
+  commit_range(o, 40);
+  const i64 alpha = -9223372036854775807LL - 1, omega = 9223372036854775807LL;
+  if (local.zones == 0) {
+    static char utc[] = "UTC";
+    o[0] = 0; o[1] = alpha; o[2] = omega; o[3] = (i64)utc; o[4] = 3;
+    return 0;
+  }
+  if (local.zones == 1) {
+    o[0] = local.offset[0]; o[1] = alpha; o[2] = omega;
+    o[3] = (i64)local.name[0]; o[4] = local.length[0];
+    return 0;
+  }
+  int z;
+  i64 start, end = omega;
+  if (sec < local.when[0]) {
+    /* lookupFirstZone: the first zone is used by the transitions; when the
+       first is to summer time, the standard zone before it, else the first
+       standard zone. */
+    z = 0;
+    if (local.dst[local.index[0]]) {
+      for (int k = local.index[0] - 1; k >= 0; k--) if (!local.dst[k]) { z = k; break; }
+    }
+    start = alpha;
+    end = local.when[0];
+  } else {
+    int lo = 0, hi = local.count;
+    while (hi - lo > 1) {
+      int m = (lo + hi) / 2;
+      if (sec < local.when[m]) { end = local.when[m]; hi = m; } else lo = m;
+    }
+    z = local.index[lo];
+    start = local.when[lo];
+  }
+  o[0] = local.offset[z]; o[1] = start; o[2] = end;
+  o[3] = (i64)local.name[z]; o[4] = local.length[z];
+  return 0;
+}
+
 /* --- The library's view of Windows ---------------------------------- */
 
 
@@ -1394,6 +1612,7 @@ i64 layer_call(unsigned char *c) {
   case 1000101: return error_text(ARG(c, 0));
   case 1000102: return full_path(ARG(c, 0));
   case 1000103: return temp_dir();
+  case 1000105: return local_lookup(ARG(c, 0), ARG(c, 1));
   case 1000104: return sys_spawn(ARG(c, 0), ARG(c, 1), ARG(c, 2), ARG(c, 3), ARG(c, 4), ARG(c, 5));
   case 61: return sys_wait4(ARG(c, 0), ARG(c, 1), ARG(c, 2));
   case 22: case 293: return sys_pipe2(ARG(c, 0));             /* pipe, pipe2 */

@@ -82,7 +82,15 @@ those not in KERNEL32).
   one (the 16 GiB arena, `MAP_NORESERVE`) is only reserved, and the handler
   commits 64 KiB around an address when touching it faults. A buffer the
   kernel reads or writes for a call is committed first, since Windows does
-  not fault it in for the kernel as Linux does.
+  not fault it in for the kernel as Linux does. Stacks (the main one of
+  1 GiB, a process's of 256 MiB) are committed whole although they are
+  `MAP_NORESERVE`: Windows writes the record of an exception on the stack
+  that faulted, so a page of a stack first touched uncommitted could not
+  even reach the handler, and Windows grows only the stack a thread was
+  started with, not those the program switches to itself. Committing
+  costs commit charge, not memory: a page is made when touched. When the
+  charge runs out the library takes smaller stacks, an eighth at a time,
+  as it does on Linux under a limit (spec/alchem-processes.md).
 - **Faults.** The SIGSEGV handler `rt_sigaction` installs (`zf_guard`) is
   called as Linux would, with the address in its siginfo and RIP in its
   ucontext; if it moves RIP the program goes on there.
@@ -182,6 +190,14 @@ branch never taken.
 - **Directories.** `File.cwd` is `GetCurrentDirectoryW` with `/` (no
   `PWD`), `System.user_home` is `USERPROFILE`, `System.tmp_dir` is
   `GetTempPathW` without its last `\` (pseudo call 1000103).
+- **Local time** (`Date.dl`, Logger's times) is the system's zone, as
+  Go's `time.Local` there (pseudo call 1000105): `GetTimeZoneInformation`,
+  one zone without summer time, else two with their transitions for the
+  hundred years around now (`pseudoUnix`), and the abbreviations from Go's
+  table of Windows zone names (the pinned toolchain's
+  `zoneinfo_abbrs_windows.go`, which the generator compiles in), else from
+  the table under the zone's English name in the registry, else the
+  capitals of its name. `$TZ` plays no part, as for Go.
 - **The environment.** `System.get_env` finds a name in either case
   (ASCII), as `GetEnvironmentVariableW` does: the Windows compiler's
   `na_get_env` is assembled with `WINDOWS` defined
@@ -232,11 +248,6 @@ errors); the reference for them is Windows (CI).
 
 ## Still to do
 
-- Local time: Go takes it on Windows from the system's zone
-  (`GetDynamicTimeZoneInformation`); the library takes `$TZ` or UTC.
-- Stacks: a 1 GiB stack is committed at once. The exception dispatcher
-  pushes its record on the faulting stack, so a stack committed as it is
-  touched would need room there.
 - The gates on Windows. CI (`.github/workflows/native.yml`, job Windows
   x64 on `windows-2025`) runs the Windows compiler the Linux job builds:
   it must make itself again byte for byte, make a program that runs, and
