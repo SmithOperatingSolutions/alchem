@@ -1,0 +1,48 @@
+{
+  "version": 2,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "r",
+              "callee": "fortytwo",
+              "args": []
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    },
+    {
+      "name": "fortytwo",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "const.i64",
+              "dest": "value",
+              "value": 42
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "value"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1578 @@
+# Enum: the functions written in Alchem, over lists. The compiler appends the
+# ones a program mentions (scripts/generate-prelude.py). Those that build a
+# list element by element put each element before the ones they have, which
+# costs no copy (spec/alchem-lists.md), and turn the list round where it
+# lies at the end (Enum.o_turn: nobody else has the list yet); one that
+# knows how long its list gets takes the room for it at once (Enum.o_room).
+#: all?/1
+  def all?(items: list[boolean]): boolean do
+    Enum.reduce(items, true, fn x, acc -> acc and x end)
+  end
+#: all?/2
+  def all?(items: list[a], f: fn[a, boolean]): boolean do
+    Enum.reduce(items, true, fn x, acc -> if acc do f(x) else false end end)
+  end
+#: any?/1
+  def any?(items: list[boolean]): boolean do
+    Enum.reduce(items, false, fn x, acc -> acc or x end)
+  end
+#: any?/2
+  def any?(items: list[a], f: fn[a, boolean]): boolean do
+    Enum.reduce(items, false, fn x, acc -> if acc do true else f(x) end end)
+  end
+#: count/2 needs c_if/3
+  def count(items: list[a], f: fn[a, boolean]): integer do
+    Enum.c_if(items, f, 0)
+  end
+# c_if: n and the elements f holds for, counted without a list of them.
+#: c_if/3
+  def c_if(items: list[a], f: fn[a, boolean], n: integer): integer do
+    case items do
+      [] -> n
+      [x | rest] -> Enum.c_if(rest, f, if f(x) do n + 1 else n end)
+    end
+  end
+#: reject/2
+  def reject(items: list[a], f: fn[a, boolean]): list[a] do
+    Enum.filter(items, fn x -> not f(x) end)
+  end
+#: find/2
+  def find(items: list[a], f: fn[a, boolean]): option[a] do
+    start: option[a] = none
+    Enum.reduce(items, start, fn x, acc ->
+      case acc do
+        some(_) -> acc
+        none -> if f(x) do some(x) else none end
+      end
+    end)
+  end
+#: find/3 needs find/2
+  def find(items: list[a], default: a, f: fn[a, boolean]): a do
+    case Enum.find(items, f) do
+      some(x) -> x
+      none -> default
+    end
+  end
+#: find_index/2
+  def find_index(items: list[a], f: fn[a, boolean]): option[integer] do
+    start: tuple[integer, option[integer]] = {0, none}
+    elem(Enum.reduce(items, start, fn x, acc ->
+      case elem(acc, 1) do
+        some(_) -> acc
+        none -> if f(x) do {elem(acc, 0), some(elem(acc, 0))} else {elem(acc, 0) + 1, none} end
+      end
+    end), 1)
+  end
+#: find_value/2
+  def find_value(items: list[a], f: fn[a, option[b]]): option[b] do
+    start: option[b] = none
+    Enum.reduce(items, start, fn x, acc ->
+      case acc do
+        some(_) -> acc
+        none ->
+          found = f(x)
+          case found do
+            some(_) -> found
+            none -> start
+          end
+      end
+    end)
+  end
+#: find_value/3 needs find_value/2
+  def find_value(items: list[a], default: b, f: fn[a, option[b]]): b do
+    case Enum.find_value(items, f) do
+      some(x) -> x
+      none -> default
+    end
+  end
+#: member?/2
+  def member?(items: list[a], value: a): boolean do
+    value in items
+  end
+#: flat_map/2 needs concat/1
+  def flat_map(items: list[a], f: fn[a, list[b]]): list[b] do
+    Enum.concat(Enum.map(items, f))
+  end
+#: concat/1
+  def concat(lists: list[list[a]]): list[a] do
+    start: list[a] = Enum.o_room(Enum.reduce(lists, 0, fn x, n -> n + length(x) end))
+    before: fn[a, list[a], list[a]] = fn y, all -> [y | all] end
+    Enum.o_turn(Enum.reduce(lists, start, fn x, acc -> Enum.reduce(x, acc, before) end))
+  end
+#: intersperse/2
+  def intersperse(items: list[a], separator: a): list[a] do
+    start: list[a] = Enum.o_room(2 * length(items))
+    Enum.o_turn(Enum.reduce(items, start, fn x, acc -> if length(acc) == 0 do [x | acc] else [x, separator | acc] end end))
+  end
+#: map_intersperse/3
+  def map_intersperse(items: list[a], separator: b, f: fn[a, b]): list[b] do
+    start: list[b] = Enum.o_room(2 * length(items))
+    Enum.o_turn(Enum.reduce(items, start, fn x, acc -> if length(acc) == 0 do [f(x) | acc] else [f(x), separator | acc] end end))
+  end
+#: dedup/1
+  def dedup(items: list[a]): list[a] do
+    start: list[a] = Enum.o_room(length(items))
+    Enum.o_turn(Enum.reduce(items, start, fn x, acc -> if length(acc) > 0 and hd(acc) == x do acc else [x | acc] end end))
+  end
+#: dedup_by/2
+  def dedup_by(items: list[a], f: fn[a, b]): list[a] do
+    start: list[a] = Enum.o_room(length(items))
+    case items do
+      [] -> start
+      [x | rest] -> Enum.o_turn(by_dedup(rest, f, f(x), [x | start]))
+    end
+  end
+  # done holds the elements kept, the last one first; k is the key of the
+  # element before.
+  defp by_dedup(items: list[a], f: fn[a, b], k: b, done: list[a]): list[a] do
+    case items do
+      [] -> done
+      [x | rest] ->
+        next = f(x)
+        by_dedup(rest, f, next, if next == k do done else [x | done] end)
+    end
+  end
+# The elements seen are kept as the keys of a map when their type has an
+# order (integers and strings then cost a search by halves each, where the
+# list of those kept was gone through for every element); other types take
+# the next form but one, which goes through that list.
+#: uniq/1 needs h_new/1 h_free/1 h_uniq/3 uniq_fold/3
+# Integers and strings are told apart through a table (h_new, at the end
+# of this file) instead of a map that is copied for each new one.
+  def uniq(items: list[integer]): list[integer] do
+    t = Enum.h_new(length(items))
+    start: list[integer] = Enum.o_room(length(items))
+    seen: map[integer, boolean] = %{}
+    if t == 0 do Enum.o_turn(Enum.uniq_fold(items, start, seen)) else
+      r = Enum.o_turn(Enum.h_uniq(items, t, start))
+      Enum.h_free(t)
+      r
+    end
+  end
+#: uniq/1 form 3 needs h_new/1 h_free/1 h_uniqs/3 uniq_fold/3
+  def uniq(items: list[string]): list[string] do
+    t = Enum.h_new(length(items))
+    start: list[string] = Enum.o_room(length(items))
+    seen: map[string, boolean] = %{}
+    if t == 0 do Enum.o_turn(Enum.uniq_fold(items, start, seen)) else
+      r = Enum.o_turn(Enum.h_uniqs(items, t, start))
+      Enum.h_free(t)
+      r
+    end
+  end
+#: uniq/1 form 4 needs uniq_fold/3
+  def uniq(items: list[ordk]): list[ordk] do
+    start: list[ordk] = Enum.o_room(length(items))
+    seen: map[ordk, boolean] = %{}
+    Enum.o_turn(Enum.uniq_fold(items, start, seen))
+  end
+#: uniq_fold/3
+  def uniq_fold(items: list[ordk], done: list[ordk], seen: map[ordk, boolean]): list[ordk] do
+    case items do
+      [] -> done
+      [x | rest] -> if Map.has_key?(seen, x) do Enum.uniq_fold(rest, done, seen) else Enum.uniq_fold(rest, [x | done], Map.o_put(seen, x, true)) end
+    end
+  end
+#: uniq/1 form 5
+  def uniq(items: list[a]): list[a] do
+    start: list[a] = Enum.o_room(length(items))
+    Enum.o_turn(Enum.reduce(items, start, fn x, acc -> if x in acc do acc else [x | acc] end end))
+  end
+#: uniq_by/2
+  def uniq_by(items: list[a], f: fn[a, b]): list[a] do
+    start: tuple[list[a], list[b]] = {Enum.o_room(length(items)), Enum.o_room(length(items))}
+    Enum.o_turn(elem(Enum.reduce(items, start, fn x, acc ->
+      k = f(x)
+      if k in elem(acc, 1) do acc else {[x | elem(acc, 0)], [k | elem(acc, 1)]} end
+    end), 0))
+  end
+#: with_index/1
+  def with_index(items: list[a]): list[tuple[a, integer]] do
+    start: list[tuple[a, integer]] = Enum.o_room(length(items))
+    Enum.o_turn(Enum.reduce(items, start, fn x, acc -> [{x, length(acc)} | acc] end))
+  end
+#: with_index/2
+# The index wraps around in 64 bits, as the pinned runtime's does.
+  def with_index(items: list[a], offset: integer): list[tuple[a, integer]] do
+    start: list[tuple[a, integer]] = Enum.o_room(length(items))
+    Enum.o_turn(Enum.reduce(items, start, fn x, acc ->
+      i = length(acc)
+      [{x, if offset > 9223372036854775807 - i do (i - 9223372036854775807 - 1) + (offset - 9223372036854775807 - 1) else i + offset end} | acc]
+    end))
+  end
+#: zip/2
+  def zip(left: list[a], right: list[b]): list[tuple[a, b]] do
+    start: list[tuple[a, b]] = Enum.o_room(if length(left) < length(right) do length(left) else length(right) end)
+    Enum.o_turn(Enum.reduce(left, start, fn x, acc ->
+      if length(acc) < length(right) do [{x, hd(Enum.drop(right, length(acc)))} | acc] else acc end
+    end))
+  end
+#: unzip/1
+  def unzip(pairs: list[tuple[a, b]]): tuple[list[a], list[b]] do
+    {Enum.map(pairs, fn p -> elem(p, 0) end), Enum.map(pairs, fn p -> elem(p, 1) end)}
+  end
+#: zip_with/3
+  def zip_with(left: list[a], right: list[b], f: fn[a, b, c]): list[c] do
+    start: list[c] = Enum.o_room(if length(left) < length(right) do length(left) else length(right) end)
+    Enum.o_turn(with_zip(left, right, f, start))
+  end
+  defp with_zip(left: list[a], right: list[b], f: fn[a, b, c], done: list[c]): list[c] do
+    case left do
+      [] -> done
+      [x | more] ->
+        case right do
+          [] -> done
+          [y | others] -> with_zip(more, others, f, [f(x, y) | done])
+        end
+    end
+  end
+#: zip_reduce/4 needs zip/2
+  def zip_reduce(left: list[a], right: list[b], start: c, f: fn[a, b, c, c]): c do
+    Enum.reduce(Enum.zip(left, right), start, fn p, acc -> f(elem(p, 0), elem(p, 1), acc) end)
+  end
+#: take_while/2
+  def take_while(items: list[a], f: fn[a, boolean]): list[a] do
+    Enum.take(items, taken(items, f, 0))
+  end
+  defp taken(items: list[a], f: fn[a, boolean], index: integer): integer do
+    case Enum.at(items, index) do
+      some(x) -> if index < length(items) do if f(x) do taken(items, f, index + 1) else index end else index end
+      none -> index
+    end
+  end
+#: drop_while/2
+  def drop_while(items: list[a], f: fn[a, boolean]): list[a] do
+    Enum.drop(items, dropped(items, f, 0))
+  end
+  defp dropped(items: list[a], f: fn[a, boolean], index: integer): integer do
+    case Enum.at(items, index) do
+      some(x) -> if index < length(items) do if f(x) do dropped(items, f, index + 1) else index end else index end
+      none -> index
+    end
+  end
+#: split_while/2
+  def split_while(items: list[a], f: fn[a, boolean]): tuple[list[a], list[a]] do
+    count = split_point(items, f, 0)
+    {Enum.take(items, count), Enum.drop(items, count)}
+  end
+  defp split_point(items: list[a], f: fn[a, boolean], index: integer): integer do
+    case Enum.at(items, index) do
+      some(x) -> if index < length(items) do if f(x) do split_point(items, f, index + 1) else index end else index end
+      none -> index
+    end
+  end
+#: split/2
+  def split(items: list[a], count: integer): tuple[list[a], list[a]] do
+    # Not max(...): beside Enum.max/2 in a program that name is the library's.
+    at = if count < 0 do if length(items) + count < 0 do 0 else length(items) + count end else count end
+    {Enum.take(items, at), Enum.drop(items, at)}
+  end
+#: split_with/2
+  def split_with(items: list[a], f: fn[a, boolean]): tuple[list[a], list[a]] do
+    yes: list[a] = Enum.o_room(length(items))
+    no: list[a] = Enum.o_room(length(items))
+    with_split(items, f, yes, no)
+  end
+  defp with_split(items: list[a], f: fn[a, boolean], yes: list[a], no: list[a]): tuple[list[a], list[a]] do
+    case items do
+      [] -> {Enum.o_turn(yes), Enum.o_turn(no)}
+      [x | rest] -> if f(x) do with_split(rest, f, [x | yes], no) else with_split(rest, f, yes, [x | no]) end
+    end
+  end
+#: chunk_every/2 needs chunk_every/3
+  def chunk_every(items: list[a], count: integer): list[list[a]] do
+    Enum.chunk_every(items, count, count)
+  end
+#: chunk_every/3
+  def chunk_every(items: list[a], count: integer, step: integer): list[list[a]] do
+    if count < 1 or step < 1 do raise("chunk_every needs a positive count and step") end
+    start: list[list[a]] = Enum.o_room(div(length(items), step) + 1)
+    chunks(items, count, step, 0, start)
+  end
+  defp chunks(items: list[a], count: integer, step: integer, from: integer, done: list[list[a]]): list[list[a]] do
+    w = length(items) - from
+    if w >= count do chunks(items, count, step, from + step, [Enum.slice(items, from, count) | done]) else
+      if w > 0 and (step >= count or w > count - step) do Enum.o_turn([Enum.drop(items, from) | done]) else Enum.o_turn(done) end
+    end
+  end
+#: chunk_by/2
+  def chunk_by(items: list[a], f: fn[a, b]): list[list[a]] do
+    done: list[list[a]] = []
+    case items do
+      [] -> done
+      [x | rest] -> by_chunks(rest, f, f(x), [x], done)
+    end
+  end
+  # The chunk being filled for key k, its last element first, and the chunks
+  # done, the last one first.
+  defp by_chunks(items: list[a], f: fn[a, b], k: b, chunk: list[a], done: list[list[a]]): list[list[a]] do
+    case items do
+      [] -> Enum.o_turn([Enum.o_turn(chunk) | done])
+      [x | rest] ->
+        next = f(x)
+        if next == k do by_chunks(rest, f, k, [x | chunk], done) else by_chunks(rest, f, next, [x], [Enum.o_turn(chunk) | done]) end
+    end
+  end
+#: scan/2
+  def scan(items: list[a], f: fn[a, a, a]): list[a] do
+    start: list[a] = Enum.o_room(length(items))
+    Enum.o_turn(Enum.reduce(items, start, fn x, acc ->
+      if length(acc) == 0 do [x | acc] else [f(x, hd(acc)) | acc] end
+    end))
+  end
+#: scan/3
+  def scan(items: list[a], first: b, f: fn[a, b, b]): list[b] do
+    start: list[b] = Enum.o_room(length(items))
+    Enum.o_turn(scanned(items, first, f, start))
+  end
+  defp scanned(items: list[a], last: b, f: fn[a, b, b], done: list[b]): list[b] do
+    case items do
+      [] -> done
+      [x | rest] ->
+        v = f(x, last)
+        scanned(rest, v, f, [v | done])
+    end
+  end
+#: map_reduce/3
+  def map_reduce(items: list[a], first: c, f: fn[a, c, tuple[b, c]]): tuple[list[b], c] do
+    start: list[b] = Enum.o_room(length(items))
+    reduced_map(items, first, f, start)
+  end
+  defp reduced_map(items: list[a], acc: c, f: fn[a, c, tuple[b, c]], done: list[b]): tuple[list[b], c] do
+    case items do
+      [] -> {Enum.o_turn(done), acc}
+      [x | rest] ->
+        step = f(x, acc)
+        reduced_map(rest, elem(step, 1), f, [elem(step, 0) | done])
+    end
+  end
+#: flat_map_reduce/3
+  def flat_map_reduce(items: list[a], first: c, f: fn[a, c, tuple[list[b], c]]): tuple[list[b], c] do
+    start: tuple[list[b], c] = {[], first}
+    before: fn[b, list[b], list[b]] = fn y, done -> [y | done] end
+    all = Enum.reduce(items, start, fn x, acc ->
+      step = f(x, elem(acc, 1))
+      {Enum.reduce(elem(step, 0), elem(acc, 0), before), elem(step, 1)}
+    end)
+    {Enum.o_turn(elem(all, 0)), elem(all, 1)}
+  end
+#: map_every/3
+  def map_every(items: list[a], nth: integer, f: fn[a, a]): list[a] do
+    if nth < 0 do raise("nth must be a nonnegative integer") end
+    start: list[a] = Enum.o_room(length(items))
+    Enum.o_turn(Enum.reduce(items, start, fn x, acc -> if nth > 0 and rem(length(acc), nth) == 0 do [f(x) | acc] else [x | acc] end end))
+  end
+#: take_every/2
+  def take_every(items: list[a], nth: integer): list[a] do
+    if nth < 0 do raise("nth must be a nonnegative integer") end
+    start: list[a] = Enum.o_room(if nth == 0 do 0 else if nth >= length(items) do 1 else div(length(items) + nth - 1, nth) end end)
+    Enum.o_turn(nth_taken(items, nth, 0, start))
+  end
+  defp nth_taken(items: list[a], nth: integer, i: integer, done: list[a]): list[a] do
+    case items do
+      [] -> done
+      [x | rest] -> nth_taken(rest, nth, i + 1, if nth > 0 and rem(i, nth) == 0 do [x | done] else done end)
+    end
+  end
+#: drop_every/2
+  def drop_every(items: list[a], nth: integer): list[a] do
+    if nth < 0 do raise("nth must be a nonnegative integer") end
+    start: list[a] = Enum.o_room(if nth == 0 do length(items) else if nth >= length(items) do length(items) else length(items) - div(length(items) + nth - 1, nth) end end)
+    Enum.o_turn(nth_dropped(items, nth, 0, start))
+  end
+  defp nth_dropped(items: list[a], nth: integer, i: integer, done: list[a]): list[a] do
+    case items do
+      [] -> done
+      [x | rest] -> nth_dropped(rest, nth, i + 1, if nth > 0 and rem(i, nth) == 0 do done else [x | done] end)
+    end
+  end
+#: reverse/2
+  def reverse(items: list[a], tail: list[a]): list[a] do
+    Enum.reverse(items) ++ tail
+  end
+#: reverse_slice/3
+# A start and count whose sum leaves 64 bits is a panic of the pinned runtime.
+  def reverse_slice(items: list[a], from: integer, count: integer): list[a] do
+    if from < 0 or count < 0 do raise("reverse_slice needs a nonnegative start and count") end
+    if from >= length(items) do items else
+      if count > 9223372036854775807 - from do Sys.panic("panic: runtime error: slice bounds out of range [:#{(from - 9223372036854775807 - 1) + (count - 9223372036854775807 - 1)}]") end
+      Enum.take(items, from) ++ Enum.reverse(Enum.slice(items, from, count)) ++ Enum.drop(items, from + count)
+    end
+  end
+#: slide/3
+  def slide(items: list[a], from: integer, to: integer): list[a] do
+    n = length(items)
+    i = if from < 0 do from + n else from end
+    j = if to < 0 do to + n else to end
+    if i < 0 or i >= n do items else
+      if j < 0 or j >= n do raise("Enum.slide: insertion index out of range") end
+      rest = Enum.take(items, i) ++ Enum.drop(items, i + 1)
+      Enum.take(rest, j) ++ Enum.slice(items, i, 1) ++ Enum.drop(rest, j)
+    end
+  end
+#: into/2
+  def into(items: list[a], target: list[a]): list[a] do
+    target ++ items
+  end
+#: to_list/1
+  def to_list(items: list[a]): list[a] do
+    items
+  end
+#: count_until/2
+  def count_until(items: list[a], limit: integer): integer do
+    if limit < 1 do raise("count_until needs a positive limit") end
+    if length(items) < limit do length(items) else limit end
+  end
+#: count_until/3
+  def count_until(items: list[a], f: fn[a, boolean], limit: integer): integer do
+    if limit < 1 do raise("count_until needs a positive limit") end
+    Enum.reduce(items, 0, fn x, n -> if n < limit and f(x) do n + 1 else n end end)
+  end
+#: reduce/2
+  def reduce(items: list[a], f: fn[a, a, a]): a do
+    if items == [] do raise("empty error") end
+    Enum.reduce(tl(items), hd(items), f)
+  end
+#: frequencies/1 needs h_new/1 h_free/1 h_int/2 h_count/3 sort/1
+  def frequencies(items: list[integer]): map[integer, integer] do
+    t = Enum.h_new(length(items))
+    if t == 0 do Enum.reduce(items, %{}, fn x, acc -> Map.put(acc, x, Map.get(acc, x, 0) + 1) end) else
+      r = Map.new(Enum.map(Enum.sort(Enum.h_count(items, t, [])), fn k -> {k, Sys.peek(Enum.h_int(t, k) + 8)} end))
+      Enum.h_free(t)
+      r
+    end
+  end
+#: frequencies/1 form 3 needs h_new/1 h_free/1 h_str/2 h_counts/3 sort/1
+  def frequencies(items: list[string]): map[string, integer] do
+    t = Enum.h_new(length(items))
+    if t == 0 do Enum.reduce(items, %{}, fn x, acc -> Map.put(acc, x, Map.get(acc, x, 0) + 1) end) else
+      r = Map.new(Enum.map(Enum.sort(Enum.h_counts(items, t, [])), fn k -> {k, Sys.peek(Enum.h_str(t, k) + 8)} end))
+      Enum.h_free(t)
+      r
+    end
+  end
+#: frequencies/1 form 4
+  def frequencies(items: list[a]): map[a, integer] do
+    Enum.reduce(items, %{}, fn x, acc -> Map.put(acc, x, Map.get(acc, x, 0) + 1) end)
+  end
+#: frequencies_by/2
+  def frequencies_by(items: list[a], f: fn[a, k]): map[k, integer] do
+    Enum.reduce(items, %{}, fn x, acc ->
+      key = f(x)
+      Map.put(acc, key, Map.get(acc, key, 0) + 1)
+    end)
+  end
+#: group_by/2 needs h_new/1 h_free/1 h_int/2 h_group/4 sort/1
+# With integers for keys the groups grow in a table: the keys are worked
+# out first, so nothing of the program runs while the table stands.
+  def group_by(items: list[a], f: fn[a, integer]): map[integer, list[a]] do
+    ks = Enum.map(items, f)
+    t = Enum.h_new(length(items))
+    if t == 0 do
+      start: map[integer, list[a]] = %{}
+      groups = Enum.reduce(items, start, fn x, acc ->
+        key = f(x)
+        Map.put(acc, key, [x | Map.get(acc, key, [])])
+      end)
+      Enum.reduce(Map.to_list(groups), groups, fn p, acc -> Map.put(acc, elem(p, 0), Enum.o_turn(elem(p, 1))) end)
+    else
+      r = Map.new(Enum.map(Enum.sort(Enum.h_group(items, ks, t, [])), fn k ->
+        g: list[a] = Process.__any(Sys.peek(Enum.h_int(t, k) + 8))
+        {k, Enum.o_turn(g)}
+      end))
+      Enum.h_free(t)
+      r
+    end
+  end
+#: group_by/2 form 4
+  def group_by(items: list[a], f: fn[a, k]): map[k, list[a]] do
+    start: map[k, list[a]] = %{}
+    groups = Enum.reduce(items, start, fn x, acc ->
+      key = f(x)
+      Map.put(acc, key, [x | Map.get(acc, key, [])])
+    end)
+    Enum.reduce(Map.to_list(groups), groups, fn p, acc -> Map.put(acc, elem(p, 0), Enum.o_turn(elem(p, 1))) end)
+  end
+#: group_by/3
+  def group_by(items: list[a], f: fn[a, k], g: fn[a, v]): map[k, list[v]] do
+    start: map[k, list[v]] = %{}
+    groups = Enum.reduce(items, start, fn x, acc ->
+      key = f(x)
+      Map.put(acc, key, [g(x) | Map.get(acc, key, [])])
+    end)
+    Enum.reduce(Map.to_list(groups), groups, fn p, acc -> Map.put(acc, elem(p, 0), Enum.o_turn(elem(p, 1))) end)
+  end
+#: fetch!/2
+  def fetch!(items: list[a], index: integer): a do
+    case Enum.at(items, index) do
+      some(value) -> value
+      none -> raise("out of bounds error")
+    end
+  end
+# o_sort sorts by g, "x is less than y", with the pinned runtime's stable
+# sort (Go's slices.SortStableFunc: insertion sort over blocks of 20, then
+# SymMerge), which the compiler has as machine code that sorts a copy in
+# place (Enum.o_stable): g is called with the same pairs in the same order,
+# so a g that is no order (a sorter that is not one, floats with NaN) gives
+# the same list. For sort/2 one element is less than another when the other
+# may not come before it, and the sorter is asked as the pinned comparison
+# asks it.
+#: sort/2 needs o_sort/2
+  def sort(items: list[a], f: fn[a, a, boolean]): list[a] do
+    Enum.o_sort(items, fn x, y -> if f(y, x) do f(x, y) and false else true end end)
+  end
+#: o_sort/2 needs reduce/3
+  def o_sort(items: list[a], g: fn[a, a, boolean]): list[a] do Enum.o_stable(items, g) end
+  def o_least(s: stream[a], l: fn[a, a, boolean]): option[a] do
+    start: option[a] = none
+    Enum.reduce(s, start, fn x, b ->
+      case b do
+        some(y) -> if l(x, y) do some(x) else b end
+        none -> some(x)
+      end
+    end)
+  end
+  def o_first(s: stream[a], l: fn[a, a, boolean]): a do
+    case Enum.o_least(s, l) do
+      some(x) -> x
+      none -> raise("empty error")
+    end
+  end
+  def o_dir(o: atom, l: fn[a, a, boolean]): fn[a, a, boolean] do
+    if o != :asc and o != :desc do raise("the sort order is :asc or :desc, not :#{o}") end
+    if o == :asc do l else fn x, y -> l(y, x) end end
+  end
+#: chunk_while/4
+  def chunk_while(items: list[a], first: s, step: fn[a, s, tuple[option[c], s]], last: fn[s, option[c]]): list[c] do
+    start: tuple[list[c], s] = {[], first}
+    done = Enum.reduce(items, start, fn x, acc ->
+      moved = step(x, elem(acc, 1))
+      case elem(moved, 0) do
+        some(chunk) -> {[chunk | elem(acc, 0)], elem(moved, 1)}
+        none -> {elem(acc, 0), elem(moved, 1)}
+      end
+    end)
+    case last(elem(done, 1)) do
+      some(chunk) -> Enum.o_turn([chunk | elem(done, 0)])
+      none -> Enum.o_turn(elem(done, 0))
+    end
+  end
+#: map/2
+  def map(items: map[k, v], f: fn[tuple[k, v], b]): list[b] do
+    Enum.map(Map.to_list(items), f)
+  end
+#: to_list/1 form 2
+  def to_list(items: map[k, v]): list[tuple[k, v]] do
+    Map.to_list(items)
+  end
+#: into/2 form 2
+  def into(items: list[tuple[k, v]], target: map[k, v]): map[k, v] do
+    Enum.reduce(items, target, fn pair, acc -> Map.put(acc, elem(pair, 0), elem(pair, 1)) end)
+  end
+#: into/2 form 3
+  def into(items: list[string], target: string): string do
+    target <> Enum.join(items, "")
+  end
+#: reduce_while/3
+  def reduce_while(items: list[a], start: b, f: fn[a, b, tuple[boolean, b]]): b do
+    stepped(items, start, f)
+  end
+  defp stepped(items: list[a], acc: b, f: fn[a, b, tuple[boolean, b]]): b do
+    case items do
+      [] -> acc
+      [x | rest] ->
+        step = f(x, acc)
+        if elem(step, 0) do elem(step, 1) else stepped(rest, elem(step, 1), f) end
+    end
+  end
+#: random/1
+  def random(items: list[a]): a do
+    if items == [] do raise("empty error") end
+    hd(Enum.drop(items, rem(rem(System.system_time(), 2147483647) * 48271, 2147483647) % length(items)))
+  end
+#: shuffle/1
+# Each element gets the next number of a sequence that starts at the clock,
+# and the elements are put in the order of their numbers.
+  def shuffle(items: list[a]): list[a] do
+    start: tuple[integer, list[tuple[integer, a]]] = {rem(System.system_time(), 2147483647), Enum.o_room(length(items))}
+    keyed = elem(Enum.reduce(items, start, fn x, acc ->
+      next = rem(elem(acc, 0) * 48271 + 11, 2147483647)
+      {next, [{next, x} | elem(acc, 1)]}
+    end), 1)
+    less: fn[tuple[integer, a], tuple[integer, a], boolean] = fn p, q -> elem(p, 0) < elem(q, 0) end
+    Enum.map(Enum.o_stable(keyed, less), fn p -> elem(p, 1) end)
+  end
+#: take_random/2 needs shuffle/1
+  def take_random(items: list[a], count: integer): list[a] do
+    if count < 0 do raise("take_random needs a nonnegative count") end
+    Enum.take(Enum.shuffle(items), count)
+  end
+#: all?/2 form 2 needs all?/2
+  def all?(items: map[k, v], f: fn[tuple[k, v], boolean]): boolean do
+    Enum.all?(Map.to_list(items), f)
+  end
+#: any?/2 form 2 needs any?/2
+  def any?(items: map[k, v], f: fn[tuple[k, v], boolean]): boolean do
+    Enum.any?(Map.to_list(items), f)
+  end
+#: count/2 form 2 needs count/2
+  def count(items: map[k, v], f: fn[tuple[k, v], boolean]): integer do
+    Enum.count(Map.to_list(items), f)
+  end
+#: reject/2 form 2 needs reject/2
+  def reject(items: map[k, v], f: fn[tuple[k, v], boolean]): list[tuple[k, v]] do
+    Enum.reject(Map.to_list(items), f)
+  end
+#: find/2 form 2 needs find/2
+  def find(items: map[k, v], f: fn[tuple[k, v], boolean]): option[tuple[k, v]] do
+    Enum.find(Map.to_list(items), f)
+  end
+#: find/3 form 2 needs find/3
+  def find(items: map[k, v], default: tuple[k, v], f: fn[tuple[k, v], boolean]): tuple[k, v] do
+    Enum.find(Map.to_list(items), default, f)
+  end
+#: find_index/2 form 2 needs find_index/2
+  def find_index(items: map[k, v], f: fn[tuple[k, v], boolean]): option[integer] do
+    Enum.find_index(Map.to_list(items), f)
+  end
+#: find_value/2 form 2 needs find_value/2
+  def find_value(items: map[k, v], f: fn[tuple[k, v], option[b]]): option[b] do
+    Enum.find_value(Map.to_list(items), f)
+  end
+#: find_value/3 form 2 needs find_value/3
+  def find_value(items: map[k, v], default: b, f: fn[tuple[k, v], option[b]]): b do
+    Enum.find_value(Map.to_list(items), default, f)
+  end
+#: member?/2 form 2 needs member?/2
+  def member?(items: map[k, v], value: tuple[k, v]): boolean do
+    Enum.member?(Map.to_list(items), value)
+  end
+#: flat_map/2 form 2 needs flat_map/2
+  def flat_map(items: map[k, v], f: fn[tuple[k, v], list[b]]): list[b] do
+    Enum.flat_map(Map.to_list(items), f)
+  end
+#: intersperse/2 form 2 needs intersperse/2
+  def intersperse(items: map[k, v], separator: tuple[k, v]): list[tuple[k, v]] do
+    Enum.intersperse(Map.to_list(items), separator)
+  end
+#: map_intersperse/3 form 2 needs map_intersperse/3
+  def map_intersperse(items: map[k, v], separator: b, f: fn[tuple[k, v], b]): list[b] do
+    Enum.map_intersperse(Map.to_list(items), separator, f)
+  end
+#: dedup/1 form 2 needs dedup/1
+  def dedup(items: map[k, v]): list[tuple[k, v]] do
+    Enum.dedup(Map.to_list(items))
+  end
+#: dedup_by/2 form 2 needs dedup_by/2
+  def dedup_by(items: map[k, v], f: fn[tuple[k, v], b]): list[tuple[k, v]] do
+    Enum.dedup_by(Map.to_list(items), f)
+  end
+#: uniq/1 form 2 needs uniq/1
+  def uniq(items: map[k, v]): list[tuple[k, v]] do
+    Enum.uniq(Map.to_list(items))
+  end
+#: uniq_by/2 form 2 needs uniq_by/2
+  def uniq_by(items: map[k, v], f: fn[tuple[k, v], b]): list[tuple[k, v]] do
+    Enum.uniq_by(Map.to_list(items), f)
+  end
+#: with_index/1 form 2 needs with_index/1
+  def with_index(items: map[k, v]): list[tuple[tuple[k, v], integer]] do
+    Enum.with_index(Map.to_list(items))
+  end
+#: with_index/2 form 2 needs with_index/2
+  def with_index(items: map[k, v], offset: integer): list[tuple[tuple[k, v], integer]] do
+    Enum.with_index(Map.to_list(items), offset)
+  end
+#: zip/2 form 2 needs zip/2
+  def zip(left: map[k, v], right: list[b]): list[tuple[tuple[k, v], b]] do
+    Enum.zip(Map.to_list(left), right)
+  end
+#: zip_with/3 form 2 needs zip_with/3
+  def zip_with(left: map[k, v], right: list[b], f: fn[tuple[k, v], b, c]): list[c] do
+    Enum.zip_with(Map.to_list(left), right, f)
+  end
+#: zip_reduce/4 form 2 needs zip_reduce/4
+  def zip_reduce(left: map[k, v], right: list[b], start: c, f: fn[tuple[k, v], b, c, c]): c do
+    Enum.zip_reduce(Map.to_list(left), right, start, f)
+  end
+#: take_while/2 form 2 needs take_while/2
+  def take_while(items: map[k, v], f: fn[tuple[k, v], boolean]): list[tuple[k, v]] do
+    Enum.take_while(Map.to_list(items), f)
+  end
+#: drop_while/2 form 2 needs drop_while/2
+  def drop_while(items: map[k, v], f: fn[tuple[k, v], boolean]): list[tuple[k, v]] do
+    Enum.drop_while(Map.to_list(items), f)
+  end
+#: split_while/2 form 2 needs split_while/2
+  def split_while(items: map[k, v], f: fn[tuple[k, v], boolean]): tuple[list[tuple[k, v]], list[tuple[k, v]]] do
+    Enum.split_while(Map.to_list(items), f)
+  end
+#: split/2 form 2 needs split/2
+  def split(items: map[k, v], count: integer): tuple[list[tuple[k, v]], list[tuple[k, v]]] do
+    Enum.split(Map.to_list(items), count)
+  end
+#: split_with/2 form 2 needs split_with/2
+  def split_with(items: map[k, v], f: fn[tuple[k, v], boolean]): tuple[list[tuple[k, v]], list[tuple[k, v]]] do
+    Enum.split_with(Map.to_list(items), f)
+  end
+#: chunk_every/2 form 2 needs chunk_every/2
+  def chunk_every(items: map[k, v], count: integer): list[list[tuple[k, v]]] do
+    Enum.chunk_every(Map.to_list(items), count)
+  end
+#: chunk_every/3 form 2 needs chunk_every/3
+  def chunk_every(items: map[k, v], count: integer, step: integer): list[list[tuple[k, v]]] do
+    Enum.chunk_every(Map.to_list(items), count, step)
+  end
+#: chunk_by/2 form 2 needs chunk_by/2
+  def chunk_by(items: map[k, v], f: fn[tuple[k, v], b]): list[list[tuple[k, v]]] do
+    Enum.chunk_by(Map.to_list(items), f)
+  end
+#: scan/2 form 2 needs scan/2
+  def scan(items: map[k, v], f: fn[tuple[k, v], tuple[k, v], tuple[k, v]]): list[tuple[k, v]] do
+    Enum.scan(Map.to_list(items), f)
+  end
+#: scan/3 form 2 needs scan/3
+  def scan(items: map[k, v], first: b, f: fn[tuple[k, v], b, b]): list[b] do
+    Enum.scan(Map.to_list(items), first, f)
+  end
+#: map_reduce/3 form 2 needs map_reduce/3
+  def map_reduce(items: map[k, v], first: c, f: fn[tuple[k, v], c, tuple[b, c]]): tuple[list[b], c] do
+    Enum.map_reduce(Map.to_list(items), first, f)
+  end
+#: flat_map_reduce/3 form 2 needs flat_map_reduce/3
+  def flat_map_reduce(items: map[k, v], first: c, f: fn[tuple[k, v], c, tuple[list[b], c]]): tuple[list[b], c] do
+    Enum.flat_map_reduce(Map.to_list(items), first, f)
+  end
+#: map_every/3 form 2 needs map_every/3
+  def map_every(items: map[k, v], nth: integer, f: fn[tuple[k, v], tuple[k, v]]): list[tuple[k, v]] do
+    Enum.map_every(Map.to_list(items), nth, f)
+  end
+#: take_every/2 form 2 needs take_every/2
+  def take_every(items: map[k, v], nth: integer): list[tuple[k, v]] do
+    Enum.take_every(Map.to_list(items), nth)
+  end
+#: drop_every/2 form 2 needs drop_every/2
+  def drop_every(items: map[k, v], nth: integer): list[tuple[k, v]] do
+    Enum.drop_every(Map.to_list(items), nth)
+  end
+#: reverse/2 form 2 needs reverse/2
+  def reverse(items: map[k, v], tail: list[tuple[k, v]]): list[tuple[k, v]] do
+    Enum.reverse(Map.to_list(items), tail)
+  end
+#: reverse_slice/3 form 2 needs reverse_slice/3
+  def reverse_slice(items: map[k, v], from: integer, count: integer): list[tuple[k, v]] do
+    Enum.reverse_slice(Map.to_list(items), from, count)
+  end
+#: slide/3 form 2 needs slide/3
+  def slide(items: map[k, v], from: integer, to: integer): list[tuple[k, v]] do
+    Enum.slide(Map.to_list(items), from, to)
+  end
+#: to_list/1 form 3 needs to_list/1
+  def to_list(items: map[k, v]): list[tuple[k, v]] do
+    Enum.to_list(Map.to_list(items))
+  end
+#: count_until/2 form 2 needs count_until/2
+  def count_until(items: map[k, v], limit: integer): integer do
+    Enum.count_until(Map.to_list(items), limit)
+  end
+#: count_until/3 form 2 needs count_until/3
+  def count_until(items: map[k, v], f: fn[tuple[k, v], boolean], limit: integer): integer do
+    Enum.count_until(Map.to_list(items), f, limit)
+  end
+#: reduce/2 form 2 needs reduce/2
+  def reduce(items: map[k, v], f: fn[tuple[k, v], tuple[k, v], tuple[k, v]]): tuple[k, v] do
+    Enum.reduce(Map.to_list(items), f)
+  end
+#: frequencies/1 form 2 needs frequencies/1
+  def frequencies(items: map[k, v]): map[tuple[k, v], integer] do
+    Enum.frequencies(Map.to_list(items))
+  end
+#: frequencies_by/2 form 2 needs frequencies_by/2
+  def frequencies_by(items: map[v, p], f: fn[tuple[v, p], k]): map[k, integer] do
+    Enum.frequencies_by(Map.to_list(items), f)
+  end
+#: group_by/2 form 2 needs group_by/2
+  def group_by(items: map[v, p], f: fn[tuple[v, p], k]): map[k, list[tuple[v, p]]] do
+    Enum.group_by(Map.to_list(items), f)
+  end
+#: group_by/3 form 2 needs group_by/3
+  def group_by(items: map[p, q], f: fn[tuple[p, q], k], g: fn[tuple[p, q], v]): map[k, list[v]] do
+    Enum.group_by(Map.to_list(items), f, g)
+  end
+#: fetch!/2 form 2 needs fetch!/2
+  def fetch!(items: map[k, v], index: integer): tuple[k, v] do
+    Enum.fetch!(Map.to_list(items), index)
+  end
+#: chunk_while/4 form 2 needs chunk_while/4
+  def chunk_while(items: map[k, v], first: s, step: fn[tuple[k, v], s, tuple[option[c], s]], last: fn[s, option[c]]): list[c] do
+    Enum.chunk_while(Map.to_list(items), first, step, last)
+  end
+#: reduce_while/3 form 2 needs reduce_while/3
+  def reduce_while(items: map[k, v], start: b, f: fn[tuple[k, v], b, tuple[boolean, b]]): b do
+    Enum.reduce_while(Map.to_list(items), start, f)
+  end
+#: random/1 form 2 needs random/1
+  def random(items: map[k, v]): tuple[k, v] do
+    Enum.random(Map.to_list(items))
+  end
+#: shuffle/1 form 2 needs shuffle/1
+  def shuffle(items: map[k, v]): list[tuple[k, v]] do
+    Enum.shuffle(Map.to_list(items))
+  end
+#: take_random/2 form 2 needs take_random/2
+  def take_random(items: map[k, v], count: integer): list[tuple[k, v]] do
+    Enum.take_random(Map.to_list(items), count)
+  end
+#: filter/2
+  def filter(items: map[k, v], f: fn[tuple[k, v], boolean]): list[tuple[k, v]] do
+    Enum.filter(Map.to_list(items), f)
+  end
+#: reduce/3 needs Range.size/1 r_fold/5
+# A range is gone through by counting: n elements from i on, s apart,
+# without the stream every other stream is folded through.
+  def reduce(r: Range, start: b, f: fn[integer, b, b]): b do
+    Enum.r_fold(r.first, r.step, Range.size(r), start, f)
+  end
+#: r_fold/5
+  def r_fold(i: integer, s: integer, n: integer, acc: b, f: fn[integer, b, b]): b do
+    if n <= 0 do acc else
+      if n == 1 do f(i, acc) else Enum.r_fold(i + s, s, n - 1, f(i, acc), f) end
+    end
+  end
+#: reduce/3 form 4
+  def reduce(items: map[k, v], start: b, f: fn[tuple[k, v], b, b]): b do
+    Enum.reduce(Map.to_list(items), start, f)
+  end
+#: at/2
+  def at(items: map[k, v], index: integer): option[tuple[k, v]] do
+    Enum.at(Map.to_list(items), index)
+  end
+#: at/3
+  def at(items: map[k, v], index: integer, default: tuple[k, v]): tuple[k, v] do
+    Enum.at(Map.to_list(items), index, default)
+  end
+#: take/2
+  def take(items: map[k, v], count: integer): list[tuple[k, v]] do
+    Enum.take(Map.to_list(items), count)
+  end
+#: drop/2
+  def drop(items: map[k, v], count: integer): list[tuple[k, v]] do
+    Enum.drop(Map.to_list(items), count)
+  end
+#: reverse/1
+  def reverse(items: map[k, v]): list[tuple[k, v]] do
+    Enum.reverse(Map.to_list(items))
+  end
+#: slice/3
+  def slice(items: map[k, v], start: integer, count: integer): list[tuple[k, v]] do
+    if count < 0 do raise("slice needs a nonnegative amount") end
+    Enum.slice(Map.to_list(items), start, count)
+  end
+#: fetch/2
+  def fetch(items: map[k, v], index: integer): option[tuple[k, v]] do
+    Enum.fetch(Map.to_list(items), index)
+  end
+#: concat/2
+  def concat(left: map[k, v], right: list[tuple[k, v]]): list[tuple[k, v]] do
+    Enum.concat(Map.to_list(left), right)
+  end
+#: unzip/1 form 2 needs unzip/1
+  def unzip(pairs: map[k, v]): tuple[list[k], list[v]] do
+    Enum.unzip(Map.to_list(pairs))
+  end
+#: concat/2 form 2
+  def concat(left: list[tuple[k, v]], right: map[k, v]): list[tuple[k, v]] do
+    left ++ Map.to_list(right)
+  end
+#: concat/2 form 3
+  def concat(left: map[k, v], right: map[k, v]): list[tuple[k, v]] do
+    Map.to_list(left) ++ Map.to_list(right)
+  end
+#: zip/2 form 3 needs zip/2
+  def zip(left: list[a], right: map[k, v]): list[tuple[a, tuple[k, v]]] do
+    Enum.zip(left, Map.to_list(right))
+  end
+#: zip/2 form 4 needs zip/2
+  def zip(left: map[p, q], right: map[k, v]): list[tuple[tuple[p, q], tuple[k, v]]] do
+    Enum.zip(Map.to_list(left), Map.to_list(right))
+  end
+#: each/2
+  def each(items: map[k, v], f: fn[tuple[k, v], b]): tuple[] do
+    Enum.each(Map.to_list(items), f)
+    {}
+  end
+#: into/2 form 4 needs Map.merge/2
+  def into(items: map[k, v], target: map[k, v]): map[k, v] do
+    Map.merge(target, items)
+  end
+#: slice/2 needs take_every/2
+  def slice(items: list[a], r: Range): list[a] do
+    n = length(items)
+    f = if r.first < 0 do r.first + n else r.first end
+    l = if r.last < 0 do r.last + n else r.last end
+    s = if r.step == -1 do 1 else r.step end
+    if s < 0 or f < 0 or f >= n or l < f do Enum.take(items, 0) else
+      Enum.take_every(Enum.slice(items, f, (if l < n - 1 do l else n - 1 end) - f + 1), s)
+    end
+  end
+#: slice/2 form 2 needs slice/2
+  def slice(items: map[k, v], r: Range): list[tuple[k, v]] do
+    Enum.slice(Map.to_list(items), r)
+  end
+#: with_index/2 form 3
+  def with_index(items: list[a], f: fn[a, integer, b]): list[b] do
+    start: list[b] = Enum.o_room(length(items))
+    Enum.o_turn(Enum.reduce(items, start, fn x, acc -> [f(x, length(acc)) | acc] end))
+  end
+#: with_index/2 form 4 needs with_index/2
+  def with_index(items: map[k, v], f: fn[tuple[k, v], integer, b]): list[b] do
+    Enum.with_index(Map.to_list(items), f)
+  end
+#: chunk_every/4 needs chunk_every/3
+  def chunk_every(items: list[a], count: integer, step: integer, pad: list[a]): list[list[a]] do
+    c = Enum.chunk_every(items, count, step)
+    n = length(c) - 1
+    if n < 0 do c else
+      l = hd(Enum.drop(c, n))
+      Enum.take(c, n) ++ [l ++ Enum.take(pad, count - length(l))]
+    end
+  end
+#: chunk_every/4 form 2 needs chunk_every/3
+  def chunk_every(items: list[a], count: integer, step: integer, pad: atom): list[list[a]] do
+    if pad != :discard do raise("Enum.chunk_every takes a list to pad the last chunk with, or :discard") end
+    c = Enum.chunk_every(items, count, step)
+    n = length(c) - 1
+    if n < 0 do c else
+      if length(hd(Enum.drop(c, n))) < count do Enum.take(c, n) else c end
+    end
+  end
+#: chunk_every/4 form 3 needs chunk_every/4
+  def chunk_every(items: map[k, v], count: integer, step: integer, pad: list[tuple[k, v]]): list[list[tuple[k, v]]] do
+    Enum.chunk_every(Map.to_list(items), count, step, pad)
+  end
+#: chunk_every/4 form 4 needs chunk_every/4
+  def chunk_every(items: map[k, v], count: integer, step: integer, pad: atom): list[list[tuple[k, v]]] do
+    Enum.chunk_every(Map.to_list(items), count, step, pad)
+  end
+#: into/3
+  def into(items: list[x], target: list[a], f: fn[x, a]): list[a] do
+    target ++ Enum.map(items, f)
+  end
+#: into/3 form 2
+  def into(items: list[x], target: map[k, v], f: fn[x, tuple[k, v]]): map[k, v] do
+    Enum.reduce(items, target, fn x, acc ->
+      p = f(x)
+      Map.put(acc, elem(p, 0), elem(p, 1))
+    end)
+  end
+#: into/3 form 3
+  def into(items: list[x], target: string, f: fn[x, string]): string do
+    target <> Enum.join(Enum.map(items, f), "")
+  end
+#: into/3 form 4 needs into/3
+  def into(items: map[k, v], target: map[j, w], f: fn[tuple[k, v], tuple[j, w]]): map[j, w] do
+    Enum.into(Map.to_list(items), target, f)
+  end
+#: max/3 needs o_sort/2
+  def max(items: stream[a], f: fn[a, a, boolean], empty: fn[a]): a do
+    case Enum.o_least(items, fn x, y -> f(x, y) and not f(y, x) end) do
+      some(x) -> x
+      none -> empty()
+    end
+  end
+#: min/3 needs max/3
+  def min(items: stream[a], f: fn[a, a, boolean], empty: fn[a]): a do Enum.max(items, f, empty) end
+#: zip/1 needs List.zip/1
+  def zip(lists: list[list[a]]): list[list[a]] do
+    List.zip(lists)
+  end
+#: zip_with/2 needs List.zip/1
+  def zip_with(lists: list[list[a]], f: fn[list[a], b]): list[b] do
+    Enum.map(List.zip(lists), f)
+  end
+# Ordered functions. A type variable whose name starts with "ord" has an
+# order: the compiler makes it for the type each call gives, as it makes
+# equality (spec/alchem-ordering.md), and rejects a call whose type the
+# pinned language does not order. On values of such a variable < <= > >= are
+# the pinned less(x, y) both ways round: a NaN is neither less nor more.
+# Each function works on a strict order l(x, y), "x is before y", and sorts
+# with o_sort, as the pinned runtime does. o_least is the first least
+# element of a stream, read as the pinned runtime reads it: one element,
+# then one comparison (o_first fails when there is none). o_dir turns the
+# order for :desc, o_keys sorts by keys, o_by is the least by a key, asking
+# the key function for both elements at every comparison as the pinned
+# runtime does, and o_pdq is List.sort. A name that starts with o_ is the
+# library's own: a program cannot call it. A form that takes a list is given
+# a map, a set, a range or a stream as the list of its elements, which is
+# when the pinned function too reads everything before it compares; the
+# forms over a stream are the functions that compare while they read.
+#: o_keys/3 needs o_sort/2
+  def o_keys(i: list[a], k: list[b], l: fn[b, b, boolean]): list[a] do
+    n = length(i)
+    g: fn[integer, integer, boolean] = fn x, y -> l(Enum.at(k, x, hd(k)), Enum.at(k, y, hd(k))) end
+    if n < 2 do i else Enum.map(Enum.o_sort(Enum.map(0..n - 1, fn x -> x end), g), fn x -> Enum.at(i, x, hd(i)) end) end
+  end
+  def o_by(i: stream[a], f: fn[a, b], l: fn[b, b, boolean]): a do
+    Enum.o_first(i, fn x, y -> l(f(x), f(y)) end)
+  end
+#: o_pdq/1
+  def o_pdq(i: list[ord]): list[ord] do
+    g: fn[ord, ord, boolean] = fn x, y -> y < x end
+    Enum.reverse(Enum.o_unstable(Enum.reverse(i), g))
+  end
+#: sort/1
+# Integers and strings that are equal are the same, so the order the
+# stable sort would leave them in is the one any sort leaves: they go
+# through the unstable one, which asks less often.
+  def sort(i: list[integer]): list[integer] do
+    g: fn[integer, integer, boolean] = fn x, y -> x < y end
+    Enum.o_unstable(i, g)
+  end
+#: sort/1 form 2
+  def sort(i: list[string]): list[string] do
+    g: fn[string, string, boolean] = fn x, y -> x < y end
+    Enum.o_unstable(i, g)
+  end
+#: sort/1 form 3 needs o_sort/2
+  def sort(i: list[ord]): list[ord] do Enum.o_sort(i, fn x, y -> x < y end) end
+#: max/1 needs o_sort/2
+  def max(i: stream[ord]): ord do Enum.o_first(i, fn x, y -> y < x end) end
+#: min/1 needs o_sort/2
+  def min(i: stream[ord]): ord do Enum.o_first(i, fn x, y -> x < y end) end
+#: min_max/1 needs o_sort/2
+  def min_max(i: list[ord]): tuple[ord, ord] do {Enum.o_first(i, fn x, y -> x < y end), Enum.o_first(i, fn x, y -> y < x end)} end
+#: sort/2 form 2 needs o_sort/2
+  def sort(i: list[ord], o: atom): list[ord] do
+    l: fn[ord, ord, boolean] = Enum.o_dir(o, fn x, y -> x < y end)
+    Enum.o_sort(i, l)
+  end
+#: max/2 needs o_sort/2
+  def max(i: stream[a], f: fn[a, a, boolean]): a do Enum.o_first(i, fn x, y -> f(x, y) and not f(y, x) end) end
+#: min/2 needs o_sort/2
+  def min(i: stream[a], f: fn[a, a, boolean]): a do Enum.o_first(i, fn x, y -> f(x, y) and not f(y, x) end) end
+#: max/2 form 2 needs o_sort/2
+  def max(i: stream[ord], e: fn[ord]): ord do
+    case Enum.o_least(i, fn x, y -> y < x end) do
+      some(x) -> x
+      none -> e()
+    end
+  end
+#: min/2 form 2 needs o_sort/2
+  def min(i: stream[ord], e: fn[ord]): ord do
+    case Enum.o_least(i, fn x, y -> x < y end) do
+      some(x) -> x
+      none -> e()
+    end
+  end
+#: sort_by/2 needs o_keys/3
+  def sort_by(i: list[a], f: fn[a, ord]): list[a] do Enum.o_keys(i, Enum.map(i, f), fn x, y -> x < y end) end
+#: max_by/2 needs o_keys/3
+  def max_by(i: stream[a], f: fn[a, ord]): a do Enum.o_by(i, f, fn x, y -> y < x end) end
+#: min_by/2 needs o_keys/3
+  def min_by(i: stream[a], f: fn[a, ord]): a do Enum.o_by(i, f, fn x, y -> x < y end) end
+#: min_max_by/2 needs o_keys/3
+  def min_max_by(i: list[a], f: fn[a, ord]): tuple[a, a] do {Enum.o_by(i, f, fn x, y -> x < y end), Enum.o_by(i, f, fn x, y -> y < x end)} end
+#: sort_by/3 needs sort/2
+  def sort_by(i: list[a], f: fn[a, b], o: fn[b, b, boolean]): list[a] do
+    Enum.map(Enum.sort(Enum.map(i, fn x -> {f(x), x} end), fn x, y -> o(elem(x, 0), elem(y, 0)) end), fn x -> elem(x, 1) end)
+  end
+#: sort_by/3 form 2 needs o_keys/3
+  def sort_by(i: list[a], f: fn[a, ord], o: atom): list[a] do
+    l: fn[ord, ord, boolean] = Enum.o_dir(o, fn x, y -> x < y end)
+    Enum.o_keys(i, Enum.map(i, f), l)
+  end
+#: max_by/3 needs o_sort/2
+  def max_by(i: stream[a], f: fn[a, b], s: fn[b, b, boolean]): a do
+    Enum.o_first(i, fn x, y ->
+      p = f(x)
+      q = f(y)
+      s(p, q) and not s(q, p)
+    end)
+  end
+#: min_by/3 needs max_by/3
+  def min_by(i: stream[a], f: fn[a, b], s: fn[b, b, boolean]): a do Enum.max_by(i, f, s) end
+# The same over a list as it is, for a reference such as &Enum.max/1, whose
+# argument is not made a stream.
+#: max/1 form 2 needs max/1
+  def max(i: list[ord]): ord do Enum.o_first(i, fn x, y -> y < x end) end
+#: min/1 form 2 needs min/1
+  def min(i: list[ord]): ord do Enum.o_first(i, fn x, y -> x < y end) end
+#: max/2 form 3 needs max/2
+  def max(i: list[a], f: fn[a, a, boolean]): a do Enum.o_first(i, fn x, y -> f(x, y) and not f(y, x) end) end
+#: min/2 form 3 needs min/2
+  def min(i: list[a], f: fn[a, a, boolean]): a do Enum.o_first(i, fn x, y -> f(x, y) and not f(y, x) end) end
+#: max/2 form 4 needs max/2
+  def max(i: list[ord], e: fn[ord]): ord do if length(i) == 0 do e() else Enum.o_first(i, fn x, y -> y < x end) end end
+#: min/2 form 4 needs min/2
+  def min(i: list[ord], e: fn[ord]): ord do if length(i) == 0 do e() else Enum.o_first(i, fn x, y -> x < y end) end end
+#: max/3 form 2 needs max/3
+  def max(i: list[a], f: fn[a, a, boolean], e: fn[a]): a do if length(i) == 0 do e() else Enum.o_first(i, fn x, y -> f(x, y) and not f(y, x) end) end end
+#: min/3 form 2 needs min/3
+  def min(i: list[a], f: fn[a, a, boolean], e: fn[a]): a do if length(i) == 0 do e() else Enum.o_first(i, fn x, y -> f(x, y) and not f(y, x) end) end end
+#: max_by/2 form 2 needs max_by/2
+  def max_by(i: list[a], f: fn[a, ord]): a do Enum.o_by(i, f, fn x, y -> y < x end) end
+#: min_by/2 form 2 needs min_by/2
+  def min_by(i: list[a], f: fn[a, ord]): a do Enum.o_by(i, f, fn x, y -> x < y end) end
+#: max_by/3 form 2 needs max_by/3
+  def max_by(i: list[a], f: fn[a, b], s: fn[b, b, boolean]): a do
+    Enum.o_first(i, fn x, y ->
+      p = f(x)
+      q = f(y)
+      s(p, q) and not s(q, p)
+    end)
+  end
+#: min_by/3 form 2 needs max_by/3
+  def min_by(i: list[a], f: fn[a, b], s: fn[b, b, boolean]): a do Enum.max_by(i, f, s) end
+# Text of numbers, booleans and atoms, and sums and products of floats.
+#: map_join/2
+  def map_join(i: list[a], f: fn[a, string]): string do Enum.join(Enum.map(i, f), "") end
+#: map_join/3
+  def map_join(i: list[a], s: string, f: fn[a, string]): string do Enum.join(Enum.map(i, f), s) end
+#: join/1
+  def join(i: list[integer]): string do Enum.join(Enum.map(i, fn x -> "#{x}" end), "") end
+#: join/2 needs map_join/2
+  def join(i: list[integer], s: string): string do Enum.join(Enum.map(i, fn x -> "#{x}" end), s) end
+#: sum_by/2
+  def sum_by(i: list[a], f: fn[a, integer]): integer do Enum.reduce(i, 0, fn x, s -> s + f(x) end) end
+#: product_by/2 needs sum_by/2
+  def product_by(i: list[a], f: fn[a, integer]): integer do Enum.reduce(i, 1, fn x, s -> s * f(x) end) end
+#: product/1
+  def product(i: list[integer]): integer do Enum.reduce(i, 1, fn x, s -> s * x end) end
+#: product/1 form 2
+  def product(i: list[float]): float do Enum.reduce(i, 1.0, fn x, s -> s * x end) end
+#: sum_by/2 form 2 needs sum_by/2 product_by/2
+  def sum_by(i: map[k, v], f: fn[tuple[k, v], integer]): integer do Enum.sum_by(Map.to_list(i), f) end
+  def product_by(i: map[k, v], f: fn[tuple[k, v], integer]): integer do Enum.product_by(Map.to_list(i), f) end
+#: sum_by/2 form 3
+  def sum_by(i: list[a], f: fn[a, float]): float do Enum.reduce(i, 0.0, fn x, s -> s + f(x) end) end
+  def product_by(i: list[a], f: fn[a, float]): float do Enum.reduce(i, 1.0, fn x, s -> s * f(x) end) end
+#: sum_by/2 form 4 needs sum_by/2 product_by/2
+  def sum_by(i: map[k, v], f: fn[tuple[k, v], float]): float do Enum.sum_by(Map.to_list(i), f) end
+  def product_by(i: map[k, v], f: fn[tuple[k, v], float]): float do Enum.product_by(Map.to_list(i), f) end
+#: map_join/2 form 2
+  def map_join(i: list[a], f: fn[a, integer]): string do Enum.join(Enum.map(i, fn x -> "#{f(x)}" end), "") end
+#: map_join/3 form 2
+  def map_join(i: list[a], s: string, f: fn[a, integer]): string do Enum.join(Enum.map(i, fn x -> "#{f(x)}" end), s) end
+#: map_join/2 form 3
+  def map_join(i: list[a], f: fn[a, float]): string do Enum.join(Enum.map(i, fn x -> "#{f(x)}" end), "") end
+  def join(i: list[float], s: string): string do Enum.join(Enum.map(i, fn x -> "#{x}" end), s) end
+#: map_join/3 form 3
+  def map_join(i: list[a], s: string, f: fn[a, float]): string do Enum.join(Enum.map(i, fn x -> "#{f(x)}" end), s) end
+#: join/1 form 2
+  def join(i: list[float]): string do Enum.join(Enum.map(i, fn x -> "#{x}" end), "") end
+#: map_join/2 form 4
+  def map_join(i: list[a], f: fn[a, boolean]): string do Enum.join(Enum.map(i, fn x -> "#{f(x)}" end), "") end
+  def join(i: list[boolean], s: string): string do Enum.join(Enum.map(i, fn x -> "#{x}" end), s) end
+#: map_join/3 form 4
+  def map_join(i: list[a], s: string, f: fn[a, boolean]): string do Enum.join(Enum.map(i, fn x -> "#{f(x)}" end), s) end
+#: join/1 form 3
+  def join(i: list[boolean]): string do Enum.join(Enum.map(i, fn x -> "#{x}" end), "") end
+#: map_join/2 form 5
+  def map_join(i: list[a], f: fn[a, atom]): string do Enum.join(Enum.map(i, fn x -> "#{f(x)}" end), "") end
+  def join(i: list[atom], s: string): string do Enum.join(Enum.map(i, fn x -> "#{x}" end), s) end
+#: map_join/3 form 5
+  def map_join(i: list[a], s: string, f: fn[a, atom]): string do Enum.join(Enum.map(i, fn x -> "#{f(x)}" end), s) end
+#: join/1 form 4
+  def join(i: list[atom]): string do Enum.join(Enum.map(i, fn x -> "#{x}" end), "") end
+#: map_join/2 form 6 needs map_join/2
+  def map_join(i: map[k, v], f: fn[tuple[k, v], string]): string do Enum.map_join(Map.to_list(i), f) end
+#: map_join/3 form 6 needs map_join/3
+  def map_join(i: map[k, v], s: string, f: fn[tuple[k, v], string]): string do Enum.map_join(Map.to_list(i), s, f) end
+#: map_join/2 form 7 needs map_join/2
+  def map_join(i: map[k, v], f: fn[tuple[k, v], integer]): string do Enum.map_join(Map.to_list(i), f) end
+#: map_join/3 form 7 needs map_join/3
+  def map_join(i: map[k, v], s: string, f: fn[tuple[k, v], integer]): string do Enum.map_join(Map.to_list(i), s, f) end
+#: map_join/2 form 8 needs map_join/2
+  def map_join(i: map[k, v], f: fn[tuple[k, v], float]): string do Enum.map_join(Map.to_list(i), f) end
+#: map_join/3 form 8 needs map_join/3
+  def map_join(i: map[k, v], s: string, f: fn[tuple[k, v], float]): string do Enum.map_join(Map.to_list(i), s, f) end
+#: map_join/2 form 9 needs map_join/2
+  def map_join(i: map[k, v], f: fn[tuple[k, v], boolean]): string do Enum.map_join(Map.to_list(i), f) end
+#: map_join/3 form 9 needs map_join/3
+  def map_join(i: map[k, v], s: string, f: fn[tuple[k, v], boolean]): string do Enum.map_join(Map.to_list(i), s, f) end
+# Sets and streams (spec/alchem-sets-streams.md).
+#: into/2 form 5 needs Map.merge/2
+  def into(items: list[a], target: set[a]): set[a] do
+    MapSet.__set(Map.merge(MapSet.__map(target), Map.new(Enum.map(items, fn x -> {x, true} end))))
+  end
+#: into/3 form 5 needs Map.merge/2
+  def into(items: list[x], target: set[a], f: fn[x, a]): set[a] do
+    MapSet.__set(Map.merge(MapSet.__map(target), Map.new(Enum.map(items, fn x -> {f(x), true} end))))
+  end
+#: to_list/1 form 4
+  def to_list(s: stream[a]): list[a] do
+    Stream.__list(s)
+  end
+#: each/2 form 2
+  def each(s: stream[a], f: fn[a, b]): tuple[] do
+    w = Stream.__run(s, fn it -> Stream.__until(it, fn x -> Stream.__then(f(x), false) end) end)
+    {}
+  end
+#: reduce/3 form 2
+  def reduce(s: stream[a], start: b, f: fn[a, b, b]): b do
+    acc = some(start)
+    w = Stream.__run(s, fn it -> Stream.__until(it, fn x -> Stream.__then(Stream.__put(acc, f(x, Stream.__get(acc))), false) end) end)
+    Stream.__get(acc)
+  end
+#: reduce/2 form 3 needs reduce/3
+  def reduce(s: stream[a], f: fn[a, a, a]): a do
+    first: option[a] = none
+    acc = Enum.reduce(s, first, fn x, held ->
+      case held do
+        some(y) -> some(f(x, y))
+        none -> some(x)
+      end
+    end)
+    case acc do
+      some(value) -> value
+      none -> raise("empty error")
+    end
+  end
+#: find/2 form 3
+  def find(s: stream[a], f: fn[a, boolean]): option[a] do
+    Stream.__run(s, fn it -> Stream.__until(it, f) end)
+  end
+#: find/3 form 3 needs find/2
+  def find(s: stream[a], default: a, f: fn[a, boolean]): a do
+    case Enum.find(s, f) do
+      some(x) -> x
+      none -> default
+    end
+  end
+#: find_index/2 form 3
+  def find_index(s: stream[a], f: fn[a, boolean]): option[integer] do
+    at = some(0)
+    case Stream.__run(s, fn it -> Stream.__until(it, fn x -> if f(x) do true else Stream.__then(Stream.__put(at, Stream.__get(at) + 1), false) end end) end) do
+      some(_) -> at
+      none -> none
+    end
+  end
+#: find_value/2 form 3
+  def find_value(s: stream[a], f: fn[a, option[b]]): option[b] do
+    start: option[b] = none
+    out = some(start)
+    w = Stream.__run(s, fn it -> Stream.__until(it, fn x -> Stream.__get(Stream.__put(out, f(x))) != none end) end)
+    case Stream.__get(out) do
+      some(x) -> some(x)
+      none -> start
+    end
+  end
+#: find_value/3 form 3 needs find_value/2
+  def find_value(s: stream[a], default: b, f: fn[a, option[b]]): b do
+    case Enum.find_value(s, f) do
+      some(x) -> x
+      none -> default
+    end
+  end
+#: any?/2 form 3
+  def any?(s: stream[a], f: fn[a, boolean]): boolean do
+    case Stream.__run(s, fn it -> Stream.__until(it, f) end) do
+      some(_) -> true
+      none -> false
+    end
+  end
+#: any?/1 form 2 needs any?/2
+  def any?(s: stream[boolean]): boolean do
+    Enum.any?(s, fn x -> x end)
+  end
+#: all?/2 form 3
+  def all?(s: stream[a], f: fn[a, boolean]): boolean do
+    case Stream.__run(s, fn it -> Stream.__until(it, fn x -> not f(x) end) end) do
+      some(_) -> false
+      none -> true
+    end
+  end
+#: all?/1 form 2 needs all?/2
+  def all?(s: stream[boolean]): boolean do
+    Enum.all?(s, fn x -> x end)
+  end
+#: member?/2 form 3 needs any?/2
+  def member?(s: stream[a], value: a): boolean do
+    Enum.any?(s, fn x -> x == value end)
+  end
+# A position from the end is known once the stream ends.
+#: at/2 form 2
+  def at(s: stream[a], index: integer): option[a] do
+    left = some(index)
+    if index < 0 do Enum.at(Stream.__list(s), index) else
+      Stream.__run(s, fn it -> Stream.__until(it, fn x -> Stream.__get(left) == 0 or Stream.__then(Stream.__put(left, Stream.__get(left) - 1), false) end) end)
+    end
+  end
+#: at/3 form 2 needs at/2
+  def at(s: stream[a], index: integer, default: a): a do
+    case Enum.at(s, index) do
+      some(x) -> x
+      none -> default
+    end
+  end
+#: fetch/2 form 2 needs at/2
+  def fetch(s: stream[a], index: integer): option[a] do
+    Enum.at(s, index)
+  end
+#: fetch!/2 form 3 needs at/2
+  def fetch!(s: stream[a], index: integer): a do
+    case Enum.at(s, index) do
+      some(x) -> x
+      none -> raise("out of bounds error")
+    end
+  end
+#: empty?/1
+  def empty?(s: stream[a]): boolean do
+    case Stream.__run(s, fn it -> it() end) do
+      some(_) -> false
+      none -> true
+    end
+  end
+#: count_until/3 form 3
+  def count_until(s: stream[a], f: fn[a, boolean], limit: integer): integer do
+    if limit < 1 do raise("count_until needs a positive limit") end
+    n = some(0)
+    w = Stream.__run(s, fn it -> Stream.__until(it, fn x -> Stream.__get(if f(x) do Stream.__put(n, Stream.__get(n) + 1) else n end) >= limit end) end)
+    Stream.__get(n)
+  end
+#: count_until/2 form 3 needs count_until/3
+  def count_until(s: stream[a], limit: integer): integer do
+    Enum.count_until(s, fn x -> true end, limit)
+  end
+#: reduce_while/3 form 3
+  def reduce_while(s: stream[a], start: b, f: fn[a, b, tuple[boolean, b]]): b do
+    acc = some({false, start})
+    w = Stream.__run(s, fn it -> Stream.__until(it, fn x -> elem(Stream.__get(Stream.__put(acc, f(x, elem(Stream.__get(acc), 1)))), 0) end) end)
+    elem(Stream.__get(acc), 1)
+  end
+#: count/1 needs reduce/3
+  def count(s: stream[a]): integer do
+    Enum.reduce(s, 0, fn x, n -> n + 1 end)
+  end
+#: count/2 form 3 needs reduce/3
+  def count(s: stream[a], f: fn[a, boolean]): integer do
+    Enum.reduce(s, 0, fn x, n -> if f(x) do n + 1 else n end end)
+  end
+#: sum/1 needs reduce/3
+  def sum(s: stream[integer]): integer do
+    Enum.reduce(s, 0, fn x, total -> total + x end)
+  end
+#: slice/3 form 2 needs Stream.take/2 Stream.drop/2
+  def slice(s: stream[a], start: integer, count: integer): list[a] do
+    if count < 0 do raise("slice needs a nonnegative amount") end
+    if start < 0 do Enum.slice(Stream.__list(s), start, count) else Stream.__list(Stream.take(Stream.drop(s, start), count)) end
+  end
+#: zip_reduce/4 form 3 needs reduce/3 Stream.zip/2
+  def zip_reduce(left: stream[a], right: stream[b], acc: c, f: fn[a, b, c, c]): c do
+    Enum.reduce(Stream.zip(left, right), acc, fn pair, state -> f(elem(pair, 0), elem(pair, 1), state) end)
+  end
+#: concat/2 form 4
+  def concat(left: list[a], right: list[a]): list[a] do
+    left ++ right
+  end
+# A function is called for an element as the stream gives it.
+#: sum_by/2 form 5 needs reduce/3
+  def sum_by(s: stream[a], f: fn[a, integer]): integer do
+    Enum.reduce(s, 0, fn x, total -> total + f(x) end)
+  end
+#: product_by/2 form 5 needs reduce/3
+  def product_by(s: stream[a], f: fn[a, integer]): integer do
+    Enum.reduce(s, 1, fn x, total -> total * f(x) end)
+  end
+#: frequencies_by/2 form 3 needs frequencies/1 Stream.map/2
+  def frequencies_by(s: stream[a], f: fn[a, k]): map[k, integer] do
+    Enum.frequencies(Stream.__list(Stream.map(s, f)))
+  end
+#: group_by/3 form 3 needs group_by/3 Stream.map/2
+  def group_by(s: stream[a], key: fn[a, k], value: fn[a, v]): map[k, list[v]] do
+    Enum.group_by(Stream.__list(Stream.map(s, fn x -> {key(x), value(x)} end)), fn pair -> elem(pair, 0) end, fn pair -> elem(pair, 1) end)
+  end
+#: group_by/2 form 3 needs group_by/3
+  def group_by(s: stream[a], key: fn[a, k]): map[k, list[a]] do
+    Enum.group_by(s, key, fn x -> x end)
+  end
+#: split_with/2 form 3 needs Stream.map/2
+  def split_with(s: stream[a], f: fn[a, boolean]): tuple[list[a], list[a]] do
+    pairs = Stream.__list(Stream.map(s, fn x -> {x, f(x)} end))
+    {Enum.map(Enum.filter(pairs, fn pair -> elem(pair, 1) end), fn pair -> elem(pair, 0) end), Enum.map(Enum.filter(pairs, fn pair -> not elem(pair, 1) end), fn pair -> elem(pair, 0) end)}
+  end
+#: map_reduce/3 form 3 needs Stream.map/2
+  def map_reduce(s: stream[a], acc: c, f: fn[a, c, tuple[b, c]]): tuple[list[b], c] do
+    state = some(acc)
+    out = Stream.__list(Stream.map(s, fn x ->
+      step = f(x, Stream.__get(state))
+      Stream.__then(Stream.__put(state, elem(step, 1)), elem(step, 0))
+    end))
+    {out, Stream.__get(state)}
+  end
+#: flat_map_reduce/3 form 3 needs map_reduce/3 List.flatten/1
+  def flat_map_reduce(s: stream[a], acc: c, f: fn[a, c, tuple[list[b], c]]): tuple[list[b], c] do
+    done = Enum.map_reduce(s, acc, f)
+    {List.flatten(elem(done, 0)), elem(done, 1)}
+  end
+#: with_index/2 form 5 needs Stream.map/2 Stream.with_index/1
+  def with_index(s: stream[a], f: fn[a, integer, b]): list[b] do
+    Stream.__list(Stream.map(Stream.with_index(s), fn pair -> f(elem(pair, 0), elem(pair, 1)) end))
+  end
+#: map_intersperse/3 form 3 needs Stream.map/2 intersperse/2
+  def map_intersperse(s: stream[a], separator: b, f: fn[a, b]): list[b] do
+    Enum.intersperse(Stream.__list(Stream.map(s, f)), separator)
+  end
+#: into/3 form 6 needs Stream.map/2
+  def into(s: stream[x], target: list[a], f: fn[x, a]): list[a] do
+    target ++ Stream.__list(Stream.map(s, f))
+  end
+#: into/3 form 7 needs Stream.map/2 into/2
+  def into(s: stream[x], target: map[k, v], f: fn[x, tuple[k, v]]): map[k, v] do
+    Enum.into(Stream.__list(Stream.map(s, f)), target)
+  end
+#: into/3 form 8 needs Stream.map/2 into/2
+  def into(s: stream[x], target: set[a], f: fn[x, a]): set[a] do
+    Enum.into(Stream.__list(Stream.map(s, f)), target)
+  end
+#: into/3 form 9 needs Stream.map/2
+  def into(s: stream[x], target: string, f: fn[x, string]): string do
+    target <> Enum.join(Stream.__list(Stream.map(s, f)), "")
+  end
+#: map_join/3 form 10 needs Stream.map/2
+  def map_join(s: stream[a], separator: string, f: fn[a, string]): string do
+    Enum.join(Stream.__list(Stream.map(s, f)), separator)
+  end
+#: map_join/3 form 11 needs Stream.map/2
+  def map_join(s: stream[a], separator: string, f: fn[a, integer]): string do
+    Enum.join(Stream.__list(Stream.map(s, fn x -> Integer.to_string(f(x)) end)), separator)
+  end
+#: map_join/2 form 10 needs map_join/3
+  def map_join(s: stream[a], f: fn[a, string]): string do
+    Enum.map_join(s, "", f)
+  end
+#: map_join/2 form 11 needs map_join/3
+  def map_join(s: stream[a], f: fn[a, integer]): string do
+    Enum.map_join(s, "", f)
+  end
+# ---- tables ----
+# A table for counting, grouping and telling apart: mapped memory of slots
+# of two words, a key and what is kept for it (never 0, which is a free
+# slot), twice as many as there can be keys, found by a number made of the
+# key and tried one after the other from there. Word 0 is the number of
+# slots less one. A string key is its address and is compared by its
+# bytes. No function of the program runs while a table stands, so it is
+# always given back (h_free); without memory for one (h_new gives 0) the
+# way through a map is taken.
+#: h_new/1 needs h_cap/2
+  def h_new(n: integer): integer do
+    c = Enum.h_cap(16, n * 2)
+    m = Sys.call(9, 0, c * 16 + 16, 3, 34, -1, 0)
+    if m < 0 do 0 else
+      Sys.poke(m, c - 1)
+      m
+    end
+  end
+#: h_cap/2
+  def h_cap(c: integer, n: integer): integer do
+    if c >= n do c else Enum.h_cap(c * 2, n) end
+  end
+#: h_free/1
+  def h_free(t: integer): integer do
+    Sys.call(11, t, (Sys.peek(t) + 1) * 16 + 16)
+  end
+# h_mix: a number of h and the word v, their bits well stirred: two
+# products of 31 bits each, which fit.
+#: h_mix/2
+  def h_mix(h: integer, v: integer): integer do
+    x = h ^^^ v
+    a = (x &&& 2147483647) * 2654435761
+    b = ((x >>> 31) &&& 2147483647) * 2246822519
+    a ^^^ (b <<< 7) ^^^ (b >>> 23) ^^^ (x >>> 62) ^^^ (a >>> 29)
+  end
+# h_int: the slot of the integer k: its own, or the free one it takes.
+#: h_int/2 needs h_mix/2 h_at/3
+  def h_int(t: integer, k: integer): integer do
+    Enum.h_at(t, k, Enum.h_mix(0, k) &&& Sys.peek(t))
+  end
+#: h_at/3
+  def h_at(t: integer, k: integer, i: integer): integer do
+    s = t + 16 + i * 16
+    if Sys.peek(s + 8) == 0 or Sys.peek(s) == k do s else Enum.h_at(t, k, (i + 1) &&& Sys.peek(t)) end
+  end
+# h_str: the slot of the string k. h_hash: the number of n bytes at a,
+# eight at a time.
+#: h_str/2 needs h_hash/3 h_sat/3
+  def h_str(t: integer, k: string): integer do
+    Enum.h_sat(t, k, Enum.h_hash(Sys.addr(k), byte_size(k), byte_size(k)) &&& Sys.peek(t))
+  end
+#: h_hash/3 needs h_mix/2
+  def h_hash(a: integer, n: integer, h: integer): integer do
+    if n >= 8 do Enum.h_hash(a + 8, n - 8, Enum.h_mix(h, Sys.peek(a))) else
+      if n == 0 do h else Enum.h_mix(h, Sys.peek(a) &&& ((1 <<< (n * 8)) - 1)) end
+    end
+  end
+#: h_sat/3
+  def h_sat(t: integer, k: string, i: integer): integer do
+    s = t + 16 + i * 16
+    if Sys.peek(s + 8) == 0 do s else
+      o: string = Process.__any(Sys.peek(s))
+      if o == k do s else Enum.h_sat(t, k, (i + 1) &&& Sys.peek(t)) end
+    end
+  end
+# h_count: every integer counted; the different ones, in no order.
+# h_counts: the same for strings. h_uniq and h_uniqs: those met for the
+# first time before done, the last first. h_group: every item put before
+# the group of its key; the different keys.
+#: h_count/3 needs h_int/2
+  def h_count(items: list[integer], t: integer, ks: list[integer]): list[integer] do
+    case items do
+      [] -> ks
+      [x | rest] ->
+        s = Enum.h_int(t, x)
+        n = Sys.peek(s + 8)
+        Sys.poke(s, x)
+        Sys.poke(s + 8, n + 1)
+        Enum.h_count(rest, t, if n == 0 do [x | ks] else ks end)
+    end
+  end
+#: h_counts/3 needs h_str/2
+  def h_counts(items: list[string], t: integer, ks: list[string]): list[string] do
+    case items do
+      [] -> ks
+      [x | rest] ->
+        s = Enum.h_str(t, x)
+        n = Sys.peek(s + 8)
+        if n == 0 do Sys.poke(s, Process.__word(x)) end
+        Sys.poke(s + 8, n + 1)
+        Enum.h_counts(rest, t, if n == 0 do [x | ks] else ks end)
+    end
+  end
+#: h_uniq/3 needs h_int/2
+  def h_uniq(items: list[integer], t: integer, done: list[integer]): list[integer] do
+    case items do
+      [] -> done
+      [x | rest] ->
+        s = Enum.h_int(t, x)
+        n = Sys.peek(s + 8)
+        Sys.poke(s, x)
+        Sys.poke(s + 8, 1)
+        Enum.h_uniq(rest, t, if n == 0 do [x | done] else done end)
+    end
+  end
+#: h_uniqs/3 needs h_str/2
+  def h_uniqs(items: list[string], t: integer, done: list[string]): list[string] do
+    case items do
+      [] -> done
+      [x | rest] ->
+        s = Enum.h_str(t, x)
+        n = Sys.peek(s + 8)
+        if n == 0 do Sys.poke(s, Process.__word(x)) end
+        Sys.poke(s + 8, 1)
+        Enum.h_uniqs(rest, t, if n == 0 do [x | done] else done end)
+    end
+  end
+#: h_group/4 needs h_int/2
+  def h_group(items: list[a], ks: list[integer], t: integer, ds: list[integer]): list[integer] do
+    case items do
+      [] -> ds
+      [x | rest] ->
+        k = hd(ks)
+        s = Enum.h_int(t, k)
+        v = Sys.peek(s + 8)
+        old: list[a] = if v == 0 do [] else Process.__any(v) end
+        Sys.poke(s, k)
+        Sys.poke(s + 8, Process.__word([x | old]))
+        Enum.h_group(rest, tl(ks), t, if v == 0 do [k | ds] else ds end)
+    end
+  end

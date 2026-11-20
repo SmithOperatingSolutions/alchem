@@ -1,0 +1,440 @@
+# Server: a process that owns a state and answers requests one at a time
+# (compiler/actor/server.go and services.go). A server is a block: 0 its
+# process, or 8 the supervisor whose only child it is; 16 its type, 24 the
+# type of its requests, 32 a function that casts a request to it. A request
+# is a cell: its value, or the function that makes it inside the server,
+# and the cell the answer goes to (0: nobody waits). An answer cell: 1 once
+# it is answered, the answer, who waits (0 when no longer).
+#: struct server also Process Agent Task Server Supervisor Registry Port _receive
+  struct server[q, r] do
+    at: integer
+    k: option[fn[q, r]]
+  end
+# The process that serves now, 0 between restarts; and the process whose
+# end is the server's.
+#: _target/1
+  def _target(s: integer): integer do
+    v = Sys.peek(s + 8)
+    if v == 0 do Sys.peek(s) else Sys.peek(Sys.peek(v + 8) + 24) end
+  end
+#: _life/1
+  def _life(s: integer): integer do
+    v = Sys.peek(s + 8)
+    if v == 0 do Sys.peek(s) else Sys.peek(v) end
+  end
+#: _caster/1 needs _drop/2
+  def _caster(s: integer): integer do
+    f: fn[integer, integer] = fn(w: integer): integer do Server._drop(s, w) end
+    Sys.poke(s + 32, Process.__word(f))
+    s
+  end
+#: _step/1 needs Process._check/1 Process._free/2 Process._g/0 Process._recv/3 _answer/3 _more/3 _value/2
+  def _step(x: integer): integer do
+    g = Process._g()
+    p = Sys.peek(g)
+    Process._check(g)
+    Process._recv(g, p, -1)
+    m = Sys.peek(g + 184)
+    v = Server._value(Sys.peek(m + 8), Sys.peek(m + 16))
+    a = Sys.peek(m + 24)
+    Process._free(g, m)
+    h: fn[integer, integer, tuple[integer, integer]] = Process.__any(Sys.peek(x + 16))
+    {n, r} = h(Sys.peek(x + 8), v)
+    Sys.poke(x + 8, n)
+    if a != 0 do Server._answer(g, a, r) end
+    Server._more(g, p, x)
+  end
+#: _some/1
+  def _some(b: integer): option[server[q, r]] do
+    v: server[q, r] = %server{at: b, k: none}
+    some(v)
+  end
+#: _pass/1 needs Process._check/1 Process._g/0 Process._recv/3 _hand/3 _maker/2
+  def _pass(x: integer): integer do
+    g = Process._g()
+    Process._check(g)
+    Process._recv(g, Sys.peek(g), -1)
+    Server._hand(g, Sys.peek(x + 8), Server._maker(Sys.peek(x + 16), Sys.peek(g + 184)))
+  end
+# A new server block of type t (0: not known).
+#: _block/2 needs Process._take/2 Process._tend/1 _caster/1
+  def _block(g: integer, t: integer): integer do
+    s = Process._take(g, 48)
+    Sys.poke(s + 16, t)
+    if t != 0 do
+      a = t + 8 + 5
+      Sys.poke(s + 24, Process.__word(Sys.text(a, Process._tend(a) - a)))
+    end
+    Server._caster(s)
+  end
+# The request w is queued for the server from outside its callers, as a
+# timer does: it waits up to a second for room.
+#: _drop/2 needs Process._cell/4 Process._g/0 Process._send/4 _target/1
+  def _drop(s: integer, w: integer): integer do
+    g = Process._g()
+    q = Server._target(s)
+    if q == 0 do 0 else Process._send(g, q, Process._cell(g, w, 0, 0), 1000) end
+  end
+# As _drop, for a request that the function value w makes inside the server.
+#: _late/2 needs Process._cell/4 Process._g/0 Process._send/4 _target/1
+  def _late(s: integer, w: integer): integer do
+    g = Process._g()
+    q = Server._target(s)
+    if q == 0 do 0 else Process._send(g, q, Process._cell(g, 0, w, 0), 1000) end
+  end
+#: _value/2
+  def _value(v: integer, w: integer): integer do
+    if w == 0 do v else
+      f: fn[integer] = Process.__any(w)
+      f()
+    end
+  end
+# What tells the server b of an exit: the function value c makes the
+# request from the reason, inside the server.
+#: _teller/2 needs _late/2 _maker/2
+  def _teller(b: integer, c: integer): integer do
+    f: fn[string, integer] = fn(why: string): integer do Server._late(b, Server._maker(c, Process.__word(why))) end
+    Process.__word(f)
+  end
+#: _maker/2 needs _made/2
+  def _maker(c: integer, w: integer): integer do
+    f: fn[integer] = fn(): integer do Server._made(c, w) end
+    Process.__word(f)
+  end
+#: _made/2
+  def _made(c: integer, w: integer): integer do
+    f: fn[integer, integer] = Process.__any(c)
+    f(w)
+  end
+# The running process passes each of its messages to the server b as a
+# request the function value c makes of it.
+#: _forward/2 needs Process._cell/4 Process._g/0 _pass/1
+  def _forward(b: integer, c: integer): integer do
+    x = Process._cell(Process._g(), b, c, 0)
+    st: fn[integer, integer] = fn(a: integer): integer do Server._pass(a) end
+    Process.__until(st, x)
+  end
+# The body of a supervisor's child that runs a server under the name n
+# (compiler/actor/server.go: ServerChild). x: the first state, the handler,
+# the type of the requests and where the program asked. The child lives as
+# long as its server, which ends with it.
+#: _kid/2 needs Process._await/3 Process._cancel/4 Process._fresh/2 Process._g/0 Process._start/3 Process._take/2 _caster/1 _kept/4 _run/3
+  def _kid(n: string, x: tuple[integer, integer, integer, integer]): integer do
+    g = Process._g()
+    c = Sys.peek(g)
+    {w, h, qt, place} = x
+    p = Process._fresh(g, 1024)
+    Sys.poke(p + 144, Process.__word("server"))
+    b = Process._take(g, 48)
+    Sys.poke(b + 24, qt)
+    Server._caster(b)
+    Sys.poke(b, p)
+    f: fn[integer] = fn(): integer do Server._run(b, w, h) end
+    Process._start(g, p, Process.__word(f))
+    try do
+      Server._kept(g, b, n, place)
+    after
+      Process._cancel(g, p, Process.__word("shutdown"), 0)
+      Process._await(g, c, p)
+    end
+  end
+#: _run/3 needs Process._check/1 Process._ended/0 Process._g/0 Process._note/1 _serve/3
+  def _run(s: integer, w: integer, h: integer): integer do
+    try do
+      Process._check(Process._g())
+      Process.__depth(1)
+      Server._serve(s, w, h)
+    rescue
+      m when Process._note(m) -> 0
+    after
+      Process._ended()
+    end
+  end
+# The running process serves s from the state w with the handler h.
+#: _serve/3 needs Process._cell/4 Process._g/0 _step/1
+  def _serve(s: integer, w: integer, h: integer): integer do
+    g = Process._g()
+    Sys.poke(Sys.peek(g) + 272, s)
+    x = Process._cell(g, w, h, 0)
+    st: fn[integer, integer] = fn(a: integer): integer do Server._step(a) end
+    Process.__until(st, x)
+  end
+#: _answer/3 needs Process._free/2 Process._ready/2
+  def _answer(g: integer, a: integer, r: integer): integer do
+    c = Sys.peek(a + 24)
+    if c == 0 do Process._free(g, a) else
+      Sys.poke(a + 16, r)
+      Sys.poke(a + 8, 1)
+      Process._ready(g, c)
+    end
+  end
+# The requests the handler continued, before any that waits.
+#: _more/3 needs Process._free/2 Process._get/1
+  def _more(g: integer, p: integer, x: integer): integer do
+    m = Process._get(p + 280)
+    if m == 0 do 0 else
+      v = Sys.peek(m + 8)
+      Process._free(g, m)
+      h: fn[integer, integer, tuple[integer, integer]] = Process.__any(Sys.peek(x + 16))
+      {n, r} = h(Sys.peek(x + 8), v)
+      Sys.poke(x + 8, n)
+      Server._more(g, p, x)
+    end
+  end
+# What is left of ms milliseconds since the time t0.
+#: _left/3 needs Process._now/1
+  def _left(g: integer, t0: integer, ms: integer): integer do
+    e = div(Process._now(g) - t0, 1000000)
+    if ms <= 0 do ms else if e >= ms do 0 else ms - e end end
+  end
+#: _call/3 needs Process._cell/4 Process._check/1 Process._due/2 Process._free/2 Process._g/0 Process._now/1 _left/3 _post/5 _reply/4
+  def _call(s: integer, w: integer, ms: integer): integer do
+    g = Process._g()
+    Process._check(g)
+    t0 = Process._now(g)
+    a = Process._cell(g, 0, 0, Sys.peek(g))
+    m = Process._cell(g, w, 0, a)
+    q = Server._post(g, s, m, ms, t0)
+    if q <= 2 do
+      Process._free(g, m)
+      Process._free(g, a)
+      q
+    else
+      left = Server._left(g, t0, ms)
+      Server._reply(g, q, a, Process._due(g, if ms > 0 and left == 0 do 1 else left end))
+    end
+  end
+# A supervised server between restarts gets the request once it runs again.
+#: _hand/3 needs Process._nap/1 _late/2 _life/1
+  def _hand(g: integer, b: integer, w: integer): integer do
+    if Server._late(b, w) == 1 do 0 else
+      if Sys.peek(Server._life(b) + 56) == 1 do 0 else
+        Process._nap(g)
+        Server._hand(g, b, w)
+      end
+    end
+  end
+#: start/2 needs Process._fresh/2 Process._g/0 Process._start/3 _block/2 _run/3
+  def start(state: s, handle: fn[s, q, tuple[s, r]]): server[q, r] do
+    t = Sys.peek(Sys.stack() - 48)
+    g = Process._g()
+    p = Process._fresh(g, 1024)
+    Sys.poke(p + 144, Process.__word("server"))
+    b = Server._block(g, t)
+    Sys.poke(b, p)
+    w = Process.__word(state)
+    h = Process.__word(handle)
+    f: fn[integer] = fn(): integer do Server._run(b, w, h) end
+    Process._start(g, p, Process.__word(f))
+    v: server[q, r] = %server{at: b, k: none}
+    v
+  end
+# A server that the process c owns and that is started again, from its
+# first state, when its handler fails: the only child of a supervisor.
+#: _supervised/6 needs Process._g/0 Supervisor._begin/6 _block/2 _serve/3
+  def _supervised(c: integer, t: integer, w: integer, h: integer, nums: tuple[integer, integer], place: integer): integer do
+    g = Process._g()
+    b = Server._block(g, t)
+    body: fn[pid[integer], integer] = fn(me: pid[integer]): integer do Server._serve(b, w, h) end
+    Sys.poke(b + 8, Supervisor._begin(c, place, Process.__word("server"), "one_for_one", {elem(nums, 0), elem(nums, 1), 1024, 0}, [{"server", "permanent", body}]))
+    b
+  end
+#: start_supervised/4 needs Process._g/0 _supervised/6
+  def start_supervised(state: s, handle: fn[s, q, tuple[s, r]], limit: integer, window: integer): server[q, r] do
+    t = Sys.peek(Sys.stack() - 48)
+    place = Stream.__where()
+    v: server[q, r] = %server{at: Server._supervised(Sys.peek(Process._g()), t, Process.__word(state), Process.__word(handle), {limit, window}, place), k: none}
+    v
+  end
+# The request cell m is sent to whichever process serves s: that process,
+# or 1 when the time ran out, or 2 when the server is not running.
+#: _post/5 needs Process._nap/1 Process._send/4 _left/3 _life/1 _target/1
+  def _post(g: integer, s: integer, m: integer, ms: integer, t0: integer): integer do
+    c = Sys.peek(g)
+    q = Server._target(s)
+    if q == c do raise("a server cannot call itself") end
+    sent = if q == 0 do 0 else Process._send(g, q, m, Server._left(g, t0, ms)) end
+    if sent == 1 do q else
+      if q != 0 and Sys.peek(q + 56) == 0 do 1 else
+        if Sys.peek(s + 8) == 0 or Sys.peek(Server._life(s) + 56) == 1 do 2 else
+          if ms == 0 or (ms > 0 and Server._left(g, t0, ms) == 0) do 1 else
+            Process._nap(g)
+            Server._post(g, s, m, ms, t0)
+          end
+        end
+      end
+    end
+  end
+# The answer in the cell a, awaited until the time d or the end of q: 0
+# with the answer at g + 184, 1 when the time ran out, 3 when q ended, its
+# reason at g + 184.
+#: _reply/4 needs Process._check/1 Process._drop/3 Process._free/2 Process._has/2 Process._push/5 Process._wait/2
+  def _reply(g: integer, q: integer, a: integer, d: integer): integer do
+    c = Sys.peek(g)
+    if Sys.peek(a + 8) == 1 do
+      Sys.poke(g + 184, Sys.peek(a + 16))
+      Process._free(g, a)
+      0
+    else
+      if Sys.peek(q + 376) == 1 do
+        Sys.poke(g + 184, Sys.peek(q + 160))
+        Process._free(g, a)
+        3
+      else
+        if Process._has(q + 248, c) == 0 do Process._push(g, q + 248, c, 0, 0) end
+        x = Process._wait(g, d)
+        if Sys.peek(a + 8) == 1 or Sys.peek(q + 376) == 1 do Server._reply(g, q, a, d) else
+          if x == 1 or Sys.peek(c + 56) == 1 do
+            Sys.poke(a + 24, 0)
+            Process._drop(g, q + 248, c)
+            Process._check(g)
+            1
+          else Server._reply(g, q, a, d) end
+        end
+      end
+    end
+  end
+#: _kept/4 needs Process._abnormal/1 Process._join/4 Process._name/6 Process._ready/2 Process._reason/1
+  def _kept(g: integer, b: integer, n: string, place: integer): integer do
+    c = Sys.peek(g)
+    p = Sys.peek(b)
+    if Process._name(g, n, p, 1, 0, b) == 0 do Stream.__fail(place, "Supervisor.server: the name " <> n <> " is already registered") end
+    if Sys.peek(c + 288) == 1 do
+      Sys.poke(c + 288, 2)
+      Process._ready(g, Sys.peek(c + 280))
+    end
+    Process._join(g, c, p, 0)
+    if Process._abnormal(Sys.peek(p + 160)) == 1 do Stream.__fail(place, "server " <> n <> " failed: " <> Process._reason(p)) end
+    0
+  end
+
+#: call/3 needs Process._g/0 _call/3
+  def call(s: server[q, r], v: q, ms: integer): result[r, string] do
+    k = Server._call(s.at, Process.__word(v), ms)
+    g = Process._g()
+    if k == 0 do ok(Process.__any(Sys.peek(g + 184))) else
+      if k == 1 do error("timeout") else
+        if k == 2 do error("server is not running") else
+          why: string = Process.__any(Sys.peek(g + 184))
+          error("server stopped: " <> why)
+        end
+      end
+    end
+  end
+#: cast/2 needs Process._cell/4 Process._check/1 Process._g/0 Process._send/4 _target/1
+  def cast(s: server[q, r], v: q): boolean do
+    g = Process._g()
+    Process._check(g)
+    t = Server._target(s.at)
+    if t == 0 do false else Process._send(g, t, Process._cell(g, Process.__word(v), 0, 0), 0) == 1 end
+  end
+#: stop/1 needs Process._halt/1 _life/1
+  def stop(s: server[q, r]): boolean do
+    Process._halt(Server._life(s.at))
+  end
+#: alive/1 needs Process._check/1 Process._g/0 _life/1
+  def alive(s: server[q, r]): boolean do
+    Process._check(Process._g())
+    t = Server._life(s.at)
+    Sys.peek(t + 56) + Sys.peek(t + 376) == 0
+  end
+#: await/2 needs Process._check/1 Process._g/0 Process._joined/3 Process._reason/1 _life/1
+  def await(s: server[q, r], ms: integer): tuple[boolean, string] do
+    g = Process._g()
+    Process._check(g)
+    t = Server._life(s.at)
+    if t == Sys.peek(g) do raise("cannot await self") end
+    if Process._joined(g, t, ms) == 1 do {true, Process._reason(t)} else {false, ""} end
+  end
+#: restarts/1
+  def restarts(s: server[q, r]): integer do
+    v = Sys.peek(s.at + 8)
+    if v == 0 do 0 else Sys.peek(v + 56) end
+  end
+#: self/0 needs Process._check/1 Process._g/0 Process._same/2
+  def self(): server[q, r] do
+    t = Sys.peek(Sys.stack() - 48)
+    g = Process._g()
+    Process._check(g)
+    b = Sys.peek(Sys.peek(g) + 272)
+    if b == 0 do raise("Server.self is called from a process that is not a server") end
+    if Process._same(Sys.peek(b + 16), t) == 0 do raise("Server.self is called by a server of other request and reply types") end
+    v: server[q, r] = %server{at: b, k: none}
+    v
+  end
+#: continue/1 needs Process._check/1 Process._g/0 Process._put/5 Process._same/2
+  def continue(v: q): boolean do
+    t = Sys.peek(Sys.stack() - 48)
+    g = Process._g()
+    Process._check(g)
+    p = Sys.peek(g)
+    b = Sys.peek(p + 272)
+    if b == 0 do raise("Server.continue is called from a process that is not a server") end
+    if Process._same(Sys.peek(b + 24), t) == 0 do raise("Server.continue is given a request of another type than its server's") end
+    Process._put(g, p + 280, Process.__word(v), 0, 0)
+    true
+  end
+#: register/2 needs Atom.to_string/1 Process._check/1 Process._g/0 Process._name/6 _life/1
+  def register(s: server[q, r], n: atom): boolean do
+    g = Process._g()
+    Process._check(g)
+    Process._name(g, Atom.to_string(n), Server._life(s.at), 1, Sys.peek(s.at + 16), s.at) == 1
+  end
+#: whereis/1 needs Atom.to_string/1 Process._g/0 Process._lookup/2 Process._same/2 _some/1
+  def whereis(n: atom): option[server[q, r]] do
+    t = Sys.peek(Sys.stack() - 48)
+    x = Process._lookup(Process._g(), Atom.to_string(n))
+    if x == 0 do none else
+      if Sys.peek(x + 8) != 1 do none else
+        if Process._same(Sys.peek(x + 16), t) == 0 do none else Server._some(Sys.peek(x + 24)) end
+      end
+    end
+  end
+#: send_after/3 needs Process._check/1 Process._g/0 Process._later/4 _drop/2 _life/1
+  def send_after(s: server[q, r], v: q, ms: integer): integer do
+    g = Process._g()
+    Process._check(g)
+    b = s.at
+    w = Process.__word(v)
+    f: fn[integer] = fn(): integer do Server._drop(b, w) end
+    Process._later(g, ms, Server._life(b), Process.__word(f))
+  end
+#: monitor/3 needs Process._check/1 Process._g/0 Process._onend/3 Process._spawn/4 _teller/2 _watch/2
+  def monitor(s: server[q, r], p: pid[a], f: fn[string, q]): boolean do
+    g = Process._g()
+    Process._check(g)
+    tell = Server._teller(s.at, Process.__word(f))
+    at = p.at
+    if Sys.peek(at + 320) == 2 do
+      body: fn[pid[integer], integer] = fn(me: pid[integer]): integer do Server._watch(at, tell) end
+      Process._spawn(g, Process.__word(body), 1, 0)
+    else Process._onend(g, at, tell) end
+    true
+  end
+# A process of another node is watched through the monitor of a helper
+# process, which passes its end on (services.go: ServerMonitor).
+#: _watch/2 needs Process._far/3 Process._free/2 Process._g/0 Process._next/3
+  def _watch(at: integer, tell: integer): integer do
+    g = Process._g()
+    Process._far(3, at, Sys.peek(g))
+    x = Process._next(g, Sys.peek(g), 0)
+    why: string = Process.__any(Sys.peek(x + 24))
+    Process._free(g, x)
+    f: fn[string, integer] = Process.__any(tell)
+    f(why)
+    0
+  end
+#: mailbox/2 needs Process._cancel/4 Process._g/0 Process._onend/3 Process._spawn/4 _forward/2 _life/1
+  def mailbox(s: server[q, r], f: fn[m, q]): pid[m] do
+    t = Sys.peek(Sys.stack() - 48)
+    g = Process._g()
+    b = s.at
+    c = Process.__word(f)
+    body: fn[pid[integer], integer] = fn(me: pid[integer]): integer do Server._forward(b, c) end
+    p = Process._spawn(g, Process.__word(body), 1024, t)
+    life = Server._life(b)
+    stop: fn[string, integer] = fn(why: string): integer do Process._cancel(Process._g(), p, Process.__word("shutdown"), 0) end
+    Process._onend(g, life, Process.__word(stop))
+    v: pid[m] = %pid{at: p, k: none}
+    v
+  end

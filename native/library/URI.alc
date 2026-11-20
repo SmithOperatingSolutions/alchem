@@ -1,0 +1,601 @@
+# URI: the functions written in Alchem, after Go's net/url as the pinned
+# runtime uses it. A string gives no access to its bytes, so a byte is found
+# by comparison (strings order by their bytes) and made from the 256 one-byte
+# literals of uri_byte, and text is cut with String.split, which works on
+# bytes. The private functions (defp) are entries of their own under /1
+# whatever they take, so that they are appended to the module of the
+# one-argument functions, which are the ones that use them.
+#: decode/1 needs uri_escape/1
+  def decode(text: string): result[string, string] do
+    parts = String.split(text, "%")
+    pieces = Enum.map(tl(parts), fn part -> uri_escape(part) end)
+    if "" in pieces do error("malformed URI " <> inspect(text)) else ok(hd(parts) <> Enum.join(pieces, "")) end
+  end
+#: uri_escape/1 needs uri_hex/1 uri_after/1 uri_byte/1
+# The text after a %: its two hexadecimal digits as one byte and the rest,
+# "" when it does not start with two.
+  defp uri_escape(part: string): string do
+    first = uri_hex(part)
+    if first == "" do "" else
+      rest = uri_after(part, first)
+      second = uri_hex(rest)
+      if second == "" do "" else
+        case Integer.parse(first <> second, 16) do
+          ok(value) -> uri_byte(value) <> uri_after(rest, second)
+          error(_) -> ""
+        end
+      end
+    end
+  end
+#: uri_after/1
+# text without the one-byte start it begins with.
+  defp uri_after(text: string, start: string): string do
+    pieces = tl(String.split(text, start))
+    if length(pieces) == 1 do hd(pieces) else Enum.join(pieces, start) end
+  end
+#: uri_hex/1
+# The hexadecimal digit text starts with, "" if none.
+  defp uri_hex(text: string): string do
+    cond do
+      String.starts_with?(text, "0") -> "0"
+      String.starts_with?(text, "1") -> "1"
+      String.starts_with?(text, "2") -> "2"
+      String.starts_with?(text, "3") -> "3"
+      String.starts_with?(text, "4") -> "4"
+      String.starts_with?(text, "5") -> "5"
+      String.starts_with?(text, "6") -> "6"
+      String.starts_with?(text, "7") -> "7"
+      String.starts_with?(text, "8") -> "8"
+      String.starts_with?(text, "9") -> "9"
+      String.starts_with?(text, "a") -> "a"
+      String.starts_with?(text, "b") -> "b"
+      String.starts_with?(text, "c") -> "c"
+      String.starts_with?(text, "d") -> "d"
+      String.starts_with?(text, "e") -> "e"
+      String.starts_with?(text, "f") -> "f"
+      String.starts_with?(text, "A") -> "A"
+      String.starts_with?(text, "B") -> "B"
+      String.starts_with?(text, "C") -> "C"
+      String.starts_with?(text, "D") -> "D"
+      String.starts_with?(text, "E") -> "E"
+      String.starts_with?(text, "F") -> "F"
+      true -> ""
+    end
+  end
+#: uri_byte/1 needs uri_row0/1 uri_row1/1 uri_row2/1 uri_row3/1 uri_row4/1 uri_row5/1 uri_row6/1 uri_row7/1 uri_row8/1 uri_row9/1 uri_row10/1 uri_row11/1 uri_row12/1 uri_row13/1 uri_row14/1 uri_row15/1
+# The string of one byte.
+  defp uri_byte(value: integer): string do
+    low = rem(value, 16)
+    case div(value, 16) do
+      0 -> uri_row0(low)
+      1 -> uri_row1(low)
+      2 -> uri_row2(low)
+      3 -> uri_row3(low)
+      4 -> uri_row4(low)
+      5 -> uri_row5(low)
+      6 -> uri_row6(low)
+      7 -> uri_row7(low)
+      8 -> uri_row8(low)
+      9 -> uri_row9(low)
+      10 -> uri_row10(low)
+      11 -> uri_row11(low)
+      12 -> uri_row12(low)
+      13 -> uri_row13(low)
+      14 -> uri_row14(low)
+      _ -> uri_row15(low)
+    end
+  end
+#: uri_row0/1
+  defp uri_row0(low: integer): string do
+    case low do 0 -> "\x00" 1 -> "\x01" 2 -> "\x02" 3 -> "\x03" 4 -> "\x04" 5 -> "\x05" 6 -> "\x06" 7 -> "\x07" 8 -> "\x08" 9 -> "\x09" 10 -> "\x0A" 11 -> "\x0B" 12 -> "\x0C" 13 -> "\x0D" 14 -> "\x0E" _ -> "\x0F" end
+  end
+#: uri_row1/1
+  defp uri_row1(low: integer): string do
+    case low do 0 -> "\x10" 1 -> "\x11" 2 -> "\x12" 3 -> "\x13" 4 -> "\x14" 5 -> "\x15" 6 -> "\x16" 7 -> "\x17" 8 -> "\x18" 9 -> "\x19" 10 -> "\x1A" 11 -> "\x1B" 12 -> "\x1C" 13 -> "\x1D" 14 -> "\x1E" _ -> "\x1F" end
+  end
+#: uri_row2/1
+  defp uri_row2(low: integer): string do
+    case low do 0 -> "\x20" 1 -> "\x21" 2 -> "\x22" 3 -> "\x23" 4 -> "\x24" 5 -> "\x25" 6 -> "\x26" 7 -> "\x27" 8 -> "\x28" 9 -> "\x29" 10 -> "\x2A" 11 -> "\x2B" 12 -> "\x2C" 13 -> "\x2D" 14 -> "\x2E" _ -> "\x2F" end
+  end
+#: uri_row3/1
+  defp uri_row3(low: integer): string do
+    case low do 0 -> "\x30" 1 -> "\x31" 2 -> "\x32" 3 -> "\x33" 4 -> "\x34" 5 -> "\x35" 6 -> "\x36" 7 -> "\x37" 8 -> "\x38" 9 -> "\x39" 10 -> "\x3A" 11 -> "\x3B" 12 -> "\x3C" 13 -> "\x3D" 14 -> "\x3E" _ -> "\x3F" end
+  end
+#: uri_row4/1
+  defp uri_row4(low: integer): string do
+    case low do 0 -> "\x40" 1 -> "\x41" 2 -> "\x42" 3 -> "\x43" 4 -> "\x44" 5 -> "\x45" 6 -> "\x46" 7 -> "\x47" 8 -> "\x48" 9 -> "\x49" 10 -> "\x4A" 11 -> "\x4B" 12 -> "\x4C" 13 -> "\x4D" 14 -> "\x4E" _ -> "\x4F" end
+  end
+#: uri_row5/1
+  defp uri_row5(low: integer): string do
+    case low do 0 -> "\x50" 1 -> "\x51" 2 -> "\x52" 3 -> "\x53" 4 -> "\x54" 5 -> "\x55" 6 -> "\x56" 7 -> "\x57" 8 -> "\x58" 9 -> "\x59" 10 -> "\x5A" 11 -> "\x5B" 12 -> "\x5C" 13 -> "\x5D" 14 -> "\x5E" _ -> "\x5F" end
+  end
+#: uri_row6/1
+  defp uri_row6(low: integer): string do
+    case low do 0 -> "\x60" 1 -> "\x61" 2 -> "\x62" 3 -> "\x63" 4 -> "\x64" 5 -> "\x65" 6 -> "\x66" 7 -> "\x67" 8 -> "\x68" 9 -> "\x69" 10 -> "\x6A" 11 -> "\x6B" 12 -> "\x6C" 13 -> "\x6D" 14 -> "\x6E" _ -> "\x6F" end
+  end
+#: uri_row7/1
+  defp uri_row7(low: integer): string do
+    case low do 0 -> "\x70" 1 -> "\x71" 2 -> "\x72" 3 -> "\x73" 4 -> "\x74" 5 -> "\x75" 6 -> "\x76" 7 -> "\x77" 8 -> "\x78" 9 -> "\x79" 10 -> "\x7A" 11 -> "\x7B" 12 -> "\x7C" 13 -> "\x7D" 14 -> "\x7E" _ -> "\x7F" end
+  end
+#: uri_row8/1
+  defp uri_row8(low: integer): string do
+    case low do 0 -> "\x80" 1 -> "\x81" 2 -> "\x82" 3 -> "\x83" 4 -> "\x84" 5 -> "\x85" 6 -> "\x86" 7 -> "\x87" 8 -> "\x88" 9 -> "\x89" 10 -> "\x8A" 11 -> "\x8B" 12 -> "\x8C" 13 -> "\x8D" 14 -> "\x8E" _ -> "\x8F" end
+  end
+#: uri_row9/1
+  defp uri_row9(low: integer): string do
+    case low do 0 -> "\x90" 1 -> "\x91" 2 -> "\x92" 3 -> "\x93" 4 -> "\x94" 5 -> "\x95" 6 -> "\x96" 7 -> "\x97" 8 -> "\x98" 9 -> "\x99" 10 -> "\x9A" 11 -> "\x9B" 12 -> "\x9C" 13 -> "\x9D" 14 -> "\x9E" _ -> "\x9F" end
+  end
+#: uri_row10/1
+  defp uri_row10(low: integer): string do
+    case low do 0 -> "\xA0" 1 -> "\xA1" 2 -> "\xA2" 3 -> "\xA3" 4 -> "\xA4" 5 -> "\xA5" 6 -> "\xA6" 7 -> "\xA7" 8 -> "\xA8" 9 -> "\xA9" 10 -> "\xAA" 11 -> "\xAB" 12 -> "\xAC" 13 -> "\xAD" 14 -> "\xAE" _ -> "\xAF" end
+  end
+#: uri_row11/1
+  defp uri_row11(low: integer): string do
+    case low do 0 -> "\xB0" 1 -> "\xB1" 2 -> "\xB2" 3 -> "\xB3" 4 -> "\xB4" 5 -> "\xB5" 6 -> "\xB6" 7 -> "\xB7" 8 -> "\xB8" 9 -> "\xB9" 10 -> "\xBA" 11 -> "\xBB" 12 -> "\xBC" 13 -> "\xBD" 14 -> "\xBE" _ -> "\xBF" end
+  end
+#: uri_row12/1
+  defp uri_row12(low: integer): string do
+    case low do 0 -> "\xC0" 1 -> "\xC1" 2 -> "\xC2" 3 -> "\xC3" 4 -> "\xC4" 5 -> "\xC5" 6 -> "\xC6" 7 -> "\xC7" 8 -> "\xC8" 9 -> "\xC9" 10 -> "\xCA" 11 -> "\xCB" 12 -> "\xCC" 13 -> "\xCD" 14 -> "\xCE" _ -> "\xCF" end
+  end
+#: uri_row13/1
+  defp uri_row13(low: integer): string do
+    case low do 0 -> "\xD0" 1 -> "\xD1" 2 -> "\xD2" 3 -> "\xD3" 4 -> "\xD4" 5 -> "\xD5" 6 -> "\xD6" 7 -> "\xD7" 8 -> "\xD8" 9 -> "\xD9" 10 -> "\xDA" 11 -> "\xDB" 12 -> "\xDC" 13 -> "\xDD" 14 -> "\xDE" _ -> "\xDF" end
+  end
+#: uri_row14/1
+  defp uri_row14(low: integer): string do
+    case low do 0 -> "\xE0" 1 -> "\xE1" 2 -> "\xE2" 3 -> "\xE3" 4 -> "\xE4" 5 -> "\xE5" 6 -> "\xE6" 7 -> "\xE7" 8 -> "\xE8" 9 -> "\xE9" 10 -> "\xEA" 11 -> "\xEB" 12 -> "\xEC" 13 -> "\xED" 14 -> "\xEE" _ -> "\xEF" end
+  end
+#: uri_row15/1
+  defp uri_row15(low: integer): string do
+    case low do 0 -> "\xF0" 1 -> "\xF1" 2 -> "\xF2" 3 -> "\xF3" 4 -> "\xF4" 5 -> "\xF5" 6 -> "\xF6" 7 -> "\xF7" 8 -> "\xF8" 9 -> "\xF9" 10 -> "\xFA" 11 -> "\xFB" 12 -> "\xFC" 13 -> "\xFD" 14 -> "\xFE" _ -> "\xFF" end
+  end
+#: uri_first/1 needs uri_byte/1
+# The first byte of text, which is not empty.
+  defp uri_first(text: string): integer do
+    uri_find(text, 0, 255)
+  end
+  defp uri_find(text: string, low: integer, high: integer): integer do
+    middle = div(low + high + 1, 2)
+    if low >= high do low else
+      if text >= uri_byte(middle) do uri_find(text, middle, high) else uri_find(text, low, middle - 1) end
+    end
+  end
+#: uri_quote/1 needs uri_first/1 uri_byte/1
+# text with every byte that is not in keep written as %XX. Text is halved
+# down to its characters, and a character of several bytes is cut at its
+# first byte until none are left.
+  defp uri_quote(text: string, keep: string): string do
+    count = String.length(text)
+    if count > 1 do uri_quote(String.slice(text, 0, div(count, 2)), keep) <> uri_quote(String.slice(text, div(count, 2), count), keep) else
+      if byte_size(text) > 1 do uri_quoted(text, keep) else
+        if String.contains?(keep, text) do text else uri_mark(uri_first(text)) end
+      end
+    end
+  end
+  defp uri_quoted(text: string, keep: string): string do
+    if text == "" do "" else
+      value = uri_first(text)
+      mark = if String.contains?(keep, uri_byte(value)) do uri_byte(value) else uri_mark(value) end
+      mark <> Enum.join(Enum.map(tl(String.split(text, uri_byte(value))), fn piece -> uri_quoted(piece, keep) end), mark)
+    end
+  end
+  defp uri_mark(value: integer): string do
+    (if value < 16 do "%0" else "%" end) <> Integer.to_string(value, 16)
+  end
+#: decode_www_form/1 needs decode/1
+  def decode_www_form(text: string): result[string, string] do
+    case URI.decode(String.replace(text, "+", " ")) do
+      ok(decoded) -> ok(decoded)
+      error(_) -> error("malformed URI " <> inspect(text))
+    end
+  end
+#: decode_query/1 needs decode_www_form/1
+  def decode_query(query: string): map[string, string] do
+    Enum.reduce(String.split(query, "&"), %{}, fn part, fields ->
+      if part == "" do fields else
+        pieces = String.split(part, "=")
+        Map.put(fields, uri_field(hd(pieces)), uri_field(Enum.join(tl(pieces), "=")))
+      end
+    end)
+  end
+# A key or value decoded, as written when it cannot be.
+  defp uri_field(text: string): string do
+    case URI.decode_www_form(text) do
+      ok(decoded) -> decoded
+      error(_) -> text
+    end
+  end
+#: encode/1 needs uri_quote/1
+  def encode(text: string): string do
+    uri_quote(text, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~:/?#[]@!$&'()*+,;=")
+  end
+#: encode_www_form/1 needs uri_quote/1
+  def encode_www_form(text: string): string do
+    String.replace(uri_quote(text, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.~ "), " ", "+")
+  end
+#: encode_query/1 needs encode_www_form/1
+  def encode_query(fields: map[string, string]): string do
+    Enum.join(Enum.map(Map.to_list(fields), fn {key, value} -> URI.encode_www_form(key) <> "=" <> URI.encode_www_form(value) end), "&")
+  end
+#: new/1 needs uri_split/1 uri_port/1
+  def new(text: string): result[URI, string] do
+    parts = uri_split(text)
+    if length(parts) == 0 do error("malformed URI " <> inspect(text)) else
+      scheme = Enum.at(parts, 0, "")
+      host = Enum.at(parts, 3, "")
+      ok(%URI{scheme: uri_some(scheme, scheme != ""), userinfo: uri_some(Enum.at(parts, 2, ""), Enum.at(parts, 1, "") != ""),
+        host: uri_some(uri_name(host), host != ""), port: uri_port(scheme, host), path: Enum.at(parts, 4, ""),
+        query: uri_some(Enum.at(parts, 6, ""), Enum.at(parts, 5, "") != ""), fragment: uri_some(Enum.at(parts, 7, ""), Enum.at(parts, 7, "") != "")})
+    end
+  end
+  defp uri_some(text: string, present: boolean): option[string] do
+    if present do some(text) else none end
+  end
+#: parse/1 needs new/1
+  def parse(text: string): URI do
+    case URI.new(text) do
+      ok(uri) -> uri
+      error(_) -> %URI{scheme: none, userinfo: none, host: none, port: none, path: text, query: none, fragment: none}
+    end
+  end
+#: to_string/1 needs new/1
+  def to_string(uri: URI): string do
+    scheme = uri_part("", uri.scheme, "")
+    usual = if scheme == "http" or scheme == "ws" do 80 else if scheme == "https" or scheme == "wss" do 443 else if scheme == "ftp" do 21 else 0 end end end
+    uri_part("", uri.scheme, ":") <> uri_address(uri, usual) <> uri.path <> uri_part("?", uri.query, "") <> uri_part("#", uri.fragment, "")
+  end
+  defp uri_part(lead: string, part: option[string], tail: string): string do
+    case part do
+      some(text) -> lead <> text <> tail
+      none -> ""
+    end
+  end
+# "//", the user information, the host and a port that is not the usual one.
+  defp uri_address(uri: URI, usual: integer): string do
+    port = case uri.port do
+      some(number) -> if number == usual do "" else ":" <> Integer.to_string(number) end
+      none -> ""
+    end
+    case uri.host do
+      some(host) -> "//" <> uri_part("", uri.userinfo, "@") <> (if String.contains?(host, ":") do "[" <> host <> "]" else host end) <> port
+      none -> ""
+    end
+  end
+#: uri_port/1 needs uri_keep/1
+# The host of "host:port", without the brackets of an address.
+  defp uri_name(host: string): string do
+    pieces = String.split(host, ":")
+    last = length(pieces) - 1
+    name = if last > 0 and uri_keep(Enum.at(pieces, last, ""), "0123456789") do Enum.join(Enum.take(pieces, last), ":") else host end
+    inner = String.split(name, "]")
+    if String.starts_with?(name, "[") and String.ends_with?(name, "]") do
+      Enum.join(tl(String.split(Enum.join(Enum.take(inner, length(inner) - 1), "]"), "[")), "[")
+    else name end
+  end
+# The port of "host:port", else the usual one of the scheme when there is a host.
+  defp uri_port(scheme: string, host: string): option[integer] do
+    pieces = String.split(host, ":")
+    last = Enum.at(pieces, length(pieces) - 1, "")
+    case Integer.parse(if length(pieces) > 1 and uri_keep(last, "0123456789") do last else "" end) do
+      ok(port) -> some(port)
+      error(_) -> if host == "" do none else
+        if scheme == "http" or scheme == "ws" do some(80) else if scheme == "https" or scheme == "wss" do some(443) else if scheme == "ftp" do some(21) else none end end end
+      end
+    end
+  end
+#: uri_keep/1
+# Whether every byte of text is one of the characters of set, which are ASCII.
+  defp uri_keep(text: string, set: string): boolean do
+    count = String.length(text)
+    if count > 1 do uri_keep(String.slice(text, 0, div(count, 2)), set) and uri_keep(String.slice(text, div(count, 2), count), set) else
+      String.contains?(set, text)
+    end
+  end
+#: uri_ctl/1
+# Whether text holds a control character.
+  defp uri_ctl(text: string): boolean do
+    uri_ctl0(text) or uri_ctl1(text) or uri_ctl2(text)
+  end
+  defp uri_ctl0(text: string): boolean do
+    String.contains?(text, "\x00") or String.contains?(text, "\x01") or String.contains?(text, "\x02") or String.contains?(text, "\x03") or String.contains?(text, "\x04") or String.contains?(text, "\x05") or String.contains?(text, "\x06") or String.contains?(text, "\x07") or String.contains?(text, "\x08") or String.contains?(text, "\x09") or String.contains?(text, "\x0A")
+  end
+  defp uri_ctl1(text: string): boolean do
+    String.contains?(text, "\x0B") or String.contains?(text, "\x0C") or String.contains?(text, "\x0D") or String.contains?(text, "\x0E") or String.contains?(text, "\x0F") or String.contains?(text, "\x10") or String.contains?(text, "\x11") or String.contains?(text, "\x12") or String.contains?(text, "\x13") or String.contains?(text, "\x14") or String.contains?(text, "\x15")
+  end
+  defp uri_ctl2(text: string): boolean do
+    String.contains?(text, "\x16") or String.contains?(text, "\x17") or String.contains?(text, "\x18") or String.contains?(text, "\x19") or String.contains?(text, "\x1A") or String.contains?(text, "\x1B") or String.contains?(text, "\x1C") or String.contains?(text, "\x1D") or String.contains?(text, "\x1E") or String.contains?(text, "\x1F") or String.contains?(text, "\x7F")
+  end
+#: uri_raw/1 needs uri_quote/1 uri_keep/1
+# The escaped form of a path or fragment as Go gives it: as it was written
+# when that is a valid encoding, otherwise the decoded text escaped anew.
+  defp uri_raw(raw: string, plain: string, keep: string): string do
+    quoted = uri_quote(plain, keep)
+    if quoted == raw or uri_keep(raw, keep <> "!$&'()*+,;=:@[]%") do raw else quoted end
+  end
+#: uri_split/1 needs uri_ctl/1 uri_main/1 uri_raw/1 decode/1
+# The parts of an address: scheme, "1" with user information, the user
+# information, host with port, path, "1" with a query, query, fragment.
+# No parts for text that is not an address.
+  defp uri_split(text: string): list[string] do
+    pieces = String.split(text, "#")
+    fragment = Enum.join(tl(pieces), "#")
+    failed: list[string] = []
+    parts = if uri_ctl(hd(pieces)) do failed else uri_main(hd(pieces)) end
+    if length(parts) == 0 do failed else
+      if fragment == "" do parts ++ [""] else
+        case URI.decode(fragment) do
+          ok(plain) -> parts ++ [uri_raw(fragment, plain, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!$&()*+,-./:;=?@_~")]
+          error(_) -> failed
+        end
+      end
+    end
+  end
+#: uri_main/1 needs uri_keep/1 uri_rest/1
+# The parts of an address without its fragment.
+  defp uri_main(text: string): list[string] do
+    pieces = String.split(text, ":")
+    head = hd(pieces)
+    failed: list[string] = []
+    if length(pieces) > 1 and head == "" do failed else
+      if length(pieces) > 1 and uri_keep(head, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-.") and not uri_keep(String.slice(head, 0, 1), "0123456789+-.") do
+        uri_rest(String.downcase(head), Enum.join(tl(pieces), ":"))
+      else uri_rest("", text) end
+    end
+  end
+#: uri_rest/1 needs uri_path/1 uri_authority/1
+# The parts of an address after its scheme.
+  defp uri_rest(scheme: string, text: string): list[string] do
+    asked = String.split(text, "?")
+    rest = hd(asked)
+    query = Enum.join(tl(asked), "?")
+    flag = if length(asked) > 1 and (query != "" or length(asked) == 2) do "1" else "" end
+    failed: list[string] = []
+    if not String.starts_with?(rest, "/") do
+      if scheme != "" do [scheme, "", "", "", rest, flag, query] else
+        if String.contains?(hd(String.split(rest, "/")), ":") do failed else uri_path(["", "", "", "", rest, flag, query]) end
+      end
+    else
+      if String.starts_with?(rest, "//") and (scheme != "" or not String.starts_with?(rest, "///")) do
+        pieces = String.split(rest, "/")
+        path = if length(pieces) > 3 do "/" <> Enum.join(Enum.drop(pieces, 3), "/") else "" end
+        found = uri_authority(scheme, Enum.at(pieces, 2, ""))
+        if length(found) == 0 do failed else uri_path([scheme] ++ found ++ [path, flag, query]) end
+      else uri_path([scheme, "", "", "", rest, flag, query]) end
+    end
+  end
+#: uri_path/1 needs decode/1 uri_raw/1
+# The parts with the path, the fifth, in its escaped form.
+  defp uri_path(parts: list[string]): list[string] do
+    raw = Enum.at(parts, 4, "")
+    case URI.decode(raw) do
+      ok(plain) -> Enum.take(parts, 4) ++ [uri_raw(raw, plain, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$&+,-./:;=@_~")] ++ Enum.drop(parts, 5)
+      error(_) -> Enum.take(parts, 0)
+    end
+  end
+#: uri_authority/1 needs uri_host/1 uri_user/1
+# "1" with user information, the user information and the host with its port.
+  defp uri_authority(scheme: string, text: string): list[string] do
+    pieces = String.split(text, "@")
+    last = length(pieces) - 1
+    host = uri_host(scheme, Enum.at(pieces, last, ""))
+    user = if last == 0 do [""] else uri_user(Enum.join(Enum.take(pieces, last), "@")) end
+    if length(host) == 0 or length(user) == 0 do Enum.take(host, 0) else [if last == 0 do "" else "1" end] ++ user ++ host end
+  end
+#: uri_user/1 needs uri_keep/1 uri_quote/1 decode/1
+# The user information in its escaped form.
+  defp uri_user(text: string): list[string] do
+    failed: list[string] = []
+    pieces = String.split(text, ":")
+    if not uri_keep(text, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._:~!$&'()*+,;=%@") do failed else
+      case {URI.decode(hd(pieces)), URI.decode(Enum.join(tl(pieces), ":"))} do
+        {ok(name), ok(password)} -> [uri_quote(name, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$&+,-.;=_~") <> (if length(pieces) == 1 do "" else ":" <> uri_quote(password, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$&+,-.;=_~") end)]
+        _ -> failed
+      end
+    end
+  end
+#: uri_host/1 needs uri_keep/1 uri_literal/1 uri_named/1
+# The host with its port, escapes decoded.
+  defp uri_host(scheme: string, text: string): list[string] do
+    failed: list[string] = []
+    colons = String.split(text, ":")
+    last = Enum.at(colons, length(colons) - 1, "")
+    if String.contains?(text, "[") do
+      if String.starts_with?(text, "[") and length(String.split(text, "[")) == 2 do uri_literal(text) else failed end
+    else
+      if length(colons) > 2 and (scheme == "http" or scheme == "https") do failed else
+        if length(colons) > 1 and not uri_keep(last, "0123456789") do failed else uri_named(text) end
+      end
+    end
+  end
+#: uri_named/1 needs uri_plain/1 uri_coded/1 decode/1
+# A host name with its escapes decoded.
+  defp uri_named(text: string): list[string] do
+    failed: list[string] = []
+    if not (uri_plain(text) and uri_coded(text, false)) do failed else
+      case URI.decode(text) do
+        ok(host) -> [host]
+        error(_) -> failed
+      end
+    end
+  end
+#: uri_plain/1 needs uri_first/1 uri_byte/1 Enum.all?/2
+# Whether every ASCII character of text may stand in a host.
+  defp uri_plain(text: string): boolean do
+    count = String.length(text)
+    if count > 1 do uri_plain(String.slice(text, 0, div(count, 2))) and uri_plain(String.slice(text, div(count, 2), count)) else uri_hosted(text) end
+  end
+  defp uri_hosted(text: string): boolean do
+    if text == "" do true else
+      value = uri_first(text)
+      (value >= 128 or String.contains?("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!\"$&'()*+,-.:;<=>[]_~%", uri_byte(value))) and
+        Enum.all?(tl(String.split(text, uri_byte(value))), fn piece -> uri_hosted(piece) end)
+    end
+  end
+#: uri_coded/1 needs uri_hex/1 uri_after/1 uri_byte/1 Enum.all?/2
+# Whether each escape of a host, or of the zone of an address, is one
+# that may stand there.
+  defp uri_coded(text: string, zone: boolean): boolean do
+    Enum.all?(tl(String.split(text, "%")), fn part ->
+      first = uri_hex(part)
+      second = if first == "" do "" else uri_hex(uri_after(part, first)) end
+      if second == "" do false else
+        if first <> second == "25" do true else
+          if zone do uri_zoned(first <> second) else String.contains?("89abcdefABCDEF", first) end
+        end
+      end
+    end)
+  end
+  defp uri_zoned(digits: string): boolean do
+    case Integer.parse(digits, 16) do
+      ok(value) -> value == 32 or (value < 128 and String.contains?("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!\"$&'()*+,-.:;<=>[]_~", uri_byte(value)))
+      error(_) -> false
+    end
+  end
+#: uri_literal/1 needs uri_keep/1 uri_plain/1 uri_coded/1 uri_six/1 uri_after/1 decode/1
+# An IPv6 address in brackets with its port.
+  defp uri_literal(text: string): list[string] do
+    failed: list[string] = []
+    pieces = String.split(text, "]")
+    last = length(pieces) - 1
+    port = Enum.at(pieces, last, "")
+    inner = uri_after(Enum.join(Enum.take(pieces, last), "]"), "[")
+    zoned = String.split(inner, "%25")
+    fine = last > 0 and (port == "" or (String.starts_with?(port, ":") and uri_keep(uri_after(port, ":"), "0123456789"))) and
+      uri_plain(inner) and uri_coded(hd(zoned), false) and uri_coded(Enum.join(tl(zoned), "%25"), true)
+    if not fine do failed else
+      case URI.decode(inner) do
+        ok(address) -> if uri_six(address) do ["[" <> address <> "]" <> port] else failed end
+        error(_) -> failed
+      end
+    end
+  end
+#: uri_six/1 needs uri_groups/1
+# Whether text is an IPv6 address.
+  defp uri_six(text: string): boolean do
+    zoned = String.split(text, "%")
+    address = hd(zoned)
+    halves = String.split(address, "::")
+    if (length(zoned) > 1 and Enum.join(tl(zoned), "%") == "") or String.contains?(address, ":::") or length(halves) > 2 do false else
+      if length(halves) == 1 do uri_groups(address, true) == 8 else
+        uri_groups(hd(halves), false) + uri_groups(Enum.at(halves, 1, ""), true) <= 7
+      end
+    end
+  end
+#: uri_groups/1 needs uri_keep/1 uri_four/1
+# The 16-bit groups of colon-separated text, 100 when it is not groups.
+# The last may be an IPv4 address, two groups, where four says so.
+  defp uri_groups(text: string, four: boolean): integer do
+    fields = String.split(text, ":")
+    last = Enum.at(fields, length(fields) - 1, "")
+    if text == "" do 0 else
+      Enum.sum(Enum.map(Enum.take(fields, length(fields) - 1), fn field -> uri_group(field) end)) + (if four and String.contains?(last, ".") do uri_four(last) else uri_group(last) end)
+    end
+  end
+  defp uri_group(field: string): integer do
+    if field != "" and byte_size(field) <= 4 and uri_keep(field, "0123456789abcdefABCDEF") do 1 else 100 end
+  end
+#: uri_four/1 needs uri_keep/1 Enum.all?/2
+# 2 for an IPv4 address, else 100.
+  defp uri_four(text: string): integer do
+    fields = String.split(text, ".")
+    fine = length(fields) == 4 and Enum.all?(fields, fn field ->
+      field != "" and byte_size(field) <= 3 and uri_keep(field, "0123456789") and (field == "0" or not String.starts_with?(field, "0")) and String.to_integer(field) <= 255
+    end)
+    if fine do 2 else 100 end
+  end
+#: append_path/2
+  def append_path(u: URI, path: string): URI do
+    if not String.starts_with?(path, "/") do raise("URI.append_path needs a path that starts with /") end
+    k = String.split(u.path, "/")
+    n = length(k) - 1
+    %URI{u | path: (if n > 0 and Enum.at(k, n, "") == "" do Enum.join(Enum.take(k, n), "/") else u.path end) <> path}
+  end
+#: append_query/2
+  def append_query(u: URI, query: string): URI do
+    case u.query do
+      some(old) -> %URI{u | query: some(if old == "" do query else old <> "&" <> query end)}
+      none -> %URI{u | query: some(query)}
+    end
+  end
+#: merge/2 needs merged/1 parse/1
+  def merge(base: string, reference: string): URI do
+    URI.parse(URI.merged({base, reference}))
+  end
+#: merge/2 form 2 needs merge/2 to_string/1
+  def merge(base: URI, reference: string): URI do
+    URI.merge(URI.to_string(base), reference)
+  end
+#: merged/1 needs uri_split/1 uri_quote/1
+# The text of a reference resolved against a base, as Go's ResolveReference
+# and String write it. It is public so that URI.merge/2 reaches it.
+  def merged(pair: tuple[string, string]): string do
+    b = uri_split(elem(pair, 0))
+    r = uri_split(elem(pair, 1))
+    rest = Enum.join(tl(String.split(elem(pair, 1), ":")), ":")
+    if length(b) == 0 or length(r) == 0 do elem(pair, 1) else
+      uri_resolved(b, r, String.starts_with?(rest, "/") and not String.starts_with?(rest, "//"))
+    end
+  end
+  defp uri_at(p: list[string], i: integer): string do
+    Enum.at(p, i, "")
+  end
+# Whether the parts are of "scheme:text" with text that is not a path.
+  defp uri_opaque(p: list[string]): boolean do
+    uri_at(p, 0) != "" and uri_at(p, 4) != "" and not String.starts_with?(uri_at(p, 4), "/")
+  end
+# omit: the reference is "scheme:/path", written back without "//".
+  defp uri_resolved(b: list[string], r: list[string], omit: boolean): string do
+    scheme = if uri_at(r, 0) == "" do uri_at(b, 0) else uri_at(r, 0) end
+    path = uri_at(r, 4)
+    if uri_at(r, 0) != "" or uri_at(r, 3) != "" or uri_at(r, 1) != "" do
+      uri_text([scheme] ++ Enum.slice(r, 1, 3) ++ [if uri_opaque(r) do path else uri_dots(path) end] ++ Enum.drop(r, 5), uri_opaque(r), omit)
+    else
+      same = path == "" and uri_at(r, 5) == ""
+      query = uri_at(if same do b else r end, 6)
+      tail = [if same and query != "" do "1" else uri_at(r, 5) end, query, uri_at(if same and uri_at(r, 7) == "" do b else r end, 7)]
+      if path == "" and uri_opaque(b) do uri_text([scheme, "", "", "", uri_at(b, 4)] ++ tail, true, false) else
+        base = if uri_opaque(b) do "" else uri_at(b, 4) end
+        k = String.split(base, "/")
+        full = if path == "" do base else if String.starts_with?(path, "/") do path else (if length(k) == 1 do "" else Enum.join(Enum.take(k, length(k) - 1), "/") <> "/" end) <> path end end
+        uri_text([scheme] ++ Enum.slice(b, 1, 3) ++ [uri_dots(full)] ++ tail, false, false)
+      end
+    end
+  end
+# A path without its "." and ".." segments.
+  defp uri_dots(full: string): string do
+    e = String.split(full, "/")
+    last = Enum.at(e, length(e) - 1, "")
+    d = elem(Enum.reduce(e, {"", true}, fn x, s ->
+      k = String.split(elem(s, 0), "/")
+      cond do
+        x == "." -> {elem(s, 0), false}
+        x != ".." -> {elem(s, 0) <> (if elem(s, 1) do "" else "/" end) <> x, false}
+        length(k) == 1 -> {"", true}
+        true -> {Enum.join(Enum.take(k, length(k) - 1), "/"), elem(s, 1)}
+      end
+    end), 0) <> (if last == "." or last == ".." do "/" else "" end)
+    if full == "" or String.starts_with?(d, "/") do d else "/" <> d end
+  end
+# The parts of uri_split written as an address.
+  defp uri_text(p: list[string], opaque: boolean, omit: boolean): string do
+    scheme = uri_at(p, 0)
+    host = uri_at(p, 3)
+    path = uri_at(p, 4)
+    named = host != "" or uri_at(p, 1) != ""
+    lead = (if scheme == "" do "" else scheme <> ":" end) <>
+      (if opaque or (scheme == "" and not named) or (omit and not named) or (path == "" and not named) do "" else "//" end) <>
+      (if uri_at(p, 1) != "" do uri_at(p, 2) <> "@" else "" end) <> uri_quote(host, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.~!$&'()*+,;=:[]<>\"") <>
+      (if host != "" and path != "" and not String.starts_with?(path, "/") do "/" else "" end)
+    lead <> (if lead == "" and String.contains?(hd(String.split(path, "/")), ":") do "./" else "" end) <> path <>
+      (if uri_at(p, 5) != "" do "?" <> uri_at(p, 6) else "" end) <> (if uri_at(p, 7) != "" do "#" <> uri_at(p, 7) else "" end)
+  end
+#: struct URI
+  struct URI do
+    scheme: option[string]
+    userinfo: option[string]
+    host: option[string]
+    port: option[integer]
+    path: string
+    query: option[string]
+    fragment: option[string]
+  end

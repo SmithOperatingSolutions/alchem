@@ -1,0 +1,39 @@
+{
+  "version": 6,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "bytes.const",
+              "dest": "b",
+              "values": [
+                104,
+                101,
+                108,
+                108,
+                111,
+                10
+              ]
+            },
+            {
+              "op": "bytes.write",
+              "dest": "r",
+              "value": "b",
+              "stream": "stdout"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    }
+  ]
+}

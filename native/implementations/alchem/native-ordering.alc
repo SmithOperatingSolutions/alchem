@@ -1,0 +1,171 @@
+defmodule NativeOrdering do
+  # The order of values, made for the type as equality is. The pinned
+  # language orders integers, floats, strings, booleans and atoms, and lists
+  # and tuples of one or more parts built from them (Orderable); its library
+  # takes the order of a type variable as a function made at the call. Here
+  # every piece takes two values in RDI and RSI and leaves in RAX -1 when the
+  # first is less, 1 when the second is and 0 otherwise, which is the pinned
+  # less(x, y), less(y, x) pair in one pass: a NaN is neither less nor more.
+  # A piece may use RCX, RDX, R8, R10, R11, RDI and RSI.
+  def od_int(): bytes do b[72,57,247,15,159,192,15,156,193,40,200,72,15,190,192] end
+  # Strings and atoms by bytes, a proper prefix first.
+  def od_text(): bytes do b[72,139,15,72,139,22,73,137,200,73,137,211,72,57,209,72,15,71,202,72,141,71,8,72,141,126,8,72,137,198,49,192,243,166,117,3,77,57,216,15,151,192,15,146,193,40,200,72,15,190,192] end
+  def od_float(): bytes do b[102,72,15,110,199,102,72,15,110,206,102,15,46,193,15,151,192,102,15,46,200,15,151,193,40,200,72,15,190,192] end
+  # A type variable of the library whose name starts with "ord" has an order:
+  # its hidden argument answers both questions, and a call must give it a
+  # type that has one.
+  def od_marked(name: bytes): integer do
+    if Enum.count(name) < 3 do 0 else if Enum.at(name,0,0)*65536+Enum.at(name,1,0)*256+Enum.at(name,2,0) == 7303780 do 1 else 0 end end
+  end
+  # 1 for a function of the library written in Alchem.
+  def od_library(source: bytes, table: bytes, id: integer): integer do
+    nc_word_at(source,nc_meta(table,nc_owner(table,id),0),b[65,108,99,104,101,109],0)
+  end
+  # 1 when the type has an order; inside says a marked type variable counts
+  # (1), or any type variable (2).
+  def od_orderable(kind: bytes, inside: integer): integer do
+    tag = nt_tag(kind)
+    if (tag-0)*(tag-2)*(tag-3)*(tag-22)*(tag-24) == 0 do 1 else
+      if tag == 7 do od_orderable(nt_child(kind,0),inside) else
+        if tag == 5 do if nt_count(kind) == 0 do 0 else od_orderable_items(kind,inside,0) end else
+          if tag == 16 do if inside == 2 do 1 else inside*od_marked(nc_slice(kind,2,Enum.count(kind))) end else 0 end
+        end
+      end
+    end
+  end
+  def od_orderable_items(kind: bytes, inside: integer, index: integer): integer do
+    if index >= nt_count(kind) do 1 else
+      if od_orderable(nt_child(kind,index),inside) == 0 do 0 else od_orderable_items(kind,inside,index+1) end
+    end
+  end
+  # The three-way comparison of two values of an ordered type.
+  def od_code(kind: bytes, vars: bytes): bytes do
+    tag = nt_tag(kind)
+    if (tag-0)*(tag-3) == 0 do od_int() else if (tag-2)*(tag-22) == 0 do od_text() else if tag == 24 do od_float() else
+      if tag == 7 do od_list(od_code(nt_child(kind,0),vars)) else
+        if tag == 5 do od_fields(kind,vars,0) else
+          if tag == 16 do od_variable(nc_slice(kind,2,Enum.count(kind)),vars) else b[] end
+        end
+      end
+    end end end
+  end
+  # A tuple: the first part that differs decides.
+  def od_fields(kind: bytes, vars: bytes, index: integer): bytes do
+    place = nc_u32(8+index*8)
+    child = od_code(nt_child(kind,index),vars)
+    rest = if index+1 >= nt_count(kind) do b[] else od_fields(kind,vars,index+1) end
+    if Enum.count(child) == 0 do b[] else
+      if index+1 >= nt_count(kind) do nc_join(nc_join(b[72,139,191],place,b[72,139,182]),place,child) else
+        if Enum.count(rest) == 0 do b[] else
+          nc_join(nc_join(nc_join(b[87,86,72,139,191],place,b[72,139,182]),place,child),Enum.concat(b[94,95,72,133,192],nq_jnz(Enum.count(rest))),rest)
+        end
+      end
+    end
+  end
+  # A list: the first element that differs decides, then the shorter is less.
+  def od_list(child: bytes): bytes do
+    size = Enum.count(child)
+    head = Enum.concat(b[72,139,15,72,139,22,81,82,72,57,209,72,15,71,202,72,133,201],nq_jz(size+39))
+    body = nc_join(Enum.concat(b[81,87,86,72,139,127,8,72,139,118,8],child),Enum.concat(b[94,95,89,72,133,192],nq_jnz(35)),Enum.concat(b[72,131,199,16,72,131,198,16,72,255,201],nq_jmp(0-size-48)))
+    if size == 0 do b[] else nc_join(head,body,b[90,89,72,57,209,15,159,192,15,156,193,40,200,72,15,190,192,235,4,72,131,196,16]) end
+  end
+  # Two values of a type variable, through its comparator: 0 orders words, 1
+  # strings, 12 floats; code or a function value is called with 1 in RDX.
+  def od_variable(name: bytes, vars: bytes): bytes do
+    slot = nq_slot(vars,name,0)
+    load = if slot < 0 do b[] else if slot < 16777216 do nc_slot(b[76,139,85],slot) else Enum.concat(b[76,139,85,248,77,139,146],nc_u32((slot-16777216)*8)) end end
+    words = nc_join(nc_join(b[73,131,250,1,15,135],nq_rel(82),nq_jz(20)),od_int(),nq_jmp(123))
+    texts = nc_join(od_text(),nq_jmp(67),Enum.concat(b[73,131,250,12],nq_jnz(35)))
+    if slot < 0 do b[] else
+      nc_join(nc_join(load,words,texts),Enum.concat(od_float(),nq_jmp(22)),b[186,1,0,0,0,77,137,211,73,193,235,32,117,5,65,255,210,235,3,65,255,18])
+    end
+  end
+  # The comparator of a type for an ordered type variable. A list or tuple
+  # gets code that answers both: equality in AL when RDX is 0, the three-way
+  # comparison in RAX otherwise. Without type variables it is code placed
+  # behind a jump and nothing is allocated; with them, a function value.
+  def od_comparator(source: bytes, table: bytes, kind: bytes, vars: bytes): bytes do
+    tag = nt_tag(kind)
+    if (tag-5)*(tag-7) != 0 do nq_comparator(source,table,kind,vars) else
+      if nu_open(kind,0) == 0 do od_static(nq_code(source,table,kind,b[]),od_code(kind,b[])) else od_closure(source,table,kind,vars) end
+    end
+  end
+  # The code that leaves in R8 twice the address of the comparator of a tuple
+  # of key types, for the map routines (spec/collections-x86_64.s).
+  def od_keyed(kind: bytes): bytes do
+    made = od_static(nq_code(b[],b[],kind,b[]),od_code(kind,b[]))
+    if Enum.count(made) == 0 do b[] else nc_join(nc_slice(made,0,Enum.count(made)-7),b[76,141,5],Enum.concat(nc_slice(made,Enum.count(made)-4,Enum.count(made)),b[77,1,192])) end
+  end
+  def od_static(same: bytes, order: bytes): bytes do
+    size = Enum.count(same)+Enum.count(order)+10
+    if Enum.count(same)*Enum.count(order) == 0 do b[] else
+      nc_join(nc_join(Enum.concat(b[233],nc_u32(size)),Enum.concat(b[133,210],nq_jnz(Enum.count(same)+1)),Enum.concat(same,b[195])),Enum.concat(order,b[195]),Enum.concat(b[72,141,5],nq_rel(0-size-7)))
+    end
+  end
+  # The function value takes the two values and the question in slots 0 to 2
+  # and holds the caller's comparators in the slots after them. Only a
+  # function of the library has an ordered variable to give on, and none
+  # keeps its comparators in an array (that is for the equality function of
+  # a type with more than six parameters), so that case has no code here.
+  def od_closure(source: bytes, table: bytes, kind: bytes, vars: bytes): bytes do
+    inner = nq_inner(vars,0,3)
+    same = nq_code(source,table,kind,inner)
+    order = od_code(kind,inner)
+    if nq_array(vars) == 1 do b[] else if Enum.count(same)*Enum.count(order) == 0 do b[] else
+      nf_code(3,nq_held(vars,0),nc_join(nc_join(b[73,255,199,72,139,125,248,72,139,117,240,72,139,85,232],Enum.concat(b[72,133,210],nq_jnz(Enum.count(same)+8)),same),Enum.concat(b[15,182,192],nq_jmp(Enum.count(order))),order))
+    end end
+  end
+  # left < right and the like inside a library function, for a type with an
+  # order that the operators of the language do not take: a type variable, a
+  # list or a tuple. plan: the condition code, then the environment.
+  def od_compare(source: bytes, table: bytes, left: bytes, right: bytes, plan: bytes): bytes do
+    env = nc_slice(plan,1,Enum.count(plan))
+    kind = nt_merge(nc_kind(left),nc_kind(right))
+    code = if od_library(source,table,nc_read(env,0)) == 0 do b[] else if od_orderable(kind,1) == 0 do b[] else od_code(kind,nu_vars(env,2)) end end
+    if Enum.count(code) == 0 do b[] else
+      nc_value(nc_pos(right),nc_join(nc_join(nc_code(left),b[80],nc_code(right)),Enum.concat(b[72,137,198,95],code),b[72,133,192,15,Enum.at(plan,0,0),192,15,182,192]),b[3])
+    end
+  end
+  # Enum.o_stable(list, less) and Enum.o_unstable(list, less), for the library
+  # alone: the elements, side by side at the start of the new list's block,
+  # are sorted there and then spread into its pairs from the last one down
+  # (alchem-lists.md): a copy of the list sorted in place by the pinned runtime's stable
+  # sort or its unstable one (spec/sort-runtime.c), which ask the function
+  # for the same pairs in the same order as Go does. Any other Enum function
+  # is the compiler's own or the library's.
+  def od_builtin(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    name = nc_start(source,nc_expect(source,nc_end(source,pos),b[46]))
+    kind = if nc_word(source,name,b[111,95,115,116,97,98,108,101]) == 1 do 1 else if nc_word(source,name,b[111,95,117,110,115,116,97,98,108,101]) == 1 do 2 else if nc_word(source,name,b[111,95,114,111,111,109]) == 1 do 3 else if nc_word(source,name,b[111,95,116,117,114,110]) == 1 do 4 else 0 end end end end
+    if kind*od_library(source,table,nc_read(env,0)) == 0 do nc_builtin(source,nc_end(source,pos),env,table,depth) else
+      begin = nc_expect(source,nc_end(source,name),b[40])
+      args = if begin < 0 do b[] else nc_arguments(source,begin,env,table,depth) end
+      routine = if kind == 1 do so_blob() else sp_blob() end
+      if kind == 3 do od_room(args) else if kind == 4 do od_turn(args) else
+      if nc_pos(args) < 0 do b[] else if nc_arg_count(args) != 2 do b[] else if nt_tag(nc_arg_kind(args,0)) != 7 do b[] else if nt_tag(nc_arg_kind(args,1)) != 10 do b[] else
+        copy = b[90,95,72,139,15,73,137,203,73,193,227,4,79,141,92,28,24,77,57,235,118,12,255,20,37,120,4,64,0,15,31,68,0,0,73,199,4,36,254,255,255,255,73,141,68,36,16,73,199,67,248,0,0,0,0,77,137,220,80,81,72,137,254,72,137,199,73,137,200,77,133,192,116,20,76,139,78,8,76,137,15,72,131,198,16,72,131,199,8,73,255,200,235,231,72,137,199,72,137,206,232,5,0,0,0,233]
+        nc_value(nc_pos(args),nc_join(Enum.concat(nc_arg_code(args),copy),Enum.concat(nc_u32(Enum.count(routine)),routine),b[89,88,72,137,202,72,133,210,116,36,76,139,68,208,248,73,137,209,73,193,225,4,78,137,68,8,248,73,137,200,73,41,208,73,255,192,78,137,68,8,240,72,255,202,235,215]),nc_arg_kind(args,0))
+      end end end end
+      end end
+    end
+  end
+  # Enum.o_room(n), for the library alone: an empty list at the top of a
+  # block with n unclaimed pairs below it, so that the next n elements put
+  # before it are written in place (alchem-lists.md). A builder of the
+  # library that knows how long its list gets takes its room at once.
+  def od_room(args: bytes): bytes do
+    if nc_pos(args) < 0 do b[] else if nc_arg_count(args) != 1 do b[] else if nt_tag(nc_arg_kind(args,0)) != 0 do b[] else
+      nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),b[89,72,133,201,121,2,49,201,73,137,203,73,193,227,4,79,141,92,28,24,77,57,235,118,12,255,20,37,120,4,64,0,15,31,68,0,0,73,199,4,36,254,255,255,255,73,141,67,248,72,199,0,0,0,0,0,77,137,220]),b[7,9])
+    end end end
+  end
+  # Enum.o_turn(list), for the library alone: the list with its elements in
+  # the opposite order, written where they lie (the counts stay as they are).
+  # Only for a list the calling function built itself and gave to nobody:
+  # no other list may share its block from the first element on.
+  def od_turn(args: bytes): bytes do
+    if nc_pos(args) < 0 do b[] else if nc_arg_count(args) != 1 do b[] else if nt_tag(nc_arg_kind(args,0)) != 7 do b[] else
+      nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),b[88,72,139,8,72,141,112,8,72,137,207,72,193,231,4,72,141,124,56,248,72,57,254,115,22,72,139,22,76,139,7,76,137,6,72,137,23,72,131,198,16,72,131,239,16,235,229]),nc_arg_kind(args,0))
+    end end end
+  end
+  # Native smoke test; the order of a type.
+  def main() do System.halt(0) end
+end

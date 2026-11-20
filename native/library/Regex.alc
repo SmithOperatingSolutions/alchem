@@ -1,0 +1,576 @@
+# Regex: regular expressions as Go's regexp package matches them
+# (spec/alchem-regex.md). A regex is a pattern compiled by rx_compile, whose
+# text is implementations/alchem/native-regex.alc, the same the compiler
+# uses for a ~r; rx_ab, rx_as, rx_ar and rx_tb are the compiler's (sg_rx).
+#: rx_compile/1
+#include native-regex.alc
+#: compile/1 needs rx_compile/1
+  def compile(source: string): result[regex, string] do
+    r = rx_compile(rx_ab(source))
+    if Enum.at(r, 0, 0) == 1 do ok(rx_ar(Enum.slice(r, 1, Enum.count(r) - 1))) else error(rx_as(Enum.slice(r, 1, Enum.count(r) - 1))) end
+  end
+#: compile!/1 needs rx_compile/1
+  def compile!(source: string): regex do
+    r = rx_compile(rx_ab(source))
+    if Enum.at(r, 0, 0) != 1 do raise(rx_as(Enum.slice(r, 1, Enum.count(r) - 1))) end
+    rx_ar(Enum.slice(r, 1, Enum.count(r) - 1))
+  end
+#: source/1
+  def source(pattern: regex): string do
+    o = rx_ab(pattern)
+    a = Enum.at(o, 6, 0) + Enum.at(o, 7, 0) * 256 + Enum.at(o, 8, 0) * 65536
+    z = Enum.at(o, 3, 0) + Enum.at(o, 4, 0) * 256 + Enum.at(o, 5, 0) * 65536
+    rx_as(Enum.slice(o, a, z - a))
+  end
+# The matcher. A program is run by going down into it, one call per
+# instruction, and a failed call is a path given up, so the first match
+# found is the one Go's backtracker finds. A call gives -1, or two of the
+# match's positions plus one each, the first times 4294967296: those of the
+# slots w asks for (the first times 16777216 plus the second), 0 for one
+# that was not set. Slot 1 is where the match stops.
+# mk and mo are the marks (instruction 18) passed since a character was
+# last taken: one below 62 is a bit of mk, the others are listed in mo.
+#: rx_all/2
+  defp g3(d: bytes, i: integer): integer do
+    Sys.peek(Sys.addr(rx_as(d)) + i) &&& 16777215
+  end
+  defp p2(k: integer): integer do
+    if k == 0 do 1 else 2 * p2(k - 1) end
+  end
+  defp cl(mo: list[integer]): list[integer] do
+    if length(mo) == 0 do mo else [] end
+  end
+# The width of the character at i, 0 for a byte that starts none.
+  defp uw(t: bytes, i: integer): integer do
+    a = Enum.at(t, i, 0)
+    if a < 128 do 1 else
+      if a < 194 or a > 244 do 0 else
+        e = Enum.at(t, i + 1, 0)
+        lo = if a == 224 do 160 else if a == 240 do 144 else 128 end end
+        hi = if a == 237 do 159 else if a == 244 do 143 else 191 end end
+        if e < lo or e > hi do 0 else
+          if a < 224 do 2 else
+            f = Enum.at(t, i + 2, 0)
+            if f < 128 or f > 191 do 0 else
+              if a < 240 do 3 else
+                g = Enum.at(t, i + 3, 0)
+                if g < 128 or g > 191 do 0 else 4 end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# The character at i of width w, U+FFFD for width 0.
+  defp cp(t: bytes, i: integer, w: integer): integer do
+    a = Enum.at(t, i, 0)
+    cond do
+      w == 1 -> a
+      w == 2 -> (a - 192) * 64 + Enum.at(t, i + 1, 0) - 128
+      w == 3 -> (a - 224) * 4096 + (Enum.at(t, i + 1, 0) - 128) * 64 + Enum.at(t, i + 2, 0) - 128
+      w == 4 -> (a - 240) * 262144 + (Enum.at(t, i + 1, 0) - 128) * 4096 + (Enum.at(t, i + 2, 0) - 128) * 64 + Enum.at(t, i + 3, 0) - 128
+      true -> 65533
+    end
+  end
+# 1 when a character starts at i, which is past the start `from`.
+  defp st(t: bytes, i: integer, from: integer): boolean do
+    b = Enum.at(t, i, 0)
+    if b < 128 or b > 191 do true else
+      not ((i - 1 >= from and uw(t, i - 1) > 1) or (i - 2 >= from and uw(t, i - 2) > 2) or (i - 3 >= from and uw(t, i - 3) > 3))
+    end
+  end
+# 1 when c is in the n ranges at i of the program, six bytes each.
+# They stand at address q: the two ends of a range are read as one word.
+  defp ic(q: integer, n: integer, c: integer): boolean do
+    if n <= 0 do false else
+      m = n / 2
+      v = Sys.peek(q + m * 6)
+      if c < (v &&& 16777215) do ic(q, m, c) else
+        if c <= ((v >>> 24) &&& 16777215) do true else ic(q + m * 6 + 6, n - m - 1, c) end
+      end
+    end
+  end
+# The length of the instruction at pc that takes one character.
+  defp il(p: bytes, pc: integer): integer do
+    op = Enum.at(p, pc, 0)
+    if op == 1 or op == 3 do 2 else if op == 2 do 4 else if op == 6 do 4 + 6 * g3(p, pc + 1) else 1 end end end
+  end
+# Where the text goes on after the character the instruction at pc takes
+# at pos, -1 when it does not take it.
+  defp one(p: bytes, t: bytes, pc: integer, pos: integer): integer do
+    op = Enum.at(p, pc, 0)
+    b = Enum.at(t, pos, -1)
+    if b < 0 do -1 else
+      if op == 1 do
+        if b == Enum.at(p, pc + 1, 0) do pos + 1 else -1 end
+      else
+        if op == 3 do
+          if b == Enum.at(p, pc + 1, 0) or b + 32 == Enum.at(p, pc + 1, 0) do pos + 1 else -1 end
+        else
+          w = if b < 128 do 1 else uw(t, pos) end
+          n = if w == 0 do pos + 1 else pos + w end
+          if op == 4 do n else
+            if op == 5 do
+              if b == 10 do -1 else n end
+            else
+              c = if b < 128 do b else cp(t, pos, w) end
+              if op == 2 do
+                if c == g3(p, pc + 1) do n else -1 end
+              else
+                if ic(Sys.addr(rx_as(p)) + pc + 4, g3(p, pc + 1), c) do n else -1 end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  defp wd(b: integer): boolean do
+    (b >= 48 and b <= 57) or (b >= 65 and b <= 90) or b == 95 or (b >= 97 and b <= 122)
+  end
+# Where the instruction at pc stops taking characters from a on, looking
+# no further than z: the first it does not take, or a place from z on.
+  defp re(p: bytes, t: bytes, pc: integer, a: integer, z: integer): integer do
+    if Enum.at(p, pc, 0) == 6 do rc(p, t, pc, a, z, Sys.addr(rx_as(p)) + pc + 4, g3(p, pc + 1)) else rg(p, t, pc, a, z) end
+  end
+  defp rg(p: bytes, t: bytes, pc: integer, a: integer, z: integer): integer do
+    if a >= z do a else
+      n = one(p, t, pc, a)
+      if n < 0 do a else rg(p, t, pc, n, z) end
+    end
+  end
+# The same for a class of n ranges at address q: an ASCII byte is looked
+# up as it is.
+  defp rc(p: bytes, t: bytes, pc: integer, a: integer, z: integer, q: integer, n: integer): integer do
+    b = Enum.at(t, a, 128)
+    if a >= z do a else
+      if b < 128 do
+        if ic(q, n, b) do rc(p, t, pc, a + 1, z, q, n) else a end
+      else
+        e = one(p, t, pc, a)
+        if e < 0 do a else rc(p, t, pc, e, z, q, n) end
+      end
+    end
+  end
+# The rest of the program from pc tried at each character start from lo
+# up to hi, the last first (hl 1) or the first first (hl 0). from: where
+# the run of characters began; k: the mark to leave once it has moved, -1
+# for none; z: an empty list. A place whose byte is not the one the rest
+# starts with (c, -1 when it starts with no single byte) is passed over.
+  defp tr(p: bytes, t: bytes, pc: integer, lo: integer, hi: integer, hl: integer, from: integer, k: integer, z: list[integer], w: integer): integer do
+    tq(p, t, pc, lo, hi, hl, from, k, z, w, if Enum.at(p, pc, 0) == 1 do Enum.at(p, pc + 1, 0) else -1 end)
+  end
+  defp tq(p: bytes, t: bytes, pc: integer, lo: integer, hi: integer, hl: integer, from: integer, k: integer, z: list[integer], w: integer, c: integer): integer do
+    if lo > hi do -1 else
+      i = if hl == 1 do hi else lo end
+      r = if (c >= 0 and Enum.at(t, i, -1) != c) or not st(t, i, from) do -1 else
+        if k < 0 do rx_run(p, t, pc, i, 0, z, w) else
+          if k < 62 do rx_run(p, t, pc, i, p2(k), z, w) else rx_run(p, t, pc, i, 0, [k], w) end
+        end
+      end
+      if r >= 0 do r else
+        if hl == 1 do tq(p, t, pc, lo, hi - 1, hl, from, k, z, w, c) else tq(p, t, pc, lo + 1, hi, hl, from, k, z, w, c) end
+      end
+    end
+  end
+# A lazy run: the rest tried after each character of the run from a on,
+# a growing number of them at a time.
+  defp lz(p: bytes, t: bytes, pc: integer, a: integer, size: integer, from: integer, k: integer, z: list[integer], w: integer): integer do
+    n = Enum.count(t)
+    stop = if a + size > n do n else a + size end
+    e0 = re(p, t, pc, a, stop)
+    e = if e0 > n do n else e0 end
+    r = tr(p, t, pc + il(p, pc), a + 1, e, 0, from, k, z, w)
+    if r >= 0 do r else
+      if e < a + size do -1 else lz(p, t, pc, e, size * 2, from, k, z, w) end
+    end
+  end
+# x* for the one instruction x at pc: greedy (g 1) or lazy. k: its mark,
+# -1 for none.
+  defp star(p: bytes, t: bytes, pc: integer, pos: integer, g: integer, k: integer, mk: integer, mo: list[integer], w: integer): integer do
+    next = pc + il(p, pc)
+    if g == 1 do
+      n = Enum.count(t)
+      e0 = re(p, t, pc, pos, n)
+      e = if e0 > n do n else e0 end
+      r = if e > pos do tr(p, t, next, pos + 1, e, 1, pos, k, cl(mo), w) else -1 end
+      if r >= 0 do r else rx_run(p, t, next, pos, mk, mo, w) end
+    else
+      r = rx_run(p, t, next, pos, mk, mo, w)
+      if r >= 0 do r else lz(p, t, pc, pos, 16, pos, k, cl(mo), w) end
+    end
+  end
+  defp rx_run(p: bytes, t: bytes, pc: integer, pos: integer, mk: integer, mo: list[integer], w: integer): integer do
+    op = Enum.at(p, pc, 0)
+    if op == 1 do
+      if Enum.at(t, pos, -1) == Enum.at(p, pc + 1, 0) do rx_run(p, t, pc + 2, pos + 1, 0, cl(mo), w) else -1 end
+    else
+      if op == 7 do
+        r = rx_run(p, t, pc + 4, pos, mk, mo, w)
+        if r >= 0 do r else rx_run(p, t, pc + g3(p, pc + 1) - 8388608, pos, mk, mo, w) end
+      else
+        if op == 10 do
+          r = rx_run(p, t, pc + 4, pos, mk, mo, w)
+          if r < 0 do r else
+            k = g3(p, pc + 1)
+            r2 = if k == w / 16777216 and r / 4294967296 == 0 do r + (pos + 1) * 4294967296 else r end
+            if k == rem(w, 16777216) and rem(r2, 4294967296) == 0 do r2 + pos + 1 else r2 end
+          end
+        else
+          if op <= 6 do
+            if op == 0 do
+              (if w / 16777216 == 1 do (pos + 1) * 4294967296 else 0 end) + (if rem(w, 16777216) == 1 do pos + 1 else 0 end)
+            else
+              n = one(p, t, pc, pos)
+              if n < 0 do -1 else rx_run(p, t, pc + il(p, pc), n, 0, cl(mo), w) end
+            end
+          else
+            if op == 9 do rx_run(p, t, pc + g3(p, pc + 1) - 8388608, pos, mk, mo, w) else
+              if op == 8 do
+                r = rx_run(p, t, pc + g3(p, pc + 1) - 8388608, pos, mk, mo, w)
+                if r >= 0 do r else rx_run(p, t, pc + 4, pos, mk, mo, w) end
+              else
+                if op <= 16 do
+                  a = Enum.at(t, pos - 1, -1)
+                  b = Enum.at(t, pos, -1)
+                  holds = cond do
+                    op == 11 -> pos == 0 or a == 10
+                    op == 12 -> b < 0 or b == 10
+                    op == 13 -> pos == 0
+                    op == 14 -> b < 0
+                    op == 15 -> (pos > 0 and wd(a)) != wd(b)
+                    true -> (pos > 0 and wd(a)) == wd(b)
+                  end
+                  if holds do rx_run(p, t, pc + 1, pos, mk, mo, w) else -1 end
+                else
+                  if op == 18 do
+                    k = g3(p, pc + 1)
+                    if k < 62 do
+                      bit = p2(k)
+                      if rem(mk / bit, 2) == 1 do -1 else rx_run(p, t, pc + 4, pos, mk + bit, mo, w) end
+                    else
+                      if k in mo do -1 else rx_run(p, t, pc + 4, pos, mk, mo ++ [k], w) end
+                    end
+                  else
+                    if op <= 20 do star(p, t, pc + 1, pos, 20 - op, -1, mk, mo, w) else
+                      k = g3(p, pc + 1)
+                      if (k < 62 and rem(mk / p2(k), 2) == 1) or (k >= 62 and k in mo) do -1 else
+                        if k < 62 do star(p, t, pc + 4, pos, 22 - op, k, mk + p2(k), mo, w) else star(p, t, pc + 4, pos, 22 - op, k, mk, mo ++ [k], w) end
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# The first match that starts at a character start from lo up to hi: its
+# start times 4294967296, plus where it stops, plus one. -1 for none. A
+# program that starts with a byte (c), and maybe a second (d), is tried
+# only where the text has them.
+  defp ff(o: bytes, t: bytes, lo: integer, hi: integer, from: integer, z: list[integer]): integer do
+    pc = g3(o, 3)
+    c = if Enum.at(o, pc, 0) == 1 do Enum.at(o, pc + 1, 0) else -1 end
+    fl(o, t, pc, lo, hi, from, z, c, if c >= 0 and Enum.at(o, pc + 2, 0) == 1 do Enum.at(o, pc + 3, 0) else -1 end)
+  end
+  defp fl(o: bytes, t: bytes, pc: integer, lo: integer, hi: integer, from: integer, z: list[integer], c: integer, d: integer): integer do
+    n = Enum.count(t)
+    i = if c < 0 or lo >= n do 0 else Sys.find(Sys.addr(rx_as(t)) + lo, n - lo, c) end
+    q = lo + i
+    if lo > hi or i < 0 or q > hi do -1 else
+      r = if (c < 0 and not st(t, q, from)) or (d >= 0 and Enum.at(t, q + 1, -1) != d) do -1 else rx_run(o, t, pc, q, 0, z, 1) end
+      if r < 0 do fl(o, t, pc, q + 1, hi, from, z, c, d) else q * 4294967296 + r end
+    end
+  end
+# The first match from `from` on. A program that starts by asking for
+# the start of the text matches there or nowhere.
+  defp first(o: bytes, t: bytes, from: integer, z: list[integer]): integer do
+    if Enum.at(o, g3(o, 3), 0) == 13 do
+      if from > 0 do -1 else ff(o, t, 0, 0, 0, z) end
+    else ff(o, t, from, Enum.count(t), from, z) end
+  end
+# Every match of a pattern in a text as Go's allMatches finds them (mode
+# 0) or as its replaceAll does (mode 1). A match is its start times
+# 8589934592, plus four times its end, plus 2 when it is empty and stands
+# where the search for it began, plus 1 when it counts: allMatches leaves
+# out an empty match at the end of the match before, replaceAll one that
+# ends where the match before did. The search goes on at a match's end, or
+# for one marked 2 a character past it. step is the next match from a
+# position, given the end of the match before (-1 for none).
+  defp step(o: bytes, t: bytes, mode: integer, pos: integer, prev: integer, z: list[integer]): integer do
+    f = if pos > Enum.count(t) do -1 else first(o, t, pos, z) end
+    if f < 0 do -1 else
+      a = f / 4294967296
+      e = rem(f, 4294967296) - 1
+      counts = if mode == 0 do not (e == pos and a == prev) else e > (if prev < 0 do 0 else prev end) or a == 0 end
+      a * 8589934592 + e * 4 + (if e == pos do 2 else 0 end) + (if counts do 1 else 0 end)
+    end
+  end
+# Where the search goes on after match m.
+  defp nx(t: bytes, m: integer): integer do
+    e = rem(m, 8589934592) / 4
+    if rem(m, 4) < 2 do e else
+      if e >= Enum.count(t) do e + 1 else (if uw(t, e) == 0 do e + 1 else e + uw(t, e) end) end
+    end
+  end
+# Up to k matches from a position; fewer when there are no more.
+  defp upto(o: bytes, t: bytes, mode: integer, pos: integer, prev: integer, k: integer): list[integer] do
+    z: list[integer] = []
+    if k <= 1 do
+      m = step(o, t, mode, pos, prev, z)
+      if m < 0 do z else [m] end
+    else
+      x = upto(o, t, mode, pos, prev, k / 2)
+      if length(x) < k / 2 do x else
+        m = Enum.at(x, length(x) - 1, 0)
+        x ++ upto(o, t, mode, nx(t, m), rem(m, 8589934592) / 4, k - k / 2)
+      end
+    end
+  end
+  defp every(o: bytes, t: bytes, mode: integer, x: list[integer], k: integer): list[integer] do
+    if length(x) < k do x else
+      m = Enum.at(x, length(x) - 1, 0)
+      every(o, t, mode, x ++ upto(o, t, mode, nx(t, m), rem(m, 8589934592) / 4, k), k * 2)
+    end
+  end
+# The matches that count, each as its start times 4294967296 plus twice
+# its end plus one.
+  def rx_all(o: bytes, t: tuple[bytes, integer]): list[integer] do
+    found = every(o, elem(t, 0), elem(t, 1), upto(o, elem(t, 0), elem(t, 1), 0, -1, 1), 1)
+    for m <- found, rem(m, 2) == 1 do m / 8589934592 * 4294967296 + rem(m, 8589934592) / 4 * 2 + 1 end
+  end
+#: rx_sp/2 needs rx_all/2
+# The groups of the match that starts at a position of a text (with it,
+# times 4294967296, where the match stops plus one, when that is known,
+# which saves running the program for the whole match): per
+# group, the whole match first, its start plus one times 4294967296
+# plus its end plus one; 0 for a group that took no part.
+  def rx_sp(o: bytes, t: tuple[bytes, integer]): list[integer] do
+    s = rem(elem(t, 1), 4294967296)
+    e = elem(t, 1) / 4294967296
+    for i <- 0..(g3(o, 0) - 1) do
+      r = if i == 0 and e > 0 do e else rx_run(o, elem(t, 0), g3(o, 3), s, 0, [], i * 2 * 16777216 + i * 2 + 1) end
+      if i == 0 do (s + 1) * 4294967296 + rem(r, 4294967296) else (if r / 4294967296 == 0 do 0 else r end) end
+    end
+  end
+#: rx_gs/2 needs rx_sp/2
+# The same as strings, the empty string for a group that took no part.
+  def rx_gs(o: bytes, t: tuple[bytes, integer]): list[string] do
+    Enum.map(rx_sp(o, t), fn r -> if r == 0 do "" else rx_as(Enum.slice(elem(t, 0), r / 4294967296 - 1, rem(r, 4294967296) - r / 4294967296)) end end)
+  end
+#: match?/2 needs rx_all/2
+  def match?(pattern: regex, text: string): boolean do
+    first(rx_ab(pattern), rx_ab(text), 0, []) >= 0
+  end
+#: run/2 needs rx_gs/2
+  def run(pattern: regex, text: string): option[list[string]] do
+    o = rx_ab(pattern)
+    t = rx_ab(text)
+    f = first(o, t, 0, [])
+    if f < 0 do none else some(rx_gs(o, {t, f / 4294967296 + rem(f, 4294967296) * 4294967296})) end
+  end
+#: scan/2 needs rx_gs/2
+  def scan(pattern: regex, text: string): list[list[string]] do
+    o = rx_ab(pattern)
+    t = rx_ab(text)
+    Enum.map(rx_all(o, {t, 0}), fn m -> rx_gs(o, {t, m / 4294967296 + (rem(m, 4294967296) / 2 + 1) * 4294967296}) end)
+  end
+#: rx_sl/2
+# The bytes from a position of a text up to another, as a string.
+  def rx_sl(t: bytes, m: integer): string do
+    rx_as(Enum.slice(t, m / 4294967296, rem(m, 4294967296) - m / 4294967296))
+  end
+#: rx_split/2 needs rx_all/2 rx_sl/2
+# Go's Split: the text between the matches; with a limit above 0, at most
+# that many pieces.
+  def rx_split(o: bytes, tl: tuple[bytes, integer]): list[string] do
+    t = elem(tl, 0)
+    limit = elem(tl, 1)
+    n = Enum.count(t)
+    if n == 0 and g3(o, 3) > g3(o, 6) do [""] else
+      ms = rx_all(o, {t, 0})
+      d = if length(ms) > 0 and rem(Enum.at(ms, 0, 0), 4294967296) / 2 == 0 do 1 else 0 end
+      k = if limit < 0 or length(ms) < limit - 1 + d do length(ms) else limit - 1 + d end
+      beg = if k == 0 do 0 else rem(Enum.at(ms, k - 1, 0), 4294967296) / 2 end
+      stop = if k == 0 do 0 else Enum.at(ms, k - 1, 0) / 4294967296 end
+      none: list[string] = []
+      pieces = if k <= d do none else
+        for i <- d..(k - 1) do
+          Regex.rx_sl(t, (if i == 0 do 0 else rem(Enum.at(ms, i - 1, 0), 4294967296) / 2 end) * 4294967296 + Enum.at(ms, i, 0) / 4294967296)
+        end
+      end
+      if stop != n do pieces ++ [Regex.rx_sl(t, beg * 4294967296 + n)] else pieces end
+    end
+  end
+#: split/2 needs rx_split/2
+  def split(pattern: regex, text: string): list[string] do
+    rx_split(rx_ab(pattern), {rx_ab(text), -1})
+  end
+#: named_captures/2 needs rx_gs/2
+  def named_captures(pattern: regex, text: string): option[map[string, string]] do
+    o = rx_ab(pattern)
+    t = rx_ab(text)
+    f = first(o, t, 0, [])
+    if f < 0 do none else some(named(o, 9, rx_gs(o, {t, f / 4294967296 + rem(f, 4294967296) * 4294967296}), %{})) end
+  end
+  defp named(o: bytes, i: integer, groups: list[string], acc: map[string, string]): map[string, string] do
+    if i >= g3(o, 6) do acc else
+      size = Enum.at(o, i + 3, 0) + Enum.at(o, i + 4, 0) * 256
+      named(o, i + 5 + size, groups, Map.put(acc, rx_as(Enum.slice(o, i + 5, size)), Enum.at(groups, g3(o, i), "")))
+    end
+  end
+#: rx_tt/0
+  def rx_tt(): bytes do
+    rx_tb()
+  end
+#: rx_ld/2 needs rx_all/2 rx_tt/0
+# The width of the character at a position when it may stand in a name
+# of a replacement: a letter, a digit (Go's unicode.IsLetter and IsDigit)
+# or an underscore. 0 when it may not.
+  def rx_ld(r: bytes, i: integer): integer do
+    b = Enum.at(r, i, -1)
+    if b < 128 do
+      if wd(b) do 1 else 0 end
+    else
+      w = uw(r, i)
+      g = Regex.rx_tt()
+      id = if w == 0 do -1 else cat(g, g3(g, 12), cp(r, i, w), 0) end
+      if id >= 0 and (Enum.at(g, g3(g, 15) + 30 + id, 0) == 1 or Enum.at(g, g3(g, 18) - 1, 0) == id) do w else 0 end
+    end
+  end
+# The general category of character c: the tables' runs from p, the
+# first at character at.
+  defp cat(g: bytes, p: integer, c: integer, at: integer): integer do
+    v = Enum.at(g, p, 0)
+    if rem(v, 8) < 7 do
+      if c < at + rem(v, 8) + 1 do v / 8 else cat(g, p + 1, c, at + rem(v, 8) + 1) end
+    else
+      size = 8 + num(g, p + 1)
+      if c < at + size do v / 8 else cat(g, skip(g, p + 1), c, at + size) end
+    end
+  end
+  defp num(g: bytes, p: integer): integer do
+    c = Enum.at(g, p, 0)
+    if c < 128 do c else c - 128 + 128 * num(g, p + 1) end
+  end
+  defp skip(g: bytes, p: integer): integer do
+    if Enum.at(g, p, 0) < 128 do p + 1 else skip(g, p + 1) end
+  end
+#: rx_join/2 needs rx_sl/2
+# A text with each of its matches replaced: the text between them and
+# what stands for each.
+  def rx_join(t: bytes, m: tuple[list[integer], list[string]]): string do
+    ms = elem(m, 0)
+    n = length(ms)
+    none: list[string] = []
+    pieces = if n == 0 do none else
+      for i <- 0..(n - 1) do
+        Regex.rx_sl(t, (if i == 0 do 0 else rem(Enum.at(ms, i - 1, 0), 4294967296) / 2 end) * 4294967296 + Enum.at(ms, i, 0) / 4294967296) <> Enum.at(elem(m, 1), i, "")
+      end
+    end
+    Enum.join(pieces ++ [Regex.rx_sl(t, (if n == 0 do 0 else rem(Enum.at(ms, n - 1, 0), 4294967296) / 2 end) * 4294967296 + Enum.count(t))])
+  end
+#: replace/3 needs rx_all/2 rx_sp/2 rx_sl/2 rx_ld/2 rx_join/2
+  def replace(pattern: regex, text: string, replacement: string): string do
+    o = rx_ab(pattern)
+    t = rx_ab(text)
+    none: list[string] = []
+    r = rx_ab(Enum.join(refs(rx_ab(replacement), 0, 0, none)))
+    ms = Regex.rx_all(o, {t, 1})
+    parts = parse(r, 0, [])
+    Regex.rx_join(t, {ms, Enum.map(ms, fn m -> if rem(m, 2) == 0 do "" else
+      if length(parts) == 3 and Enum.at(parts, 0, 0) == 0 do rx_as(r) else Enum.join(expand(o, t, r, parts, 0, Regex.rx_sp(o, {t, m / 4294967296 + (rem(m, 4294967296) / 2 + 1) * 4294967296}), none)) end
+    end end)})
+  end
+  defp digit(r: bytes, i: integer): boolean do
+    Enum.at(r, i, 0) >= 48 and Enum.at(r, i, 0) <= 57
+  end
+  defp digits(r: bytes, i: integer): integer do
+    if digit(r, i) do digits(r, i + 1) else i end
+  end
+# \1 written as ${1}: the pieces of the replacement from i, those
+# before `last` being done.
+  defp refs(r: bytes, i: integer, last: integer, done: list[string]): list[string] do
+    if i >= Enum.count(r) do done ++ [Regex.rx_sl(r, last * 4294967296 + i)] else
+      if Enum.at(r, i, 0) == 92 and digit(r, i + 1) do
+        refs(r, digits(r, i + 1), digits(r, i + 1), done ++ [Regex.rx_sl(r, last * 4294967296 + i), "${", Regex.rx_sl(r, (i + 1) * 4294967296 + digits(r, i + 1)), "}"])
+      else refs(r, i + 1, last, done) end
+    end
+  end
+  defp dollar(r: bytes, i: integer): integer do
+    if i >= Enum.count(r) do i else if Enum.at(r, i, 0) == 36 do i else dollar(r, i + 1) end end
+  end
+  defp name_end(r: bytes, i: integer): integer do
+    w = if i >= Enum.count(r) do 0 else Regex.rx_ld(r, i) end
+    if w == 0 do i else name_end(r, i + w) end
+  end
+# The number a name is, -1 when it is none (Go's extract).
+  defp number(r: bytes, i: integer, stop: integer, n: integer): integer do
+    if i >= stop do n else
+      if not digit(r, i) or n >= 100000000 do -1 else number(r, i + 1, stop, n * 10 + Enum.at(r, i, 0) - 48) end
+    end
+  end
+# A replacement from i on as parts of three numbers: 0 and where text
+# starts and stops, 1 and a group's number, 2 and where a group's name
+# starts and stops, 3 for a dollar sign (Go's expand).
+  defp parse(r: bytes, i: integer, done: list[integer]): list[integer] do
+    n = Enum.count(r)
+    d = dollar(r, i)
+    if d >= n do done ++ [0, i, n] else
+      if Enum.at(r, d + 1, 0) == 36 do parse(r, d + 2, done ++ [0, i, d, 3, 0, 0]) else
+        brace = if Enum.at(r, d + 1, 0) == 123 do 1 else 0 end
+        from = d + 1 + brace
+        stop = name_end(r, from)
+        if stop == from or (brace == 1 and Enum.at(r, stop, 0) != 125) do parse(r, d + 1, done ++ [0, i, d, 3, 0, 0]) else
+          v = if Enum.at(r, from, 0) == 48 and stop - from > 1 do -1 else number(r, from, stop, 0) end
+          parse(r, stop + brace, done ++ [0, i, d] ++ (if v >= 0 do [1, v, 0] else [2, from, stop] end))
+        end
+      end
+    end
+  end
+  defp same(a: bytes, i: integer, c: bytes, j: integer, n: integer): boolean do
+    if n == 0 do true else if Enum.at(a, i, 0) != Enum.at(c, j, 1) do false else same(a, i + 1, c, j + 1, n - 1) end end
+  end
+# The first group called by the name from a up to z of r that took part
+# in the match, -1 for none. i: where the names of the pattern go on.
+  defp called(o: bytes, i: integer, r: bytes, a: integer, z: integer, sp: list[integer]): integer do
+    stop = Enum.at(o, 6, 0) + Enum.at(o, 7, 0) * 256 + Enum.at(o, 8, 0) * 65536
+    if i >= stop do -1 else
+      size = Enum.at(o, i + 3, 0) + Enum.at(o, i + 4, 0) * 256
+      g = Enum.at(o, i, 0) + Enum.at(o, i + 1, 0) * 256 + Enum.at(o, i + 2, 0) * 65536
+      if size == z - a and same(o, i + 5, r, a, size) and Enum.at(sp, g, 0) != 0 do g else called(o, i + 5 + size, r, a, z, sp) end
+    end
+  end
+  defp expand(o: bytes, t: bytes, r: bytes, parts: list[integer], i: integer, sp: list[integer], done: list[string]): list[string] do
+    if i >= length(parts) do done else
+      kind = Enum.at(parts, i, 0)
+      a = Enum.at(parts, i + 1, 0)
+      z = Enum.at(parts, i + 2, 0)
+      g = if kind == 1 do a else if kind == 2 do called(o, 9, r, a, z, sp) else -1 end end
+      span = if g < 0 do 0 else Enum.at(sp, g, 0) end
+      expand(o, t, r, parts, i + 3, sp, done ++ [cond do
+        kind == 0 -> Regex.rx_sl(r, a * 4294967296 + z)
+        kind == 3 -> "$"
+        span == 0 -> ""
+        true -> Regex.rx_sl(t, (span / 4294967296 - 1) * 4294967296 + rem(span, 4294967296) - 1)
+      end])
+    end
+  end
+#: replace/3 form 2 needs rx_all/2 rx_sl/2 rx_join/2
+  def replace(pattern: regex, text: string, f: fn[string, string]): string do
+    o = rx_ab(pattern)
+    t = rx_ab(text)
+    ms = Regex.rx_all(o, {t, 1})
+    Regex.rx_join(t, {ms, Enum.map(ms, fn m -> if rem(m, 2) == 0 do "" else f(Regex.rx_sl(t, m / 4294967296 * 4294967296 + rem(m, 4294967296) / 2)) end end)})
+  end
+#: replace/3 form 3 needs rx_all/2 rx_gs/2 rx_join/2
+  def replace(pattern: regex, text: string, f: fn[list[string], string]): string do
+    o = rx_ab(pattern)
+    t = rx_ab(text)
+    ms = Regex.rx_all(o, {t, 0})
+    Regex.rx_join(t, {ms, Enum.map(ms, fn m -> f(Regex.rx_gs(o, {t, m / 4294967296 + (rem(m, 4294967296) / 2 + 1) * 4294967296})) end)})
+  end

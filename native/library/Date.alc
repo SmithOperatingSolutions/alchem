@@ -1,0 +1,1206 @@
+# Date: calendar dates, and what the date and time modules share, after
+# Go's time package as the pinned runtime uses it.
+#
+# Every byte of a library function costs the compiler's source, which has a
+# size limit, more than two, and a name that is not a common word costs a
+# byte per letter. So the code of these six files is written short: the
+# private functions and the variables have one or two letters, and a
+# comment says what each is. Division and remainder are / and %, which
+# truncate as div and rem do.
+#
+# The four date and time structs are one entry, under the name Time: a
+# struct entry is appended to a program that mentions its file's module or
+# the entry's name, a word counts where a longer one ends in it, and the
+# functions of each of the four modules and those of Calendar name the
+# structs of the others. So all four are there for a program that mentions
+# Date, Time, NaiveDateTime or DateTime.
+#: struct Time also ~D[ ~T[ ~N[ ~U[
+  struct Date do
+    year: integer
+    month: integer
+    day: integer
+  end
+  struct Time do
+    hour: integer
+    minute: integer
+    second: integer
+    microsecond: integer
+  end
+  struct NaiveDateTime do
+    year: integer
+    month: integer
+    day: integer
+    hour: integer
+    minute: integer
+    second: integer
+    microsecond: integer
+  end
+  struct DateTime do
+    year: integer
+    month: integer
+    day: integer
+    hour: integer
+    minute: integer
+    second: integer
+    microsecond: integer
+    time_zone: string
+    utc_offset: integer
+  end
+# The shared part is one entry, cm/2. Its public functions all take two
+# arguments, so that they live in one appended module, and are public only
+# so that the other library files can call them (a private function is
+# visible in one module of one parameter count); their names are two
+# letters, c or d and one more. It is one entry, and uses nothing of the
+# other library files, because an entry is tested against a program once
+# for every function that needs it, and nearly every date and time function
+# needs these. What reads ISO 8601 text is a second entry, cr/2, in the
+# same module, for the few functions that need it.
+#
+# A moment is what Go's time.Time holds, so that fields out of their ranges
+# normalize as time.Date normalizes them, and a moment out of the 584
+# thousand million years a Time has comes out as it does there: the
+# seconds since 1 March of the year -292277022400, a uint64 that is kept in
+# an int64, and the microseconds of the second. Day numbers count from that
+# day too. Fields travel as lists: [year, month, day], [hour, minute,
+# second, microsecond] or the seven.
+#
+# Time zones are read from the system's zone files by the entry dz/2 at
+# the end of this file. Without a file the zones known are UTC and those
+# of one offset for all time: Etc/GMT+12 to Etc/GMT-14 and the names of GMT
+# and UTC (dv). In any other zone a DateTime keeps the offset it was given,
+# and what moves it gives UTC, as the pinned runtime does for a name its
+# database lacks.
+#: cm/2
+# cm: the seven fields b microseconds later, in range.
+  def cm(f: list[integer], b: integer): list[integer] do
+    zm(f, 0, 0, b)
+  end
+# zm: the seven fields n months, p days and b microseconds later: time.Date,
+# which counts from any month and day, and Time.Add, which stops at the
+# ends of an int64 of seconds since the year 1.
+  defp zm(f: list[integer], n: integer, p: integer, b: integer): list[integer] do
+    if yf(f) and ys(n, 0, 0) and yb(p, b) do
+      r = l(f)+b
+      w(yj(o(f, 0), o(f, 1)+n, o(f, 2)+p)+yo(r), yg(r)/1000000, g(r, 1000000))
+    else ym(f, n, p, b) end
+  end
+# The fields of this library's own range are moved in plain arithmetic.
+# ys: whether three numbers are within 2**31 of zero. yf: whether seven
+# fields are. yb: whether days are within 2**40 and microseconds within
+# 2**60. yj: the day number za gives for such a year, month and day.
+# yh: the microseconds of a time of day. yd: the Date of a day number. yn:
+# the NaiveDateTime, yt: the DateTime of a day number and r microseconds.
+# yc: e days and r microseconds within what a Go Duration holds.
+  defp ys(a: integer, b: integer, c: integer): boolean do
+    a> -2147483648 and a<2147483648 and b> -2147483648 and b<2147483648 and c> -2147483648 and c<2147483648
+  end
+  defp yf(f: list[integer]): boolean do
+    case f do
+      [y, m, d, h, i, s, c] -> ys(y, m, d) and ys(h, i, s) and ys(c, 0, 0)
+      _ -> false
+    end
+  end
+  defp yb(p: integer, b: integer): boolean do
+    p> -1099511627776 and p<1099511627776 and b> -1152921504606846976 and b<1152921504606846976
+  end
+  defp yj(y: integer, m: integer, d: integer): integer do
+    a = if m>0 and m<13 do 0 else (m-1)/12-(if (m-1)%12<0 do 1 else 0 end) end
+    n = m-a*12
+    e = if n<3 do 1 else 0 end
+    t = y+a-e+292277022400
+    t/100*146097/4+1461*(t%100)/4+(153*(n+12*e)-457)/5+d-1
+  end
+# yo: r microseconds in whole days, rounded down. yg: what is left of r.
+  defp yo(r: integer): integer do
+    r/86400000000-(if r%86400000000<0 do 1 else 0 end)
+  end
+  defp yg(r: integer): integer do
+    r-yo(r)*86400000000
+  end
+  defp yh(h: integer, i: integer, s: integer, u: integer): integer do
+    ((h*60+i)*60+s)*1000000+u
+  end
+  defp yd(n: integer): Date do
+    a = n%146097
+    y = (a-a/1460+a/36524-a/146096)/365
+    i = a-(365*y+y/4-y/100)
+    p = (5*i+2)/153
+    m = if p<10 do p+3 else p-9 end
+    %Date{year: y+n/146097*400-292277022400+(if m<3 do 1 else 0 end), month: m, day: i-(153*p+2)/5+1}
+  end
+  defp yn(n: integer, r: integer): NaiveDateTime do
+    d = yd(n)
+    c = r/1000000
+    %NaiveDateTime{year: d.year, month: d.month, day: d.day, hour: c/3600, minute: c/60%60, second: c%60, microsecond: r%1000000}
+  end
+  defp yt(n: integer, r: integer): DateTime do
+    d = yd(n)
+    c = r/1000000
+    %DateTime{year: d.year, month: d.month, day: d.day, hour: c/3600, minute: c/60%60, second: c%60, microsecond: r%1000000, time_zone: "Etc/UTC", utc_offset: 0}
+  end
+  defp yc(e: integer, r: integer): integer do
+    cond do
+      e>200000 -> 9223372036854775
+      e< -200000 -> -9223372036854775
+      true -> max(min(e*86400000000+r, 9223372036854775), -9223372036854775)
+    end
+  end
+  defp ym(f: list[integer], n: integer, p: integer, b: integer): list[integer] do
+    u = g(l(f), 1000000)+b
+    e = x(zs(f, n, p), -9223371966606163200)
+    s = x(e, v(u, 1000000))
+    zy(x((if (s>e) == (u>999999) do s else if u>0 do 9223372036854775807 else -9223372036854775807 end end), 9223371966606163200), g(u, 1000000))
+  end
+# o: a field. A list is not taken apart by a pattern where that happens
+# often: a pattern copies what follows each element.
+  defp o(f: list[integer], i: integer): integer do
+    Enum.at(f, i, 0)
+  end
+# l: the microseconds of the day of seven fields.
+  defp l(f: list[integer]): integer do
+    o(f, 6)+((o(f, 3)*60+o(f, 4))*60+o(f, 5))*1000000
+  end
+# v: a / b rounded down. g: what is left of a then.
+  defp v(a: integer, b: integer): integer do
+    if a%b<0 do a/b-1 else a/b end
+  end
+  defp g(a: integer, b: integer): integer do
+    a-v(a, b)*b
+  end
+# x: a sum as Go's int64 gives it, modulo 2**64. k: such a product a * n
+# for a positive n.
+  defp x(a: integer, b: integer): integer do
+    m = -9223372036854775807-1
+    cond do
+      a>0 and b>0 and a>9223372036854775807-b -> a+m+(b+m)
+      a<0 and b<0 and a<m-b -> a-m+(b-m)
+      true -> a+b
+    end
+  end
+  defp k(a: integer, n: integer): integer do
+    if n == 0 do 0 else
+      h = k(x(a, a), n/2)
+      if n%2 == 1 do x(h, a) else h end
+    end
+  end
+# za: the day number of a year, any month and any day, as Go's
+# dateToAbsDays counts it: in centuries and years of a year t that starts
+# in March, which for a year before the first is 2**64 more, and 2**64 is
+# 184467440737095516 hundreds and 16; the days of the centuries are a
+# fourth of a product modulo 2**64.
+  defp za(y: integer, m: integer, d: integer): integer do
+    n = g(m-1, 12)+1
+    e = if n<3 do 1 else 0 end
+    t = y+v(m-1, 12)-e+292277022400
+    h = if t<0 do t+16 else t end
+    p = k(v(h, 100)+(if t<0 do 184467440737095516 else 0 end), 146097)
+    x((if p<0 do v(p, 4)+4611686018427387904 else p/4 end), 1461*g(h, 100)/4+(153*(n+12*e)-457)/5+d-1)
+  end
+# zs: the seconds of seven fields n months and p days on. ze: those of
+# fields since the year 1, which is how moments are ordered.
+  defp zs(f: list[integer], n: integer, p: integer): integer do
+    if yf(f) and ys(n, 0, 0) and yb(p, 0) do x(ye(f, n, p), 9223371966606163200) else yw(f, n, p) end
+  end
+# ye: the seconds since the year 1 of such fields.
+  defp ye(f: list[integer], n: integer, p: integer): integer do
+    (yj(o(f, 0), o(f, 1)+n, o(f, 2)+p)+yo(l(f))-106751990354238)*86400+yg(l(f))/1000000
+  end
+  defp yw(f: list[integer], n: integer, p: integer): integer do
+    x(k(za(o(f, 0), o(f, 1)+n, o(f, 2)+p+v(l(f), 86400000000)), 86400), g(v(l(f), 1000000), 86400))
+  end
+  defp ze(f: list[integer]): integer do
+    if yf(f) do ye(f, 0, 0) else x(zs(f, 0, 0), -9223371966606163200) end
+  end
+# zn: the day number of seconds s, which are 2**64 more if below 0, and
+# 2**64 is 213503982334601 days and 25216 seconds.
+  defp zn(s: integer): integer do
+    if s<0 do 213503982334601+v(s+25216, 86400) else s/86400 end
+  end
+# zy: the seven fields of seconds s and u microseconds.
+  defp zy(s: integer, u: integer): list[integer] do
+    w(zn(s), (if s<0 do g(s+25216, 86400) else s%86400 end), u)
+  end
+# w: the seven fields of a day number, c seconds and u microseconds.
+  defp w(n: integer, c: integer, u: integer): list[integer] do
+    d = yd(n)
+    [d.year, d.month, d.day, c/3600, c/60%60, c%60, u]
+  end
+# cy: the fields p days later, as Time.AddDate moves them. cv: the day
+# number of fields and p more. zq: the fields of a Date. cn: its day number
+# and p more. cd: the Date p days later.
+  def cy(f: list[integer], p: integer): list[integer] do
+    zm(f, 0, p, 0)
+  end
+  def cv(f: list[integer], p: integer): integer do
+    if yf(f) do yj(o(f, 0), o(f, 1), o(f, 2))+yo(l(f))+p else zn(zs(f, 0, 0))+p end
+  end
+  defp zq(d: Date): list[integer] do
+    [d.year, d.month, d.day, 0, 0, 0, 0]
+  end
+  def cn(d: Date, p: integer): integer do
+    if ys(d.year, d.month, d.day) do yj(d.year, d.month, d.day)+p else cv(zq(d), p) end
+  end
+  def cd(d: Date, p: integer): Date do
+    if ys(d.year, d.month, d.day) and yb(p, 0) do yd(yj(d.year, d.month, d.day)+p) else
+      f = zm(zq(d), 0, p, 0)
+      %Date{year: o(f, 0), month: o(f, 1), day: o(f, 2)}
+    end
+  end
+# cj: the day of the year of day number n + p, from 1.
+  def cj(n: integer, p: integer): integer do
+    q = n+p
+    if q>=0 and q<281474976710656 do q-yj(yd(q).year, 1, 0) else q-za(o(w(q, 0, 0), 0), 1, 0) end
+  end
+# zl: the day of the month of the day before the same day of the next
+# month. cl: the days of a month, which is that of its first day.
+  defp zl(f: list[integer]): integer do
+    o(zm(f, 1, -1, 0), 2)
+  end
+  def cl(y: integer, m: integer): integer do
+    if m>0 and m<13 and ys(y, 0, 0) do (if m == 2 do (if y%4 == 0 and (y%100 != 0 or y%400 == 0) do 29 else 28 end) else 30+(m+m/8)%2 end) else zl([y, m, 1, 0, 0, 0, 0]) end
+  end
+# cb: whether a date and a time of day do not exist. zx: whether field i
+# is not from a to b.
+  def cb(d: list[integer], t: list[integer]): boolean do
+    zx(d, 0, -9999, 9999) or zx(d, 1, 1, 12) or zx(d, 2, 1, cl(o(d, 0), o(d, 1))) or zx(t, 0, 0, 23) or zx(t, 1, 0, 59) or zx(t, 2, 0, 59) or zx(t, 3, 0, 999999)
+  end
+  defp zx(f: list[integer], i: integer, a: integer, b: integer): boolean do
+    o(f, i)<a or o(f, i)>b
+  end
+# cf: the microseconds from b to a, kept within what a Go Duration holds.
+  def cf(a: list[integer], b: list[integer]): integer do
+    p = ze(a)
+    c = ze(b)
+    e = v(p, 86400)-v(c, 86400)
+    cond do
+      e>200000 -> 9223372036854775
+      e< -200000 -> -9223372036854775
+      true -> max(min(e*86400000000+(g(p, 86400)-g(c, 86400))*1000000+g(l(a), 1000000)-g(l(b), 1000000), 9223372036854775), -9223372036854775)
+    end
+  end
+# dy: the DateTime in UTC of s seconds since 1970, for seconds of the years
+# -9999 to 9999, and u microseconds.
+  def dy(s: integer, u: integer): DateTime do
+    c = s%86400
+    e = if c<0 do 1 else 0 end
+    yt(106751991073400+s/86400-e, (c+e*86400)*1000000+u)
+  end
+# ci: the microseconds from Date b to Date a, as cf.
+  def ci(a: Date, b: Date): integer do
+    if ys(a.year, a.month, a.day) and ys(b.year, b.month, b.day) do yc(yj(a.year, a.month, a.day)-yj(b.year, b.month, b.day), 0) else cf(zq(a), zq(b)) end
+  end
+# co: the order of two numbers.
+  def co(a: integer, b: integer): atom do
+    cond do
+      a<b -> :lt
+      a>b -> :gt
+      true -> :eq
+    end
+  end
+# cp: n microseconds in a unit of time.
+  def cp(n: integer, u: atom): integer do
+    p = case u do
+      :day -> 86400000000
+      :hour -> 3600000000
+      :minute -> 60000000
+      :second -> 1000000
+      :millisecond -> 1000
+      :microsecond -> 1
+      _ -> raise("the unit is :day, :hour, :minute, :second, :millisecond or :microsecond, not "<>inspect(u))
+    end
+    n/p
+  end
+# cc: the microseconds kept at a precision.
+  def cc(u: integer, p: atom): integer do
+    case p do
+      :second -> 0
+      :millisecond -> u/1000*1000
+      :microsecond -> u
+      _ -> raise("truncate takes :second, :millisecond or :microsecond")
+    end
+  end
+# cs: the microseconds n of a unit move a moment by; the pinned runtime
+# multiplies microseconds by 1000 in a 64-bit Duration. ce: those of n
+# units of p nanoseconds each.
+  def cs(n: integer, u: atom): integer do
+    p = 86400000000/cp(86400000000, u)
+    if n>4611686018427387904/p or n< -4611686018427387904/p do raise("the amount to add is out of range") end
+    v(k(n*p, 1000), 1000)
+  end
+  def ce(n: integer, p: integer): integer do
+    if n>1099511627776 or n< -1099511627776 do raise("the amount to add is out of range") end
+    if p == 1000000000 and n> -9000000000 and n<9000000000 do n*1000000 else v(k(n, p), 1000) end
+  end
+# ch: a wall clock moved by the eight amounts of a duration, as the pinned
+# runtime moves it: to the first p of the month n months on, then to the
+# day of the month it had or the last day that month has, then by the
+# weeks and days, then by the time units. zf: whether one of the amounts
+# is out of range.
+  def ch(f: list[integer], b: list[integer]): list[integer] do
+    if zf(b, 0) do raise("the duration is out of range") end
+    t = cm(f, 0)
+    n = o(b, 0)*12+o(b, 1)
+    p = zm(t, n, 1-o(t, 2), 0)
+    cm(cy((if n == 0 do t else cy(p, min(o(t, 2), zl(p))-1) end), o(b, 2)*7+o(b, 3)), v(x(x(k(o(b, 4), 3600000000000), k(o(b, 5), 60000000000)), x(k(o(b, 6), 1000000000), k(o(b, 7), 1000))), 1000))
+  end
+  defp zf(b: list[integer], i: integer): boolean do
+    i<8 and (o(b, i)>1099511627776 or o(b, i)< -1099511627776 or zf(b, i+1))
+  end
+# cz: Go's %0pd.
+  def cz(n: integer, p: integer): string do
+    if n<0 do "-"<>String.pad_leading(Integer.to_string(-n), p-1, "0") else String.pad_leading(Integer.to_string(n), p, "0") end
+  end
+# ct: three fields as YYYY-MM-DD, four as HH:MM:SS and the fraction that is
+# not zero, seven as both with p between. zu: the date. zt: the time of
+# the fields from i on. zr: the digits of a fraction.
+  def ct(f: list[integer], p: string): string do
+    case f do
+      [y, m, d] -> if yq(y, m, d) do yx(10, yy(y, m), yp(d), 0) else zu(f) end
+      [h, i, s, u] -> if ya(h, i, s) do yr(yx(8, yp(h)+3801088+yp(i)*16777216+63771674411008+yp(s)*281474976710656, 0, 0), u) else zt(f, 0) end
+      [y, m, d, h, i, s, u] -> if yq(y, m, d) and ya(h, i, s) and byte_size(p) == 1 do yr(yx(19, yy(y, m), yp(d)+Sys.byte(Sys.addr(p))*65536+yp(h)*16777216+63771674411008+yp(i)*281474976710656, 58+yp(s)*256), u) else zu(f)<>p<>zt(f, 3) end
+      _ -> zu(f)<>p<>zt(f, 3)
+    end
+  end
+# Fields that take the digits they usually take are written into the bytes
+# of a fresh string, eight at a time. yp: two digits as two bytes. ya:
+# whether three numbers are from 0 to 99. yq: whether a year is from 0 to
+# 9999 and two more are that. yy: YYYY-MM- as eight bytes. yx: a string of
+# n bytes that are the words a, b and c. yr: a time and its fraction.
+  defp yp(v: integer): integer do
+    12336+v/10+v%10*256
+  end
+  defp ya(a: integer, b: integer, c: integer): boolean do
+    a>=0 and a<100 and b>=0 and b<100 and c>=0 and c<100
+  end
+  defp yq(y: integer, m: integer, d: integer): boolean do
+    y>=0 and y<10000 and ya(m, d, 0)
+  end
+  defp yy(y: integer, m: integer): integer do
+    yp(y/100)+yp(y%100)*65536+193273528320+yp(m)*1099511627776+3242591731706757120
+  end
+  defp yx(n: integer, a: integer, b: integer, c: integer): string do
+    t = Sys.text(Sys.addr("0000000000000000000"), n)
+    q = Sys.addr(t)
+    Sys.poke(q, a)
+    if n>8 do Sys.poke(q+8, b) end
+    if n>16 do Sys.poke(q+16, c) end
+    t
+  end
+  defp yr(t: string, u: integer): string do
+    if u == 0 do t else t<>"."<>zr(u, 6) end
+  end
+  defp zu(f: list[integer]): string do
+    cz(o(f, 0), 4)<>"-"<>cz(o(f, 1), 2)<>"-"<>cz(o(f, 2), 2)
+  end
+  defp zt(f: list[integer], i: integer): string do
+    cz(o(f, i), 2)<>":"<>cz(o(f, i+1), 2)<>":"<>cz(o(f, i+2), 2)<>(if o(f, i+3) == 0 do "" else "."<>zr(o(f, i+3), 6) end)
+  end
+  defp zr(u: integer, p: integer): string do
+    if u%10 == 0 do zr(u/10, p-1) else cz(u, p) end
+  end
+# ck: a time of day b microseconds later, around midnight. cg: the
+# microseconds from one time of day to another.
+  def ck(t: Time, b: integer): Time do
+    if ys(t.hour, t.minute, t.second) and ys(t.microsecond, 0, 0) and yb(0, b) do
+      r = g(yh(t.hour, t.minute, t.second, t.microsecond)+b, 86400000000)
+      c = r/1000000
+      %Time{hour: c/3600, minute: c/60%60, second: c%60, microsecond: r%1000000}
+    else
+      f = cm([1970, 1, 1, t.hour, t.minute, t.second, t.microsecond], b)
+      %Time{hour: o(f, 3), minute: o(f, 4), second: o(f, 5), microsecond: o(f, 6)}
+    end
+  end
+  def cg(a: Time, b: Time): integer do
+    (((a.hour-b.hour)*60+a.minute-b.minute)*60+a.second-b.second)*1000000+a.microsecond-b.microsecond
+  end
+# r: the seven fields of a NaiveDateTime, as they are. cw: they b
+# microseconds later. ca: the NaiveDateTime of seven fields b microseconds
+# later. cq: the microseconds from b to a. cx: one as text.
+  defp r(n: NaiveDateTime): list[integer] do
+    [n.year, n.month, n.day, n.hour, n.minute, n.second, n.microsecond]
+  end
+  def cw(n: NaiveDateTime, b: integer): list[integer] do
+    cm(r(n), b)
+  end
+  def ca(f: list[integer], b: integer): NaiveDateTime do
+    t = cm(f, b)
+    %NaiveDateTime{year: o(t, 0), month: o(t, 1), day: o(t, 2), hour: o(t, 3), minute: o(t, 4), second: o(t, 5), microsecond: o(t, 6)}
+  end
+  def cq(a: NaiveDateTime, b: NaiveDateTime): integer do
+    if yv(a) and yv(b) do
+      p = yh(a.hour, a.minute, a.second, a.microsecond)
+      c = yh(b.hour, b.minute, b.second, b.microsecond)
+      yc(yj(a.year, a.month, a.day)+yo(p)-yj(b.year, b.month, b.day)-yo(c), yg(p)-yg(c))
+    else cf(r(a), r(b)) end
+  end
+# yv: whether the fields of a NaiveDateTime are within 2**31 of zero. cu:
+# one b microseconds later.
+  defp yv(n: NaiveDateTime): boolean do
+    ys(n.year, n.month, n.day) and ys(n.hour, n.minute, n.second) and ys(n.microsecond, 0, 0)
+  end
+  def cu(n: NaiveDateTime, b: integer): NaiveDateTime do
+    if yv(n) and yb(0, b) do
+      p = yh(n.hour, n.minute, n.second, n.microsecond)+b
+      yn(yj(n.year, n.month, n.day)+yo(p), yg(p))
+    else ca(cm(r(n), 0), b) end
+  end
+  def cx(n: NaiveDateTime, p: string): string do
+    ct(r(n), p)
+  end
+# dv: the abbreviation of a zone after the text b, "" for a zone that is
+# not known. An offset of whole hours is its own abbreviation.
+  def dv(n: string, b: string): string do
+    cond do
+      n in ["Etc/UTC", "UTC", "Etc/UCT", "UCT", "Etc/Universal", "Universal", "Etc/Zulu", "Zulu"] -> b<>"UTC"
+      n in ["Etc/GMT", "GMT", "Etc/GMT+0", "Etc/GMT-0", "Etc/GMT0", "GMT+0", "GMT-0", "GMT0", "Etc/Greenwich", "Greenwich"] -> b<>"GMT"
+      n == "Factory" -> b<>"-00"
+      true -> zc(n, b, -14)
+    end
+  end
+  defp zc(n: string, b: string, i: integer): string do
+    cond do
+      i>12 -> ""
+      i != 0 and n == "Etc/GMT"<>(if i>0 do "+" else "-" end)<>Integer.to_string(abs(i)) -> b<>(if i>0 do "-" else "+" end)<>cz(abs(i), 2)
+      true -> zc(n, b, i+1)
+    end
+  end
+# dr: the fields in UTC of the moment a DateTime names, its wall clock less
+# its offset, b microseconds later. dg: the microseconds from b to a. du:
+# its seconds since 1970 and p more.
+  def dr(d: DateTime, b: integer): list[integer] do
+    cm([d.year, d.month, d.day, d.hour, d.minute, d.second, d.microsecond], b+ce(-d.utc_offset, 1000000000))
+  end
+  def dg(a: DateTime, b: DateTime): integer do
+    if yz(a) and yz(b) do
+      p = yu(a)
+      c = yu(b)
+      yc(yj(a.year, a.month, a.day)+yo(p)-yj(b.year, b.month, b.day)-yo(c), yg(p)-yg(c))
+    else cf(dr(a, 0), dr(b, 0)) end
+  end
+# yz: whether the fields and the offset of a DateTime are within 2**31 of
+# zero. yu: the microseconds of its time of day in UTC. dq: it b
+# microseconds later.
+  defp yz(d: DateTime): boolean do
+    ys(d.year, d.month, d.day) and ys(d.hour, d.minute, d.second) and ys(d.microsecond, d.utc_offset, 0)
+  end
+  defp yu(d: DateTime): integer do
+    yh(d.hour, d.minute, d.second, d.microsecond)-d.utc_offset*1000000
+  end
+  def du(d: DateTime, p: integer): integer do
+    if yz(d) and yb(p, 0) do (yj(d.year, d.month, d.day)+yo(yu(d))-106751991073400)*86400+yg(yu(d))/1000000+p else x(zs(dr(d, 0), 0, 0), p-9223372028741760000) end
+  end
+# df: an offset from UTC as +HH:MM, with p between. dt: a DateTime as text
+# up to its Z or offset.
+  def df(d: DateTime, p: string): string do
+    a = abs(d.utc_offset)
+    (if d.utc_offset<0 do "-" else "+" end)<>cz(a/3600, 2)<>p<>cz(a%3600/60, 2)
+  end
+  def dt(d: DateTime, p: string): string do
+    ct([d.year, d.month, d.day, d.hour, d.minute, d.second, d.microsecond], p)<>(if d.utc_offset == 0 and d.time_zone == "Etc/UTC" do "Z" else df(d, ":") end)
+  end
+#: cr/2 needs cm/2
+# cr: the fields ISO 8601 text writes, [] if it is not valid, as Go's
+# time.Parse reads it. Kind 0 is YYYY-MM-DD, 1 is HH:MM:SS, 2 is both with
+# a T or spaces between, 3 is that and Z or +HH:MM, with the offset in
+# seconds as the eighth field. One digit will do for the hour, a comma may
+# start the fraction, and digits past the sixth are dropped.
+  def cr(s: string, n: integer): list[integer] do
+    a = Sys.addr(s)
+    b = byte_size(s)
+    f = cond do
+      n == 0 -> if b == 10 do yrd(a) else [] end
+      n == 1 -> yrt(a, b)
+      b<19 or (Sys.byte(a+10) != 84 and Sys.byte(a+10) != 32) -> []
+      n == 2 -> yrk(yrd(a), yrt(a+11, b-11))
+      Sys.byte(a+b-1) == 90 -> yrk(yrd(a), yrk(yrt(a+11, b-12), [0]))
+      b>24 and Sys.byte(a+b-3) == 58 and (Sys.byte(a+b-6) == 43 or Sys.byte(a+b-6) == 45) -> yrk(yrd(a), yrk(yrt(a+11, b-17), yro(ygd(a+b-5, 2), ygd(a+b-2, 2), 44-Sys.byte(a+b-6))))
+      true -> []
+    end
+    if f != [] do f else crs(s, n) end
+  end
+# Text in the form this library writes is read from its bytes; any other
+# goes the long way below (crs), which also finds what is wrong with it.
+# ygd: the number n digits at address a write, -1 if they are not digits.
+# yrd: the date YYYY-MM-DD at a. yrt: the time HH:MM:SS, with up to six
+# digits of a fraction, of n bytes at a. yro: an offset of h hours and m
+# minutes, s its sign. yrk: two lists as one, [] if either is.
+  defp ygd(a: integer, n: integer): integer do
+    if n == 0 do 0 else
+      c = Sys.byte(a+n-1)-48
+      h = ygd(a, n-1)
+      if c<0 or c>9 or h<0 do -1 else h*10+c end
+    end
+  end
+  defp yrd(a: integer): list[integer] do
+    y = ygd(a, 4)
+    m = ygd(a+5, 2)
+    d = ygd(a+8, 2)
+    if Sys.byte(a+4) != 45 or Sys.byte(a+7) != 45 or y<0 or m<1 or m>12 or d<1 or d>cl(y, m) do [] else [y, m, d] end
+  end
+  defp yrt(a: integer, n: integer): list[integer] do
+    if n<8 or n == 9 or n>15 do [] else
+      h = ygd(a, 2)
+      m = ygd(a+3, 2)
+      s = ygd(a+6, 2)
+      u = if n == 8 do 0 else if Sys.byte(a+8) == 46 do ygd(a+9, n-9) else -1 end end
+      if Sys.byte(a+2) != 58 or Sys.byte(a+5) != 58 or h<0 or h>23 or m<0 or m>59 or s<0 or s>59 or u<0 do [] else [h, m, s, u*(10**(15-n))] end
+    end
+  end
+  defp yro(h: integer, m: integer, s: integer): list[integer] do
+    if h<0 or h>24 or m<0 or m>60 do [] else [(h*60+m)*60*s] end
+  end
+  defp yrk(a: list[integer], b: list[integer]): list[integer] do
+    if a == [] or b == [] do [] else a ++ b end
+  end
+  defp crs(s: string, n: integer): list[integer] do
+    case n do
+      0 -> zp(s)
+      1 -> q(s)
+      _ ->
+        a = case String.split(s, "T") do
+          [d, t] -> zb(d, t, n)
+          _ -> []
+        end
+        p = String.split(s, " ")
+        if a != [] or length(p)<2 do a else zb(hd(p), hd(zo(tl(p))), n) end
+    end
+  end
+# zo: what follows a run of spaces: an empty piece per further space, then
+# the rest, which must be the last piece.
+  defp zo(p: list[string]): list[string] do
+    cond do
+      length(p) == 1 -> p
+      hd(p) == "" -> zo(tl(p))
+      true -> [":"]
+    end
+  end
+# zb: a date and what follows it.
+  defp zb(a: string, b: string, n: integer): list[integer] do
+    d = zp(a)
+    t = if n == 2 do q(b) else zz(b) end
+    if d == [] or t == [] do [] else d ++ t end
+  end
+# j: the number that exactly n digits write, -1 if they are not that.
+  defp j(s: string, n: integer): integer do
+    case Integer.parse(s) do
+      ok(a) -> if byte_size(s) != n or String.starts_with?(s, "+") or String.starts_with?(s, "-") do -1 else a end
+      error(_) -> -1
+    end
+  end
+# zp: a date. q: a time of day.
+  defp zp(s: string): list[integer] do
+    case String.split(s, "-") do
+      [a, b, c] ->
+        y = j(a, 4)
+        m = j(b, 2)
+        d = j(c, 2)
+        if y<0 or m<1 or m>12 or d<1 or d>cl(y, m) do [] else [y, m, d] end
+      _ -> []
+    end
+  end
+  defp q(s: string): list[integer] do
+    case String.split(s, ":") do
+      [a, b, c] ->
+        h = max(j(a, 1), j(a, 2))
+        m = j(b, 2)
+        p = String.split(c, ".")
+        t = if length(p) == 1 do String.split(c, ",") else p end
+        u = case t do
+          [d] -> 0
+          [d, e] -> zi(e)
+          _ -> -1
+        end
+        i = j(hd(t), 2)
+        if h<0 or h>23 or m<0 or m>59 or i<0 or i>59 or u<0 do [] else [h, m, i, u] end
+      _ -> []
+    end
+  end
+# zi: the microseconds the digits of a fraction write, -1 if they are not
+# digits. zg: whether text of any length is digits.
+  defp zi(s: string): integer do
+    n = min(byte_size(s), 6)
+    if n>0 and zg(s) do j(String.slice(s, 0, 6), n)*(10**(6-n)) else -1 end
+  end
+  defp zg(s: string): boolean do
+    n = byte_size(s)
+    if n<16 do j(s, n)>=0 else j(String.slice(s, 0, 15), 15)>=0 and zg(String.slice(s, 15, n)) end
+  end
+# zz: a time of day and Z or an offset. zv: they with an offset from UTC of
+# up to 24:60, which Go accepts.
+  defp zz(b: string): list[integer] do
+    case String.split(b, "Z") do
+      [c, ""] -> zv(q(c), 0, 0, 1)
+      _ ->
+        p = String.split(b, "+")
+        case (if length(p) == 2 do p else String.split(b, "-") end) do
+          [c, d] ->
+            case String.split(d, ":") do
+              [h, m] -> zv(q(c), j(h, 2), j(m, 2), if length(p) == 2 do 1 else -1 end)
+              _ -> []
+            end
+          _ -> []
+        end
+    end
+  end
+  defp zv(t: list[integer], h: integer, m: integer, s: integer): list[integer] do
+    if t == [] or h<0 or h>24 or m<0 or m>60 do [] else t ++ [(h*60+m)*60*s] end
+  end
+#: new/3 needs cm/2
+  def new(y: integer, m: integer, d: integer): result[Date, string] do
+    if y< -9999 or y>9999 or m<1 or m>12 or d<1 or d>Date.cl(y, m) do error("invalid date") else ok(%Date{year: y, month: m, day: d}) end
+  end
+#: new!/3 needs new/3
+  def new!(y: integer, m: integer, d: integer): Date do
+    case Date.new(y, m, d) do
+      ok(a) -> a
+      error(e) -> raise(e)
+    end
+  end
+#: from_iso8601/1 needs cr/2
+  def from_iso8601(s: string): result[Date, string] do
+    case Date.cr(s, 0) do
+      [y, m, d] -> ok(%Date{year: y, month: m, day: d})
+      _ -> error("invalid date: "<>inspect(s))
+    end
+  end
+#: from_iso8601!/1 needs from_iso8601/1
+  def from_iso8601!(s: string): Date do
+    case Date.from_iso8601(s) do
+      ok(a) -> a
+      error(e) -> raise(e)
+    end
+  end
+#: to_iso8601/1 needs cm/2
+  def to_iso8601(d: Date): string do
+    Date.ct([d.year, d.month, d.day], "")
+  end
+#: to_string/1 needs cm/2
+  def to_string(d: Date): string do
+    Date.ct([d.year, d.month, d.day], "")
+  end
+#: diff/2 needs cm/2
+# The pinned runtime subtracts in a Go Duration, which holds 106751 days.
+  def diff(a: Date, b: Date): integer do
+    ci(a, b)/86400000000
+  end
+#: compare/2 needs cm/2
+  def compare(a: Date, b: Date): atom do
+    co(ci(a, b), 0)
+  end
+#: before?/2 needs cm/2
+  def before?(a: Date, b: Date): boolean do
+    ci(a, b)<0
+  end
+#: after?/2 needs cm/2
+  def after?(a: Date, b: Date): boolean do
+    ci(a, b)>0
+  end
+#: add/2 needs cm/2
+  def add(d: Date, n: integer): Date do
+    if n>10000000 or n< -10000000 do raise("the number of days to add is out of range") end
+    cd(d, n)
+  end
+#: day_of_week/2 needs cm/2
+# The day of the week from 1, in a week that starts on a day: p days after
+# the date is a Monday as far into its week, and day 5 is a Monday.
+  def day_of_week(d: Date, s: atom): integer do
+    p = case s do
+      :monday -> 2
+      :tuesday -> 1
+      :wednesday -> 0
+      :thursday -> 6
+      :friday -> 5
+      :saturday -> 4
+      :sunday -> 3
+      _ -> raise("a week starts on :monday, :tuesday, :wednesday, :thursday, :friday, :saturday or :sunday")
+    end
+    cn(d, p)%7+1
+  end
+#: day_of_week/1 needs cm/2
+  def day_of_week(d: Date): integer do
+    Date.cn(d, 2)%7+1
+  end
+#: beginning_of_week/2 needs day_of_week/2
+  def beginning_of_week(d: Date, s: atom): Date do
+    cd(d, 1-day_of_week(d, s))
+  end
+#: end_of_week/2 needs day_of_week/2
+  def end_of_week(d: Date, s: atom): Date do
+    cd(d, 7-day_of_week(d, s))
+  end
+#: beginning_of_week/1 needs beginning_of_week/2
+  def beginning_of_week(d: Date): Date do
+    Date.beginning_of_week(d, :monday)
+  end
+#: end_of_week/1 needs end_of_week/2
+  def end_of_week(d: Date): Date do
+    Date.end_of_week(d, :monday)
+  end
+#: day_of_year/1 needs cm/2
+  def day_of_year(d: Date): integer do
+    Date.cj(Date.cn(d, 0), 0)
+  end
+#: days_in_month/1 needs cm/2
+  def days_in_month(d: Date): integer do
+    Date.cl(d.year, d.month)
+  end
+#: leap_year?/1
+  def leap_year?(d: Date): boolean do
+    d.year%4 == 0 and (d.year%100 != 0 or d.year%400 == 0)
+  end
+#: quarter_of_year/1
+  def quarter_of_year(d: Date): integer do
+    (d.month-1)/3+1
+  end
+#: beginning_of_month/1
+  def beginning_of_month(d: Date): Date do
+    %Date{d | day: 1}
+  end
+#: end_of_month/1 needs cm/2
+  def end_of_month(d: Date): Date do
+    %Date{d | day: Date.cl(d.year, d.month)}
+  end
+#: week_of_year/1 needs cm/2
+# The ISO 8601 week: the one of the year its Thursday falls in.
+  def week_of_year(d: Date): integer do
+    n = Date.cn(d, 0)
+    (Date.cj(n, 3-(n+2)%7)+6)/7
+  end
+#: range/3 needs cm/2 Stream.map/2
+# A stream of the days, each made when it is asked for.
+  def range(a: Date, b: Date, s: integer): stream[Date] do
+    if s == 0 do raise("Date.range needs a step other than 0") end
+    n = Date.cn(b, 0)-Date.cn(a, 0)
+    Stream.map(if (s>0 and n<0) or (s<0 and n>0) do 1..0//1 else 0..div(n, s)//1 end, fn i -> if i == 0 do a else Date.cd(a, i*s) end end)
+  end
+#: range/2 needs cm/2 range/3
+  def range(a: Date, b: Date): stream[Date] do
+    Date.range(a, b, if ci(b, a)<0 do -1 else 1 end)
+  end
+#: shift/2 needs cm/2
+  def shift(d: Date, b: Duration): Date do
+    if b.hour != 0 or b.minute != 0 or b.second != 0 or b.microsecond != 0 do raise("a date is shifted by years, months, weeks and days only") end
+    f = ch(zq(d), [b.year, b.month, b.week, b.day, 0, 0, 0, 0])
+    %Date{year: o(f, 0), month: o(f, 1), day: o(f, 2)}
+  end
+#: utc_today/0 needs cm/2
+  def utc_today(): Date do
+    Date.cd(%Date{year: 1970, month: 1, day: 1}, System.system_time()/86400000000000)
+  end
+#: dz/2 needs String.contains?/2 String.starts_with?/2 cm/2 dl/2
+# dz: what zone n has at s seconds since 1970, as time.Location.lookup
+# gives it: [1, the offset, when it started, when it ends, where its
+# abbreviation stands, how long that is], or [0] for a zone that is not
+# known. The zone files are read by the entry dl/2 below; without a file
+# the zones of one offset that the library knows by name (dv) are known
+# still.
+  def dz(n: string, s: integer): list[integer] do
+    r = if n == "Etc/UTC" or n == "UTC" do 0 else tzf(n) end
+    cond do
+      n == "Etc/UTC" or n == "UTC" -> [1, 0, tzi(0), tzi(1), Sys.addr("UTC"), 3]
+      r != 0 -> tzl(r, s)
+      true -> tzk(dv(n, ""))
+    end
+  end
+  defp tzk(z: string): list[integer] do
+    c = case Integer.parse(z) do
+      ok(a) -> a*3600
+      error(_) -> 0
+    end
+    if z == "" do [0] else [1, c, tzi(0), tzi(1), Sys.addr(z), byte_size(z)] end
+  end
+# di: the moment of seven fields in UTC as the wall clock of a zone shows
+# it; for a zone that is not known, in UTC with "" for the zone. dk: that,
+# or in UTC.
+  def di(f: list[integer], n: string): DateTime do
+    if (n == "UTC" or n == "Etc/UTC") and yf(f) do
+      r = l(f)
+      yt(yj(o(f, 0), o(f, 1), o(f, 2))+yo(r), yg(r))
+    else yi(f, n) end
+  end
+  defp yi(f: list[integer], n: string): DateTime do
+    z = dz(n, x(zs(f, 0, 0), -9223372028741760000))
+    c = o(z, 1)
+    t = cm(f, c*1000000)
+    %DateTime{year: o(t, 0), month: o(t, 1), day: o(t, 2), hour: o(t, 3), minute: o(t, 4), second: o(t, 5), microsecond: o(t, 6), time_zone: if o(z, 0) == 0 do "" else if n == "UTC" do "Etc/UTC" else n end end, utc_offset: c}
+  end
+  def dk(f: list[integer], n: string): DateTime do
+    d = di(f, n)
+    if d.time_zone == "" do di(f, "UTC") else d end
+  end
+# dq: a DateTime b microseconds later.
+  def dq(d: DateTime, b: integer): DateTime do
+    if d.time_zone == "Etc/UTC" and yz(d) and yb(0, b) do
+      p = yu(d)+b
+      yt(yj(d.year, d.month, d.day)+yo(p), yg(p))
+    else dk(dr(d, b), d.time_zone) end
+  end
+# da: the abbreviation its zone has at the moment of a DateTime, after the
+# text b; "" for a zone that is not known.
+  def da(d: DateTime, b: string): string do
+    z = dz(d.time_zone, x(zs(dr(d, 0), 0, 0), -9223372028741760000))
+    if o(z, 0) == 0 do "" else b<>Sys.text(o(z, 4), o(z, 5)) end
+  end
+# dn: the moment that seven fields are the wall clock of in zone n, as
+# fields in UTC, the way time.Date finds it: by the offset the zone has at
+# those fields read as UTC, or, when that leaves its span, by the offset at
+# the moment that gives. So a time the clocks skipped moves on by the gap
+# and one they repeated is its first. dw: the wall clock of fields in UTC.
+  def dn(f: list[integer], n: string): list[integer] do
+    u = x(zs(f, 0, 0), -9223372028741760000)
+    z = dz(n, u)
+    c = o(z, 1)
+    e = if c != 0 and (u-c<o(z, 2) or u-c >= o(z, 3)) do o(dz(n, u-c), 1) else c end
+    cm(f, -e*1000000)
+  end
+  def dw(f: list[integer], n: string): list[integer] do
+    cm(f, o(dz(n, x(zs(f, 0, 0), -9223372028741760000)), 1)*1000000)
+  end
+# ds: a DateTime moved by the eight amounts of a duration as the pinned
+# runtime moves it: years, months, weeks and days on the wall clock of its
+# zone, each step through time.Date; the rest as elapsed time; and what
+# comes of it in the zone, or in UTC when the zone is not known.
+  def ds(d: DateTime, b: list[integer]): DateTime do
+    if zf(b, 0) do raise("the duration is out of range") end
+    n = if o(dz(d.time_zone, 0), 0) == 0 do "UTC" else d.time_zone end
+    m = o(b, 0)*12+o(b, 1)
+    t = dw(dr(d, 0), n)
+    p = dw(dn(zm(t, m, 1-o(t, 2), 0), n), n)
+    q = if m == 0 do t else dw(dn(cy(p, min(o(t, 2), o(dw(dn(zm(p, 1, -1, 0), n), n), 2))-1), n), n) end
+    a = dw(dn(cy(q, o(b, 2)*7+o(b, 3)), n), n)
+    dk(cm(dn(a, n), v(x(x(k(o(b, 4), 3600000000000), k(o(b, 5), 60000000000)), x(k(o(b, 6), 1000000000), k(o(b, 7), 1000))), 1000)), d.time_zone)
+  end
+# The record of zone n, read now if it was not yet; 0 when no file has it.
+  defp tzf(n: string): integer do
+    e = System.get_env("ZONEINFO", "")
+    if n == "" or n == "Local" or byte_size(n)>255 or String.contains?(n, "..") or String.starts_with?(n, "/") or String.starts_with?(n, "\\") or String.contains?(n, "\x00") do 0 else
+      tzn(n, n, (if e == "" do [] else [e<>"/"] end)++["/usr/share/zoneinfo/", "/usr/share/lib/zoneinfo/", "/usr/lib/locale/TZ/", "/etc/zoneinfo/"])
+    end
+  end
+#: dl/2 needs Enum.at/3 Kernel.binary_part/3 String.contains?/2 String.starts_with?/2 Sys.state/0
+# Time zones. The pinned runtime finds a zone with Go's time.LoadLocation;
+# this reads the same files the same way: NAME under $ZONEINFO when that is
+# set, then under /usr/share/zoneinfo, /usr/share/lib/zoneinfo,
+# /usr/lib/locale/TZ and /etc/zoneinfo, the first that is a zone file
+# (TZif, version 1 to 3). A file is read once into mapped memory and kept:
+# word 80 of the library's state block (spec/alchem-system.md) is the first
+# of a chain of records, each 0 the next, 16 the number of transitions, 24
+# of zone types and 32 of the bytes of their abbreviations, 40 where the
+# transition times stand and 48 how long one is (4 or 8 bytes), 56 the
+# types of the transitions, 64 the zone types (six bytes: the offset,
+# whether it is summer time, where its abbreviation starts), 72 the
+# abbreviations, 80 and 88 the rule for the time after the last transition
+# (a POSIX TZ text) and its length, 96 and 104 the name, 448 and 456 the
+# place in that rule while it is read, 512 the file. This entry uses
+# nothing of the dates above, so that Logger, which needs local time only,
+# does not bring them along.
+  defp tzi(i: integer): integer do
+    if i == 0 do -9223372036854775807-1 else 9223372036854775807 end
+  end
+# dl: what local time has at s seconds since 1970, as Go's time.Local: the
+# zone file $TZ names (a path from the root, or a name under the system's
+# directories; a colon before it is passed over), /etc/localtime when there
+# is no $TZ, and UTC when $TZ is empty or names no zone file. $ZONEINFO
+# plays no part.
+  def dl(s: integer, u: integer): list[integer] do
+    t = case System.get_env("TZ") do
+      some(v) -> if String.starts_with?(v, ":") do Kernel.binary_part(v, 1, byte_size(v)-1) else v end
+      none -> "/etc/localtime"
+    end
+    r = if t == "" or t == "UTC" or byte_size(t)>255 or String.contains?(t, "\x00") do 0 else tzn("\x01"<>t, t, if String.starts_with?(t, "/") do [""] else ["/usr/share/zoneinfo/", "/usr/share/lib/zoneinfo/", "/usr/lib/locale/TZ/", "/etc/zoneinfo/"] end) end
+    if r == 0 do [1, 0, tzi(0), tzi(1), Sys.addr("UTC"), 3] else tzl(r, s+u) end
+  end
+# The record kept under the name k, or else that of the file n in the
+# first of the directories that has it as a zone file.
+  defp tzn(k: string, n: string, dirs: list[string]): integer do
+    r = tzc(Sys.peek(Sys.state()+80), k)
+    if r != 0 do r else tzg(k, n, dirs, 0) end
+  end
+  defp tzc(r: integer, n: string): integer do
+    if r == 0 do 0 else if Sys.peek(r+96) == byte_size(n) and Sys.same(r+104, Sys.addr(n), byte_size(n)) == 1 do r else tzc(Sys.peek(r), n) end end
+  end
+# The file of n in the i-th of the directories: mapped behind 512 bytes
+# and read whole. One of more than 10 MB is none to Go either.
+  defp tzg(k: string, n: string, dirs: list[string], i: integer): integer do
+    s = Sys.state()
+    fd = if i >= length(dirs) do -1 else Sys.call(257, -100, Sys.addr(Enum.at(dirs, i, "")<>n<>"\x00"), 524288, 0) end
+    size = if fd<0 do -1 else if Sys.call(5, fd, s+1024) != 0 do -1 else Sys.peek(s+1072) end end
+    r = if size<0 or size>10485760 do 0 else Sys.call(9, 0, 512+size+16, 3, 34, -1, 0) end
+    got = if r <= 0 do -1 else tzd(fd, r+512, size, 0) end
+    if fd >= 0 do Sys.call(3, fd) end
+    cond do
+      i >= length(dirs) -> 0
+      r>0 and got >= 0 and tzp(r, got) ->
+        Sys.poke(r+96, byte_size(k))
+        Sys.copy(r+104, Sys.addr(k), byte_size(k))
+        Sys.poke(r, Sys.peek(s+80))
+        Sys.poke(s+80, r)
+        r
+      true ->
+        if r>0 do Sys.call(11, r, 512+size+16) end
+        tzg(k, n, dirs, i+1)
+    end
+  end
+  defp tzd(fd: integer, a: integer, n: integer, got: integer): integer do
+    r = if got >= n do 0 else Sys.call(0, fd, a+got, n-got) end
+    if r == -4 do tzd(fd, a, n, got) else if r<0 do -1 else if r == 0 do got else tzd(fd, a, n, got+r) end end end
+  end
+# Four bytes at a, high byte first, as a number from 0; ts4 with a sign;
+# tb8 eight bytes.
+  defp tb4(a: integer): integer do
+    Sys.byte(a)*16777216+Sys.byte(a+1)*65536+Sys.byte(a+2)*256+Sys.byte(a+3)
+  end
+  defp ts4(a: integer): integer do
+    if tb4(a) >= 2147483648 do tb4(a)-4294967296 else tb4(a) end
+  end
+  defp tb8(a: integer): integer do
+    ts4(a)*4294967296+tb4(a+4)
+  end
+# Whether the l bytes at r+512 are a zone file, as LoadLocationFromTZData
+# asks; the record gets where its parts stand.
+  defp tzp(r: integer, l: integer): boolean do
+    d = r+512
+    v = if l<44 do 1 else Sys.byte(d+4) end
+    one = if l<44 do 0 else tb4(d+32)*5+tb4(d+36)*6+tb4(d+40)+tb4(d+28)*8+tb4(d+24)+tb4(d+20) end
+    h = if v == 0 do d+20 else d+44+one+20 end
+    wide = if v == 0 do 4 else 8 end
+    fits = l >= 44 and tb4(d) == 1415211366 and (v == 0 or v == 50 or v == 51) and h+24 <= d+l
+    nt = if fits do tb4(h+12) else 0 end
+    nz = if fits do tb4(h+16) else 0 end
+    nc = if fits do tb4(h+20) else 0 end
+    tail = if fits do h+24+nt*wide+nt+nz*6+nc+tb4(h+8)*(wide+4)+tb4(h+4)+tb4(h) else 0 end
+    rest = d+l-tail
+    if not fits or tail>d+l or nz == 0 do false else
+      Sys.poke(r+16, nt)
+      Sys.poke(r+24, nz)
+      Sys.poke(r+32, nc)
+      Sys.poke(r+40, h+24)
+      Sys.poke(r+48, wide)
+      Sys.poke(r+56, h+24+nt*wide)
+      Sys.poke(r+64, h+24+nt*wide+nt)
+      Sys.poke(r+72, h+24+nt*wide+nt+nz*6)
+      Sys.poke(r+80, tail+1)
+      Sys.poke(r+88, if rest>2 and Sys.byte(tail) == 10 and Sys.byte(d+l-1) == 10 do rest-2 else 0 end)
+      tzv(r, 0, nz, nc) and tzx(Sys.peek(r+56), nt, nz)
+    end
+  end
+# Every zone type's abbreviation starts among the abbreviations, and every
+# transition has a zone type there is.
+  defp tzv(r: integer, i: integer, nz: integer, nc: integer): boolean do
+    i >= nz or (Sys.byte(Sys.peek(r+64)+i*6+5)<nc and tzv(r, i+1, nz, nc))
+  end
+  defp tzx(a: integer, nt: integer, nz: integer): boolean do
+    k = if nt>1000 do 1000 else nt end
+    tzxk(a, k, nz) and (nt == k or tzx(a+k, nt-k, nz))
+  end
+  defp tzxk(a: integer, k: integer, nz: integer): boolean do
+    k == 0 or (Sys.byte(a)<nz and tzxk(a+1, k-1, nz))
+  end
+# When transition i of the record happens.
+  defp tzw(r: integer, i: integer): integer do
+    if Sys.peek(r+48) == 4 do ts4(Sys.peek(r+40)+i*4) else tb8(Sys.peek(r+40)+i*8) end
+  end
+# Zone type z between two moments.
+  defp tzz(r: integer, z: integer, from: integer, to: integer): list[integer] do
+    t = Sys.peek(r+64)+z*6
+    a = Sys.peek(r+72)+Sys.byte(t+5)
+    [1, ts4(t), from, to, a, min(Sys.len(a), Sys.peek(r+32)-Sys.byte(t+5))]
+  end
+# lookup: before the first transition the first zone type that is standard
+# time (lookupFirstZone); else the type of the last transition not after s,
+# found by halving; after the last one what the rule says, when it can be
+# read.
+  defp tzl(r: integer, s: integer): list[integer] do
+    nt = Sys.peek(r+16)
+    lo = if nt == 0 do 0 else if s<tzw(r, 0) do -1 else tzb(r, s, 0, nt) end end
+    from = if nt == 0 do tzi(0) else if lo<0 do tzi(0) else tzw(r, lo) end end
+    late = if lo == nt-1 or nt == 0 do if Sys.peek(r+88)>0 do tze(r, from, s) else [] end else [] end
+    cond do
+      lo<0 -> tzz(r, tzh(r, nt), tzi(0), tzw(r, 0))
+      late != [] -> late
+      nt == 0 -> tzz(r, 0, tzi(0), tzi(1))
+      true -> tzz(r, Sys.byte(Sys.peek(r+56)+lo), from, if lo+1<nt do tzw(r, lo+1) else tzi(1) end)
+    end
+  end
+  defp tzb(r: integer, s: integer, lo: integer, hi: integer): integer do
+    m = lo+(hi-lo)/2
+    if hi-lo <= 1 do lo else if s<tzw(r, m) do tzb(r, s, lo, m) else tzb(r, s, m, hi) end end
+  end
+  defp tzh(r: integer, nt: integer): integer do
+    first = Sys.byte(Sys.peek(r+56))
+    cond do
+      Sys.find(Sys.peek(r+56), nt, 0)<0 -> 0
+      Sys.byte(Sys.peek(r+64)+first*6+4) != 0 and tzj(r, first-1, -1)>= 0 -> tzj(r, first-1, -1)
+      true -> max(tzj(r, 0, 1), 0)
+    end
+  end
+# The first zone type from i on, going up or down, that is no summer time; -1: none.
+  defp tzj(r: integer, i: integer, step: integer): integer do
+    if i<0 or i >= Sys.peek(r+24) do -1 else if Sys.byte(Sys.peek(r+64)+i*6+4) == 0 do i else tzj(r, i+step, step) end end
+  end
+# tzset: what the rule (a POSIX TZ text such as CET-1CEST,M3.5.0,M10.5.0/3)
+# gives at s, after a last transition at last; [] when Go cannot read it.
+# The place in the text is at 448 of the record and its end at 456; what
+# reads a part moves the place past it.
+  defp tze(r: integer, last: integer, s: integer): list[integer] do
+    Sys.poke(r+448, Sys.peek(r+80))
+    Sys.poke(r+456, Sys.peek(r+80)+Sys.peek(r+88))
+    sn = tzq(r)
+    sl = Sys.peek(r+464)
+    so = if sn<0 do 999999999 else tzo(r) end
+    c = if so == 999999999 do -1 else tzt(r) end
+    dn = if c<0 or c == 44 do -1 else tzq(r) end
+    dl = Sys.peek(r+464)
+    e = if dn<0 do -1 else tzt(r) end
+    dd = if dn<0 do 999999999 else if e<0 or e == 44 do so-3600 else tzo(r) end end
+    cond do
+      so == 999999999 -> []
+      c<0 or c == 44 -> [1, -so, last, tzi(1), sn, sl]
+      dd == 999999999 -> []
+      true -> tzr(r, [sn, sl, -so, dn, dl, -dd], s)
+    end
+  end
+# The byte at the place, -1 at the end of the rule.
+  defp tzt(r: integer): integer do
+    if Sys.peek(r+448) >= Sys.peek(r+456) do -1 else Sys.byte(Sys.peek(r+448)) end
+  end
+  defp tzmove(r: integer, k: integer): integer do
+    Sys.poke(r+448, Sys.peek(r+448)+k)
+  end
+# A zone's name: letters (three at least, up to a digit, a comma or a sign)
+# or anything between < and >. Where it starts, -1 for none; 464 of the
+# record gets its length.
+  defp tzq(r: integer): integer do
+    p = Sys.peek(r+448)
+    e = Sys.peek(r+456)
+    i = if p >= e do 0 else if Sys.byte(p) == 60 do Sys.find(p, e-p, 62) else tzqk(p, e, 0) end end
+    if p >= e do -1 else if Sys.byte(p) == 60 do
+      if i<0 do -1 else
+        Sys.poke(r+464, i-1)
+        Sys.poke(r+448, p+i+1)
+        p+1
+      end
+    else
+      if i<3 do -1 else
+        Sys.poke(r+464, i)
+        Sys.poke(r+448, p+i)
+        p
+      end
+    end end
+  end
+  defp tzqk(p: integer, e: integer, i: integer): integer do
+    c = if p+i >= e do 44 else Sys.byte(p+i) end
+    if (c >= 48 and c <= 57) or c == 44 or c == 45 or c == 43 do i else tzqk(p, e, i+1) end
+  end
+# A number from lo to hi at the place; -1 when there is none.
+  defp tznum(r: integer, lo: integer, hi: integer): integer do
+    p = Sys.peek(r+448)
+    n = tznk(p, Sys.peek(r+456), 0, hi)
+    j = tznj(p, Sys.peek(r+456), 0)
+    if j == 0 or n<lo do -1 else
+      Sys.poke(r+448, p+j)
+      n
+    end
+  end
+  defp tznj(p: integer, e: integer, j: integer): integer do
+    if p+j<e and Sys.byte(p+j) >= 48 and Sys.byte(p+j) <= 57 do tznj(p, e, j+1) else j end
+  end
+  defp tznk(p: integer, e: integer, n: integer, hi: integer): integer do
+    if p<e and Sys.byte(p) >= 48 and Sys.byte(p) <= 57 do if n*10+Sys.byte(p)-48>hi do -1 else tznk(p+1, e, n*10+Sys.byte(p)-48, hi) end else n end
+  end
+# An offset [+-]hh[:mm[:ss]] in seconds; 999999999 when there is none.
+# tzpart: the :mm or :ss after it, -2 when no colon stands there.
+  defp tzo(r: integer): integer do
+    c = tzt(r)
+    if c == 43 or c == 45 do tzmove(r, 1) end
+    h = if c<0 do -1 else tznum(r, 0, 168) end
+    m = if h<0 do -1 else tzpart(r) end
+    s = if m<0 do m else tzpart(r) end
+    if h<0 or m == -1 or s == -1 do 999999999 else (if c == 45 do -1 else 1 end)*(h*3600+max(m, 0)*60+max(s, 0)) end
+  end
+  defp tzpart(r: integer): integer do
+    if tzt(r) != 58 do -2 else
+      tzmove(r, 1)
+      tznum(r, 0, 59)
+    end
+  end
+# When a change happens: [0, n] the n-th day of the year not counting 29
+# February (Jn), [1, n] the day n of the year from 0, [2, month, week, day]
+# the weekday of that week of the month (Mm.w.d); then the time of day, 2
+# o'clock unless /time follows. [] when it cannot be read.
+  defp tzu(r: integer): list[integer] do
+    c = tzt(r)
+    if c == 74 or c == 77 do tzmove(r, 1) end
+    a = if c<0 do -1 else if c == 74 do tznum(r, 1, 365) else if c == 77 do tznum(r, 1, 12) else tznum(r, 0, 365) end end end
+    b = if c != 77 or a<0 do 0 else if tzt(r) != 46 do -1 else tzdot(r, 1, 5) end end
+    d = if c != 77 or b<0 do 0 else if tzt(r) != 46 do -1 else tzdot(r, 0, 6) end end
+    t = if a<0 or b<0 or d<0 do 999999999 else if tzt(r) != 47 do 7200 else tzslash(r) end end
+    if t == 999999999 do [] else [(if c == 74 do 0 else if c == 77 do 2 else 1 end end), a, b, d, t] end
+  end
+  defp tzdot(r: integer, lo: integer, hi: integer): integer do
+    tzmove(r, 1)
+    tznum(r, lo, hi)
+  end
+  defp tzslash(r: integer): integer do
+    tzmove(r, 1)
+    tzo(r)
+  end
+# tzruleTime: the seconds into the year y at which the change u happens,
+# in UTC for a zone whose offset is c then.
+  defp tzy(y: integer, u: list[integer], c: integer): integer do
+    leap = if y%4 == 0 and (y%100 != 0 or y%400 == 0) do 1 else 0 end
+    mon = tzat(u, 1)
+    yy = if mon <= 2 do y-1 else y end
+    dow = ((26*((mon+9)%12+1)-2)/10+1+yy%100+yy%100/4+yy/100/4-2*(yy/100))%7
+    first = tzat(u, 3)-(if dow<0 do dow+7 else dow end)
+    d = tzweek((if first<0 do first+7 else first end), tzat(u, 2), Enum.at([31, 28+leap, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31], mon-1, 31))
+    cond do
+      tzat(u, 0) == 0 -> (tzat(u, 1)-1+(if leap == 1 and tzat(u, 1) >= 60 do 1 else 0 end))*86400+tzat(u, 4)-c
+      tzat(u, 0) == 1 -> tzat(u, 1)*86400+tzat(u, 4)-c
+      true -> (d+Enum.at([0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334], mon-1, 0)+(if leap == 1 and mon>2 do 1 else 0 end))*86400+tzat(u, 4)-c
+    end
+  end
+# The day (from 0) of the week-th such weekday of a month of n days, the
+# last one when the month has no week-th.
+  defp tzweek(d: integer, week: integer, n: integer): integer do
+    if week <= 1 or d+7 >= n do d else tzweek(d+7, week-1, n) end
+  end
+# The two changes of the year and which of the two zones holds at s. z: the
+# standard name, its length and offset, then the summer ones. In the south
+# summer time starts later in the year than it ends, and Go then swaps the
+# two; the span it gives ends 365 days into the year.
+  defp tzr(r: integer, z: list[integer], s: integer): list[integer] do
+    c = tzt(r)
+    if c >= 0 do tzmove(r, 1) end
+    a = if c<0 do [2, 3, 2, 0, 7200] else if c != 44 and c != 59 do [] else tzu(r) end end
+    m = tzt(r)
+    if c >= 0 and m == 44 do tzmove(r, 1) end
+    b = if c<0 do [2, 11, 1, 0, 7200] else if a == [] or m != 44 do [] else tzu(r) end end
+    day = if s<0 do (s-86399)/86400 else s/86400 end
+    y = tzyear(day)
+    ysec = (day-((y-1)*365+(y-1)/4-(y-1)/100+(y-1)/400-719162))*86400+s%86400
+    base = s-ysec
+    start = if a == [] or b == [] do 0 else tzy(y, a, tzat(z, 2)) end
+    stop = if a == [] or b == [] do 0 else tzy(y, b, tzat(z, 5)) end
+    cond do
+      a == [] or b == [] or (c >= 0 and tzt(r) >= 0) -> []
+      stop<start and ysec<stop -> [1, tzat(z, 5), base, stop+base, tzat(z, 3), tzat(z, 4)]
+      stop<start and ysec >= start -> [1, tzat(z, 5), start+base, base+31536000, tzat(z, 3), tzat(z, 4)]
+      stop<start -> [1, tzat(z, 2), stop+base, start+base, tzat(z, 0), tzat(z, 1)]
+      ysec<start -> [1, tzat(z, 2), base, start+base, tzat(z, 0), tzat(z, 1)]
+      ysec >= stop -> [1, tzat(z, 2), stop+base, base+31536000, tzat(z, 0), tzat(z, 1)]
+      true -> [1, tzat(z, 5), start+base, stop+base, tzat(z, 3), tzat(z, 4)]
+    end
+  end
+  defp tzat(f: list[integer], i: integer): integer do
+    Enum.at(f, i, 0)
+  end
+# The year of a day counted from 1970.
+  defp tzyear(day: integer): integer do
+    z = day+719468
+    c = if z<0 do (z-146096)/146097 else z/146097 end
+    e = z-c*146097
+    y = (e-e/1460+e/36524-e/146096)/365
+    i = e-(365*y+y/4-y/100)
+    y+c*400+(if (5*i+2)/153<10 do 0 else 1 end)
+  end

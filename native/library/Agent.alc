@@ -1,0 +1,222 @@
+# Agent: a process that holds a state and applies functions to it one at a
+# time (compiler/actor/task.go). An operation is a cell: its kind (0 get, 1
+# update, 2 get and update, 3 cast; 9 once it is answered), the function
+# (then the answer) and the process that waits for it (0 when none does).
+#: struct agent also Process Agent Task Server Supervisor Registry Port _receive
+  struct agent[s] do
+    at: integer
+    k: option[fn[s, s]]
+  end
+#: _run/1 needs Process._check/1 Process._ended/0 Process._g/0 Process._note/1 _serve/1
+  def _run(f: fn[s]): integer do
+    try do
+      Process._check(Process._g())
+      Process.__depth(1)
+      Agent._serve(Process.__word(f()))
+    rescue
+      m when Process._note(m) -> 0
+    after
+      Process._ended()
+    end
+  end
+# The agent's turns, from the state w on, until it is stopped.
+#: _serve/1 needs Process._cell/4 Process._g/0 _step/1
+  def _serve(w: integer): integer do
+    x = Process._cell(Process._g(), w, 0, 0)
+    st: fn[integer, integer] = fn(a: integer): integer do Agent._step(a) end
+    Process.__until(st, x)
+  end
+#: _step/1 needs Process._check/1 Process._free/2 Process._g/0 Process._recv/3 _reply/3
+  def _step(x: integer): integer do
+    g = Process._g()
+    Process._check(g)
+    Process._recv(g, Sys.peek(g), -1)
+    m = Sys.peek(g + 184)
+    k = Sys.peek(m + 8)
+    s = Sys.peek(x + 8)
+    if k == 2 do
+      f2: fn[integer, tuple[integer, integer]] = Process.__any(Sys.peek(m + 16))
+      {r, n} = f2(s)
+      Sys.poke(x + 8, n)
+      Agent._reply(g, m, r)
+    else
+      f1: fn[integer, integer] = Process.__any(Sys.peek(m + 16))
+      v = f1(s)
+      if k == 0 do Agent._reply(g, m, v) else
+        Sys.poke(x + 8, v)
+        if k == 1 do Agent._reply(g, m, 0) else Process._free(g, m) end
+      end
+    end
+    0
+  end
+# The agent named n.
+#: _find/1 needs Atom.to_string/1 Process._g/0 Process._lookup/2
+  def _find(n: atom): integer do
+    x = Process._lookup(Process._g(), Atom.to_string(n))
+    k = if x == 0 do 0 else Sys.peek(x + 8) end
+    if k != 2 do raise("no agent named :" <> Atom.to_string(n) <> " with this state type is running") end
+    Sys.peek(x + 24)
+  end
+#: _some/1
+  def _some(q: integer): option[agent[s]] do
+    r: agent[s] = %agent{at: q, k: none}
+    some(r)
+  end
+
+#: _reply/3 needs Process._free/2 Process._ready/2
+  def _reply(g: integer, m: integer, r: integer): integer do
+    c = Sys.peek(m + 24)
+    if c == 0 do Process._free(g, m) else
+      Sys.poke(m + 16, r)
+      Sys.poke(m + 8, 9)
+      Process._ready(g, c)
+    end
+  end
+# The agent q takes the name n, its state of type t; without the name it
+# is stopped.
+#: _take/3 needs Process._g/0 Process._halt/1 Process._name/6
+  def _take(q: integer, n: string, t: integer): integer do
+    if n == "" do 0 else
+      if Process._name(Process._g(), n, q, 2, t, q) == 1 do 0 else
+        Process._halt(q)
+        raise("the name :" <> n <> " is already taken")
+      end
+    end
+  end
+# The operation of kind k with the function value w runs in the agent q and
+# is waited for up to ms milliseconds: its answer.
+#: _ask/4 needs Process._cell/4 Process._check/1 Process._due/2 Process._g/0 Process._send/4 _answer/4
+  def _ask(q: integer, k: integer, w: integer, ms: integer): integer do
+    g = Process._g()
+    Process._check(g)
+    c = Sys.peek(g)
+    if q == c do raise("an agent cannot call itself") end
+    m = Process._cell(g, k, w, c)
+    if Process._send(g, q, m, ms) == 0 do raise("agent is not running") end
+    Agent._answer(g, q, m, Process._due(g, ms))
+  end
+#: _answer/4 needs Process._check/1 Process._drop/3 Process._free/2 Process._has/2 Process._push/5 Process._reason/1 Process._wait/2
+  def _answer(g: integer, q: integer, m: integer, d: integer): integer do
+    c = Sys.peek(g)
+    if Sys.peek(m + 8) == 9 do
+      r = Sys.peek(m + 16)
+      Process._free(g, m)
+      r
+    else
+      if Sys.peek(q + 376) == 1 do raise("agent stopped: " <> Process._reason(q)) end
+      if Process._has(q + 248, c) == 0 do Process._push(g, q + 248, c, 0, 0) end
+      x = Process._wait(g, d)
+      if Sys.peek(m + 8) == 9 or Sys.peek(q + 376) == 1 do Agent._answer(g, q, m, d) else
+        if x == 1 or Sys.peek(c + 56) == 1 do
+          Sys.poke(m + 24, 0)
+          Process._drop(g, q + 248, c)
+          Process._check(g)
+          raise("agent timed out")
+        else Agent._answer(g, q, m, d) end
+      end
+    end
+  end
+#: start/1 needs Process._fresh/2 Process._g/0 Process._start/3 _run/1
+  def start(f: fn[s]): agent[s] do
+    g = Process._g()
+    p = Process._fresh(g, 1024)
+    Sys.poke(p + 144, Process.__word("agent"))
+    w: fn[integer] = fn(): integer do Agent._run(f) end
+    Process._start(g, p, Process.__word(w))
+    r: agent[s] = %agent{at: p, k: none}
+    r
+  end
+#: start_link/1 needs start/1
+  def start_link(f: fn[s]): agent[s] do
+    Agent.start(f)
+  end
+# The name the options give, "" for none.
+#: _option/2 needs Atom.to_string/1
+  def _option(o: list[tuple[atom, atom]], n: string): string do
+    case o do
+      [] -> n
+      [{k, v} | rest] -> if k == :name do Agent._option(rest, Atom.to_string(v)) else raise("unknown option :" <> Atom.to_string(k) <> "; Agent.start_link takes name:") end
+    end
+  end
+# The update is queued for the agent q: false when it has stopped or its
+# queue is full.
+#: _cast/2 needs Process._cell/4 Process._check/1 Process._g/0 Process._send/4
+  def _cast(q: integer, w: integer): boolean do
+    g = Process._g()
+    Process._check(g)
+    Process._send(g, q, Process._cell(g, 3, w, 0), 0) == 1
+  end
+#: start/2 needs _option/2 _take/3 start/1
+  def start(f: fn[s], o: list[tuple[atom, atom]]): agent[s] do
+    t = Sys.peek(Sys.stack() - 48)
+    n = Agent._option(o, "")
+    a = Agent.start(f)
+    Agent._take(a.at, n, t)
+    a
+  end
+#: start_link/2 needs _option/2 _take/3 start/1
+  def start_link(f: fn[s], o: list[tuple[atom, atom]]): agent[s] do
+    t = Sys.peek(Sys.stack() - 48)
+    n = Agent._option(o, "")
+    a = Agent.start(f)
+    Agent._take(a.at, n, t)
+    a
+  end
+#: whereis/1 needs Atom.to_string/1 Process._g/0 Process._lookup/2 Process._same/2 _some/1
+  def whereis(n: atom): option[agent[s]] do
+    t = Sys.peek(Sys.stack() - 48)
+    x = Process._lookup(Process._g(), Atom.to_string(n))
+    if x == 0 do none else
+      if Sys.peek(x + 8) != 2 do none else
+        if Process._same(Sys.peek(x + 16), t) == 0 do none else Agent._some(Sys.peek(x + 24)) end
+      end
+    end
+  end
+#: get/3 needs _ask/4
+  def get(a: agent[s], f: fn[s, r], ms: integer): r do
+    Process.__any(Agent._ask(a.at, 0, Process.__word(f), ms))
+  end
+#: get/2 needs _ask/4
+  def get(a: agent[s], f: fn[s, r]): r do
+    Process.__any(Agent._ask(a.at, 0, Process.__word(f), 5000))
+  end
+#: get/2 form 2 needs _ask/4 _find/1
+  def get(n: atom, f: fn[s, r]): r do
+    Process.__any(Agent._ask(Agent._find(n), 0, Process.__word(f), 5000))
+  end
+#: update/3 needs _ask/4
+  def update(a: agent[s], f: fn[s, s], ms: integer): integer do
+    Agent._ask(a.at, 1, Process.__word(f), ms)
+  end
+#: update/2 needs _ask/4
+  def update(a: agent[s], f: fn[s, s]): integer do
+    Agent._ask(a.at, 1, Process.__word(f), 5000)
+  end
+#: update/2 form 2 needs _ask/4 _find/1
+  def update(n: atom, f: fn[s, s]): integer do
+    Agent._ask(Agent._find(n), 1, Process.__word(f), 5000)
+  end
+#: get_and_update/3 needs _ask/4
+  def get_and_update(a: agent[s], f: fn[s, tuple[r, s]], ms: integer): r do
+    Process.__any(Agent._ask(a.at, 2, Process.__word(f), ms))
+  end
+#: get_and_update/2 needs _ask/4
+  def get_and_update(a: agent[s], f: fn[s, tuple[r, s]]): r do
+    Process.__any(Agent._ask(a.at, 2, Process.__word(f), 5000))
+  end
+#: get_and_update/2 form 2 needs _ask/4 _find/1
+  def get_and_update(n: atom, f: fn[s, tuple[r, s]]): r do
+    Process.__any(Agent._ask(Agent._find(n), 2, Process.__word(f), 5000))
+  end
+#: cast/2 needs _cast/2
+  def cast(a: agent[s], f: fn[s, s]): boolean do
+    Agent._cast(a.at, Process.__word(f))
+  end
+#: cast/2 form 2 needs _cast/2 _find/1
+  def cast(n: atom, f: fn[s, s]): boolean do
+    Agent._cast(Agent._find(n), Process.__word(f))
+  end
+#: stop/1 needs Process._halt/1
+  def stop(a: agent[s]): boolean do
+    Process._halt(a.at)
+  end

@@ -1,0 +1,1630 @@
+# Process: processes as the pinned runtime has them (compiler/actor/process.go),
+# run as coroutines of the one thread a native program has
+# (spec/alchem-processes.md). Sys.state() + 96 holds the address of the
+# block g that everything here hangs from; the names are short because the
+# text is held in the compiler's source.
+#
+# g:   0 the running process, 8 and 16 the first and last of those ready
+#      to run, 24 the last number given out, 32 how many processes live, 40
+#      the newest of them, 48 the first of those that wait for a time, 56 the
+#      earliest such time (0: none), 64 and 72 the free part of the block
+#      records come from, 80 the free stacks, 88 the free cells, 112 set when
+#      the program is ending, 120 the status System.stop asked for (-1: none),
+#      128 the main process, 136 the names, 144 the supervisors that wait
+#      for a change, 152 the stack of a process that has just ended, 160 up
+#      function values kept for Process.__until (and 272), 184 a message
+#      or an answer passed on, 200 a time, 216 two descriptors, 224 and 232
+#      where a walk stands, 240 the size of a stack, 248 the timers, 264
+#      the functions of children that say when they have started, 2048 to
+#      4096 zeros.
+# process: 0 to 32 what Process.__switch keeps, 40 its number, 48 its state
+#      (0 ready, 1 running, 2 waiting, 3 over), 56 asked to stop, 64 the
+#      next ready one, 72 and 80 newer and older live ones, 88 the time it
+#      waits for, 96 and 104 the ones before and after it among those, 112
+#      and 120 first and last message, 128 how many, 136 the mailbox's
+#      capacity (0: no mailbox yet), 144 its type, 152 who waits to send to
+#      it, 160 the exit reason, 168 the failure's text, 176 and 184 those a
+#      stop gave, 192 and 200 first and last event, 208 who monitors it, 216
+#      whom it monitors, 224 its links, 232 what it owns, 240 its owner, 248
+#      who waits for its end, 256 the top of its stack, 264 the message it
+#      failed with, 272 its server, 280 and 288 requests continued, 296
+#      functions to run once it is over, 304 what
+#      a task's function returned, 312
+#      traps exits, 320 not a process of the program (a timer or the like),
+#      328 no message type yet, 336 ending, 344 its wait ran out, 352 its
+#      function returned, 360 left by a stop, 368 among those that wait for
+#      a time, 376 over.
+# A cell is four words: the next cell, then three of whatever the list holds.
+#: struct pid also Process Agent Task Server Supervisor Registry Port _receive TCP UDP HTTP WebSocket DiskStore Node Stream.publish TLS
+  struct pid[t] do
+    at: integer
+    k: option[fn[t, t]]
+  end
+#: struct Process.Exit also Process Agent Task Server Supervisor Registry Port _receive TCP UDP HTTP WebSocket DiskStore Node Stream.publish TLS
+  struct Process.Exit do
+    r: integer
+  end
+#: _g/0 needs Sys.state/0 _boot/0
+  def _g(): integer do
+    g = Sys.peek(Sys.state() + 96)
+    if g != 0 do g else Process._boot() end
+  end
+#: _boot/0 needs Sys.state/0 _close/1 _fdwait/4 _fire1/1 _g/0 _fire2/1 _halted/1 _loop1/1 _new/2 _pick/1 _shut1/1 _stopped/0
+  def _boot(): integer do
+    g = Sys.call(9, 0, 65536, 3, 34, -1, 0)
+    # Never so: a program with processes holds Process._close, which its
+    # entry calls, Process._stopped, which main calls, and
+    # Process._halted, which System.stop calls.
+    if g == 0 do Process._close(Process._stopped() + Process._halted(0)) end
+    if g < 0 do System.halt(71) end
+    Sys.poke(Sys.state() + 96, g)
+    Sys.poke(g + 120, -1)
+    Sys.poke(g + 64, g + 4096)
+    Sys.poke(g + 72, g + 65536)
+    Sys.poke(g + 240, 268435456)
+    r = Process._new(g, 0)
+    Sys.poke(r + 48, 1)
+    Sys.poke(g, r)
+    Sys.poke(g + 128, r)
+    a: fn[integer, integer] = fn(x: integer): integer do Process._pick(x) end
+    Sys.poke(g + 160, Process.__word(a))
+    b: fn[integer, integer] = fn(x: integer): integer do Process._fire1(x) end
+    Sys.poke(g + 168, Process.__word(b))
+    c: fn[integer, integer] = fn(x: integer): integer do Process._loop1(x) end
+    Sys.poke(g + 176, Process.__word(c))
+    d: fn[integer, integer] = fn(x: integer): integer do Process._shut1(x) end
+    Sys.poke(g + 192, Process.__word(d))
+    e: fn[integer, integer] = fn(x: integer): integer do Process._fire2(x) end
+    Sys.poke(g + 272, Process.__word(e))
+    h: fn[integer, integer] = fn(x: integer): integer do Process._fdwait(Process._g(), x, 1, 0) end
+    Sys.poke(g + 1032, Process.__word(h))
+    g
+  end
+# Every process waits and none for a time: the pinned runtime ends so.
+#: _stuck/0 needs Sys.put/3
+  def _stuck(): integer do
+    m = "fatal error: all goroutines are asleep - deadlock!\n"
+    Sys.put(2, Sys.addr(m), byte_size(m))
+    Sys.call(60, 2)
+  end
+# What a process ends in, on every way out of its function. A failure is
+# first written down by a copy of the program, which returns from here.
+#: _ended/0 needs _exit/4 _g/0 _trace/1
+  def _ended(): integer do
+    g = Process._g()
+    p = Sys.peek(g)
+    if Sys.peek(p + 352) == 1 do Process._exit(g, p, Sys.peek(p + 160), 0) else
+      if Sys.peek(p + 360) == 1 do Process._exit(g, p, Sys.peek(p + 176), Sys.peek(p + 184)) else
+        t = Process._trace(g)
+        if t == 0 do 0 else
+          m: string = if Sys.peek(p + 264) == 0 do "uncaught throw" else Process.__any(Sys.peek(p + 264)) end
+          r = if m == "normal" or m == "shutdown" do "error: " <> m else m end
+          Process._exit(g, p, Process.__word(r), t)
+        end
+      end
+    end
+  end
+# The main process looks, before each of its statements, whether it was
+# asked to stop (the compiler calls this when the word at R14-56 is set; a
+# function value made in main has the call too, and is not held up by it).
+#: _stopped/0 needs _check/1 _g/0
+  def _stopped(): integer do
+    g = Process._g()
+    if Sys.peek(g) == Sys.peek(g + 128) do Process._check(g) else 0 end
+  end
+# n bytes for a record, all zero: a value like any other (a string of n
+# zero bytes, of which this is the address of the first), so that a record
+# nothing refers to any more is given back (alchem-memory.md). Records are
+# referred to by their address, held as an integer in handles, in other
+# records and in the block g.
+#: _take/2
+  def _take(g: integer, n: integer): integer do
+    Sys.addr(String.duplicate("\x00", n))
+  end
+#: _free/2
+  def _free(g: integer, x: integer): integer do
+    Sys.poke(x, Sys.peek(g + 88))
+    Sys.poke(g + 88, x)
+  end
+# The first cell of the list at h that holds a first; 0 for none.
+#: _has/2
+  def _has(h: integer, a: integer): integer do
+    x = Sys.peek(h)
+    if x == 0 do 0 else if Sys.peek(x + 8) == a do x else Process._has(x, a) end end
+  end
+# Every cell of the list at h is freed.
+#: _clear/2 needs _free/2
+  def _clear(g: integer, h: integer): integer do
+    x = Sys.peek(h)
+    if x == 0 do 0 else
+      Sys.poke(h, Sys.peek(x))
+      Process._free(g, x)
+      Process._clear(g, h)
+    end
+  end
+#: _new/2 needs _take/2
+  def _new(g: integer, h: integer): integer do
+    p = Process._take(g, 384)
+    if h == 0 do
+      n = Sys.peek(g + 24) + 1
+      Sys.poke(g + 24, n)
+      Sys.poke(p + 40, n)
+      o = Sys.peek(g + 40)
+      Sys.poke(p + 80, o)
+      if o != 0 do Sys.poke(o + 72, p) end
+      Sys.poke(g + 40, p)
+      Sys.poke(g + 32, Sys.peek(g + 32) + 1)
+    else Sys.poke(p + 320, 1) end
+    p
+  end
+# When a wait of ms milliseconds is over; 0 for one without end.
+#: _due/2 needs _now/1
+  def _due(g: integer, ms: integer): integer do
+    if ms < 0 do 0 else Process._now(g) + (if ms > 9000000000000 do 9000000000000 else ms end) * 1000000 end
+  end
+#: _queue/2
+  def _queue(g: integer, p: integer): integer do
+    Sys.poke(p + 64, 0)
+    t = Sys.peek(g + 16)
+    if t == 0 do Sys.poke(g + 8, p) else Sys.poke(t + 64, p) end
+    Sys.poke(g + 16, p)
+  end
+# A process that waits is ready to run again.
+#: _ready/2 needs _queue/2 _untime/2
+  def _ready(g: integer, p: integer): integer do
+    if Sys.peek(p + 48) != 2 do 0 else
+      Process._untime(g, p)
+      Sys.poke(p + 48, 0)
+      Process._queue(g, p)
+    end
+  end
+#: _untime/2
+  def _untime(g: integer, p: integer): integer do
+    if Sys.peek(p + 368) == 0 do 0 else
+      a = Sys.peek(p + 96)
+      b = Sys.peek(p + 104)
+      if a == 0 do Sys.poke(g + 48, b) else Sys.poke(a + 104, b) end
+      if b != 0 do Sys.poke(b + 96, a) end
+      Sys.poke(p + 368, 0)
+    end
+  end
+# The stack a process that ended ran on is free once another runs.
+#: _reap/2
+  def _reap(g: integer, p: integer): integer do
+    s = Sys.peek(g + 152)
+    if s == 0 or s == Sys.peek(p + 256) do 0 else
+      Sys.poke(s - 8, Sys.peek(g + 80))
+      Sys.poke(g + 80, s)
+      Sys.poke(g + 152, 0)
+    end
+  end
+# The running process p, whose state is set, gives way to the next.
+#: _sched/2 needs _reap/2
+  def _sched(g: integer, p: integer): integer do
+    Process._reap(g, p)
+    n = Process.__until(Process.__any(Sys.peek(g + 160)), g)
+    Sys.poke(n + 48, 1)
+    if n == p do 0 else
+      Sys.poke(g, n)
+      Process.__switch(p, n)
+    end
+  end
+# The running process waits until another makes it ready or the time d
+# comes (0: none): 1 when the time came.
+#: _wait/2 needs _sched/2 _time/3
+  def _wait(g: integer, d: integer): integer do
+    p = Sys.peek(g)
+    Sys.poke(p + 344, 0)
+    Sys.poke(p + 48, 2)
+    if d > 0 do Process._time(g, p, d) end
+    Process._sched(g, p)
+    Sys.peek(p + 344)
+  end
+# Whoever waits to send to p looks again.
+#: _release/2 needs _free/2 _ready/2
+  def _release(g: integer, p: integer): integer do
+    x = Sys.peek(p + 152)
+    if x == 0 do 0 else
+      Sys.poke(p + 152, Sys.peek(x))
+      Process._ready(g, Sys.peek(x + 8))
+      Process._free(g, x)
+      Process._release(g, p)
+    end
+  end
+# Every cell of the list at h names a process that is made ready.
+#: _wake/2 needs _free/2 _ready/2
+  def _wake(g: integer, h: integer): integer do
+    x = Sys.peek(h)
+    if x == 0 do 0 else
+      Sys.poke(h, Sys.peek(x))
+      Process._ready(g, Sys.peek(x + 8))
+      Process._free(g, x)
+      Process._wake(g, h)
+    end
+  end
+# Supervisors that wait for a change look again.
+#: _stir/2 needs _ready/2
+  def _stir(g: integer, x: integer): integer do
+    if x == 0 do 0 else
+      Process._ready(g, Sys.peek(x + 8))
+      Process._stir(g, Sys.peek(x))
+    end
+  end
+# The processes of the list at x are asked to stop.
+#: _stopall/2 needs _cancel/4
+  def _stopall(g: integer, x: integer): integer do
+    if x == 0 do 0 else
+      n = Sys.peek(x)
+      Process._cancel(g, Sys.peek(x + 8), Process.__word("shutdown"), 0)
+      Process._stopall(g, n)
+    end
+  end
+# The running process p waits until nothing it owns is left.
+#: _orphan/2 needs _await/3 _drop/3
+  def _orphan(g: integer, p: integer): integer do
+    x = Sys.peek(p + 232)
+    if x == 0 do 0 else
+      Process._await(g, p, Sys.peek(x + 8))
+      Process._drop(g, p + 232, Sys.peek(x + 8))
+      Process._orphan(g, p)
+    end
+  end
+# Whom p monitors is no longer monitored by it.
+#: _fm/2 needs _drop/3 _free/2
+  def _fm(g: integer, p: integer): integer do
+    x = Sys.peek(p + 216)
+    if x == 0 do 0 else
+      Sys.poke(p + 216, Sys.peek(x))
+      Process._drop(g, Sys.peek(x + 16) + 208, Sys.peek(x + 8))
+      Process._free(g, x)
+      Process._fm(g, p)
+    end
+  end
+# The body of a process: its function, and what it ends in.
+#: _run/2 needs _check/1 _done/1 _ended/0 _g/0 _note/1
+  def _run(f: fn[pid[t], integer], h: pid[t]): integer do
+    try do
+      Process._check(Process._g())
+      Process.__depth(1)
+      Process._done(f(h))
+    rescue
+      m when Process._note(m) -> 0
+    after
+      Process._ended()
+    end
+  end
+# A new process of the program with a mailbox of capacity c, not yet
+# started.
+#: _fresh/2 needs _capacity/1 _check/1 _new/2
+  def _fresh(g: integer, c: integer): integer do
+    Process._check(g)
+    Process._capacity(c)
+    if Sys.peek(g + 112) == 1 do raise("runtime shutting down") end
+    p = Process._new(g, 0)
+    Sys.poke(p + 136, c)
+    p
+  end
+#: _pop/2 needs _free/2 _get/1 _release/2
+  def _pop(g: integer, p: integer): integer do
+    x = Process._get(p + 112)
+    Sys.poke(g + 184, Sys.peek(x + 8))
+    Process._free(g, x)
+    Sys.poke(p + 128, Sys.peek(p + 128) - 1)
+    Process._release(g, p)
+    1
+  end
+#: _sleep/2 needs _wait/2
+  def _sleep(g: integer, d: integer): integer do
+    if Process._wait(g, d) == 1 do 0 else
+      if Sys.peek(Sys.peek(g) + 56) == 1 do 0 else Process._sleep(g, d) end
+    end
+  end
+# The main process waits until it is the only one left.
+#: _last/2 needs _await/3
+  def _last(g: integer, r: integer): integer do
+    p = Sys.peek(g + 40)
+    q = if p == r do Sys.peek(p + 80) else p end
+    if q == 0 do 0 else
+      Process._await(g, r, q)
+      Process._last(g, r)
+    end
+  end
+# 1 when two types, each the word of its string, are one; 0 stands for a
+# type that is not known and fits any.
+#: _same/2
+  def _same(a: integer, b: integer): integer do
+    if a == 0 or b == 0 do 1 else
+      x: string = Process.__any(a)
+      y: string = Process.__any(b)
+      if x == y do 1 else 0 end
+    end
+  end
+#: _tends/2 needs _tend/1
+  def _tends(a: integer, n: integer): integer do
+    if n == 0 do a else Process._tends(Process._tend(a), n - 1) end
+  end
+# The value of the type at a that the pinned runtime leaves where there is
+# none (Go's zero value): 0, false, 0.0, an empty string, atom, list, map
+# or set, a tuple of such; for an option and a result the nil that is
+# neither of its constructors (0x400000, discriminant -1). The words
+# from g + 2048 to g + 4096 stay zero.
+#: _zero/2 needs _tend/1 _zeros/4 _tcount/1 _tfirst/1
+  def _zero(g: integer, a: integer): integer do
+    k = Sys.byte(a)
+    if k == 2 or k == 22 do Process.__word("") else
+      if k == 7 or k == 8 or k == 25 do
+        Process.__word([])
+      else
+        if k == 5 do
+          n = Process._tcount(a + 1)
+          w = Process.__word(Sys.text(g + 2048, 8 * n))
+          Sys.poke(w, n)
+          Process._zeros(g, Process._tfirst(a + 1), w + 8, n)
+          w
+        else
+          if k == 6 do
+            w = Process.__word(Sys.text(g + 2048, 8))
+            Sys.poke(w, -1)
+            w
+          else if k == 4 do 4194304 else 0 end end
+        end
+      end
+    end
+  end
+# A name of the program: the cell that holds it (the name, the process, and
+# a cell of the kind: 0 a process, 1 a server, 2 an agent; the type; the
+# handle), or 0.
+#: _named/2
+  def _named(x: integer, n: string): integer do
+    if x == 0 do 0 else
+      s: string = Process.__any(Sys.peek(x + 8))
+      if s == n do x else Process._named(Sys.peek(x), n) end
+    end
+  end
+#: _unname/2 needs _drop/3 _free/2 _named/2
+  def _unname(g: integer, n: string): integer do
+    x = Process._named(Sys.peek(g + 136), n)
+    if x == 0 do 0 else
+      Process._free(g, Sys.peek(x + 24))
+      Process._drop(g, g + 136, Sys.peek(x + 8))
+    end
+  end
+# The cell of the kind of the living process named n, or 0.
+#: _lookup/2 needs _named/2
+  def _lookup(g: integer, n: string): integer do
+    x = Process._named(Sys.peek(g + 136), n)
+    if x == 0 do 0 else if Sys.peek(Sys.peek(x + 16) + 376) == 1 do 0 else Sys.peek(x + 24) end end
+  end
+# A process that is none of the program's own runs the function value w and
+# is over: what the pinned runtime starts a goroutine for.
+#: _go/2 needs _gone/1 _new/2 _start/3
+  def _go(g: integer, w: integer): integer do
+    p = Process._new(g, 1)
+    v: fn[integer] = fn(): integer do Process._gone(w) end
+    Process._start(g, p, Process.__word(v))
+    p
+  end
+# What waits in the mailbox of p, each message as the function shows it,
+# the last ten of a long one.
+#: _waiting/2 needs Enum.join/2 _shown/3
+  def _waiting(p: integer, show: fn[integer, string]): string do
+    n = Sys.peek(p + 128)
+    if n == 0 do "empty" else
+      (if n > 10 do "(last 10 of #{n}) " else "" end) <> Enum.join(Process._shown(Sys.peek(p + 112), if n > 10 do n - 10 else 0 end, show), ", ")
+    end
+  end
+#: _details/2 needs Enum.join/2 Enum.map/2
+  def _details(pattern: string, pinned: list[string]): string do
+    "\n     pattern: " <> pattern <> Enum.join(Enum.map(pinned, fn pin -> "\n     pinned:  " <> pin end), "")
+  end
+
+#: _cell/4 needs _take/2
+  def _cell(g: integer, a: integer, b: integer, c: integer): integer do
+    f = Sys.peek(g + 88)
+    x = if f != 0 do f else Process._take(g, 32) end
+    if f != 0 do Sys.poke(g + 88, Sys.peek(f)) end
+    Sys.poke(x, 0)
+    Sys.poke(x + 8, a)
+    Sys.poke(x + 16, b)
+    Sys.poke(x + 24, c)
+    x
+  end
+# Process p is asked to stop, with the reason r and the failure text f.
+#: _cancel/4 needs _ready/2 _release/2 _stir/2
+  def _cancel(g: integer, p: integer, r: integer, f: integer): integer do
+    if Sys.peek(p + 56) + Sys.peek(p + 376) > 0 do 0 else
+      Sys.poke(p + 56, 1)
+      if p == Sys.peek(g + 128) do Sys.poke(Sys.stack() - 56, 1) end
+      Sys.poke(p + 176, r)
+      Sys.poke(p + 184, f)
+      Process._ready(g, p)
+      Process._release(g, p)
+      Process._stir(g, Sys.peek(g + 144))
+    end
+  end
+# The links of p: one that traps exits gets an event, another is stopped
+# when p did not end well.
+#: _fl/4 needs _abnormal/1 _cancel/4 _event/5 _lcut/2
+  def _fl(g: integer, p: integer, r: integer, f: integer): integer do
+    x = Sys.peek(p + 224)
+    if x == 0 do 0 else
+      o = Sys.peek(x + 8)
+      Process._lcut(g, Sys.peek(x + 16))
+      Process._lcut(g, x)
+      if Sys.peek(o + 376) == 0 do
+        if Sys.peek(o + 312) == 1 do Process._event(g, o, 0, Sys.peek(p + 40), r) else
+          if Process._abnormal(r) == 1 do
+            s: string = Process.__any(r)
+            Process._cancel(g, o, Process.__word("linked: " <> s), f)
+          end
+        end
+      end
+      Process._fl(g, p, r, f)
+    end
+  end
+# Process p is over, with the reason r and the failure text f (0: none).
+#: _finish/4 needs _cancel/4 _clear/2 _drop/3 _fd/3 _fl/4 _fm/2 _fw/3 _orphan/2 _release/2 _stir/2 _stopall/2 _wake/2
+  def _finish(g: integer, p: integer, r0: integer, f0: integer): integer do
+    if Sys.peek(p + 376) + Sys.peek(p + 336) > 0 do 0 else
+      Sys.poke(p + 336, 1)
+      n: string = Process.__any(r0)
+      s = if Sys.peek(p + 56) == 1 and n == "normal" do 1 else 0 end
+      r = if s == 1 do Sys.peek(p + 176) else r0 end
+      f = if s == 1 do Sys.peek(p + 184) else f0 end
+      Process._cancel(g, p, r, f)
+      Process._stopall(g, Sys.peek(p + 232))
+      Process._orphan(g, p)
+      Sys.poke(p + 376, 1)
+      Sys.poke(p + 56, 1)
+      Sys.poke(p + 160, r)
+      Sys.poke(p + 168, f)
+      if Sys.peek(p + 320) == 0 do
+        a = Sys.peek(p + 72)
+        b = Sys.peek(p + 80)
+        if a == 0 do Sys.poke(g + 40, b) else Sys.poke(a + 80, b) end
+        if b != 0 do Sys.poke(b + 72, a) end
+        Sys.poke(g + 32, Sys.peek(g + 32) - 1)
+      end
+      Process._fw(g, p, r)
+      Process._fm(g, p)
+      Process._clear(g, p + 192)
+      Sys.poke(p + 200, 0)
+      Process._clear(g, p + 112)
+      Sys.poke(p + 120, 0)
+      Sys.poke(p + 128, 0)
+      Process._release(g, p)
+      Process._fl(g, p, r, f)
+      Process._fd(g, p, r)
+      o = Sys.peek(p + 240)
+      if o != 0 do Process._drop(g, o + 232, p) end
+      Sys.poke(p + 240, 0)
+      Process._wake(g, p + 248)
+      Process._stir(g, Sys.peek(g + 144))
+    end
+  end
+# The running process p is over and another runs.
+#: _exit/4 needs _finish/4 _reap/2 _sched/2
+  def _exit(g: integer, p: integer, r: integer, f: integer): integer do
+    Process._finish(g, p, r, f)
+    Process._reap(g, p)
+    Sys.poke(g + 152, Sys.peek(p + 256))
+    Sys.poke(p + 48, 3)
+    Process._sched(g, p)
+  end
+# The word w for process q, waiting up to ms milliseconds for room: 1 or 0.
+#: _send/4 needs _deliver/3 _due/2 _far/3 _sendw/4
+  def _send(g: integer, q: integer, w: integer, ms: integer): integer do
+    if Sys.peek(q + 320) == 2 do Process._far(1, q, w) else if Sys.peek(q + 56) == 1 do 0 else
+      if Sys.peek(q + 128) < Sys.peek(q + 136) do Process._deliver(g, q, w) else
+        if ms == 0 do 0 else Process._sendw(g, q, w, Process._due(g, ms)) end
+      end
+    end end
+  end
+#: _sendw/4 needs _check/1 _deliver/3 _drop/3 _has/2 _push/5 _wait/2
+  def _sendw(g: integer, q: integer, w: integer, d: integer): integer do
+    c = Sys.peek(g)
+    if Process._has(q + 152, c) == 0 do Process._push(g, q + 152, c, 0, 0) end
+    x = Process._wait(g, d)
+    Process._drop(g, q + 152, c)
+    if x == 1 or Sys.peek(c + 56) == 1 do Process._check(g) else
+      if Sys.peek(q + 56) == 1 do 0 else
+        if Sys.peek(q + 128) < Sys.peek(q + 136) do Process._deliver(g, q, w) else Process._sendw(g, q, w, d) end
+      end
+    end
+  end
+# The running process c waits up to the time d for q to be over: 1 or 0.
+#: _join/4 needs _check/1 _drop/3 _has/2 _push/5 _wait/2
+  def _join(g: integer, c: integer, q: integer, d: integer): integer do
+    if Sys.peek(q + 376) == 1 do 1 else
+      if Process._has(q + 248, c) == 0 do Process._push(g, q + 248, c, 0, 0) end
+      x = Process._wait(g, d)
+      if Sys.peek(q + 376) == 1 do 1 else
+        if x == 1 or Sys.peek(c + 56) == 1 do
+          Process._drop(g, q + 248, c)
+          Process._check(g)
+        else Process._join(g, c, q, d) end
+      end
+    end
+  end
+#: _zeros/4 needs _tend/1 _zero/2
+  def _zeros(g: integer, a: integer, w: integer, n: integer): integer do
+    if n == 0 do 0 else
+      Sys.poke(w, Process._zero(g, a))
+      Process._zeros(g, Process._tend(a), w + 8, n - 1)
+    end
+  end
+# A timer (services.go: later): after ms milliseconds the function value w
+# runs, unless the timer is cancelled or the process q (0: none) is over by
+# then. Its reference.
+#: _later/4 needs _due/2 _go/2 _push/5 _ref/1 _timer/4
+  def _later(g: integer, ms: integer, q: integer, w: integer): integer do
+    n = Process._ref(g)
+    d = Process._due(g, if ms < 0 do 0 else ms end)
+    v: fn[integer] = fn(): integer do Process._timer(n, d, q, w) end
+    p = Process._go(g, Process.__word(v))
+    Process._push(g, g + 248, n, p, 0)
+    n
+  end
+#: _timer/4 needs _drop/3 _g/0 _push/5 _tick/4
+  def _timer(n: integer, d: integer, q: integer, w: integer): integer do
+    g = Process._g()
+    c = Sys.peek(g)
+    if q != 0 do if Sys.peek(q + 376) == 0 do Process._push(g, q + 248, c, 0, 0) end end
+    Process._tick(g, c, d, q)
+    if q != 0 do Process._drop(g, q + 248, c) end
+    if Process._drop(g, g + 248, n) == 0 do 0 else
+      if q != 0 and Sys.peek(q + 376) == 1 do 0 else
+        f: fn[integer] = Process.__any(w)
+        f()
+      end
+    end
+  end
+# Until the time d, the end of q or the timer's own.
+#: _tick/4 needs _wait/2
+  def _tick(g: integer, c: integer, d: integer, q: integer): integer do
+    if Sys.peek(c + 264) == 1 do 0 else
+      if q != 0 and Sys.peek(q + 376) == 1 do 0 else
+        if Process._wait(g, d) == 1 do 0 else Process._tick(g, c, d, q) end
+      end
+    end
+  end
+# A new process for the function value w, which takes the process's own
+# handle, with a mailbox of capacity c and messages of type t.
+#: _spawn/4 needs _fresh/2 _run/2 _start/3
+  def _spawn(g: integer, w: integer, c: integer, t: integer): integer do
+    p = Process._fresh(g, c)
+    Sys.poke(p + 144, t)
+    f: fn[pid[integer], integer] = Process.__any(w)
+    h: pid[integer] = %pid{at: p, k: none}
+    v: fn[integer] = fn(): integer do Process._run(f, h) end
+    Process._start(g, p, Process.__word(v))
+    p
+  end
+# accepts leaves the mailbox, the others staying as they are; one is
+# waited for up to ms milliseconds: 1 with the message at g + 184, or 0.
+#: _match/4 needs _cell/4 _due/2 _free/2 _match1/1
+  def _match(g: integer, p: integer, ms: integer, w: integer): integer do
+    x = Process._cell(g, p + 112, w, Process._due(g, ms))
+    y = Process._cell(g, ms, 0, 0)
+    Sys.poke(x, y)
+    st: fn[integer, integer] = fn(a: integer): integer do Process._match1(a) end
+    Process.__until(st, x)
+    r = Sys.peek(y + 16)
+    Process._free(g, x)
+    Process._free(g, y)
+    r
+  end
+# A cell before the others of the list whose first is kept at h.
+#: _push/5 needs _cell/4
+  def _push(g: integer, h: integer, a: integer, b: integer, c: integer): integer do
+    x = Process._cell(g, a, b, c)
+    Sys.poke(x, Sys.peek(h))
+    Sys.poke(h, x)
+  end
+# A cell after the others of the queue whose first and last are kept at q.
+#: _put/5 needs _cell/4
+  def _put(g: integer, q: integer, a: integer, b: integer, c: integer): integer do
+    x = Process._cell(g, a, b, c)
+    t = Sys.peek(q + 8)
+    if t == 0 do Sys.poke(q, x) else Sys.poke(t, x) end
+    Sys.poke(q + 8, x)
+  end
+# An event for process o: the reference, the number and the reason.
+#: _event/5 needs _put/5 _ready/2
+  def _event(g: integer, o: integer, a: integer, b: integer, c: integer): integer do
+    Process._put(g, o + 192, a, b, c)
+    Process._ready(g, o)
+  end
+# The events of reference n and process number i leave the queue at q.
+#: _unevent/5 needs _free/2
+  def _unevent(g: integer, q: integer, h: integer, n: integer, i: integer): integer do
+    x = Sys.peek(h)
+    if x == 0 do 0 else
+      if Sys.peek(x + 8) == n and Sys.peek(x + 16) == i do
+        Sys.poke(h, Sys.peek(x))
+        if Sys.peek(q + 8) == x do Sys.poke(q + 8, if h == q do 0 else h end) end
+        Process._free(g, x)
+        1 + Process._unevent(g, q, h, n, i)
+      else Process._unevent(g, q, x, n, i) end
+    end
+  end
+# That cell is taken out: 1, or 0 when there is none.
+#: _drop/3 needs _free/2
+  def _drop(g: integer, h: integer, a: integer): integer do
+    x = Sys.peek(h)
+    if x == 0 do 0 else
+      if Sys.peek(x + 8) == a do
+        Sys.poke(h, Sys.peek(x))
+        Process._free(g, x)
+        1
+      else Process._drop(g, x, a) end
+    end
+  end
+#: _time/3
+  def _time(g: integer, p: integer, d: integer): integer do
+    n = Sys.peek(g + 48)
+    Sys.poke(p + 88, d)
+    Sys.poke(p + 96, 0)
+    Sys.poke(p + 104, n)
+    if n != 0 do Sys.poke(n + 96, p) end
+    Sys.poke(g + 48, p)
+    Sys.poke(p + 368, 1)
+    m = Sys.peek(g + 56)
+    if m == 0 or d < m do Sys.poke(g + 56, d) else 0 end
+  end
+# Process p starts as the function value w, called with nothing, on a
+# stack of its own.
+#: _start/3 needs _queue/2 _stack/1
+  def _start(g: integer, p: integer, w: integer): integer do
+    t = Process._stack(g)
+    Sys.poke(p + 256, t)
+    Sys.poke(t - 24, w)
+    Sys.poke(t - 32, Process.__stub())
+    Sys.poke(p, t - 32)
+    Sys.poke(p + 8, 0)
+    Sys.poke(p + 16, 0)
+    Sys.poke(p + 24, 0)
+    Sys.poke(p + 32, t - Sys.peek(t - 16) + 65536)
+    Sys.poke(p + 48, 0)
+    Process._queue(g, p)
+  end
+# The running process c waits until q is over, whatever is asked of c.
+#: _await/3 needs _has/2 _push/5 _wait/2
+  def _await(g: integer, c: integer, q: integer): integer do
+    if Sys.peek(q + 376) == 1 do 0 else
+      if Process._has(q + 248, c) == 0 do Process._push(g, q + 248, c, 0, 0) end
+      Process._wait(g, 0)
+      Process._await(g, c, q)
+    end
+  end
+# Who monitors p hears of its end.
+#: _fw/3 needs _drop/3 _event/5 _free/2
+  def _fw(g: integer, p: integer, r: integer): integer do
+    x = Sys.peek(p + 208)
+    if x == 0 do 0 else
+      o = Sys.peek(x + 16)
+      Sys.poke(p + 208, Sys.peek(x))
+      Process._drop(g, o + 216, Sys.peek(x + 8))
+      if Sys.peek(o + 376) == 0 do Process._event(g, o, Sys.peek(x + 8), Sys.peek(p + 40), r) end
+      Process._free(g, x)
+      Process._fw(g, p, r)
+    end
+  end
+#: _deliver/3 needs _put/5 _ready/2
+  def _deliver(g: integer, q: integer, w: integer): integer do
+    Process._put(g, q + 112, w, 0, 0)
+    Sys.poke(q + 128, Sys.peek(q + 128) + 1)
+    Process._ready(g, q)
+    1
+  end
+# The next message of the running process p, waiting up to ms
+# milliseconds: 1 with the message at g + 184, or 0.
+#: _recv/3 needs _due/2 _pop/2 _recvw/3
+  def _recv(g: integer, p: integer, ms: integer): integer do
+    if Sys.peek(p + 128) > 0 do Process._pop(g, p) else
+      if ms == 0 do 0 else Process._recvw(g, p, Process._due(g, ms)) end
+    end
+  end
+#: _recvw/3 needs _check/1 _pop/2 _wait/2
+  def _recvw(g: integer, p: integer, d: integer): integer do
+    x = Process._wait(g, d)
+    if Sys.peek(p + 128) > 0 do Process._pop(g, p) else
+      if x == 1 do 0 else
+        Process._check(g)
+        Process._recvw(g, p, d)
+      end
+    end
+  end
+#: _joined/3 needs _due/2 _join/4
+  def _joined(g: integer, q: integer, ms: integer): integer do
+    if Sys.peek(q + 376) == 1 do 1 else
+      if ms == 0 do 0 else Process._join(g, Sys.peek(g), q, Process._due(g, ms)) end
+    end
+  end
+#: _link/3 needs _abnormal/1 _cancel/4 _event/5 _lhas/4 _pair/3
+  def _link(g: integer, c: integer, q: integer): integer do
+    if q == c do 0 else
+      if Sys.peek(q + 376) == 1 do
+        r = Sys.peek(q + 160)
+        if Sys.peek(c + 312) == 1 do Process._event(g, c, 0, Sys.peek(q + 40), r) else
+          if Process._abnormal(r) == 1 do
+            s: string = Process.__any(r)
+            Process._cancel(g, c, Process.__word("linked: " <> s), Sys.peek(q + 168))
+          end
+        end
+        0
+      else
+        if Process._lhas(Sys.peek(c + 224), q, Sys.peek(q + 224), c) == 0 do Process._pair(g, c, q) end
+        1
+      end
+    end
+  end
+# The next event of the running process c, waiting up to the time d.
+#: _next/3 needs _check/1 _get/1 _wait/2
+  def _next(g: integer, c: integer, d: integer): integer do
+    x = Process._get(c + 192)
+    if x != 0 do x else
+      if Process._wait(g, d) == 1 do Process._get(c + 192) else
+        Process._check(g)
+        Process._next(g, c, d)
+      end
+    end
+  end
+# The word w of type t for whatever holds the name s now: a process whose
+# messages are of that type, or a server whose requests are, as a cast.
+#: _tell/3 needs _g/0 _lookup/2 _same/2 _send/4
+  def _tell(n: string, t: integer, w: integer): integer do
+    g = Process._g()
+    x = Process._lookup(g, n)
+    if x == 0 do 0 else
+      if Sys.peek(x + 8) == 0 and Process._same(Sys.peek(x + 16), t) == 1 do Process._send(g, Sys.peek(x + 24), w, 1000) else
+        if Sys.peek(x + 8) != 1 do 0 else
+          s = Sys.peek(x + 24)
+          if Process._same(Sys.peek(s + 24), t) == 0 do 0 else
+            f: fn[integer, integer] = Process.__any(Sys.peek(s + 32))
+            f(w)
+          end
+        end
+      end
+    end
+  end
+# Process t belongs to c: it is stopped and awaited when c ends.
+#: _own/3 needs _push/5
+  def _own(g: integer, c: integer, t: integer): integer do
+    Sys.poke(t + 240, c)
+    Process._push(g, c + 232, t, 0, 0)
+  end
+# The function value w, which takes the exit reason, runs once q is over,
+# in a process that is none of the program's own; at once when q is over.
+#: _onend/3 needs _push/5 _told/3
+  def _onend(g: integer, q: integer, w: integer): integer do
+    if Sys.peek(q + 376) == 1 do Process._told(g, w, Sys.peek(q + 160)) else Process._push(g, q + 296, w, 0, 0) end
+  end
+#: _told/3 needs _go/2
+  def _told(g: integer, w: integer, r: integer): integer do
+    f: fn[string, integer] = Process.__any(w)
+    s: string = Process.__any(r)
+    v: fn[integer] = fn(): integer do f(s) end
+    Process._go(g, Process.__word(v))
+  end
+#: _fd/3 needs _free/2 _told/3
+  def _fd(g: integer, p: integer, r: integer): integer do
+    x = Sys.peek(p + 296)
+    if x == 0 do 0 else
+      Sys.poke(p + 296, Sys.peek(x))
+      Process._told(g, Sys.peek(x + 8), r)
+      Process._free(g, x)
+      Process._fd(g, p, r)
+    end
+  end
+#: _shown/3
+  def _shown(x: integer, skip: integer, show: fn[integer, string]): list[string] do
+    if x == 0 do [] else
+      if skip > 0 do Process._shown(Sys.peek(x), skip - 1, show) else [show(Sys.peek(x + 8)) | Process._shown(Sys.peek(x), 0, show)] end
+    end
+  end
+# The first cell of the queue at q leaves it; the caller frees it.
+#: _get/1
+  def _get(q: integer): integer do
+    x = Sys.peek(q)
+    if x != 0 do
+      n = Sys.peek(x)
+      Sys.poke(q, n)
+      if n == 0 do Sys.poke(q + 8, 0) end
+    end
+    x
+  end
+# The next number: processes, monitors and timers share them.
+#: _ref/1
+  def _ref(g: integer): integer do
+    Sys.poke(g + 24, Sys.peek(g + 24) + 1)
+  end
+#: _now/1
+  def _now(g: integer): integer do
+    Sys.call(228, 1, g + 200)
+    Sys.peek(g + 200) * 1000000000 + Sys.peek(g + 208)
+  end
+# Those whose time came first are ready, and the earliest time of the
+# others is kept: one time at a turn, so that what an earlier one sets off
+# runs before a later one, however late the program finds them.
+#: _fire/1 needs _now/1
+  def _fire(g: integer): integer do
+    Sys.poke(g + 224, Sys.peek(g + 48))
+    Sys.poke(g + 56, 0)
+    Process.__until(Process.__any(Sys.peek(g + 168)), g)
+    m = Sys.peek(g + 56)
+    if m == 0 or m > Process._now(g) do 0 else
+      Sys.poke(g + 232, m)
+      Sys.poke(g + 224, Sys.peek(g + 48))
+      Sys.poke(g + 56, 0)
+      Process.__until(Process.__any(Sys.peek(g + 272)), g)
+    end
+  end
+#: _fire1/1
+  def _fire1(g: integer): integer do
+    p = Sys.peek(g + 224)
+    if p == 0 do 1 else
+      Sys.poke(g + 224, Sys.peek(p + 104))
+      d = Sys.peek(p + 88)
+      m = Sys.peek(g + 56)
+      if m == 0 or d < m do Sys.poke(g + 56, d) end
+      0
+    end
+  end
+#: _fire2/1 needs _ready/2
+  def _fire2(g: integer): integer do
+    p = Sys.peek(g + 224)
+    if p == 0 do 1 else
+      Sys.poke(g + 224, Sys.peek(p + 104))
+      d = Sys.peek(p + 88)
+      m = Sys.peek(g + 56)
+      if d == Sys.peek(g + 232) do
+        Sys.poke(p + 344, 1)
+        Process._ready(g, p)
+      else
+        if m == 0 or d < m do Sys.poke(g + 56, d) end
+      end
+      0
+    end
+  end
+# The next process to run; 0 after a sleep until the earliest time or,
+# when processes wait for descriptors (the list at g + 280), until one of
+# those is ready. While others are ready the descriptors are looked at
+# every sixteenth turn, without waiting.
+#: _pick/1 needs _fire/1 _now/1 _poll/2 _stuck/0
+  def _pick(g: integer): integer do
+    t = Sys.peek(g + 56)
+    if t != 0 do if Process._now(g) >= t do Process._fire(g) end end
+    n = Sys.peek(g + 8)
+    if n != 0 do
+      if Sys.peek(g + 280) != 0 do
+        k = Sys.peek(g + 336) + 1
+        Sys.poke(g + 336, rem(k, 16))
+        if k == 16 do Process._poll(g, 0) end
+      end
+      x = Sys.peek(n + 64)
+      Sys.poke(g + 8, x)
+      if x == 0 do Sys.poke(g + 16, 0) end
+      n
+    else
+      e = Sys.peek(g + 56)
+      w = if e == 0 do -1 else e - Process._now(g) end
+      if Sys.peek(g + 280) != 0 do Process._poll(g, if e == 0 do -1 else if w > 0 do w else 0 end end) else
+        if e == 0 do Process._stuck() else
+          if w > 0 do
+            Sys.poke(g + 200, div(w, 1000000000))
+            Sys.poke(g + 208, rem(w, 1000000000))
+            Sys.call(35, g + 200, 0)
+          end
+        end
+      end
+      0
+    end
+  end
+# The top of a stack: mapped lazily, its size in the word at top - 16.
+#: _stack/1
+  def _stack(g: integer): integer do
+    f = Sys.peek(g + 80)
+    if f != 0 do
+      Sys.poke(g + 80, Sys.peek(f - 8))
+      f
+    else
+      n = Sys.peek(g + 240)
+      m = Sys.call(9, 0, n, 3, 16418, -1, 0)
+      if m < 0 do
+        if n <= 262144 do System.halt(71) end
+        Sys.poke(g + 240, if n >= 2097152 do div(n, 8) else 262144 end)
+        Process._stack(g)
+      else
+        Sys.poke(m + n - 16, n)
+        m + n
+      end
+    end
+  end
+# A process asked to stop leaves here; nothing rescues or catches it.
+#: _check/1
+  def _check(g: integer): integer do
+    p = Sys.peek(g)
+    if Sys.peek(p + 56) == 1 do
+      Sys.poke(p + 360, 1)
+      throw(%Process.Exit{r: 0})
+    else 0 end
+  end
+#: _abnormal/1
+  def _abnormal(r: integer): integer do
+    s: string = Process.__any(r)
+    if s == "normal" or s == "shutdown" do 0 else 1 end
+  end
+# What a failing process would have written had it been the program: its
+# place, its reason and its calls. A copy of the program writes them into
+# a pipe by failing in earnest: 0 in the copy, the text's word in the
+# program.
+#: _trace/1 needs Sys.got/0 Sys.load/1 Sys.pad/0 Sys.wait/4
+  def _trace(g: integer): integer do
+    Sys.call(293, g + 216, 0)
+    r = rem(Sys.peek(g + 216), 4294967296)
+    w = div(Sys.peek(g + 216), 4294967296)
+    k = Sys.call(57)
+    if k == 0 do
+      Sys.call(33, w, 2)
+      Sys.call(3, w)
+      Sys.call(3, r)
+      0
+    else
+      Sys.call(3, w)
+      Sys.pad()
+      Sys.load(r)
+      Sys.call(3, r)
+      if k > 0 do Sys.wait(61, k, 0, 0) end
+      Process.__word(Sys.got())
+    end
+  end
+# The message a process fails with is noted; the failure passes on.
+#: _note/1 needs _g/0
+  def _note(m: string): boolean do
+    p = Sys.peek(Process._g())
+    Sys.poke(p + 264, Process.__word(m))
+    Sys.poke(p + 360, 0)
+    false
+  end
+# The function of a process returned c.
+#: _done/1 needs _g/0
+  def _done(c: integer): integer do
+    p = Sys.peek(Process._g())
+    Sys.poke(p + 160, Process.__word(if c == 0 do "normal" else "exit:#{c}" end))
+    Sys.poke(p + 352, 1)
+  end
+#: _capacity/1
+  def _capacity(c: integer): integer do
+    if c < 1 or c > 1000000 do raise("mailbox capacity must be 1..1000000") else 0 end
+  end
+#: _yield/1 needs _queue/2 _sched/2
+  def _yield(g: integer): integer do
+    p = Sys.peek(g)
+    if Sys.peek(g + 8) == 0 do 0 else
+      Sys.poke(p + 48, 0)
+      Process._queue(g, p)
+      Process._sched(g, p)
+    end
+  end
+# Process q is asked to stop: true when it was not before.
+#: _halt/1 needs _cancel/4 _check/1 _g/0
+  def _halt(q: integer): boolean do
+    g = Process._g()
+    Process._check(g)
+    ok = Sys.peek(q + 56) + Sys.peek(q + 376) == 0
+    Process._cancel(g, q, Process.__word("shutdown"), 0)
+    ok
+  end
+#: _reason/1
+  def _reason(q: integer): string do
+    Process.__any(Sys.peek(q + 160))
+  end
+# The function of a task returned the word w.
+#: _result/1 needs _done/1 _g/0
+  def _result(w: integer): integer do
+    Sys.poke(Sys.peek(Process._g()) + 304, w)
+    Process._done(0)
+  end
+# A failure's text without the line end it was written with.
+#: _text/1
+  def _text(f: integer): string do
+    s: string = Process.__any(f)
+    n = byte_size(s)
+    if n > 0 do Sys.text(Sys.addr(s), n - 1) else s end
+  end
+#: _loop1/1 needs _check/1 _g/0
+  def _loop1(x: integer): integer do
+    Process._check(Process._g())
+    f: fn[integer, tuple[boolean, integer]] = Process.__any(Sys.peek(x + 16))
+    {c, n} = f(Sys.peek(x + 8))
+    Sys.poke(x + 8, n)
+    if c do 0 else 1 end
+  end
+# One more live process is asked to stop as the program ends.
+#: _shut1/1 needs _cancel/4
+  def _shut1(g: integer): integer do
+    p = Sys.peek(g + 224)
+    if p == 0 do 1 else
+      Sys.poke(g + 224, Sys.peek(p + 80))
+      if p != Sys.peek(g + 128) do Process._cancel(g, p, Process.__word("shutdown"), 0) end
+      0
+    end
+  end
+# The program ends (compiler/actor: Run and Close): every other process is
+# asked to stop and awaited. f is 1 when the main process failed: a failure
+# of its own passes on from here, and one it was stopped for is written.
+# The status the program ends with.
+#: _close/1 needs Sys.put/3 Sys.state/0 _abnormal/1 _last/2
+  def _close(f: integer): integer do
+    g = Sys.peek(Sys.state() + 96)
+    if g == 0 do 0 else
+      r = Sys.peek(g + 128)
+      Sys.poke(g + 112, 1)
+      Sys.poke(g + 224, Sys.peek(g + 40))
+      Process.__until(Process.__any(Sys.peek(g + 192)), g)
+      Process._last(g, r)
+      e = Sys.peek(g + 120)
+      if f == 0 do if e < 0 do 0 else e end else
+        if Sys.peek(r + 360) == 0 do 0 else
+          w = Sys.peek(r + 176)
+          t = Sys.peek(r + 184)
+          if Process._abnormal(w) == 0 do Sys.call(60, if e < 0 do 0 else e end) else
+            s: string = Process.__any(w)
+            m: string = if t != 0 do Process.__any(t) else "<runtime>: " <> s <> "\n" end
+            Sys.put(2, Sys.addr(m), byte_size(m))
+            Sys.call(60, 2)
+          end
+        end
+      end
+    end
+  end
+
+# Where the type that starts at a ends (the compiler's type bytes).
+#: _tend/1 needs _tends/2 _tcount/1 _tfirst/1
+  def _tend(a: integer): integer do
+    k = Sys.byte(a)
+    if k == 4 or k == 7 or k == 25 or k == 26 do Process._tend(a + 1) else
+      if k == 6 or k == 8 do Process._tend(Process._tend(a + 1)) else
+        if k == 5 do Process._tends(Process._tfirst(a + 1), Process._tcount(a + 1)) else
+          if k == 10 do Process._tends(Process._tfirst(a + 1), Process._tcount(a + 1) + 1) else
+            if k == 13 or k == 14 or k == 15 do a + 4 else
+              if k == 16 do a + 2 + Sys.byte(a + 1) else
+                if k == 18 or k == 19 or k == 20 do Process._tends(Process._tfirst(a + 4), Process._tcount(a + 4)) else a + 1 end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+#: _gone/1 needs _exit/4 _g/0
+  def _gone(w: integer): integer do
+    f: fn[integer] = Process.__any(w)
+    f()
+    g = Process._g()
+    Process._exit(g, Sys.peek(g), Process.__word("normal"), 0)
+  end
+#: _some/1
+  def _some(q: integer): option[pid[t]] do
+    r: pid[t] = %pid{at: q, k: none}
+    some(r)
+  end
+# A pause of a millisecond, as the pinned runtime polls.
+#: _nap/1 needs _check/1 _due/2 _sleep/2
+  def _nap(g: integer): integer do
+    Process._sleep(g, Process._due(g, 1))
+    Process._check(g)
+  end
+
+# x: a second cell (the wait in milliseconds, then the outcome), where the
+# next message to look at is kept, the function, and when the wait ends.
+#: _match1/1 needs _check/1 _free/2 _g/0 _release/2 _wait/2
+  def _match1(x: integer): integer do
+    g = Process._g()
+    p = Sys.peek(g)
+    y = Sys.peek(x)
+    link = Sys.peek(x + 8)
+    m = Sys.peek(link)
+    if m == 0 do
+      if Sys.peek(y + 8) == 0 do 1 else
+        late = Process._wait(g, Sys.peek(x + 24))
+        if Sys.peek(link) != 0 do 0 else
+          if late == 1 do 1 else Process._check(g) end
+        end
+      end
+    else
+      f: fn[integer, boolean] = Process.__any(Sys.peek(x + 16))
+      if f(Sys.peek(m + 8)) do
+        Sys.poke(link, Sys.peek(m))
+        if Sys.peek(p + 120) == m do Sys.poke(p + 120, if link == p + 112 do 0 else link end) end
+        Sys.poke(p + 128, Sys.peek(p + 128) - 1)
+        Sys.poke(g + 184, Sys.peek(m + 8))
+        Process._free(g, m)
+        Process._release(g, p)
+        Sys.poke(y + 16, 1)
+        1
+      else
+        Sys.poke(x + 8, m)
+        0
+      end
+    end
+  end
+# System.stop(n) in a program with processes (compiler/actor: StopProgram):
+# the main process is asked to stop, as if it had returned, and the program
+# ends with the status n once the others are stopped. A process other than
+# the main one waits here for that.
+#: _halted/1 needs Sys.state/0 _cancel/4 _check/1 _parked/1
+  def _halted(n: integer): integer do
+    g = Sys.peek(Sys.state() + 96)
+    if g == 0 do Sys.call(60, n) end
+    if Sys.peek(g + 120) < 0 do Sys.poke(g + 120, n) end
+    Process._cancel(g, Sys.peek(g + 128), Process.__word("shutdown"), 0)
+    Process._check(g)
+    Process._parked(g)
+  end
+#: _parked/1 needs _check/1 _wait/2
+  def _parked(g: integer): integer do
+    Process._wait(g, 0)
+    Process._check(g)
+    Process._parked(g)
+  end
+
+#: self/1 needs _capacity/1 _check/1 _clear/2 _g/0 _same/2
+  def self(c: integer): pid[t] do
+    t = Sys.peek(Sys.stack() - 48)
+    g = Process._g()
+    Process._check(g)
+    Process._capacity(c)
+    p = Sys.peek(g)
+    if Sys.peek(p + 136) == 0 do
+      Sys.poke(p + 136, c)
+      Sys.poke(p + 144, t)
+    else
+      if Process._same(Sys.peek(p + 144), t) == 0 do
+        # The pinned runtime raises this one without a trace: no calls are shown (bit 30 of the place).
+        if Sys.peek(p + 328) == 0 do Stream.__fail(Stream.__where() + 1073741824, "process mailbox type already fixed") end
+        Sys.poke(p + 328, 0)
+        Process._clear(g, p + 112)
+        Sys.poke(p + 120, 0)
+        Sys.poke(p + 128, 0)
+        Sys.poke(p + 136, c)
+        Sys.poke(p + 144, t)
+      else
+        if Sys.peek(p + 144) == 0 do Sys.poke(p + 144, t) end
+      end
+    end
+    r: pid[t] = %pid{at: p, k: none}
+    r
+  end
+#: spawn/2 needs _fresh/2 _g/0 _run/2 _start/3
+  def spawn(f: fn[pid[t], integer], c: integer): pid[t] do
+    t = Sys.peek(Sys.stack() - 48)
+    g = Process._g()
+    p = Process._fresh(g, c)
+    Sys.poke(p + 144, t)
+    h: pid[t] = %pid{at: p, k: none}
+    w: fn[integer] = fn(): integer do Process._run(f, h) end
+    Process._start(g, p, Process.__word(w))
+    h
+  end
+# A pid that is the zero of its type (what a receive that ran out of time
+# leaves in a struct or a tuple) is no process: every function that takes
+# one fails as the pinned runtime's do.
+#: id/1
+  def id(h: pid[t]): integer do
+    if Process.__word(h) == 0 or h.at == 0 do raise("invalid or foreign PID") end
+    Sys.peek(h.at + 40)
+  end
+#: alive/1 needs _check/1 _far/3 _g/0
+  def alive(h: pid[t]): boolean do
+    if Process.__word(h) == 0 or h.at == 0 do raise("invalid or foreign PID") end
+    Process._check(Process._g())
+    if Sys.peek(h.at + 320) == 2 do Process._far(2, h.at, 0) == 1 else Sys.peek(h.at + 56) + Sys.peek(h.at + 376) == 0 end
+  end
+#: count/0 needs _g/0
+  def count(): integer do
+    Sys.peek(Process._g() + 32)
+  end
+#: send/3 needs _check/1 _g/0 _send/4
+  def send(h: pid[t], v: t, ms: integer): boolean do
+    if Process.__word(h) == 0 or h.at == 0 do raise("invalid or foreign PID") end
+    g = Process._g()
+    Process._check(g)
+    Process._send(g, h.at, Process.__word(v), ms) == 1
+  end
+#: receive/2 needs _check/1 _g/0 _home/1 _recv/3 _zero/2
+  def receive(h: pid[t], ms: integer): tuple[boolean, t] do
+    if Process.__word(h) == 0 or h.at == 0 do raise("invalid or foreign PID") end
+    t = Sys.peek(Sys.stack() - 48)
+    g = Process._g()
+    Process._check(g)
+    p = Sys.peek(g)
+    Process._home(h.at)
+    if h.at != p do raise("only the mailbox owner may receive") end
+    if Process._recv(g, p, ms) == 1 do {true, Process.__any(Sys.peek(g + 184))} else {false, Process.__any(if t == 0 do 0 else Process._zero(g, t + 8) end)} end
+  end
+#: sleep/1 needs _check/1 _due/2 _g/0 _sleep/2 _yield/1
+  def sleep(ms: integer): integer do
+    g = Process._g()
+    Process._check(g)
+    if ms < 0 do raise("sleep duration must be nonnegative") end
+    if ms == 0 do Process._yield(g) else Process._sleep(g, Process._due(g, ms)) end
+    Process._check(g)
+  end
+#: await/2 needs _check/1 _g/0 _home/1 _joined/3
+  def await(h: pid[t], ms: integer): tuple[boolean, string] do
+    if Process.__word(h) == 0 or h.at == 0 do raise("invalid or foreign PID") end
+    g = Process._g()
+    Process._check(g)
+    Process._home(h.at)
+    if h.at == Sys.peek(g) do raise("cannot await self") end
+    if Process._joined(g, h.at, ms) == 1 do {true, Process.__any(Sys.peek(h.at + 160))} else {false, ""} end
+  end
+#: stop/1 needs _halt/1 _home/1
+  def stop(h: pid[t]): boolean do
+    if Process.__word(h) == 0 or h.at == 0 do raise("invalid or foreign PID") end
+    Process._home(h.at)
+    Process._halt(h.at)
+  end
+#: crash/1
+  def crash(r: string): integer do
+    raise(r)
+  end
+#: monitor/1 needs _check/1 _event/5 _far/3 _g/0 _push/5 _ref/1
+  def monitor(h: pid[t]): integer do
+    if Process.__word(h) == 0 or h.at == 0 do raise("invalid or foreign PID") end
+    g = Process._g()
+    Process._check(g)
+    c = Sys.peek(g)
+    q = h.at
+    if Sys.peek(q + 320) == 2 do Process._far(3, q, c) else
+      n = Process._ref(g)
+      if Sys.peek(q + 376) == 1 do Process._event(g, c, n, Sys.peek(q + 40), Sys.peek(q + 160)) else
+        Process._push(g, q + 208, n, c, 0)
+        Process._push(g, c + 216, n, q, 0)
+      end
+      n
+    end
+  end
+#: demonitor/2 needs _check/1 _drop/3 _far/3 _g/0 _has/2 _unevent/5
+  def demonitor(h: pid[t], n: integer): boolean do
+    if Process.__word(h) == 0 or h.at == 0 do raise("invalid or foreign PID") end
+    g = Process._g()
+    Process._check(g)
+    c = Sys.peek(g)
+    q = h.at
+    x = if Sys.peek(q + 320) == 2 do 0 else Process._has(c + 216, n) end
+    a = if Sys.peek(q + 320) == 2 do Process._far(4, q, n) else if x == 0 do 0 else if Sys.peek(x + 16) != q do 0 else
+      Process._drop(g, c + 216, n)
+      Process._drop(g, q + 208, n)
+    end end end
+    a + Process._unevent(g, c + 192, c + 192, n, Sys.peek(q + 40)) > 0
+  end
+#: trap_exits/1 needs _check/1 _g/0
+  def trap_exits(v: boolean): boolean do
+    g = Process._g()
+    Process._check(g)
+    c = Sys.peek(g)
+    o = Sys.peek(c + 312)
+    Sys.poke(c + 312, if v do 1 else 0 end)
+    o == 1
+  end
+#: link/1 needs _check/1 _far/3 _g/0 _link/3
+  def link(h: pid[t]): boolean do
+    if Process.__word(h) == 0 or h.at == 0 do raise("invalid or foreign PID") end
+    g = Process._g()
+    Process._check(g)
+    if Sys.peek(h.at + 320) == 2 do Process._far(5, h.at, Sys.peek(g)) == 1 else Process._link(g, Sys.peek(g), h.at) == 1 end
+  end
+#: unlink/1 needs _check/1 _far/3 _g/0 _lcut/2 _lhas/4
+  def unlink(h: pid[t]): boolean do
+    if Process.__word(h) == 0 or h.at == 0 do raise("invalid or foreign PID") end
+    g = Process._g()
+    Process._check(g)
+    c = Sys.peek(g)
+    if Sys.peek(h.at + 320) == 2 do Process._far(6, h.at, c) == 1 else
+      x = Process._lhas(Sys.peek(c + 224), h.at, Sys.peek(h.at + 224), c)
+      if x == 0 do false else
+        Process._lcut(g, Sys.peek(x + 16))
+        Process._lcut(g, x)
+        true
+      end
+    end
+  end
+#: event/1 needs _check/1 _due/2 _free/2 _g/0 _get/1 _next/3
+  def event(ms: integer): tuple[boolean, integer, integer, string] do
+    g = Process._g()
+    Process._check(g)
+    c = Sys.peek(g)
+    x = if ms == 0 do Process._get(c + 192) else Process._next(g, c, Process._due(g, ms)) end
+    if x == 0 do {false, 0, 0, ""} else
+      a = Sys.peek(x + 8)
+      b = Sys.peek(x + 16)
+      r: string = Process.__any(Sys.peek(x + 24))
+      Process._free(g, x)
+      {true, a, b, r}
+    end
+  end
+#: report/1 needs _g/0 _home/1 _text/1
+  def report(h: pid[t]): string do
+    if Process.__word(h) == 0 or h.at == 0 do raise("invalid or foreign PID") end
+    g = Process._g()
+    Process._home(h.at)
+    f = Sys.peek(h.at + 168)
+    if f != 0 do Process._text(f) else Process.__any(Sys.peek(h.at + 160)) end
+  end
+#: loop/2 needs _cell/4 _check/1 _free/2 _g/0
+  def loop(s: a, f: fn[a, tuple[boolean, a]]): a do
+    g = Process._g()
+    Process._check(g)
+    x = Process._cell(g, Process.__word(s), Process.__word(f), 0)
+    Process.__until(Process.__any(Sys.peek(g + 176)), x)
+    r: a = Process.__any(Sys.peek(x + 8))
+    Process._free(g, x)
+    r
+  end
+# Process q takes the name n as kind k with type t and handle w: 1, or 0
+# when a living process has the name.
+#: _name/6 needs _cell/4 _named/2 _push/5 _unname/2
+  def _name(g: integer, n: string, q: integer, k: integer, t: integer, w: integer): integer do
+    x = Process._named(Sys.peek(g + 136), n)
+    if n == "" do 0 else
+      if x != 0 and Sys.peek(Sys.peek(x + 16) + 376) == 0 do 0 else
+        if x != 0 do Process._unname(g, n) end
+        Process._push(g, g + 136, Process.__word(n), q, Process._cell(g, k, t, w))
+        1
+      end
+    end
+  end
+#: register/2 needs _check/1 _g/0 _lookup/2 _name/6 _reach/2
+  def register(h: pid[t], n: atom): boolean do
+    if Process.__word(h) == 0 or h.at == 0 do false else
+    t = Sys.peek(Sys.stack() - 48)
+    f = Sys.peek(Sys.stack() - 72)
+    g = Process._g()
+    Process._check(g)
+    if Sys.peek(h.at + 320) == 2 do false else
+      made = Process._name(g, Process.__any(Process.__word(n)), h.at, 0, t, h.at) == 1
+      if made and f != 0 do Sys.poke(Process._lookup(g, Process.__any(Process.__word(n))), Process._reach(g, f + 3)) end
+      made
+    end
+    end
+  end
+#: unregister/1 needs _g/0 _unname/2
+  def unregister(n: atom): boolean do
+    Process._unname(Process._g(), Process.__any(Process.__word(n))) == 1
+  end
+#: whereis/1 needs _g/0 _lookup/2 _same/2 _some/1
+  def whereis(n: atom): option[pid[t]] do
+    t = Sys.peek(Sys.stack() - 48)
+    f = Sys.peek(Sys.stack() - 72)
+    g = Process._g()
+    x = Process._lookup(g, Process.__any(Process.__word(n)))
+    if x == 0 do none else
+      if Sys.peek(x + 8) != 0 do none else
+        kind: string = if Sys.peek(x) == 0 do "" else Process.__any(Sys.peek(Sys.peek(x))) end
+        if (if Sys.peek(x) != 0 and f != 0 do kind == Sys.text(f + 5, Sys.byte(f + 3) + 256 * Sys.byte(f + 4)) else Process._same(Sys.peek(x + 16), t) == 1 end) do Process._some(Sys.peek(x + 24)) else none end
+      end
+    end
+  end
+#: cancel_timer/1 needs _drop/3 _g/0 _has/2 _ready/2
+  def cancel_timer(n: integer): boolean do
+    g = Process._g()
+    x = Process._has(g + 248, n)
+    if x == 0 do false else
+      p = Sys.peek(x + 16)
+      Sys.poke(p + 264, 1)
+      Process._drop(g, g + 248, n)
+      Process._ready(g, p)
+      true
+    end
+  end
+#: send_after/3 needs _check/1 _g/0 _later/4 _send/4
+  def send_after(h: pid[t], v: t, ms: integer): integer do
+    if Process.__word(h) == 0 or h.at == 0 do raise("invalid PID") end
+    g = Process._g()
+    Process._check(g)
+    q = h.at
+    w = Process.__word(v)
+    f: fn[integer] = fn(): integer do Process._send(Process._g(), q, w, 1000) end
+    Process._later(g, ms, if Sys.peek(q + 320) == 2 do 0 else q end, Process.__word(f))
+  end
+#: send_after/3 form 2 needs _check/1 _g/0 _later/4 _tell/3
+  def send_after(n: atom, v: t, ms: integer): integer do
+    t = Sys.peek(Sys.stack() - 48)
+    g = Process._g()
+    Process._check(g)
+    s: string = Process.__any(Process.__word(n))
+    w = Process.__word(v)
+    f: fn[integer] = fn(): integer do Process._tell(s, t, w) end
+    Process._later(g, ms, 0, Process.__word(f))
+  end# The first message of the running process p that the function value w# The statements assert_receive(pid, pattern) and refute_receive(pid,
+# pattern) are these calls, the pattern as a function (the compiler writes
+# them: native-processes.alc). by is how far right of the statement the
+# call stands (as
+# Process.assert_receive); a failure is named where the statement starts.
+#: assert_receive/8 needs _check/1 _details/2 _g/0 _match/4 _waiting/2 Testing._setting/2
+  def assert_receive(h: pid[a], wait: integer, f: fn[a, boolean], show: fn[a, string], pattern: string, pinned: list[string], custom: string, by: integer): a do
+    place = Stream.__where() - by
+    ms = if wait >= 0 do wait else Testing._setting("ALCHEM_TEST_RECEIVE_TIMEOUT", 100) end
+    g = Process._g()
+    Process._check(g)
+    p = Sys.peek(g)
+    if Sys.peek(h.at + 320) == 2 do Stream.__fail(place, "this needs a process of this node; a process of another node can only be sent to") end
+    if h.at != p do Stream.__fail(place, "only the mailbox owner may receive") end
+    if Process._match(g, p, ms, Process.__word(f)) == 0 do
+      problem = if custom != "" do custom else if ms == 0 do "no message matching the pattern has arrived" else "no message matching the pattern arrived within #{ms}ms" end end
+      Stream.__fail(place, problem <> Process._details(pattern, pinned) <> "\n     mailbox: " <> Process._waiting(p, Process.__any(Process.__word(show))))
+    end
+    Process.__any(Sys.peek(g + 184))
+  end
+#: refute_receive/8 needs _check/1 _details/2 _g/0 _match/4 Testing._setting/2
+  def refute_receive(h: pid[a], wait: integer, f: fn[a, boolean], show: fn[a, string], pattern: string, pinned: list[string], custom: string, by: integer): integer do
+    place = Stream.__where() - by
+    ms = if wait >= 0 do wait else Testing._setting("ALCHEM_TEST_RECEIVE_TIMEOUT", 100) end
+    g = Process._g()
+    Process._check(g)
+    p = Sys.peek(g)
+    if Sys.peek(h.at + 320) == 2 do Stream.__fail(place, "this needs a process of this node; a process of another node can only be sent to") end
+    if h.at != p do Stream.__fail(place, "only the mailbox owner may receive") end
+    if Process._match(g, p, ms, Process.__word(f)) == 1 do
+      v: a = Process.__any(Sys.peek(g + 184))
+      problem = if custom != "" do custom else "a message matching the pattern arrived, but none was expected" end
+      Stream.__fail(place, problem <> Process._details(pattern, pinned) <> "\n     received: " <> show(v))
+    end
+    0
+  end
+# Waiting for descriptors (the network modules, spec/alchem-network.md).
+# g + 280 holds the cells of the processes that wait for one: the process,
+# the descriptor with what is waited for above it (as poll takes them: 1 to
+# read, 4 to write, shifted 32 bits), and what poll found. g + 288 and 296
+# are the array poll is given and its room, g + 336 counts the turns since
+# the descriptors were last looked at. g + 304 to 400 belong to the network
+# modules (library/TCP.alc lists them).
+# One poll of every descriptor waited for, for up to w nanoseconds (-1:
+# until one is ready); the processes whose descriptor is ready are made
+# ready.
+#: _poll/2 needs _pcount/2 _pfill/2 _pmark/3
+  def _poll(g: integer, w: integer): integer do
+    n = Process._pcount(Sys.peek(g + 280), 0)
+    if n > Sys.peek(g + 296) do
+      m = Sys.call(9, 0, n * 16, 3, 34, -1, 0)
+      if m < 0 do System.halt(71) end
+      if Sys.peek(g + 288) != 0 do Sys.call(11, Sys.peek(g + 288), Sys.peek(g + 296) * 8) end
+      Sys.poke(g + 288, m)
+      Sys.poke(g + 296, n * 2)
+    end
+    b = Sys.peek(g + 288)
+    Process._pfill(Sys.peek(g + 280), b)
+    if w >= 0 do
+      Sys.poke(g + 200, div(w, 1000000000))
+      Sys.poke(g + 208, rem(w, 1000000000))
+    end
+    r = Sys.call(271, b, n, if w < 0 do 0 else g + 200 end, 0, 8)
+    if r > 0 do Process._pmark(g, Sys.peek(g + 280), b) else 0 end
+  end
+#: _pcount/2
+  def _pcount(x: integer, n: integer): integer do
+    if x == 0 do n else Process._pcount(Sys.peek(x), n + 1) end
+  end
+#: _pfill/2
+  def _pfill(x: integer, b: integer): integer do
+    if x == 0 do 0 else
+      Sys.poke(b, Sys.peek(x + 16))
+      Process._pfill(Sys.peek(x), b + 8)
+    end
+  end
+# A cell whose descriptor is ready keeps what was found and is not looked
+# at again (a descriptor of -1 is passed over by poll).
+#: _pmark/3 needs _ready/2
+  def _pmark(g: integer, x: integer, b: integer): integer do
+    if x == 0 do 0 else
+      v = div(Sys.peek(b), 281474976710656)
+      if v != 0 do
+        Sys.poke(x + 24, v)
+        Sys.poke(x + 16, 4294967295)
+        Process._ready(g, Sys.peek(x + 8))
+      end
+      Process._pmark(g, Sys.peek(x), b + 8)
+    end
+  end
+# The running process waits until descriptor fd can be read (e 1) or
+# written (e 4), another process makes it ready, or the time d comes (0:
+# none): what poll found, 0 when the wait ended otherwise.
+#: _fdwait/4 needs _drop/3 _push/5 _wait/2
+  def _fdwait(g: integer, fd: integer, e: integer, d: integer): integer do
+    c = Sys.peek(g)
+    Process._push(g, g + 280, c, fd + e * 4294967296, 0)
+    x = Sys.peek(g + 280)
+    Process._wait(g, d)
+    r = Sys.peek(x + 24)
+    Process._drop(g, g + 280, c)
+    r
+  end
+# Whoever waits for descriptor fd, which is being closed, looks again.
+#: _fdshut/3 needs _ready/2
+  def _fdshut(g: integer, x: integer, fd: integer): integer do
+    if x == 0 do 0 else
+      if rem(Sys.peek(x + 16), 4294967296) == fd do
+        Sys.poke(x + 24, 32)
+        Sys.poke(x + 16, 4294967295)
+        Process._ready(g, Sys.peek(x + 8))
+      end
+      Process._fdshut(g, Sys.peek(x), fd)
+    end
+  end
+# Processes of other nodes (library/Node.alc, spec/alchem-nodes.md). The
+# handle of one is a block like a process's with 2 at 320, its number at 40
+# and at 24 the function that reaches it: 1 sends the word a, 2 says
+# whether its node is connected, 3 has process a monitor it, 4 ends the
+# monitor a, 5 links process a to it, 6 ends that link.
+#: _far/3
+  def _far(op: integer, q: integer, a: integer): integer do
+    f: fn[integer, integer, integer, integer] = Process.__any(Sys.peek(q + 24))
+    f(op, q, a)
+  end
+# What only a process of this node can be asked.
+#: _home/1
+  def _home(q: integer): integer do
+    if Sys.peek(q + 320) == 2 do raise("this needs a process of this node; a process of another node can only be sent to") else 0 end
+  end
+# What another node needs to reach a registered process: the text of its
+# messages' type, the node of that type and the first node, from the form
+# at f (native-nodes.alc).
+#: _reach/2 needs _take/2
+  def _reach(g: integer, f: integer): integer do
+    k = Sys.byte(f) + 256 * Sys.byte(f + 1)
+    r = Process._take(g, 24)
+    Sys.poke(r, Process.__word(Sys.text(f + 2, k)))
+    Sys.poke(r + 8, f + 2 + k)
+    Sys.poke(r + 16, f + 2 + k)
+    r
+  end
+# The number of parts of a tuple, a function type or an instance in the
+# compiler's type bytes, at a: one byte, or the byte 255 and three bytes
+# (nt_counter of native-types.alc); _tfirst is where the parts start.
+#: _tcount/1
+  def _tcount(a: integer): integer do
+    if Sys.byte(a) == 255 do Sys.byte(a + 1) + Sys.byte(a + 2) * 256 + Sys.byte(a + 3) * 65536 else Sys.byte(a) end
+  end
+#: _tfirst/1
+  def _tfirst(a: integer): integer do
+    if Sys.byte(a) == 255 do a + 4 else a + 1 end
+  end
+# The links of a process (the list at 224 of its record) are cells that
+# know their place: 8 the other process, 16 the cell that process has for
+# this one, 24 the word that points at the cell (the list's first, or the
+# cell before). So a link is taken out without walking the list, and a
+# process with ten thousand linked tasks ends each of them in one step.
+# _pair: c and q are linked. _lcut: a cell is taken out of its list.
+# _lhas: the cell of either list (x of the one that looks for a, y of the
+# one that looks for b) that holds the link, 0 when the shorter list ends
+# without it.
+#: _pair/3 needs _cell/4
+  def _pair(g: integer, c: integer, q: integer): integer do
+    x = Process._cell(g, q, 0, c + 224)
+    y = Process._cell(g, c, x, q + 224)
+    Sys.poke(x + 16, y)
+    Sys.poke(x, Sys.peek(c + 224))
+    if Sys.peek(x) != 0 do Sys.poke(Sys.peek(x) + 24, x) end
+    Sys.poke(c + 224, x)
+    Sys.poke(y, Sys.peek(q + 224))
+    if Sys.peek(y) != 0 do Sys.poke(Sys.peek(y) + 24, y) end
+    Sys.poke(q + 224, y)
+  end
+#: _lcut/2 needs _free/2
+  def _lcut(g: integer, x: integer): integer do
+    n = Sys.peek(x)
+    Sys.poke(Sys.peek(x + 24), n)
+    if n != 0 do Sys.poke(n + 24, Sys.peek(x + 24)) end
+    Process._free(g, x)
+  end
+#: _lhas/4
+  def _lhas(x: integer, a: integer, y: integer, b: integer): integer do
+    if x == 0 or y == 0 do 0 else
+      if Sys.peek(x + 8) == a do x else
+        if Sys.peek(y + 8) == b do y else Process._lhas(Sys.peek(x), a, Sys.peek(y), b) end
+      end
+    end
+  end

@@ -1,0 +1,1827 @@
+defmodule NativeSourceCompiler do
+  # Integer/function bootstrap profile. All parsing and emitted bytes run in Alchem.
+  # Metadata uses little-endian u24 source offsets, never host pointers.
+  # value divided by 256 and by 65536, rounded down (0 below 0). There is
+  # no division: a quotient below 256 is found a bit at a time, eight
+  # comparisons (nc_quot256), where subtracting took up to fifteen a digit.
+  def nc_hi(value: integer): integer do
+    if value < 65536 do nc_quot256(value,256) else
+      upper = nc_upper(value)
+      256*upper+nc_hi(value-65536*upper)
+    end
+  end
+
+  def nc_u16(value: integer): bytes do
+    high = nc_hi(value)
+    b[value - high * 256, high]
+  end
+  def nc_upper(value: integer): integer do
+    if value >= 4294967296 do 65536+nc_upper(value-4294967296) else
+      top = nc_quot256(value,16777216)
+      256*top+nc_quot256(value-top*16777216,65536)
+    end
+  end
+  # value divided by unit, rounded down, for value below 256 units.
+  def nc_quot256(value: integer, unit: integer): integer do
+    high = nc_quot_high(value,unit)
+    high+nc_quot_low(value-high*unit,unit)
+  end
+  def nc_quot_high(value: integer, unit: integer): integer do
+    h1 = if value >= 128*unit do 128 else 0 end
+    h2 = if value-h1*unit >= 64*unit do 64 else 0 end
+    h3 = if value-(h1+h2)*unit >= 32*unit do 32 else 0 end
+    h4 = if value-(h1+h2+h3)*unit >= 16*unit do 16 else 0 end
+    h1+h2+h3+h4
+  end
+  def nc_quot_low(value: integer, unit: integer): integer do
+    h1 = if value >= 8*unit do 8 else 0 end
+    h2 = if value-h1*unit >= 4*unit do 4 else 0 end
+    h3 = if value-(h1+h2)*unit >= 2*unit do 2 else 0 end
+    h4 = if value-(h1+h2+h3)*unit >= unit do 1 else 0 end
+    h1+h2+h3+h4
+  end
+  def nc_u32(value: integer): bytes do
+    upper = nc_upper(value)
+    Enum.concat(nc_u16(value-upper*65536),nc_u16(upper))
+  end
+  # 1 when neither a nor b is 0. A test that a byte is one of many is a
+  # product of differences, and a product of more than seven of them can
+  # leave 64 bits: it is split in two, each part tested here.
+  def nc_and(a: integer, b: integer): integer do
+    if a == 0 do 0 else if b == 0 do 0 else 1 end end
+  end
+  # A source has millions of bytes: the first steps are for the halves of its ranges.
+  def nc_half(value: integer): integer do
+    if value >= 65536 do
+      if value >= 1048576 do if value >= 16777216 do 8388608+nc_half(value-16777216) else 524288+nc_half(value-1048576) end else 32768+nc_half(value-65536) end
+    else
+      if value >= 4096 do 2048+nc_half(value-4096) else
+        if value >= 256 do 128+nc_half(value-256) else
+          if value >= 16 do 8+nc_half(value-16) else
+            if value >= 2 do 1+nc_half(value-2) else 0 end
+          end
+        end
+      end
+    end
+  end
+  # Division by subtraction in steps of 4096, 256, 16 and 1 keeps recursion shallow.
+  def nc_units(size: integer, width: integer): integer do
+    if size >= width*4096 do 4096+nc_units(size-width*4096,width) else
+      if size >= width*256 do 256+nc_units(size-width*256,width) else
+        if size >= width*16 do 16+nc_units(size-width*16,width) else
+          if size >= width do 1+nc_units(size-width,width) else 0 end
+        end
+      end
+    end
+  end
+  # Table records are 27 bytes: five u24 source positions, argc, flags, an
+  # eight-byte return type and the u16 index of the owning module's header.
+  # A finished table has after its records one record of zeros, the name
+  # index (the number of every record as a u32, in the order of nc_order) and
+  # up to 26 bytes that make its size one more than a multiple of 27, which
+  # is how it is told from records alone.
+  def nc_records(size: integer): integer do
+    count = nc_units(size,27)
+    if count*27 == size do count else nc_units(size-27,31) end
+  end
+  def nc_indexed(table: bytes): integer do
+    if nc_units(Enum.count(table),27)*27 == Enum.count(table) do 0 else 1 end
+  end
+  def nc_u24(value: integer): bytes do
+    high = nc_upper(value)
+    Enum.concat(nc_u16(value-high*65536),b[high])
+  end
+  def nc_cursor(data: bytes, pos: integer): integer do
+    nc_read(data,pos)+Enum.at(data,pos+2,0)*65536
+  end
+  # A 32-bit field: code lengths and addresses.
+  def nc_long(data: bytes, pos: integer): integer do
+    nc_read(data,pos)+nc_read(data,pos+2)*65536
+  end
+  def nc_read(data: bytes, pos: integer): integer do
+    Enum.at(data, pos, 0) + Enum.at(data, pos + 1, 0) * 256
+  end
+  # The position a packet starts with. A value's flags (nw_mark, nx_impure)
+  # are the byte after it, so a position takes all 24 bits.
+  def nc_pos(result: bytes): integer do
+    if Enum.count(result) < 3 do -1 else nc_cursor(result,0) end
+  end
+  def nc_join(a: bytes, b: bytes, c: bytes): bytes do
+    Enum.concat(Enum.concat(a, b), c)
+  end
+  def nc_chunk(data: bytes, start: integer): bytes do
+    b[ Enum.at(data,start+0,0),Enum.at(data,start+1,0),Enum.at(data,start+2,0),Enum.at(data,start+3,0),Enum.at(data,start+4,0),Enum.at(data,start+5,0),Enum.at(data,start+6,0),Enum.at(data,start+7,0),Enum.at(data,start+8,0),Enum.at(data,start+9,0),Enum.at(data,start+10,0),Enum.at(data,start+11,0),Enum.at(data,start+12,0),Enum.at(data,start+13,0),Enum.at(data,start+14,0),Enum.at(data,start+15,0) ]
+  end
+  def nc_block(data: bytes, start: integer): bytes do
+    left = nc_join(nc_chunk(data,start),nc_chunk(data,start+16),nc_chunk(data,start+32))
+    middle = nc_join(nc_chunk(data,start+48),nc_chunk(data,start+64),nc_chunk(data,start+80))
+    nc_join(left,middle,Enum.concat(nc_chunk(data,start+96),nc_chunk(data,start+112)))
+  end
+  def nc_slice(data: bytes, start: integer, stop: integer): bytes do
+    if start >= stop do b[] else Enum.slice(data,start,stop-start) end
+  end
+  # A compiled value: position after it (3 bytes), its flags (1 byte: 128
+  # nw_mark, 64 nx_impure), its type as a cell (nt_cell: the type after its
+  # length), then its code. An empty byte string is failure, also for no type.
+  def nc_code(result: bytes): bytes do
+    nc_slice(result,nt_after(result,4),Enum.count(result))
+  end
+
+  def nc_result(pos: integer, code: bytes): bytes do
+    nc_value(pos,code,b[0])
+  end
+  def nc_value(pos: integer, code: bytes, kind: bytes): bytes do
+    if Enum.count(kind) == 0 do b[] else nc_join(nc_u24(pos),Enum.concat(b[0],nt_cell(kind)),code) end
+  end
+  def nc_kind(result: bytes): bytes do
+    if Enum.count(result) < 6 do b[] else nt_read(result,4) end
+  end
+  # The first byte of the type: the whole type when it is a scalar.
+  def nc_tag(result: bytes): integer do
+    if Enum.count(result) < 6 do -1 else Enum.at(result,4+nt_head(result,4),0) end
+  end
+
+  def nc_spaces(source: bytes, pos: integer, count: integer): integer do
+    if count == 0 do pos else
+      if is_space(byte_at(source,pos)) == 1 do nc_spaces(source,pos+1,count-1) else pos end
+    end
+  end
+  def nc_ignored(source: bytes, pos: integer): integer do
+    if is_space(byte_at(source,pos)) == 1 do 1 else
+      if byte_at(source,pos) == 35 do 1 else 0 end
+    end
+  end
+  def nc_skip(source: bytes, pos: integer, steps: integer): integer do
+    if pos < 0 do -1 else
+      if nc_ignored(source,pos) == 0 do pos else
+        if steps <= 1 do
+          next = nc_spaces(source,pos,16)
+          if byte_at(source,next) == 35 do nc_line(source,next,262144) else next end
+        else
+          half = nc_half(steps)
+          next = nc_skip(source,pos,half)
+          if next < 0 do -1 else
+            if nc_ignored(source,next) == 0 do next else nc_skip(source,next,steps-half) end
+          end
+        end
+      end
+    end
+  end
+  def nc_line_chunk(source: bytes, pos: integer, count: integer): integer do
+    value = byte_at(source,pos)
+    if count == 0 do pos else
+      if value == -1 do pos else
+        if value == 10 do pos else
+          if value == 13 do pos else nc_line_chunk(source,pos+1,count-1) end
+        end
+      end
+    end
+  end
+  def nc_line(source: bytes, pos: integer, count: integer): integer do
+    next = nc_line_chunk(source,pos,16)
+    if next-pos == 16 do
+      if count == 0 do -1 else nc_line(source,next,count-1) end
+    else next end
+  end
+  def nc_start(source: bytes, pos: integer): integer do
+    if pos < 0 do -1 else
+      if nc_ignored(source,pos) == 0 do pos else
+        # One blank between two tokens is the common case.
+        if nc_single(source,pos) == 1 do pos+1 else
+          next = nc_skip(source,pos,16)
+          if next < 0 do -1 else
+            if nc_ignored(source,next) == 0 do next else nc_skip(source,next,16777216) end
+          end
+        end
+      end
+    end
+  end
+  # 1 when pos holds a blank, not the start of a comment, and a token follows it.
+  def nc_single(source: bytes, pos: integer): integer do
+    if byte_at(source,pos) == 35 do 0 else 1-nc_ignored(source,pos+1) end
+  end
+  def nc_scan(source: bytes, pos: integer, kind: integer, count: integer): integer do
+    value = byte_at(source,pos)
+    continues = if kind == 3 do is_digit(value) else is_identifier_continue(value) end
+    if continues == 0 do pos else
+      if count == 0 do -1 else nc_scan(source,pos+1,kind,count-1) end
+    end
+  end
+  def nc_end(source: bytes, pos: integer): integer do
+    start = nc_start(source,pos)
+    if start < 0 do -1 else
+      if byte_at(source,start) == 34 do ns_token_end(source,start) else
+      kind = classify_ascii(byte_at(source,start))
+      # A name may end in ? or !; != after a name is the operator.
+      if kind == 2 do
+        stop = nc_scan(source,start,2,16777216)
+        if byte_at(source,stop) == 63 do stop+1 else if byte_at(source,stop) == 33 do if byte_at(source,stop+1) == 61 do stop else stop+1 end else stop end end
+      else
+        if kind == 3 do nh_end(source,start) else nc_punctuation_end(source,start) end
+      end
+      end
+    end
+  end
+  def nc_punctuation_end(source: bytes, pos: integer): integer do
+    value = byte_at(source,pos)
+    # The bitwise operators: &&& ||| ^^^ <<< >>> ~~~.
+    if nk_tripled(source,pos) == 1 do pos+3 else
+    if value == 45 do
+      if byte_at(source,pos+1) == 62 do pos+2 else nc_equal_end(source,pos) end
+    else
+      if value == 61 do if (byte_at(source,pos+1)-62)*(byte_at(source,pos+1)-126) == 0 do pos+2 else nc_pair_end(source,pos) end else if value == 126 do sg_token_end(source,pos) else nc_pair_end(source,pos) end end
+    end
+    end
+  end
+  def nc_pair_end(source: bytes, pos: integer): integer do
+    value = byte_at(source,pos)
+    if value == 60 do
+      if byte_at(source,pos+1) == 62 do pos+2 else nc_equal_end(source,pos) end
+    else nc_equal_end(source,pos) end
+  end
+  def nc_equal_end(source: bytes, pos: integer): integer do
+    value = byte_at(source,pos)
+    if byte_at(source,pos+1) == value do
+      if (value-42)*(value-43)*(value-45)*(value-38)*(value-124)*(value-46)*(value-47) == 0 do pos+2 else nc_compare_end(source,pos) end
+    else nc_compare_end(source,pos) end
+  end
+  def nc_compare_end(source: bytes, pos: integer): integer do
+    value = byte_at(source,pos)
+    if byte_at(source,pos+1) == 61 do
+      if value == 61 do pos+2 else
+        if value == 33 do pos+2 else
+          if value == 60 do pos+2 else if value == 62 do pos+2 else pos+1 end end
+        end
+      end
+    else pos+1 end
+  end
+  def nc_equal(source: bytes, a: integer, b: integer, size: integer): integer do
+    if size == 0 do 1 else
+      if byte_at(source,a) != byte_at(source,b) do 0 else nc_equal(source,a+1,b+1,size-1) end
+    end
+  end
+  def nc_word_at(source: bytes, pos: integer, word: bytes, index: integer): integer do
+    if index == Enum.count(word) do 1 else
+      if byte_at(source,pos+index) != Enum.at(word,index,-1) do 0 else nc_word_at(source,pos,word,index+1) end
+    end
+  end
+  def nc_word(source: bytes, pos: integer, word: bytes): integer do
+    start = nc_start(source,pos)
+    # Most words asked for are not there: the first byte says so without reading the token.
+    if start < 0 do 0 else if byte_at(source,start) != Enum.at(word,0,-1) do 0 else
+      if nc_end(source,start)-start != Enum.count(word) do 0 else nc_word_at(source,start,word,0) end
+    end end
+  end
+  # 1 for the do that opens a block: not the do: of a one-line if.
+  def nc_opens(source: bytes, pos: integer): integer do
+    if nc_word(source,pos,b[100,111]) == 0 do 0 else if byte_at(source,nc_end(source,pos)) == 58 do 0 else 1 end end
+  end
+  def nc_expect(source: bytes, pos: integer, word: bytes): integer do
+    if nc_word(source,pos,word) == 1 do nc_end(source,pos) else -1 end
+  end
+  def nc_identifier(source: bytes, pos: integer): integer do
+    start = nc_start(source,pos)
+    if start < 0 do 0 else
+      if classify_ascii(byte_at(source,start)) != 2 do 0 else
+        if nc_end(source,start) < 0 do 0 else
+          if nc_word(source,start,b[100,111]) == 1 do 0 else
+            if nc_word(source,start,b[101,110,100]) == 1 do 0 else
+              if nc_word(source,start,b[100,101,102]) == 1 do 0 else
+                if nc_word(source,start,b[100,101,102,112]) == 1 do 0 else
+                  if nc_word(source,start,b[105,110,116,101,103,101,114]) == 2 do 0 else
+                    if nc_word(source,start,b[83,121,115,116,101,109]) == 1 do 0 else
+ if nc_reserved(source,start) == 1 do 0 else 1 end
+ end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  def nc_reserved(source: bytes, pos: integer): integer do
+    group = nc_word(source,pos,b[105,102])+nc_word(source,pos,b[101,108,115,101])+nc_word(source,pos,b[100,101,102,109,111,100,117,108,101])+nc_word(source,pos,b[116,114,117,101])+nc_word(source,pos,b[102,97,108,115,101])
+    # The words of types (integer, string, boolean, bytes, option, void) and
+    # byte_size name bindings like any other, as in the pinned language.
+    other = nc_word(source,pos,b[114,101,116,117,114,110])+nc_word(source,pos,b[110,111,116])
+    text = nc_word(source,pos,b[73,79])
+    option_words = nc_word(source,pos,b[99,97,115,101])
+    if group+other+text+option_words+nc_word(source,pos,b[97,110,100])+nc_word(source,pos,b[111,114])+nc_word(source,pos,b[73,110,116,101,103,101,114]) > 0 do 1 else 0 end
+  end
+  # 1 for a word the pinned language lets no binding or parameter have: its
+  # keywords and the functions it keeps without a module.
+  def nc_unbindable(source: bytes, pos: integer): integer do
+    value = byte_at(source,nc_start(source,pos))
+    if nc_and((value-97)*(value-99)*(value-100)*(value-101)*(value-102)*(value-103)*(value-104),(value-105)*(value-108)*(value-109)*(value-112)*(value-114)*(value-117)*(value-119)) != 0 do 0 else
+      first = nc_word(source,pos,b[97,115,115,101,114,116])+nc_word(source,pos,b[108,101,110,103,116,104])+nc_word(source,pos,b[119,104,101,110])+nc_word(source,pos,b[112,114,101,112,101,110,100])+nc_word(source,pos,b[99,111,110,99,97,116])+nc_word(source,pos,b[109,97,112])+nc_word(source,pos,b[102,105,108,116,101,114])+nc_word(source,pos,b[114,101,100,117,99,101])+nc_word(source,pos,b[112,117,116])+nc_word(source,pos,b[103,101,116])+nc_word(source,pos,b[104,97,115,95,107,101,121])
+      second = nc_word(source,pos,b[105,109,112,111,114,116])+nc_word(source,pos,b[101,120,116,101,114,110])+nc_word(source,pos,b[114,101,113,117,105,114,101])+nc_word(source,pos,b[105,110])+nc_word(source,pos,b[99,111,110,100])+nc_word(source,pos,b[114,97,105,115,101])+nc_word(source,pos,b[119,105,116,104])+nc_word(source,pos,b[102,111,114])+nc_word(source,pos,b[117,110,108,101,115,115])+nc_word(source,pos,b[100,101,102,112,114,111,116,111,99,111,108])+nc_word(source,pos,b[100,101,102,105,109,112,108])+nc_word(source,pos,b[100,101,102,109,97,99,114,111])+nc_word(source,pos,b[102,110])
+      if first+second > 0 do 1 else 0 end
+    end
+  end
+  def nc_meta(table: bytes, index: integer, field: integer): integer do
+    nc_cursor(table,index*27+field)
+  end
+  def nc_owner(table: bytes, index: integer): integer do nc_read(table,index*27+25) end
+  # The number of parameters of a function's record (of type parameters, for
+  # a struct or sum type): its low byte after the positions, its high byte
+  # before the owner.
+  def nc_argc(table: bytes, index: integer): integer do Enum.at(table,index*27+15,0)+Enum.at(table,index*27+24,0)*256 end
+  # The function named at pos in module owner; owner -1 finds a module header.
+  def nc_find(source: bytes, pos: integer, table: bytes, owner: integer): integer do
+    if nc_indexed(table) == 0 do nc_find_range(source,pos,table,0,nc_records(Enum.count(table)),owner) else
+      if owner < 0 do nc_index_find(source,table,nc_index_key(table,pos,nc_end(source,pos)-pos,0,0),1) else
+        count = nc_records(Enum.count(table))
+        first = nj_scan(source,pos,table,0,count,owner)
+        # The only function of the name is the one any search finds.
+        if first < 0 do -1 else if nj_scan(source,pos,table,first+1,count,owner) < 0 do first else nc_find_among(source,pos,table,0,count,owner) end end
+      end
+    end
+  end
+  # Of several functions of one name the one nc_find_range comes to first:
+  # the middle of the range, else the left half's, else the right half's.
+  def nc_find_among(source: bytes, pos: integer, table: bytes, first: integer, stop: integer, owner: integer): integer do
+    middle = first+nc_half(stop-first)
+    least = if first >= stop do -1 else nj_scan(source,pos,table,first,stop,owner) end
+    if least < 0 do -1 else if nj_scan(source,pos,table,middle,middle+1,owner) == middle do middle else
+      if least < middle do nc_find_among(source,pos,table,first,middle,owner) else nc_find_among(source,pos,table,middle+1,stop,owner) end
+    end end
+  end
+  # The name index. A key: where a name is in the source and its length, a
+  # module, a record number and where the index ends in the table (3 bytes
+  # each); a name that is not in the source follows the key.
+  def nc_index_key(table: bytes, pos: integer, size: integer, owner: integer, from: integer): bytes do
+    count = nc_records(Enum.count(table))
+    nc_join(nc_join(nc_u24(pos),nc_u24(size),nc_u24(owner)),nc_u24(from),nc_u24(count*31+27))
+  end
+  # The first difference of count bytes of left from at and of right from
+  # start, 0 when there is none.
+  def nc_differ(left: bytes, at: integer, right: bytes, start: integer, count: integer): integer do
+    if count <= 0 do 0 else
+      gap = Enum.at(left,at,0)-Enum.at(right,start,0)
+      if gap != 0 do gap else nc_differ(left,at+1,right,start+1,count-1) end
+    end
+  end
+  # The name of record id against the key's: negative when it sorts before.
+  def nc_name_order(source: bytes, table: bytes, id: integer, key: bytes): integer do
+    start = nc_meta(table,id,0)
+    size = nc_meta(table,id,3)-start
+    wanted = nc_cursor(key,3)
+    least = if size < wanted do size else wanted end
+    gap = if Enum.count(key) > 15 do nc_differ(source,start,key,15,least) else nc_differ(source,start,source,nc_cursor(key,0),least) end
+    if gap != 0 do gap else size-wanted end
+  end
+  # Record id against a key, by name, then module, then record number.
+  def nc_order(source: bytes, table: bytes, id: integer, key: bytes): integer do
+    gap = nc_name_order(source,table,id,key)
+    if gap != 0 do gap else
+      if nc_owner(table,id) != nc_cursor(key,6) do nc_owner(table,id)-nc_cursor(key,6) else id-nc_cursor(key,9) end
+    end
+  end
+  # Where the key would stand among the record numbers (u32 each, in order)
+  # that held has from byte first up to stop.
+  def nc_seek(source: bytes, table: bytes, held: bytes, key: bytes, first: integer, stop: integer): integer do
+    if first >= stop do first else
+      middle = first+nc_half(nc_half(nc_half(stop-first)))*4
+      if nc_order(source,table,nc_cursor(held,middle),key) < 0 do nc_seek(source,table,held,key,middle+4,stop) else nc_seek(source,table,held,key,first,middle) end
+    end
+  end
+  # The first record from index byte at on that has the key's name and is of
+  # the kind wanted: 0 a function of the key's module, 1 a module header, 2 a
+  # struct or sum type of the key's module. -1 when there is none.
+  def nc_index_walk(source: bytes, table: bytes, key: bytes, at: integer, kind: integer): integer do
+    id = nc_cursor(table,at)
+    flags = Enum.at(table,id*27+16,0)
+    fits = if kind == 1 do if flags == 32 do 1 else 0 end else if kind == 0 do if flags < 32 do 1 else 0 end else if flags >= 64 do 1 else 0 end end end
+    if at >= nc_cursor(key,12) do -1 else if nc_name_order(source,table,id,key) != 0 do -1 else
+      if kind != 1 do
+        if nc_owner(table,id) != nc_cursor(key,6) do -1 else if fits == 1 do id else nc_index_walk(source,table,key,at+4,kind) end end
+      else
+        if fits == 1 do id else nc_index_walk(source,table,key,at+4,kind) end
+      end
+    end end
+  end
+  def nc_index_find(source: bytes, table: bytes, key: bytes, kind: integer): integer do
+    count = nc_records(Enum.count(table))
+    if nc_cursor(key,3) <= 0 do -1 else nc_index_walk(source,table,key,nc_seek(source,table,table,key,count*27+27,count*31+27),kind) end
+  end
+  def nc_zip(source: bytes, table: bytes, left: bytes, right: bytes): bytes do
+    if Enum.count(left) == 0 do right else if Enum.count(right) == 0 do left else
+      if nc_order(source,table,nc_cursor(left,0),nc_record_key(table,nc_cursor(right,0))) < 0 do
+        Enum.concat(nc_slice(left,0,4),nc_zip(source,table,nc_slice(left,4,Enum.count(left)),right))
+      else
+        Enum.concat(nc_slice(right,0,4),nc_zip(source,table,left,nc_slice(right,4,Enum.count(right))))
+      end
+    end end
+  end
+  def nc_record_key(table: bytes, id: integer): bytes do
+    nc_join(nc_join(nc_u24(nc_meta(table,id,0)),nc_u24(nc_meta(table,id,3)-nc_meta(table,id,0)),nc_u24(nc_owner(table,id))),nc_u24(id),b[0,0,0])
+  end
+  # Two runs of record numbers in order as one: short runs one number at a
+  # time, long ones about the middle of the longer.
+  def nc_merged(source: bytes, table: bytes, left: bytes, right: bytes): bytes do
+    if Enum.count(left) == 0 do right else if Enum.count(right) == 0 do left else
+      if Enum.count(left)+Enum.count(right) <= 64 do nc_zip(source,table,left,right) else
+        if Enum.count(left) < Enum.count(right) do nc_merged(source,table,right,left) else
+          middle = nc_half(nc_half(nc_half(Enum.count(left))))*4
+          split = nc_seek(source,table,right,nc_record_key(table,nc_cursor(left,middle)),0,Enum.count(right))
+          nc_join(nc_merged(source,table,nc_slice(left,0,middle),nc_slice(right,0,split)),nc_slice(left,middle,middle+4),nc_merged(source,table,nc_slice(left,middle+4,Enum.count(left)),nc_slice(right,split,Enum.count(right))))
+        end
+      end
+    end end
+  end
+  def nc_sorted(source: bytes, table: bytes, first: integer, stop: integer): bytes do
+    if first >= stop do b[] else
+      if stop-first == 1 do nc_u32(first) else
+        middle = first+nc_half(stop-first)
+        nc_merged(source,table,nc_sorted(source,table,first,middle),nc_sorted(source,table,middle,stop))
+      end
+    end
+  end
+  # The records with their name index.
+  def nc_table_index(source: bytes, records: bytes): bytes do
+    count = nc_records(Enum.count(records))
+    over = count*4-nc_units(count*4,27)*27
+    nc_join(nc_join(records,nc_zeros(27),nc_sorted(source,records,0,count)),nc_zeros(if over <= 1 do 1-over else 28-over end),b[])
+  end
+  # What building the table left to check once every record is known: a
+  # module name is declared once, a struct or sum type once in its module
+  # and not under a library module's name, and two functions of one name in
+  # a module take different numbers of arguments.
+  def nc_table_valid(source: bytes, table: bytes, first: integer, stop: integer): integer do
+    if first >= stop do 1 else
+      if stop-first == 1 do nc_record_valid(source,table,first) else
+        middle = first+nc_half(stop-first)
+        if nc_table_valid(source,table,first,middle) == 0 do 0 else nc_table_valid(source,table,middle,stop) end
+      end
+    end
+  end
+  def nc_earlier(found: integer, id: integer): integer do
+    if found < 0 do 0 else if found < id do 1 else 0 end end
+  end
+  def nc_record_valid(source: bytes, table: bytes, id: integer): integer do
+    flags = Enum.at(table,id*27+16,0)
+    name = nc_meta(table,id,0)
+    if flags == 40 do 1 else
+      if flags == 32 do if nc_find(source,name,table,-1) == id do 1 else 0 end else
+        # (A dotted or lowercase name of the library's types is not found by its first word: only an earlier record counts.)
+        # A dotted name is looked up whole: the library's Markup.Value stands beside its Markup.
+        if flags >= 64 do if nc_earlier(if nc_meta(table,id,3) == nc_end(source,name) do nd_find(source,name,table,nc_owner(table,id)) else nh_find(source,name,table,0,nc_records(Enum.count(table)),nc_owner(table,id)) end,id) == 1 do 0 else if sg_reserved(source,table,name,nc_owner(table,id)) == 1 do 0 else nd_closed(source,table,id) end end else
+          if nj_same(source,table,nj_last_clause(table,id-1),nj_record(table,id)) == 1 do 1 else 1-nj_clash_before(source,table,nj_record(table,id),0,id) end
+        end
+      end
+    end
+  end
+  def nc_find_range(source: bytes, pos: integer, table: bytes, first: integer, stop: integer, owner: integer): integer do
+    if first >= stop do -1 else
+      middle = first+nc_half(stop-first)
+      start = nc_meta(table,middle,0)
+      size = nc_meta(table,middle,3)-start
+      header = if Enum.at(table,middle*27+16,0) == 32 do 1 else 0 end
+      wanted = if owner < 0 do header else if Enum.at(table,middle*27+16,0) >= 32 do 0 else if nc_owner(table,middle) == owner do 1 else 0 end end end
+      match = if wanted == 0 do 0 else if nc_end(source,pos)-pos == size do nc_equal(source,pos,start,size) else 0 end end
+      if match == 1 do middle else
+        left = nc_find_range(source,pos,table,first,middle,owner)
+        if left >= 0 do left else nc_find_range(source,pos,table,middle+1,stop,owner) end
+      end
+    end
+  end
+  # Whether module owner may call into module target: itself or a direct import.
+  def nc_imported(source: bytes, table: bytes, owner: integer, target: integer): integer do
+    if owner == target do 1 else
+      start = nc_meta(table,target,0)
+      nc_import_match(source,nc_meta(table,owner,6),start,nc_meta(table,target,3)-start)
+    end
+  end
+  def nc_import_match(source: bytes, pos: integer, start: integer, size: integer): integer do
+    if nc_word(source,pos,b[105,109,112,111,114,116]) != 1 do 0 else
+      opening = nc_start(source,nc_end(source,pos))
+      stop = nc_end(source,opening)
+      same = if stop-opening-9 == size do nc_equal(source,opening+8,start,size) else 0 end
+      if same == 1 do 1 else nc_import_match(source,stop,start,size) end
+    end
+  end
+
+  def nc_type(source: bytes, pos: integer): bytes do
+    nt_type(source,pos,0)
+  end
+  def nc_scalar_type(source: bytes, pos: integer): bytes do
+    if nc_word(source,pos,b[115,116,114,105,110,103]) == 1 do nc_value(nc_end(source,pos),b[],b[2]) else if nc_word(source,pos,b[97,116,111,109]) == 1 do nc_value(nc_end(source,pos),b[],b[22]) else if nc_word(source,pos,b[82,97,110,103,101]) == 1 do nc_value(nc_end(source,pos),b[],b[23]) else if nc_word(source,pos,b[102,108,111,97,116]) == 1 do nc_value(nc_end(source,pos),b[],b[24]) else
+      if nc_word(source,pos,b[98,111,111,108,101,97,110]) == 1 do nc_value(nc_end(source,pos),b[],b[3]) else if nc_word(source,pos,b[114,101,103,101,120]) == 1 do nc_value(nc_end(source,pos),b[],b[29]) else nc_basic_type(source,pos) end end
+    end end end end
+  end
+  def nc_basic_type(source: bytes, pos: integer): bytes do
+    if nc_word(source,pos,b[105,110,116,101,103,101,114]) == 1 do
+      nc_value(nc_end(source,pos),b[],b[0])
+    else
+      stop = nc_expect(source,pos,b[98,121,116,101,115])
+      first = byte_at(source,nc_start(source,pos))
+      # A capitalized name is a declared type, resolved once its module is known.
+      # Any other lowercase name is a type variable.
+      if stop < 0 do
+        if (first-65)*(90-first)+nd_lower(source,pos)*65536 < 0 do if nc_identifier(source,pos) == 0 do b[] else nc_value(nc_end(source,pos),b[],nu_variable(source,nc_start(source,pos))) end else
+          # Name, Module.Name, or either with type arguments in brackets.
+          if nc_word(source,nd_name_end(source,nc_start(source,pos)),b[91]) == 1 do nd_arguments(source,nc_start(source,pos),nc_end(source,nd_name_end(source,nc_start(source,pos))),b[]) else
+            nc_value(nd_name_end(source,nc_start(source,pos)),b[],Enum.concat(b[15],nc_u24(nc_start(source,pos))))
+          end
+        end
+      else nc_value(stop,b[],b[1]) end
+    end
+  end
+  # name: type, or pattern: type.
+  def nc_parameter_type(source: bytes, pos: integer): bytes do
+    stop = if np_plain(source,pos) == 1 do nc_end(source,pos) else np_skip(source,pos) end
+    nc_type(source,nc_expect(source,stop,b[58]))
+  end
+  # The table holds the position of a function's result annotation; main has none.
+  def nc_return_kind(source: bytes, table: bytes, id: integer): bytes do
+    typed = nj_result(table,id)
+    if typed == 0 do b[0] else nd_resolve(source,table,nc_owner(table,id),nc_kind(nc_type(source,typed))) end
+  end
+  def nc_parameter(source: bytes, pos: integer): integer do
+    nc_pos(nc_parameter_type(source,pos))
+  end
+
+  def nc_parameters(source: bytes, pos: integer, count: integer): bytes do
+    if count < 0 do b[] else
+      next = nc_parameter(source,pos)
+      if next < 0 do b[] else
+        if nc_word(source,next,b[41]) == 1 do Enum.concat(nc_u24(nc_end(source,next)),nc_u24(count+1)) else
+          if nc_word(source,next,b[44]) == 1 do nc_parameters(source,nc_end(source,next),count+1) else b[] end
+        end
+      end
+    end
+  end
+  def nc_body_chunk(source: bytes, pos: integer, nesting: integer, count: integer): bytes do
+    # A token that does not end (a string without its closing quote) leaves no position.
+    if pos < 0 do b[] else if count == 0 do Enum.concat(nc_u24(pos),nc_u16(nesting)) else
+      start = nc_start(source,pos)
+      if start < 0 do b[] else
+        if start >= Enum.count(source) do b[] else
+          if nc_word(source,start,b[101,110,100]) == 1 do
+            if nesting == 1 do Enum.concat(nc_u24(start),b[0,0]) else nc_body_chunk(source,nc_end(source,start),nesting-1,count-1) end
+          else
+            # do opens a block; so does an unannotated fn x -> ... end.
+            next = if nc_opens(source,start)+nf_untyped(source,start) > 0 do nesting+1 else nesting end
+            # fn[...] that is a type holds no block: its brackets are passed
+            # at once (types nested two thousand deep were each read to
+            # their end for every fn in them).
+            typed = if next > nesting do 0 else nc_word(source,start,b[102,110])*nc_word(source,nc_end(source,start),b[91]) end
+            # 251 blocks inside a function's own, as the pinned parser nests them:
+            # a body nested deeper is refused here, before any of it is compiled.
+            if next > 252 do b[] else nc_body_chunk(source,if typed == 1 do np_close(source,nc_start(source,nc_end(source,start)),0,16777216) else nc_end(source,start) end,next,count-1) end
+          end
+        end
+      end
+    end end
+  end
+  def nc_body_scan(source: bytes, pos: integer, nesting: integer, count: integer): integer do
+    if count <= 0 do -1 else
+      state = nc_body_chunk(source,pos,nesting,16)
+      if nc_pos(state) < 0 do -1 else
+        if nc_read(state,3) == 0 do nc_pos(state) else nc_body_scan(source,nc_pos(state),nc_read(state,3),count-16) end
+      end
+    end
+  end
+
+  def nc_body_end(source: bytes, pos: integer, count: integer): integer do
+    nc_body_scan(source,pos,1,count)
+  end
+  # def name(parameters): type when guard do ... end: its table record.
+  def nc_signature(source: bytes, pos: integer, owner: integer): bytes do
+    name = nc_start(source,nc_end(source,pos))
+    # A function may have the name of a type (Gen.integer), as a variant and a field may.
+    params = if nv_member(source,name) == 0 do -1 else nc_expect(source,nc_end(source,name),b[40]) end
+    shape = if params < 0 do b[] else if nc_word(source,params,b[41]) == 1 do Enum.concat(nc_u24(nc_end(source,params)),b[0,0,0,0,0,0]) else nj_params(source,params,0,0) end end
+    if nc_pos(shape) < 0 do b[] else nj_signature(source,pos,owner,nc_join(nc_join(nc_u24(name),nc_u24(nc_end(source,name)),nc_u24(params)),shape,b[])) end
+  end
+  def nc_main_index(table: bytes, index: integer): integer do
+    nc_main_range(table,index,nc_records(Enum.count(table)))
+  end
+  def nc_main_range(table: bytes, first: integer, stop: integer): integer do
+    if first >= stop do -1 else
+      middle = first+nc_half(stop-first)
+      if Enum.at(table,middle*27+16,0) == 1 do middle else
+        left = nc_main_range(table,first,middle)
+        if left >= 0 do left else nc_main_range(table,middle+1,stop) end
+      end
+    end
+  end
+
+  # Table building. A state: the position (3 bytes), what follows (0 more
+  # declarations of the module, 1 the end of the source, 2 a defmodule
+  # header), the number of records so far, the record of the module being
+  # read and the user functions declared before it (3 bytes each), the
+  # length of the window (3 bytes), the record of the module's header, the
+  # window, then the records made since the state was fresh. The window holds the records since the module's
+  # header or the first clause of the function declared last, which is all
+  # that the place of the next record depends on (nj_place): no step copies
+  # the table, and what needs every record is checked at the end
+  # (nc_table_valid).
+  def nc_table_state(pos: integer, kind: integer, counts: bytes, header: bytes, window: bytes, made: bytes): bytes do
+    nc_join(nc_join(nc_u24(pos),b[kind],counts),nc_join(nc_u24(Enum.count(window)),header,window),made)
+  end
+  def nc_table_window(state: bytes): bytes do nc_slice(state,43,43+nc_cursor(state,13)) end
+  def nc_table_made(state: bytes): bytes do nc_slice(state,43+nc_cursor(state,13),Enum.count(state)) end
+  def nc_table_batch(source: bytes, state: bytes, quota: integer): bytes do
+    next = nc_table_skip(source,nc_start(source,nc_cursor(state,0)),1024)
+    if next < 0 do b[] else nc_table_declare(source,next,state,quota) end
+  end
+  # The position after a string whose opening quote is at pos, of any length:
+  # a heredoc ends with """ at the start of a later line.
+  def nc_text_end(source: bytes, pos: integer): integer do
+    if byte_at(source,pos) != 34 do -1 else
+      if byte_at(source,pos+1)*256+byte_at(source,pos+2) == 8738 do nc_heredoc_end(source,nz_line_end(source,pos)+1) else nc_quote_end(source,pos+1) end
+    end
+  end
+  def nc_blank_end(source: bytes, pos: integer): integer do
+    if (byte_at(source,pos)-32)*(byte_at(source,pos)-9) == 0 do nc_blank_end(source,pos+1) else pos end
+  end
+  def nc_heredoc_end(source: bytes, line: integer): integer do
+    close = ns_heredoc_close(source,line)
+    if close < 0 do -1 else nc_blank_end(source,close)+3 end
+  end
+  def nc_quote_end(source: bytes, pos: integer): integer do
+    value = byte_at(source,pos)
+    if pos >= Enum.count(source) do -1 else if value == 10 do -1 else
+      if value == 34 do pos+1 else nc_quote_end(source,if value == 92 do pos+2 else pos+1 end) end
+    end end
+  end
+  # What a module holds that makes no code: @doc, @moduledoc, other
+  # attributes and constants (@name value) with their value, and require "name" "version". The position
+  # of the declaration after them, -1 when one is malformed.
+  def nc_table_skip(source: bytes, start: integer, budget: integer): integer do
+    value = nc_start(source,nc_end(source,nc_end(source,start)))
+    first = nc_start(source,nc_end(source,start))
+    if start < 0 do -1 else if budget == 0 do -1 else
+      if byte_at(source,start) == 64 do
+        if sg_attribute(source,first,nk_value_end(source,nc_end(source,first))) == 0 do -1 else nc_table_skip(source,nc_start(source,nk_value_end(source,nc_end(source,first))),budget-1) end
+      else
+        if nc_word(source,start,b[114,101,113,117,105,114,101]) != 1 do start else
+          nc_table_skip(source,nc_start(source,nc_text_end(source,nc_start(source,nc_text_end(source,first)))),budget-1)
+        end
+      end
+    end end
+  end
+  # The record of the declaration at pos: a function's signature, or
+  # struct Name do ... end, type Name do ... end and defexception Name do ... end, which take a table record and no code.
+  # header: the record of the module, which says whether a struct may have a
+  # library type's name there (nh_declare reads it as a table of one record).
+  def nc_table_record(source: bytes, pos: integer, owner: integer, header: bytes): bytes do
+    if nc_word(source,pos,b[100,101,102]) + nc_word(source,pos,b[100,101,102,112]) == 1 do nc_signature(source,pos,owner) else
+      if nc_word(source,pos,b[115,116,114,117,99,116]) == 1 do nh_declare(source,header,nd_declare(source,pos,owner,64),0) else if nc_word(source,pos,b[116,121,112,101]) == 1 do nd_declare(source,pos,owner,128) else if nc_word(source,pos,b[100,101,102,101,120,99,101,112,116,105,111,110]) == 1 do ty_declare(source,pos,owner) else b[] end end end
+    end
+  end
+  # The state after a record: placed is the window with it.
+  def nc_table_add(source: bytes, state: bytes, pos: integer, placed: bytes): bytes do
+    record = nc_slice(placed,Enum.count(placed)-27,Enum.count(placed))
+    counts = nc_join(nc_u24(nc_cursor(state,4)+1),nc_u24(nc_cursor(state,7)),nc_u24(nc_cursor(state,10)))
+    nc_table_state(pos,0,counts,nc_slice(state,16,43),if Enum.at(record,16,0) >= 40 do nc_table_kept(source,placed) else record end,Enum.concat(nc_table_made(state),record))
+  end
+  # The window with a further clause: the clause before it is left out once
+  # the clauses kept before that declare the type of every parameter, since
+  # the place of the next record then depends on nothing it holds (nj_place
+  # reads the first clause, what the clauses declare and the last record).
+  # A function of ten thousand clauses would else copy a window of all of
+  # them for each.
+  def nc_table_kept(source: bytes, placed: bytes): bytes do
+    count = nc_records(Enum.count(placed))
+    before = nc_slice(placed,0,Enum.count(placed)-54)
+    if count < 3 do placed else if Enum.at(placed,(count-2)*27+16,0) != 40 do placed else
+      if nc_table_settled(source,before,nj_head(before,count-3),0) == 0 do placed else Enum.concat(before,nc_slice(placed,Enum.count(placed)-27,Enum.count(placed))) end
+    end end
+  end
+  # 1 when the clauses of the form at head declare every parameter from index on.
+  def nc_table_settled(source: bytes, table: bytes, head: integer, index: integer): integer do
+    if index >= nc_argc(table,head) do 1 else
+      if Enum.count(nj_form_declared(source,table,head,index)) == 0 do 0 else nc_table_settled(source,table,head,index+1) end
+    end
+  end
+  def nc_table_declare(source: bytes, pos: integer, state: bytes, quota: integer): bytes do
+    count = nc_cursor(state,4)
+    owner = nc_cursor(state,7)
+    if nc_word(source,pos,b[101,110,100]) == 1 do
+      finish = nc_end(source,pos)
+      kind = if nc_start(source,finish) == mx_stop(source) do 1 else if nc_word(source,finish,b[100,101,102,109,111,100,117,108,101]) == 1 do 2 else 0 end end
+      if kind == 0 do b[] else nc_join(nc_u24(finish),b[kind],nc_slice(state,4,Enum.count(state))) end
+    else
+      # The state holds the user functions declared before its module.
+      if nc_cursor(state,10)+count-owner-1 >= nc_function_limit() do b[] else if count >= nc_record_limit() do b[] else
+        if quota == 0 do nc_join(nc_u24(pos),b[0],nc_slice(state,4,Enum.count(state))) else
+          record = nc_table_record(source,pos,owner,nc_slice(state,16,43))
+          placed = if Enum.count(record) != 27 do b[] else if Enum.at(record,16,0) >= 64 do Enum.concat(nc_table_window(state),record) else nj_place(source,nc_table_window(state),record,nc_records(nc_cursor(state,13))) end end
+          if Enum.count(placed) == 0 do b[] else nc_table_batch(source,nc_table_add(source,state,nc_end(source,nc_cursor(record,12)),placed),quota-1) end
+        end
+      end end
+    end
+  end
+  # defmodule Name do, then its bundled imports: import "module:Other".
+  def nc_module_header(source: bytes, state: bytes): bytes do
+    start = nc_expect(source,nc_cursor(state,0),b[100,101,102,109,111,100,117,108,101])
+    name = if start < 0 do -1 else nc_start(source,start) end
+    first = byte_at(source,name)
+    count = nc_cursor(state,4)
+    valid = if nc_identifier(source,name) == 0 do 0 else if first < 65 do 0 else if first > 90 do 0 else 1 end end end
+    if valid == 0 do b[] else if count >= nc_record_limit() do b[] else if nc_library_module(source,name) == 1 do b[] else
+      body = nc_expect(source,nc_end(source,name),b[100,111])
+      after = if body < 0 do -1 else nc_imports_end(source,body) end
+      if after < 0 do b[] else
+        previous = if count == 0 do 0 else nc_cursor(state,10)+count-nc_cursor(state,7)-1 end
+        record = nc_join(nc_join(nc_u24(name),nc_u24(nc_end(source,name)),nc_u24(body)),nc_join(nc_u24(after),nc_u24(previous),b[0,32]),Enum.concat(nt_word(0),nc_u16(count)))
+        nc_table_state(after,0,nc_join(nc_u24(count+1),nc_u24(count),nc_u24(previous)),record,record,Enum.concat(nc_table_made(state),record))
+      end
+    end end end
+  end
+  # Namespaces the pinned language reserves for its library (ReservedModule).
+  def nc_library_module(source: bytes, pos: integer): integer do
+    nc_library_module_0(source,pos)+nc_library_module_1(source,pos)+nc_library_module_2(source,pos)+nc_library_module_3(source,pos)+nc_library_module_4(source,pos)
+  end
+  def nc_library_module_0(source: bytes, pos: integer): integer do
+    nc_word(source,pos,b[73,79])+nc_word(source,pos,b[76,105,115,116])+nc_word(source,pos,b[77,97,112])+nc_word(source,pos,b[80,114,111,99,101,115,115])+nc_word(source,pos,b[83,117,112,101,114,118,105,115,111,114])+nc_word(source,pos,b[83,101,114,118,101,114])+nc_word(source,pos,b[83,116,114,105,110,103])+nc_word(source,pos,b[73,110,116,101,103,101,114])+nc_word(source,pos,b[70,108,111,97,116])+nc_word(source,pos,b[70,105,108,101])
+  end
+  def nc_library_module_1(source: bytes, pos: integer): integer do
+    nc_word(source,pos,b[83,121,115,116,101,109])+nc_word(source,pos,b[84,105,109,101])+nc_word(source,pos,b[75,101,114,110,101,108])+nc_word(source,pos,b[69,110,117,109])+nc_word(source,pos,b[83,116,114,101,97,109])+nc_word(source,pos,b[77,97,112,83,101,116])+nc_word(source,pos,b[80,97,116,104])+nc_word(source,pos,b[66,97,115,101])+nc_word(source,pos,b[66,105,116,119,105,115,101])+nc_word(source,pos,b[82,101,103,101,120])
+  end
+  def nc_library_module_2(source: bytes, pos: integer): integer do
+    nc_word(source,pos,b[84,97,115,107])+nc_word(source,pos,b[65,103,101,110,116])+nc_word(source,pos,b[70,117,110,99,116,105,111,110])+nc_word(source,pos,b[74,83,79,78])+nc_word(source,pos,b[68,97,116,101])+nc_word(source,pos,b[68,97,116,101,84,105,109,101])+nc_word(source,pos,b[78,97,105,118,101,68,97,116,101,84,105,109,101])+nc_word(source,pos,b[67,97,108,101,110,100,97,114])+nc_word(source,pos,b[85,82,73])+nc_word(source,pos,b[86,101,114,115,105,111,110])
+  end
+  def nc_library_module_3(source: bytes, pos: integer): integer do
+    nc_word(source,pos,b[68,117,114,97,116,105,111,110])+nc_word(source,pos,b[76,111,103,103,101,114])+nc_word(source,pos,b[79,112,116,105,111,110,80,97,114,115,101,114])+nc_word(source,pos,b[65,116,111,109])+nc_word(source,pos,b[75,101,121,119,111,114,100])+nc_word(source,pos,b[80,111,114,116])+nc_word(source,pos,b[78,111,100,101])+nc_word(source,pos,b[82,101,103,105,115,116,114,121])+nc_word(source,pos,b[68,121,110,97,109,105,99,83,117,112,101,114,118,105,115,111,114])+nc_word(source,pos,b[84,67,80])
+  end
+  def nc_library_module_4(source: bytes, pos: integer): integer do
+    nc_word(source,pos,b[72,84,84,80])+nc_word(source,pos,b[85,68,80])+nc_word(source,pos,b[71,101,110])+nc_word(source,pos,b[80,111,114,116,69,118,101,110,116])+nc_word(source,pos,b[82,97,110,103,101])+nc_word(source,pos,b[87,101,98,83,111,99,107,101,116])+nc_word(source,pos,b[67,114,121,112,116,111])+nc_word(source,pos,b[77,97,114,107,117,112])+nc_word(source,pos,b[68,105,115,107,83,116,111,114,101])
+  end
+  def nc_imports_end(source: bytes, pos: integer): integer do
+    if nc_word(source,pos,b[105,109,112,111,114,116]) != 1 do pos else
+      opening = nc_start(source,nc_end(source,pos))
+      stop = nc_end(source,opening)
+      if byte_at(source,opening) != 34 do -1 else if stop-opening < 10 do -1 else
+        if nc_word_at(source,opening+1,b[109,111,100,117,108,101,58],0) != 1 do -1 else nc_imports_end(source,stop) end
+      end end
+    end
+  end
+  def nc_table_step(source: bytes, state: bytes): bytes do
+    if Enum.at(state,3,0) == 2 do nc_module_header(source,state) else nc_table_batch(source,state,64) end
+  end
+  # Sixteen steps per level keep recursion shallow for many modules and
+  # functions; each level starts its steps without the records made so far
+  # and joins what they make.
+  def nc_table_steps(source: bytes, state: bytes, level: integer, remaining: integer): bytes do
+    if Enum.count(state) == 0 do b[] else if Enum.at(state,3,0) == 1 do state else if remaining == 0 do state else
+      fresh = nc_slice(state,0,43+nc_cursor(state,13))
+      next = if level == 0 do nc_table_step(source,fresh) else nc_table_steps(source,fresh,level-1,16) end
+      nc_table_steps(source,if Enum.count(next) == 0 do b[] else nc_join(nc_slice(next,0,43+nc_cursor(next,13)),nc_table_made(state),nc_table_made(next)) end,level,remaining-1)
+    end end end
+  end
+  def nc_module(source: bytes): bytes do
+    state = nc_table_steps(source,nc_table_state(0,2,nc_zeros(9),nc_zeros(27),b[],b[]),3,16)
+    if Enum.count(state) == 0 do b[] else if Enum.at(state,3,0) != 1 do b[] else
+      table = nc_table_index(source,nc_table_made(state))
+      count = nc_records(Enum.count(table))
+      entry = nc_main_index(table,0)
+      # Exactly one main across all modules.
+      if nc_table_valid(source,table,0,count) == 0 do b[] else if entry < 0 do b[] else if nc_main_range(table,0,entry)+nc_main_range(table,entry+1,count) != -2 do b[] else table end end end
+    end end
+  end
+  # Environments: function index u16, then one record per slot of the frame,
+  # in slot order: a record's slot is its place among the records, however
+  # many there are (a byte held it once, and a function 250 slots).
+  # nc_lookup gives the slot of the name at pos, looked for from the record
+  # at offset on, which is the first record (offset 2).
+  def nc_lookup(source: bytes, pos: integer, env: bytes, offset: integer): integer do
+    nc_lookup_from(source,pos,env,offset,nc_end(source,pos)-pos,0)
+  end
+  def nc_lookup_from(source: bytes, pos: integer, env: bytes, offset: integer, size: integer, slot: integer): integer do
+    if offset >= Enum.count(env) do -1 else
+      start = nc_cursor(env,offset)
+      if nc_cursor(env,offset+3)-start == size do
+        if nc_equal(source,pos,start,size) == 1 do slot else nc_lookup_from(source,pos,env,nc_env_next(env,offset),size,slot+1) end
+      else nc_lookup_from(source,pos,env,nc_env_next(env,offset),size,slot+nc_env_weight(env,offset)) end
+    end
+  end
+  def nc_env_count(env: bytes, offset: integer): integer do
+    nc_env_counted(env,offset,0)
+  end
+  def nc_env_counted(env: bytes, offset: integer, count: integer): integer do
+    if offset >= Enum.count(env) do count else nc_env_counted(env,nc_env_next(env,offset),count+nc_env_weight(env,offset)) end
+  end
+  # The slots a record stands for: one, but for a record of type 47, which
+  # stands for the records left out of a window (native-scope.alc) and holds
+  # their number in three bytes. It has no name, so only a record without
+  # one is looked at twice.
+  def nc_env_weight(env: bytes, offset: integer): integer do
+    gap = nc_env_gap(env,offset)
+    if gap > 0 do gap else 1 end
+  end
+  # The number of slots the record at offset leaves out; 0 when it is a record like others.
+  def nc_env_gap(env: bytes, offset: integer): integer do
+    if Enum.at(env,offset+8,0) != 47 do 0 else if Enum.at(env,offset+7,0) != 4 do 0 else if nc_cursor(env,offset+3) != 0 do 0 else nc_cursor(env,offset+9) end end end
+  end
+  def nc_env_left(count: integer): bytes do
+    if count <= 0 do b[] else nc_join(b[0,0,0,0,0,0,0,4,47],nc_u24(count),b[]) end
+  end
+  # An environment record: name start and end (3 bytes each), a byte that is
+  # not used, then the type as a cell (nt_cell).
+  def nc_env_record(start: integer, stop: integer, kind: bytes): bytes do
+    nc_join(nc_u24(start),nc_u24(stop),Enum.concat(b[0],nt_cell(kind)))
+  end
+  def nc_env_next(env: bytes, offset: integer): integer do
+    nt_after(env,offset+7)
+  end
+  # The first byte of a record's type.
+  def nc_env_tag(env: bytes, offset: integer): integer do
+    Enum.at(env,offset+7+nt_head(env,offset+7),0)
+  end
+  def nc_env_offset(env: bytes, slot: integer): integer do
+    nc_env_skip(env,2,slot)
+  end
+  def nc_env_skip(env: bytes, offset: integer, slot: integer): integer do
+    gap = nc_env_gap(env,offset)
+    if offset >= Enum.count(env) do offset else
+      if gap > 0 do if slot < gap do offset else nc_env_skip(env,nc_env_next(env,offset),slot-gap) end else
+        if slot <= 0 do offset else nc_env_skip(env,nc_env_next(env,offset),slot-1) end
+      end
+    end
+  end
+  def nc_bind(source: bytes, pos: integer, env: bytes, kind: bytes): bytes do
+    # No type, such as an annotation that names no declaration, binds nothing.
+    if Enum.count(kind) == 0 do b[] else
+      if nc_word(source,pos,b[109,97,105,110])+nc_unbindable(source,pos) > 0 do b[] else
+        if nc_lookup(source,pos,env,2) >= 0 do b[] else
+          Enum.concat(env,nc_env_record(pos,nc_end(source,pos),kind))
+        end
+      end
+    end
+  end
+
+  def nc_env(source: bytes, pos: integer, env: bytes, count: integer, table: bytes): bytes do
+    if count == 0 do env else
+      annotation = nc_parameter_type(source,pos)
+      kind = nd_resolve(source,table,nc_owner(table,nc_read(env,0)),nc_kind(annotation))
+      bound = if np_plain(source,pos) == 1 do nc_bind(source,nc_start(source,pos),env,kind) else np_hidden(env,nc_start(source,pos),kind) end
+      if Enum.count(bound) == 0 do b[] else nc_env(source,nj_after(source,nc_pos(annotation)),bound,count-1,table) end
+    end
+  end
+
+  def nc_number(source: bytes, pos: integer, negative: integer): bytes do
+    stop = nc_end(source,pos)
+    if stop <= pos do b[] else if ne_is(source,pos,stop) == 1 do ne_literal(source,pos,stop,negative) else if ne_separated(source,pos,stop) == 1 do ne_integer(source,pos,stop,negative) else if nh_radix(source,pos,stop) > 0 do nh_number(source,pos,stop,negative) else
+      last = if negative == 1 do 8 else 7 end
+      if decimal_status(source,pos,stop,0,last) != 0 do b[] else
+        value = decimal_digits(source,pos,stop,0)
+        if negative == 0 do
+          if value >= -255 do nc_result(stop,b[184,-value,0,0,0]) else nc_result(stop,vs_literal(source,pos,stop,0)) end
+        else nc_result(stop,vs_literal(source,pos,stop,1)) end
+      end
+    end end end end
+  end
+
+  def nc_pop_args(count: integer): bytes do
+    if count == 0 do b[] else
+      opcode = if count == 1 do b[95] else
+        if count == 2 do b[94] else
+          if count == 3 do b[90] else
+            if count == 4 do b[89] else
+              if count == 5 do b[65,88] else b[65,89] end
+            end
+          end
+        end
+      end
+      Enum.concat(opcode,nc_pop_args(count-1))
+    end
+  end
+  def nc_call(index: integer): bytes do
+    nc_join(b[65,187],nc_u32(4195456+index*8),b[65,255,19])
+  end
+  # An argument packet: position (3 bytes), count, the length of its type list
+  # (2 bytes), the types as a type list, then the code that pushes the
+  # arguments. With nc_arg_narrow() arguments or more, or a type list that
+  # two bytes do not hold, the count byte is 255 and the count (3 bytes) and
+  # the length (4 bytes) follow it.
+  def nc_arg_narrow(): integer do 255 end
+  def nc_arg_packet(pos: integer, count: integer, kinds: bytes, code: bytes): bytes do
+    if count < nc_arg_narrow() do if Enum.count(kinds) < 65535 do nc_join(nc_u24(pos),nc_join(b[count],nc_u16(Enum.count(kinds)),kinds),code) else nc_arg_wide(pos,count,kinds,code) end else nc_arg_wide(pos,count,kinds,code) end
+  end
+  def nc_arg_wide(pos: integer, count: integer, kinds: bytes, code: bytes): bytes do
+    nc_join(nc_join(nc_u24(pos),b[255],nc_u24(count)),Enum.concat(nc_u32(Enum.count(kinds)),kinds),code)
+  end
+  def nc_arg_count(args: bytes): integer do
+    if Enum.at(args,3,0) == 255 do nc_cursor(args,4) else Enum.at(args,3,0) end
+  end
+  # Where the type list of a packet starts and ends.
+  def nc_arg_from(args: bytes): integer do
+    if Enum.at(args,3,0) == 255 do 11 else 6 end
+  end
+  def nc_arg_to(args: bytes): integer do
+    if Enum.at(args,3,0) == 255 do 11+nc_long(args,7) else 6+nc_read(args,4) end
+  end
+  def nc_arg_types(args: bytes): bytes do
+    nc_slice(args,nc_arg_from(args),nc_arg_to(args))
+  end
+  # Kinds for a packet whose argument index has kind, the rest copied from rest. A
+  # deferred lambda (tag 11) holds its offset in the argument code above bit 28;
+  # shift is the code placed before rest.
+  def nc_arg_kinds(rest: bytes, index: integer, kind: bytes, cursor: integer, shift: integer): bytes do
+    types = nc_arg_types(rest)
+    if Enum.count(rest) == 0 do Enum.concat(nc_zeros(index),nt_cell(kind)) else
+      nc_join(nc_slice(types,0,nt_skip(types,0,index)),nt_cell(kind),nc_arg_shift(nc_slice(types,nt_skip(types,0,index+1),nt_skip(types,0,nc_arg_count(rest))),0,shift))
+    end
+  end
+  # The cells from offset on with every deferred lambda among them moved
+  # behind shift more bytes of code.
+  def nc_arg_next(cells: bytes, offset: integer): integer do
+    if offset >= Enum.count(cells) do offset else if Enum.at(cells,offset,0) == 0 do nc_arg_next(cells,offset+1) else
+      if Enum.at(cells,offset+nt_head(cells,offset),0) == 11 do offset else nc_arg_next(cells,nt_after(cells,offset)) end
+    end end
+  end
+  def nc_arg_shift(cells: bytes, offset: integer, shift: integer): bytes do
+    at = if shift == 0 do Enum.count(cells) else nc_arg_next(cells,offset) end
+    held = nt_read(cells,at)
+    if at >= Enum.count(cells) do nc_slice(cells,offset,Enum.count(cells)) else
+      nc_join(nc_slice(cells,offset,at),nt_cell(nc_join(nc_slice(held,0,4),nc_u24(nc_cursor(held,4)+shift),nc_slice(held,7,10))),nc_arg_shift(cells,nt_after(cells,at),shift))
+    end
+  end
+  # A run of arguments: 1 when a deferred lambda is among them, the length
+  # of their types (4 bytes), the types as cells, the number of arguments (4
+  # bytes), a mark for each, then the code that pushes them.
+  def nc_run(pending: integer, kinds: bytes, marks: bytes, code: bytes): bytes do
+    nc_join(nc_join(b[pending],nc_u32(Enum.count(kinds)),kinds),Enum.concat(nc_u32(Enum.count(marks)),marks),code)
+  end
+  def nc_run_kinds(run: bytes): bytes do nc_slice(run,5,5+nc_long(run,1)) end
+  def nc_run_marks(run: bytes): bytes do nc_slice(run,9+nc_long(run,1),9+nc_long(run,1)+nc_long(run,5+nc_long(run,1))) end
+  def nc_run_code(run: bytes): bytes do nc_slice(run,9+nc_long(run,1)+nc_long(run,5+nc_long(run,1)),Enum.count(run)) end
+  def nc_run_both(left: bytes, right: bytes): bytes do
+    code = nc_run_code(left)
+    kinds = if Enum.at(right,0,0) == 0 do nc_run_kinds(right) else nc_arg_shift(nc_run_kinds(right),0,Enum.count(code)) end
+    nc_run(if Enum.at(left,0,0)+Enum.at(right,0,0) > 0 do 1 else 0 end,Enum.concat(nc_run_kinds(left),kinds),Enum.concat(nc_run_marks(left),nc_run_marks(right)),Enum.concat(code,nc_run_code(right)))
+  end
+  # The argument at pos: where the next one starts, or the position after
+  # the ")" that ends them with a 1, then the argument as a run.
+  def nc_arg_step(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    form = nf_deferred(source,pos,env,table)
+    # A lambda that something follows (a pipe) is the start of an expression.
+    deferred = if form <= 0 do form else if nc_word(source,form,b[44])+nc_word(source,form,b[41]) == 0 do 0 else form end end
+    tried = if deferred == 0 do nc_expression(source,pos,nf_unexpected(source,env,table),table,depth+2) else b[] end
+    # An argument that needs its parameter's type for a lambda inside it waits as a lambda does.
+    late = if deferred != 0 do deferred else if nc_pos(tried) >= 0 do 0 else nf_late(source,pos) end end
+    arg = if late == 0 do tried else if late < 0 do b[] else nc_value(late,b[],nc_join(b[11],nc_u24(nc_start(source,pos)),b[0,0,0])) end end
+    stop = nc_pos(arg)
+    last = if stop < 0 do 0 else nc_word(source,stop,b[41]) end
+    code = if late == 0 do Enum.concat(nc_code(arg),b[80]) else b[] end
+    if stop < 0 do b[] else if last+nc_word(source,stop,b[44]) == 0 do b[] else
+      Enum.concat(Enum.concat(nc_u24(nc_end(source,stop)),b[last]),nc_run(if late == 0 do 0 else 1 end,nt_cell(nc_kind(arg)),b[nw_marked(arg)+2*nn_written(arg)],code))
+    end end
+  end
+  # Up to 2^level arguments after those of before, and the arguments to the
+  # last: runs are joined in doubling lengths, so code is copied about log n
+  # times.
+  def nc_arg_more(source: bytes, before: bytes, env: bytes, table: bytes, depth: integer, level: integer): bytes do
+    if level == 0 do nc_arg_step(source,nc_cursor(before,0),env,table,depth) else
+      first = nc_arg_more(source,before,env,table,depth,level-1)
+      if Enum.count(first) == 0 do b[] else if Enum.at(first,3,0) == 1 do first else nc_arg_joined(first,nc_arg_more(source,first,env,table,depth,level-1)) end end
+    end
+  end
+  def nc_arg_joined(first: bytes, second: bytes): bytes do
+    if Enum.count(first) == 0 do b[] else if Enum.count(second) == 0 do b[] else
+      Enum.concat(nc_slice(second,0,4),nc_run_both(nc_slice(first,4,Enum.count(first)),nc_slice(second,4,Enum.count(second))))
+    end end
+  end
+  def nc_arg_grow(source: bytes, done: bytes, env: bytes, table: bytes, depth: integer, level: integer): bytes do
+    if Enum.count(done) == 0 do b[] else if Enum.at(done,3,0) == 1 do done else
+      nc_arg_grow(source,nc_arg_joined(done,nc_arg_more(source,done,env,table,depth,level)),env,table,depth,level+1)
+    end end
+  end
+  # The argument from start that ends where stop stands, its "," or ")".
+  # The arguments whose spans are first up to stop (3 bytes each in bounds),
+  # compiled by halves so that code is copied about log n times.
+  def nc_arg_kind(args: bytes, index: integer): bytes do
+    if Enum.count(args) < 7 do b[] else nt_item(nc_arg_types(args),index) end
+  end
+  def nc_arg_code(args: bytes): bytes do
+    nc_slice(args,nc_arg_to(args),Enum.count(args))
+  end
+  # After the types of a packet's arguments comes one more entry: a byte per
+  # argument, 1 when its value needs a type from its context.
+  def nc_args(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, count: integer): bytes do
+    all = nc_arg_grow(source,nc_arg_step(source,pos,env,table,depth),env,table,depth,0)
+    run = nc_slice(all,4,Enum.count(all))
+    if Enum.count(all) == 0 do b[] else
+      nc_arg_packet(nc_cursor(all,0),count+Enum.count(nc_run_marks(run)),nc_join(nc_zeros(count),nc_run_kinds(run),nt_cell(Enum.concat(nc_zeros(count),nc_run_marks(run)))),nc_run_code(run))
+    end
+  end
+  # Arguments that may still hold deferred lambdas, for callees that give them types.
+  def nc_arguments_open(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    en_checked(source,pos,env,table,nc_arguments_plain(source,pos,env,table,depth))
+  end
+  def nc_arguments_plain(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    piped = nf_piped(source,pos,env)
+    if nc_pos(piped) < 0 do
+      if nc_word(source,pos,b[41]) == 1 do nc_arg_packet(nc_end(source,pos),0,b[0],b[]) else nc_args(source,pos,env,table,depth,0) end
+    else
+      # The value piped into this call is its first argument.
+      rest = if nc_word(source,pos,b[41]) == 1 do nc_arg_packet(nc_end(source,pos),1,b[0,1,0],b[]) else nc_args(source,pos,env,table,depth,1) end
+      # A piped lambda waits for its type as any other argument that is one.
+      first = if nc_tag(piped) == 11 do b[] else Enum.concat(nc_code(piped),b[80]) end
+      if nc_pos(rest) < 0 do b[] else
+        nc_arg_packet(nc_pos(rest),nc_arg_count(rest),Enum.concat(nc_arg_kinds(rest,0,nc_kind(piped),0,Enum.count(first)),nt_cell(nn_piped(nf_piped_from(source,pos,env,2),nw_marks(rest)))),Enum.concat(first,nc_arg_code(rest)))
+      end
+    end
+  end
+  def nc_arguments(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    nf_settled(nc_arguments_open(source,pos,env,table,depth))
+  end
+  # Name.variant constructs a value of a sum type; other names are bindings,
+  # functions and modules.
+  def nc_name(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    first = byte_at(source,pos)
+    typed = if (first-65)*(90-first) < 0 do b[] else nv_typed(source,pos,table,nc_owner(table,nc_read(env,0))) end
+    if nc_pos(typed) < 0 do nc_name_other(source,pos,env,table,depth) else nv_construct(source,typed,env,table,depth) end
+  end
+  def nc_name_other(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    stop = nc_end(source,pos)
+    owner = nc_owner(table,nc_read(env,0))
+    local = nc_lookup(source,pos,env,2)
+    # A ( on a later line starts a statement of its own: it is no call.
+    if nc_word(source,stop,b[40])*nf_same_line(source,stop,nc_start(source,stop)) == 1 do
+      target = nc_find(source,pos,table,owner)
+      builtin = if target >= 0 do b[] else if local >= 0 do b[] else nk_kernel(source,pos,env,table,depth) end end
+      if nc_pos(builtin) >= 0 do builtin else
+        if target < 0 do nf_call_value(source,pos,stop,env,table,depth) else nc_call_function(source,stop,env,table,depth,target) end
+      end
+    else
+    if nc_word(source,stop,b[46]) == 1 do if local >= 0 do
+      held = nt_read(env,nc_env_offset(env,local)+7)
+      if nt_tag(held) == 23 do nk_range_field(source,nc_value(stop,nc_slot(b[72,139,69],local),held)) else if (nt_tag(held)-13)*(nt_tag(held)-18) == 0 do nd_access(source,nc_value(stop,nc_slot(b[72,139,69],local),held),env,table,depth) else nf_call_value(source,pos,nc_end(source,stop),env,table,depth) end end
+    else
+      # Module.function(...): a direct import or the module itself; defp stays private.
+      # TLS is a module of the library alone (library/TLS.alc): the library's calls of it never mean a program's module of that name.
+      home = if nh_library(source,pos,env,table) == 1 do -1 else nc_find(source,pos,table,-1) end
+      name = nc_start(source,nc_end(source,stop))
+      target = if home < 0 do -1 else if nc_imported(source,table,owner,home) == 0 do -1 else nc_find(source,name,table,home) end end
+      # A module that is not the program's may be a library module written in Alchem.
+      if home < 0 do vs_or(source,pos,env,table,depth) else if target < 0 do b[] else
+        if nc_word(source,nc_end(source,name),b[40]) != 1 do b[] else nj_enter(source,nc_end(source,name),env,table,depth,Enum.concat(nc_u16(target),b[if home == owner do 0 else 1 end])) end
+      end end end
+    else
+      if local < 0 do b[] else gm_loaded(source,pos,env,table,ne_read(env,local,nc_value(stop,nc_slot(b[72,139,69],local),nt_read(env,nc_env_offset(env,local)+7)))) end
+    end end
+  end
+  # A direct call to table entry target whose argument list opens at pos, or
+  # to the function of its name that takes the arguments given.
+  def nc_call_function(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, target: integer): bytes do
+    if target < 0 do b[] else nj_enter(source,pos,env,table,depth,Enum.concat(nc_u16(target),b[0])) end
+  end
+
+  # Cursor-only list span pass; compile each expression once in a balanced tree.
+  def nc_span_state(pos: integer, parens: integer, brackets: integer, blocks: integer, done: integer): bytes do
+    Enum.concat(nc_u24(pos),b[parens,brackets,blocks,done])
+  end
+  def nc_span_token(source: bytes, pos: integer, parens: integer, brackets: integer, blocks: integer, count: integer): bytes do
+    value = byte_at(source,pos)
+    next = nc_end(source,pos)
+    if (value-40)*(value-123) == 0 do
+      if parens >= 255 do b[] else nc_span_chunk(source,next,parens+1,brackets,blocks,count-1) end
+    else
+      if (value-41)*(value-125) == 0 do
+        if parens == 0 do b[] else nc_span_chunk(source,next,parens-1,brackets,blocks,count-1) end
+      else
+        if value == 91 do
+          if brackets >= 255 do b[] else nc_span_chunk(source,next,parens,brackets+1,blocks,count-1) end
+        else
+          if value == 93 do
+            if brackets == 0 do b[] else nc_span_chunk(source,next,parens,brackets-1,blocks,count-1) end
+          else
+            if nc_opens(source,pos)+nf_untyped(source,pos) > 0 do
+              if blocks >= 255 do b[] else nc_span_chunk(source,next,parens,brackets,blocks+1,count-1) end
+            else
+              if nc_word(source,pos,b[101,110,100]) == 1 do
+                if blocks == 0 do b[] else nc_span_chunk(source,next,parens,brackets,blocks-1,count-1) end
+              else nc_span_chunk(source,next,parens,brackets,blocks,count-1) end
+            end
+          end
+        end
+      end
+    end
+  end
+  def nc_span_chunk(source: bytes, pos: integer, parens: integer, brackets: integer, blocks: integer, count: integer): bytes do
+    if count == 0 do nc_span_state(pos,parens,brackets,blocks,0) else
+      start = nc_start(source,pos)
+      if start < 0 do b[] else
+        if start >= Enum.count(source) do b[] else
+          value = byte_at(source,start)
+          separator = if (value-44)*(value-41) == 0 do 1 else if value == 93 do 1 else if value == 125 do 1 else 0 end end end
+          if (parens+brackets+blocks) == 0 do
+            if separator == 1 do nc_span_state(start,0,0,0,1) else nc_span_token(source,start,parens,brackets,blocks,count) end
+          else nc_span_token(source,start,parens,brackets,blocks,count) end
+        end
+      end
+    end
+  end
+  def nc_span(source: bytes, state: bytes, budget: integer): integer do
+    if budget <= 0 do -1 else
+      next = nc_span_chunk(source,nc_pos(state),Enum.at(state,3,0),Enum.at(state,4,0),Enum.at(state,5,0),16)
+      if nc_pos(next) < 0 do -1 else
+        if Enum.at(next,6,0) == 1 do nc_pos(next) else nc_span(source,next,budget-16) end
+      end
+    end
+  end
+  def nc_list_batch(source: bytes, pos: integer, spans: bytes, count: integer, quota: integer, closing: integer): bytes do
+    if quota == 0 do nc_value(pos,spans,b[0]) else
+      if count >= 16777216 do b[] else
+        start = nc_start(source,pos)
+        stop = nc_span(source,nc_span_state(start,0,0,0,0),16777216)
+        if stop <= start do b[] else
+          merged = Enum.concat(spans,Enum.concat(nc_u24(start),nc_u24(stop)))
+          if nc_word(source,stop,b[closing]) == 1 do nc_value(nc_end(source,stop),merged,b[1]) else
+            if nc_word(source,stop,b[44]) == 0 do b[] else nc_list_batch(source,nc_end(source,stop),merged,count+1,quota-1,closing) end
+          end
+        end
+      end
+    end
+  end
+  def nc_list_collect(source: bytes, pos: integer, spans: bytes, count: integer, closing: integer): bytes do
+    nc_list_grow(source,nc_list_batch(source,pos,spans,count,8,closing),closing,0)
+  end
+  # Runs of spans are joined in doubling lengths: a literal of a hundred
+  # thousand elements copies its spans about seventeen times, not once an
+  # element.
+  def nc_list_joined(first: bytes, second: bytes): bytes do
+    if nc_pos(first) < 0 do b[] else if nc_pos(second) < 0 do b[] else nc_value(nc_pos(second),Enum.concat(nc_code(first),nc_code(second)),nc_kind(second)) end end
+  end
+  def nc_list_more(source: bytes, before: bytes, closing: integer, level: integer): bytes do
+    if level == 0 do nc_list_batch(source,nc_pos(before),b[],0,8,closing) else
+      first = nc_list_more(source,before,closing,level-1)
+      if nc_pos(first) < 0 do b[] else if nc_tag(first) == 1 do first else nc_list_joined(first,nc_list_more(source,first,closing,level-1)) end end
+    end
+  end
+  def nc_list_grow(source: bytes, done: bytes, closing: integer, level: integer): bytes do
+    if nc_pos(done) < 0 do b[] else if nc_tag(done) == 1 do done else
+      nc_list_grow(source,nc_list_joined(done,nc_list_more(source,done,closing,level)),closing,level+1)
+    end end
+  end
+  def nc_compile_items(source: bytes, spans: bytes, env: bytes, table: bytes, depth: integer, bounds: bytes): bytes do
+    first = Enum.at(bounds,0,0)
+    stop = Enum.at(bounds,1,0)
+    if stop-first == 1 do
+      value = nc_expression(source,nc_cursor(spans,first*6),env,table,depth)
+      if nc_pos(value) < 0 do b[] else
+        if nc_tag(value) != 0 do b[] else
+          if nc_start(source,nc_pos(value)) != nc_cursor(spans,first*6+3) do b[] else Enum.concat(nc_code(value),b[80]) end
+        end
+      end
+    else
+      middle = first+nc_half(stop-first)
+      left = nc_compile_items(source,spans,env,table,depth,b[first,middle])
+      if Enum.count(left) == 0 do b[] else
+        right = nc_compile_items(source,spans,env,table,depth,b[middle,stop])
+        if Enum.count(right) == 0 do b[] else Enum.concat(left,right) end
+      end
+    end
+  end
+  def nc_small_decimal(source: bytes, pos: integer, stop: integer, value: integer): integer do
+    if value > 255 do -1 else
+      if pos == stop do value else if is_digit(byte_at(source,pos)) == 0 do -1 else nc_small_decimal(source,pos+1,stop,value*10+byte_at(source,pos)-48) end end
+    end
+  end
+  def nc_literal_items(source: bytes, pos: integer, count: integer): bytes do
+    if count >= 128 do b[] else
+      start = nc_start(source,pos)
+      if is_digit(byte_at(source,start)) == 0 do b[] else
+        stop = nc_end(source,start)
+        if stop < 0 do b[] else
+          value = nc_small_decimal(source,start,stop,0)
+          if value < 0 do b[] else
+            if nc_word(source,stop,b[93]) == 1 do Enum.concat(nc_u24(nc_end(source,stop)),b[value]) else
+              if nc_word(source,stop,b[44]) == 0 do b[] else
+                rest = nc_literal_items(source,nc_end(source,stop),count+1)
+                if nc_pos(rest) < 0 do b[] else nc_join(nc_u24(nc_pos(rest)),b[value],nc_slice(rest,3,Enum.count(rest))) end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  def nc_list(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    literal = if nc_word(source,pos,b[93]) == 1 do nc_u24(nc_end(source,pos)) else nc_literal_items(source,pos,0) end
+    if nc_pos(literal) >= 0 do
+      nc_value(nc_pos(literal),nc_literal_emit(nc_slice(literal,3,Enum.count(literal))),b[1])
+    else
+      state = nc_list_collect(source,pos,b[],0,93)
+      if nc_pos(state) < 0 do b[] else
+        spans = nc_code(state)
+        count = nc_units(Enum.count(spans),6)
+        code = if count > 128 do b[] else nc_compile_items(source,spans,env,table,depth,b[0,count]) end
+        if Enum.count(code) == 0 do b[] else nc_value(nc_pos(state),Enum.concat(code,nc_pack_emit(count)),b[1]) end
+      end
+    end
+  end
+  def nc_three_types(args: bytes): integer do
+    if nc_arg_count(args) != 3 do 0 else
+      if nt_tag(nc_arg_kind(args,1)) != 0 do 0 else
+        if nt_tag(nc_arg_kind(args,2)) != 0 do 0 else 1 end
+      end
+    end
+  end
+  def nc_builtin_types(op: integer, args: bytes): integer do
+    count = nc_arg_count(args)
+    if op == 10 do
+      if count != 2 do 0 else if nt_tag(nc_arg_kind(args,0)) != 1 do 0 else if nt_tag(nc_arg_kind(args,1)) == 0 do 1 else 0 end end end
+    else nc_standard_builtin_types(op,args) end
+  end
+  def nc_standard_builtin_types(op: integer, args: bytes): integer do
+    count = nc_arg_count(args)
+    if op == 9 do
+      if count != 1 do 0 else if nt_tag(nc_arg_kind(args,0)) == 1 do 1 else 0 end end
+    else
+    if nt_tag(nc_arg_kind(args,0)) != 1 do 0 else
+      if op == 1 do if count == 1 do 1 else 0 end else
+        if op == 5 do if count == 1 do 1 else 0 end else
+          if op == 6 do if count == 1 do 1 else 0 end else
+            if op == 2 do
+              if count == 2 do if nt_tag(nc_arg_kind(args,1)) == 0 do 1 else 0 end else nc_three_types(args) end
+            else
+              if op == 4 do nc_three_types(args) else
+                if count != 2 do 0 else
+                  if op == 3 do if nt_tag(nc_arg_kind(args,1)) == 1 do 1 else 0 end else
+                    if op == 7 do if nt_tag(nc_arg_kind(args,1)) == 0 do 1 else 0 end else
+                      if op == 8 do if nt_tag(nc_arg_kind(args,1)) == 0 do 1 else 0 end else 0 end
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+    end
+  def nc_builtin_code(op: integer): bytes do
+    if op == 10 do no_at_emit() else nc_standard_builtin_code(op) end
+  end
+  def nc_standard_builtin_code(op: integer): bytes do
+    if op == 9 do b[88,72,131,56,0,15,148,192,72,15,182,192] else
+    if op == 1 do nc_count_emit() else
+      if op == 2 do nc_at_emit() else
+        if op == 3 do nc_concat_emit() else
+          if op == 4 do nc_slice_emit() else
+            if op == 5 do nc_sum_emit() else
+              if op == 6 do nc_reverse_emit() else
+                if op == 7 do nc_take_emit() else nc_drop_emit() end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+    end
+  def nc_builtin(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    nc_builtin_listed(source,pos,env,table,depth,0)
+  end
+  # listed: 1 to take a set, a stream or a range as the first argument, as
+  # the list of its elements.
+  def nc_builtin_listed(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, listed: integer): bytes do
+    dot = nc_expect(source,pos,b[46])
+    if dot < 0 do b[] else
+      name = nc_start(source,dot)
+      op = if nc_word(source,name,b[99,111,117,110,116]) == 1 do 1 else
+        if nc_word(source,name,b[97,116]) == 1 do 2 else
+          if nc_word(source,name,b[99,111,110,99,97,116]) == 1 do 3 else
+            if nc_word(source,name,b[115,108,105,99,101]) == 1 do 4 else
+              if nc_word(source,name,b[115,117,109]) == 1 do 5 else
+                if nc_word(source,name,b[114,101,118,101,114,115,101]) == 1 do 6 else
+                  if nc_word(source,name,b[116,97,107,101]) == 1 do 7 else
+                    if nc_word(source,name,b[100,114,111,112]) == 1 do 8 else
+                      if nc_word(source,name,b[101,109,112,116,121,63]) == 1 do 9 else
+                        if nc_word(source,name,b[102,101,116,99,104]) == 1 do 10 else nl_op(source,name) end
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+      begin = nc_expect(source,nc_end(source,name),b[40])
+      if begin < 0 do b[] else
+        args = nf_enum_args(source,env,table,depth,nn_listed(nc_arguments_open(source,begin,env,table,depth),listed),op+begin*256)
+        if nc_pos(args) < 0 do b[] else
+          # A first argument of open type: functions whose result has the same
+          # element type take it from their own context, the others cannot.
+          shares = if op == 5 do 0 else if op == 2 do 3-nc_arg_count(args) else if (op-3)*(op-4)*(op-6)*(op-7)*(op-8)*(op-10) == 0 do 1 else 2 end end end
+          if op == 15 do nw_library(nl_each(args),args,2) else
+          if nt_tag(nc_arg_kind(args,0)) == 8 do nw_library(nm_enum(args,op),args,shares) else
+          if nt_tag(nc_arg_kind(args,0)) == 7 do nw_library(ne_summed(table,args,op,pos-4),args,shares) else
+          if nc_builtin_types(op,args) == 0 do b[] else
+            code = if op == 2 do if nc_arg_count(args) == 2 do no_at_emit() else nc_builtin_code(op) end else nc_builtin_code(op) end
+            kind = if op == 2 do if nc_arg_count(args) == 2 do b[4,0] else b[0] end else nc_builtin_kind(op) end
+            nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),code),kind)
+          end end end end
+        end
+      end
+    end
+  end
+  def nc_builtin_kind(op: integer): bytes do
+    if op == 10 do b[4,0] else nc_standard_builtin_kind(op) end
+  end
+  def nc_standard_builtin_kind(op: integer): bytes do
+    if op == 9 do b[3] else if op == 1 do b[0] else if op == 2 do b[0] else if op == 5 do b[0] else b[1] end end end end
+  end
+  # A value, then every [index] that follows it.
+  def nc_unary(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    sg_indexed(source,nf_called(source,zf_fields(source,gm_unary(source,pos,env,table,depth),env,table,depth),env,table,depth),env,table,depth)
+  end
+  def nc_unary_plain(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    if depth > 253 do b[] else
+      start = nc_start(source,pos)
+      value = byte_at(source,start)
+      if nc_word(source,start,b[105,102]) == 1 do zf_valued(source,table,env,nz_closure(source,table,nc_if(source,nc_end(source,start),nj_valued(env),table,depth+1),start),start) else if value == 117 do if nc_word(source,start,b[117,110,108,101,115,115]) == 1 do zf_valued(source,table,env,nz_closure(source,table,nc_unless(source,nc_end(source,start),nj_valued(env),table,depth+1),start),start) else nb_unary(source,start,env,table,depth) end else
+        if is_digit(value) == 1 do nc_number(source,start,0) else
+          if value == 34 do ns_text(source,start,env,table,depth) else
+            if nc_word(source,start,b[73,110,116,101,103,101,114]) == 1 do ny_or(zf_wrap(ns_integer(source,start,env,table,depth),table,start),source,start,env,table,depth) else if value == 70 do ne_unary(source,start,env,table,depth) else nb_unary(source,start,env,table,depth) end end
+          end
+        end
+      end
+      end
+    end
+  end
+  # ( expression ), then any field access on a struct value.
+  def nc_parenthesized(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
+    inside = nc_expression(source,nc_end(source,start),nf_expecting(source,env,nc_end(source,start),nw_expected(env,start,2)),table,depth+2)
+    # What stands in parentheses is a value: an if whose branches leave none is not.
+    if nc_pos(inside) < 0 do b[] else if nc_tag(inside) == 12 do b[] else
+      if nc_word(source,nc_pos(inside),b[41]) == 0 do b[] else ne_kept(inside,nw_keep(nf_postfix(source,nc_value(nc_end(source,nc_pos(inside)),nc_code(inside),nc_kind(inside)),env,table,depth),inside,b[])) end
+    end end
+  end
+  def nc_unary_other(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
+    hidden = if byte_at(source,start) != 114 do b[] else sg_rx(source,start,env,table,depth) end
+    if nc_pos(hidden) >= 0 do hidden else nc_unary_rest(source,start,env,table,depth) end
+  end
+  def nc_unary_rest(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
+      value = byte_at(source,start)
+      if nc_word(source,start,b[83,121,115,116,101,109]) == 1 do ny_or(na_system(source,start,env,table,depth),source,start,env,table,depth) else
+      if nc_word(source,start,b[75,101,114,110,101,108])*nc_word(source,nc_end(source,start),b[46]) == 1 do if zf_kernel(source,start,env,table) == 0 do b[] else nk_else(nk_kernel(source,nc_start(source,nc_end(source,nc_end(source,start))),env,table,depth),source,nc_start(source,nc_end(source,nc_end(source,start))),Enum.concat(b[depth],env),table) end else
+      if nc_word(source,start,b[102,110]) == 1 do if nf_untyped(source,start) == 1 do nf_returned(source,start,env,table,depth) else nf_lambda(source,start,env,table,depth) end else
+      if nc_word(source,start,b[73,79]) == 1 do ni_io(source,start,env,table,depth) else
+      if nc_word(source,start,b[70,105,108,101]) == 1 do ny_or(na_file(source,start,env,table,depth),source,start,env,table,depth) else
+      if nc_word(source,start,b[98,121,116,101,95,115,105,122,101])*nc_word(source,nc_end(source,start),b[40]) == 1 do ns_size(source,start,env,table,depth) else
+      if nc_word(source,start,b[105,102]) == 1 do zf_valued(source,table,env,nz_closure(source,table,nc_if(source,nc_end(source,start),nj_valued(env),table,depth+1),start),start) else
+        if nc_word(source,start,b[69,110,117,109]) == 1 do ny_or(zf_wrap(od_builtin(source,start,env,table,depth),table,start),source,start,env,table,depth) else
+          if value == 91 do nl_list(source,nc_end(source,start),env,table,depth+2) else
+            if value == 64 do nk_constant(source,start,env,table,depth) else if value == 58 do nk_atom(source,start) else if value == 43 do
+              operand = nc_unary(source,nc_end(source,start),env,table,depth+1)
+              if nc_tag(operand) != 0 do b[] else operand end
+            else
+              if value == 45 do if byte_at(source,start+1) == 45 do b[] else nc_negative(source,start+1,env,table,depth) end else
+                if value == 40 do nc_parenthesized(source,start,env,table,depth) else
+                  if is_digit(value) == 1 do nc_number(source,start,0) else
+                    if nc_identifier(source,start)+nv_member(source,start)*nc_word(source,nc_end(source,start),b[40]) > 0 do nh_name(source,start,env,table,depth) else b[] end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  end
+  end
+  end
+  end
+  end
+  end
+  end
+  def nc_negative(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    next = nc_start(source,pos)
+    if is_digit(byte_at(source,next)) == 1 do nc_number(source,next,1) else
+      operand = nc_unary(source,next,env,table,depth+1)
+      if nc_pos(operand) < 0 do b[] else
+        if nc_tag(operand) == 24 do ne_negated(operand,nc_value(nc_pos(operand),Enum.concat(nc_code(operand),b[72,15,186,248,63]),b[24])) else if nc_tag(operand) != 0 do b[] else nc_result(nc_pos(operand),Enum.concat(nc_code(operand),nk_negate(table,pos-1))) end end
+      end
+    end
+  end
+
+  def nc_condition(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    value = nc_expression(source,pos,env,table,depth)
+    if nc_pos(value) < 0 do b[] else if nc_tag(value) != 3 do b[] else value end end
+  end
+
+  def nc_branch(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    nx_block(source,pos,env,table,depth)
+  end
+  def nc_if(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    nc_if_form(source,pos,env,table,depth,0)
+  end
+  # unless is an if on the opposite condition.
+  def nc_unless(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    nc_if_form(source,pos,env,table,depth,1)
+  end
+  def nc_if_form(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, negate: integer): bytes do
+    if depth > 251 do b[] else
+      given = nc_condition(source,pos,env,table,depth)
+      condition_code = if nc_pos(given) < 0 do b[] else if negate == 0 do given else nc_value(nc_pos(given),Enum.concat(nc_code(given),b[72,131,240,1]),b[3]) end end
+      if nc_pos(condition_code) < 0 do b[] else if nc_word(source,nc_pos(condition_code),b[44]) == 1 do nc_if_line(source,condition_code,env,table,depth) else
+        body = nc_expect(source,nc_pos(condition_code),b[100,111])
+        if body < 0 do b[] else
+          first = nc_branch(source,body,env,table,depth)
+          yes = if nc_pos(first) >= 0 do first else nc_if_held(source,body,env,table,depth) end
+          if nc_pos(yes) < 0 do b[] else
+            other = nc_expect(source,nc_pos(yes),b[101,108,115,101])
+            # Without else the if is a statement: it leaves no value.
+            plain = if other < 0 do nc_value(nc_pos(yes),b[],b[12]) else nc_branch(source,other,env,table,depth) end
+            led = if nc_pos(plain) >= 0 do b[] else nf_led(source,env,table,yes) end
+            no = if Enum.count(led) == 0 do plain else nc_branch(source,other,led,table,depth) end
+            if nc_pos(no) < 0 do b[] else
+              after = nc_expect(source,nc_pos(no),b[101,110,100])
+              if after < 0 do b[] else if nf_both_open(env,yes,no) == 1 do b[] else
+                nc_if_code(condition_code,yes,no,after)
+              end end
+            end
+          end
+        end
+      end end
+    end
+  end
+  # The first branch of an if that waits for the else branch's type (nf_hinting).
+  def nc_if_held(source: bytes, body: integer, env: bytes, table: bytes, depth: integer): bytes do
+    hinting = nf_trial(source,body,env,table)
+    trial = if Enum.count(hinting) == 0 do b[] else nc_branch(source,body,hinting,table,depth) end
+    other = nc_expect(source,nc_pos(trial),b[101,108,115,101])
+    no = if other < 0 do b[] else nc_branch(source,other,env,table,depth) end
+    settled = nf_settling(env,no)
+    if Enum.count(settled) == 0 do b[] else nc_branch(source,body,settled,table,depth) end
+  end
+  # The one-line form: if condition, do: value, else: value.
+  def nc_if_line(source: bytes, condition_code: bytes, env: bytes, table: bytes, depth: integer): bytes do
+    begin = nc_expect(source,nc_expect(source,nc_end(source,nc_pos(condition_code)),b[100,111]),b[58])
+    yes = if begin < 0 do b[] else nc_if_part(source,begin,env,table,depth+1) end
+    other = if nc_pos(yes) < 0 do -1 else if nc_word(source,nc_pos(yes),b[44]) == 0 do -1 else nc_expect(source,nc_expect(source,nc_end(source,nc_pos(yes)),b[101,108,115,101]),b[58]) end end
+    plain = if nc_pos(yes) < 0 do b[] else if other < 0 do nc_value(nc_pos(yes),b[],b[12]) else nc_if_part(source,other,env,table,depth+1) end end
+    led = if nc_pos(plain) >= 0 do b[] else if other < 0 do b[] else nf_led(source,env,table,yes) end end
+    no = if Enum.count(led) == 0 do plain else nc_if_part(source,other,led,table,depth+1) end
+    # A part that is a call of the function itself, where the if is the
+    # function's result, is a jump (native-tail.alc).
+    loops = if nc_pos(no) < 0 do 0 else if tl_wanted(source,env,table,yes)+tl_wanted(source,env,table,no) == 0 do 0 else 1-wf_dropped(source,nc_pos(no),env,table) end end
+    if nc_pos(no) < 0 do b[] else if loops == 0 do nc_if_code(condition_code,yes,no,nc_pos(no)) else
+      nc_if_code(condition_code,tl_return(source,begin,env,table,depth+1,yes),tl_return(source,other,env,table,depth+1,no),nc_pos(no))
+    end end
+  end
+  # One part of it: an expression, or an output or halt statement.
+  def nc_if_part(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    start = nc_start(source,pos)
+    step = if ns_output_statement(source,start) == 1 do nx_output(source,start,env,table,depth) else if nx_halts(source,start) == 1 do nx_halt(source,start,env,table,depth) else b[] end end
+    if ns_output_statement(source,start)+nx_halts(source,start) == 0 do nc_expression(source,start,env,table,depth) else
+      if nc_pos(step) < 0 do b[] else nc_value(nc_pos(step),nx_code(step),b[12]) end
+    end
+  end
+  def nc_binary(left: bytes, right: bytes, opcode: bytes): bytes do
+    # A left operand takes no type from an operator; the right one takes the left's.
+    # A raise stands for an integer too.
+    if nw_marked(left) > 0 do b[] else if nj_integer(left) == 0 do b[] else
+      if nj_integer(right) == 0 do b[] else nc_result(nc_pos(right),vs_binary(nc_code(left),nc_code(right),opcode)) end
+    end end
+  end
+  def nc_product(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    nk_product_tail(source,nk_power(source,pos,env,table,depth),env,table,depth,1024)
+  end
+  def nc_sum(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    nk_sum_tail(source,nc_product(source,pos,env,table,depth),env,table,depth,1024)
+  end
+  def nc_sum_tail(source: bytes, left: bytes, env: bytes, table: bytes, depth: integer, budget: integer): bytes do
+    nk_join_tail(source,nk_sum_tail(source,left,env,table,depth,budget),env,table,depth,budget)
+  end
+  def nc_expression(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    if Enum.count(env) > ev_plain() do ev_expression(source,pos,env,table,depth) else nb_expression(source,pos,env,table,depth) end
+  end
+  def nc_comparison(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    left = nc_math(source,pos,env,table,depth)
+    nb_compare(source,left,env,table,depth)
+  end
+  def nc_math(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    plain = nf_pipes(source,nk_join_tail(source,nc_sum(source,pos,env,table,depth),env,table,depth,1024),env,table,depth,1024)
+    if nc_pos(plain) >= 0 do plain else nf_pipe_late(source,pos,env,table,depth) end
+  end
+
+  def nc_body(source: bytes, pos: integer, env: bytes, table: bytes, budget: integer): bytes do
+    nx_block(source,pos,env,table,0)
+  end
+  def nc_if_code(condition_code: bytes, yes: bytes, no: bytes, after: integer): bytes do
+    a = nc_code(yes)
+    b = nc_code(no)
+    kind = nx_join(yes,no)
+    if nt_tag(kind) < 0 do b[] else
+    jump_end = Enum.concat(b[233],nc_u32(Enum.count(b)))
+    nw_keep(nc_value(after,nc_join(vs_test(nc_code(condition_code),Enum.count(a)+5),Enum.concat(a,jump_end),b),kind),yes,no)
+    end
+  end
+  # An instruction that addresses frame slot: prefix is its three bytes before
+  # a one-byte offset from RBP. The first sixteen slots are the eight bytes
+  # each below RBP; later ones lie below the frame's two trace words.
+  def nc_slot(prefix: bytes, slot: integer): bytes do
+    if slot < 16 do Enum.concat(prefix,b[248-slot*8]) else
+      if slot < 255 do nc_join(nc_slice(prefix,0,2),b[Enum.at(prefix,2,0)+64],nq_rel(0-32-slot*8)) else
+        nc_join(Enum.concat(b[15,31,132,0],nc_u32(32+slot*8)),Enum.concat(nc_slice(prefix,0,2),b[Enum.at(prefix,2,0)+64]),nq_rel(0-32-slot*8))
+      end
+    end
+  end
+  # How far below RBP the code of a function reaches for a slot past the
+  # sixteenth: every such access is a 32-bit offset, looked for by its shape.
+  # A chance match only makes the frame larger.
+  def nc_peak(code: bytes, first: integer, stop: integer): integer do
+    left = if stop-first <= 1 do 0 else nc_peak(code,first,first+nc_half(stop-first)) end
+    right = if stop-first <= 1 do 0 else nc_peak(code,first+nc_half(stop-first),stop) end
+    if stop-first <= 0 do 0 else
+      if stop-first > 1 do if left > right do left else right end else
+        if Enum.at(code,first+4,0) != 255 do 0 else nc_peak_at(code,first,Enum.at(code,first,0),65536-nc_read(code,first+1)) end
+      end
+    end
+  end
+  # A slot from the 255th on is addressed behind an instruction that does
+  # nothing and holds how far below RBP it lies (nc_slot): no chance match
+  # makes a frame of that size.
+  def nc_peak_at(code: bytes, first: integer, shape: integer, reach: integer): integer do
+    near = if Enum.at(code,first+3,0) != 255 do 0 else if (shape-133)*(shape-141)*(shape-149)*(shape-181)*(shape-189) != 0 do 0 else if reach < 152 do 0 else if reach > 2064 do 0 else reach end end end end
+    if near > 0 do near else if first < 10 do 0 else
+      if Enum.at(code,first-10,0)*16777216+Enum.at(code,first-9,0)*65536+Enum.at(code,first-8,0)*256+Enum.at(code,first-7,0) != 253723648 do 0 else
+        if nc_long(code,first-6)+nc_long(code,first+1) != 4294967296 do 0 else nc_long(code,first-6) end
+      end
+    end end
+  end
+  def nc_store_params(count: integer, slot: integer): bytes do
+    if slot == count do b[] else
+      prefix = if slot == 0 do b[72,137,125] else
+        if slot == 1 do b[72,137,117] else
+          if slot == 2 do b[72,137,85] else
+            if slot == 3 do b[72,137,77] else
+              if slot == 4 do b[76,137,69] else b[76,137,77] end
+            end
+          end
+        end
+      end
+      # From the seventh on a value arrives on the stack, the last one lowest.
+      if slot >= 6 do nc_join(Enum.concat(b[72,139,133],nc_u32(16+(count-1-slot)*8)),nc_slot(b[72,137,69],slot),nc_store_params(count,slot+1)) else
+        Enum.concat(nc_slot(prefix,slot),nc_store_params(count,slot+1))
+      end
+    end
+  end
+  # Seven or more pushed values for a call: the first six go to their
+  # registers and all stay on the stack until nc_drop_args after the call.
+  def nc_load_args(count: integer): bytes do
+    first = nc_join(Enum.concat(b[72,139,188,36],nc_u32(count*8-8)),Enum.concat(b[72,139,180,36],nc_u32(count*8-16)),Enum.concat(b[72,139,148,36],nc_u32(count*8-24)))
+    nc_join(first,nc_join(Enum.concat(b[72,139,140,36],nc_u32(count*8-32)),Enum.concat(b[76,139,132,36],nc_u32(count*8-40)),Enum.concat(b[76,139,140,36],nc_u32(count*8-48))),b[])
+  end
+  def nc_drop_args(count: integer): bytes do Enum.concat(b[72,141,164,36],nc_u32(count*8)) end
+  # After count pushed arguments, the call: up to six leave the stack for
+  # their registers; more than six all stay on it until the call returns.
+  def nc_passed(count: integer, call: bytes): bytes do
+    if count > 6 do nc_join(nc_load_args(count),call,nc_drop_args(count)) else Enum.concat(nc_pop_args(count),call) end
+  end
+  def nc_function(source: bytes, table: bytes, id: integer): bytes do
+    nc_function_with(source,table,id,b[])
+  end
+  # extra: records the function's environment starts with after its
+  # parameters (nu_needs compiles a function with one to learn what it needs).
+  def nc_function_with(source: bytes, table: bytes, id: integer, extra: bytes): bytes do
+    # Two forms of a function may not declare the same parameter types.
+    if nj_twice(source,table,id,nj_first_form(source,table,id))+nu_stray(source,table,id) > 0 do b[] else
+      if nj_clausal(table,id) == 1 do nj_function(source,table,id,extra) else nc_function_plain(source,table,id,extra) end
+    end
+  end
+  def nc_function_plain(source: bytes, table: bytes, id: integer, extra: bytes): bytes do
+    count = nc_argc(table,id)
+    named = nc_env(source,nc_meta(table,id,6),nc_u16(id),count,table)
+    # Parameters that are patterns are matched before the body.
+    # A generic function keeps the comparators of its type variables after its
+    # parameters.
+    names = if Enum.count(named) == 0 do b[] else nu_signature(source,table,id) end
+    wide = nu_barring(nu_hidden(named,names,0),extra)
+    shaped = if Enum.count(wide) == 0 do b[] else np_params(source,nc_meta(table,id,6),wide,table,Enum.concat(nc_u24(0),nc_u24(count))) end
+    env = gm_params(source,table,np_env(shaped),count,Enum.concat(nc_u24(nc_meta(table,id,9)),nc_u24(nc_meta(table,id,12))))
+    if nc_pos(shaped) < 0 do b[] else
+      # A test or a setup block ends in whatever it ends in (native-testing.alc).
+      ours = tm_ours(source,nc_meta(table,id,0))
+      body = if ours > 0 do nc_body(source,nc_meta(table,id,9),env,table,16777216) else nn_returned(source,table,id,nc_body(source,nc_meta(table,id,9),nf_bodied(source,table,id,env),table,16777216)) end
+      if nc_pos(body) < 0 do b[] else
+        # main is a block of statements and returns 0 when it reaches its end; any
+        # other function ends in a value of its result type.
+        entry = if Enum.at(table,id*27+16,0) == 1 do 1 else 0 end
+        # A function says what it returns.
+        fits = if entry == 1 do 1-nx_pure(body) else if ours > 0 do 1-nw_marked(body) else if nj_result(table,id) == 0 do 0 else no_compatible(nc_return_kind(source,table,id),nc_kind(body)) end end end
+        if fits == 0 do b[] else
+          if nc_start(source,nc_pos(body)) != nc_meta(table,id,12) do b[] else
+            enter = tl_enter(source,table,id)
+            inside = nc_join(Enum.concat(Enum.concat(gm_frame(env,table,nc_code(body)),nc_store_params(count+nu_name_count(names,0),0)),enter),nc_join(Enum.concat(if Enum.count(np_tree(shaped)) == 0 do b[] else zf_cover_in(source,table,id,nc_meta(table,id,0)) end,np_tree(shaped)),nc_code(body),if ours > 0 do tm_tail(body) else b[] end),if entry == 1 do b[49,192,73,255,207,201,195] else tl_leave(source,table,id) end)
+            Enum.concat(nc_guard(inside),inside)
+          end
+        end
+      end
+    end
+  end
+
+  # Bundles: metadata length u16, one 32-bit function length each, then code.
+  # The bundle of a program's own functions (nc_build) has a 32-bit metadata
+  # length: 65536 records have 262144 bytes of lengths.
+  def nc_built_meta(bundle: bytes): bytes do
+    nc_slice(bundle,4,4+nc_long(bundle,0))
+  end
+  def nc_built_code(bundle: bytes): bytes do
+    nc_slice(bundle,4+nc_long(bundle,0),Enum.count(bundle))
+  end
+  def nc_bundle_meta(bundle: bytes): bytes do
+    nc_slice(bundle,2,2+nc_read(bundle,0))
+  end
+  def nc_bundle_code(bundle: bytes): bytes do
+    nc_slice(bundle,2+nc_read(bundle,0),Enum.count(bundle))
+  end
+  def nc_build(source: bytes, table: bytes, first: integer, stop: integer): bytes do
+    if first >= stop do b[] else
+      if stop-first == 1 do
+        # A module header occupies a table slot but has no code.
+        # A module header has no code; a struct or sum type has its equality function.
+        # A further clause is compiled with the first clause of its function.
+        code = if nj_silent(Enum.at(table,first*27+16,0)) == 1 do b[] else if Enum.at(table,first*27+16,0) >= 64 do nq_function(source,table,first) else nc_function(source,table,first) end end
+        if nj_silent(Enum.at(table,first*27+16,0)) == 1 do b[4,0,0,0,0,0,0,0] else
+          if Enum.count(code) == 0 do b[] else nc_join(nc_u32(4),nc_u32(Enum.count(code)),code) end
+        end
+      else
+        middle = first+nc_half(stop-first)
+        left = nc_build(source,table,first,middle)
+        if nc_pos(left) < 0 do b[] else
+          right = nc_build(source,table,middle,stop)
+          if nc_pos(right) < 0 do b[] else
+            meta = Enum.concat(nc_built_meta(left),nc_built_meta(right))
+            code = Enum.concat(nc_built_code(left),nc_built_code(right))
+            nc_join(nc_u32(Enum.count(meta)),meta,code)
+          end
+        end
+      end
+    end
+  end
+
+  def nc_zeros(count: integer): bytes do
+    if count <= 0 do b[] else
+      if count == 1 do b[0] else
+        half = nc_half(count)
+        Enum.concat(nc_zeros(half),nc_zeros(count-half))
+      end
+    end
+  end
+
+  # User functions across all modules. Table slots also hold module headers
+  # and shared runtimes. A record is named by a 16-bit number (the function of
+  # an environment, the module of a record), so tables stop at 65536 records;
+  # the runtimes take the slots after them, which call sites address with a
+  # 32-bit address.
+  def nc_function_limit(): integer do 65535 end
+  def nc_record_limit(): integer do 65536 end
+  def nc_slot_limit(): integer do 65541 end
+  # One eight-byte entry per slot; code follows the table directly.
+  def nc_addresses(lengths: bytes, id: integer, offset: integer): bytes do
+    nc_address_range(lengths,id,nc_units(Enum.count(lengths),4),offset)
+  end
+  def nc_address_range(lengths: bytes, first: integer, stop: integer, offset: integer): bytes do
+    if first >= stop do b[] else
+      if stop-first == 1 do Enum.concat(nc_u32(4194304+offset),b[0,0,0,0]) else
+        middle = first+nc_half(stop-first)
+        left = nc_address_range(lengths,first,middle,offset)
+        next = offset+nc_length_sum(lengths,first,middle)
+        Enum.concat(left,nc_address_range(lengths,middle,stop,next))
+      end
+    end
+  end
+  def nc_length_sum(lengths: bytes, first: integer, stop: integer): integer do
+    if first >= stop do 0 else
+      if stop-first == 1 do nc_long(lengths,first*4) else
+        middle = first+nc_half(stop-first)
+        nc_length_sum(lengths,first,middle)+nc_length_sum(lengths,middle,stop)
+      end
+    end
+  end
+
+  def nc_entry(id: integer): bytes do
+    check = b[72,61,255,0,0,0,118,12,191,70,0,0,0,184,60,0,0,0,15,5,72,137,199,184,60,0,0,0,15,5]
+    if nc_arm() == 1 do a_entry(Enum.concat(nc_call(id),check)) else nc_entry_x86(id,check) end
+  end
+  def nc_entry_x86(id: integer, check: bytes): bytes do
+    # R14 keeps the initial stack pointer (argc, argv, envp) for System.argv/get_env.
+    entry = nc_join(nc_join(b[73,137,230],Enum.concat(nc_arena_init(),nc_stack_init()),nc_call(id)),check,b[])
+    Enum.concat(entry,nc_zeros(1024-Enum.count(entry)))
+  end
+
+  def nc_header(size: integer): bytes do
+    top = nc_hi(nc_upper(size))
+    upper = nc_upper(size)-top*256
+    rest = size-nc_upper(size)*65536
+    high = nc_hi(rest)
+    low = rest-high*256
+    # The machine: 62 x86-64, 183 AArch64 (spec/arm64.md).
+    machine = if nc_arm() == 1 do 183 else 62 end
+    b[127,69,76,70,2,1,1,0,0,0,0,0,0,0,0,0,
+     2,0,machine,0,1,0,0,0,128,0,64,0,0,0,0,0,
+     64,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+     0,0,0,0,64,0,56,0,1,0,0,0,0,0,0,0,
+     1,0,0,0,5,0,0,0,0,0,0,0,0,0,0,0,
+     0,0,64,0,0,0,0,0,0,0,64,0,0,0,0,0,
+     low,high,upper,top,0,0,0,0,low,high,upper,top,0,0,0,0,
+     0,16,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+  end
+  def nc_native_index(source: bytes, table: bytes, first: integer, stop: integer): integer do
+    if first >= stop do -1 else
+      middle = first+nc_half(stop-first)
+      if nc_word(source,nc_meta(table,middle,0),b[110,97,116,105,118,101,95,99,111,109,112,105,108,101]) == 1 do middle else
+        left = nc_native_index(source,table,first,middle)
+        if left >= 0 do left else nc_native_index(source,table,middle+1,stop) end
+      end
+    end
+  end
+  # io: the table entry of a compiler entry's input and output on ARM64
+  # (nc_io_function), -1 for none.
+  def nc_choose_entry(source: bytes, table: bytes, io: integer): bytes do
+    index = nc_native_index(source,table,0,nc_records(Enum.count(table)))
+    if index < 0 do ac_entry(source,table,nc_main_index(table,0)) else
+      if Enum.at(table,index*27+16,0) != 0 do b[] else
+        if nt_tag(nc_return_kind(source,table,index)) != 1 do b[] else
+        if nc_argc(table,index) != 1 do b[] else
+          annotation = nc_parameter_type(source,nc_meta(table,index,6))
+          if nc_tag(annotation) != 1 do b[] else nc_entry_compiler(index,io) end
+        end end
+      end
+    end
+  end
+  # The most bytes a program may have, with the library it uses: a position
+  # is 24 bits, and 16777215 stands for none (mx_none), so 1 KiB is left
+  # between the last position and it.
+  def nc_limit(): integer do 16776191 end
+  def nc_compile(given: bytes): bytes do
+    if Enum.count(given) > nc_limit() do b[] else ac_compiled(given) end
+  end
+  # Macros, protocols and templates are rewritten (native-macros.alc), after
+  # the receive assertions (ac_receives), whose rewriting keeps every line:
+  # the places of the rewritten text are turned back to that text. The
+  # library is chosen from what is compiled, so a function only a macro's
+  # template or a function added by use mentions is there.
+  # A test file is rewritten first (native-testing.alc), and what that
+  # leaves is rewritten as any program: the places of the second text are
+  # turned back through the first.
+  def nc_rewritten(source: bytes): bytes do
+    tested = tm_prepare(source)
+    if Enum.count(tested) == 0 do b[] else if Enum.count(tested) == 1 do nc_rewritten_plain(source) else tm_then(tested) end end
+  end
+  def nc_rewritten_plain(source: bytes): bytes do
+    made = mx_prepare(source)
+    code = nc_slice(made,4,4+nc_cursor(made,1))
+    if Enum.count(made) == 0 do b[] else
+      if Enum.count(made) == 1 do nc_compile_with(source,ny_prelude(source),b[]) else nc_compile_with(code,ny_prelude(code),nc_slice(made,4+nc_cursor(made,1),Enum.count(made))) end
+    end
+  end
+  # A program at the source or function limit has no room for library
+  # functions it only seems to mention: it is compiled without them.
+  # tail: what a rewritten program ends in.
+  def nc_compile_with(given: bytes, library: bytes, tail: bytes): bytes do
+    image = nc_compile_all(nc_join(given,library,tail))
+    if Enum.count(image) > 0 do image else if Enum.count(library) == 0 do image else nc_compile_all(Enum.concat(given,tail)) end end
+  end
+  # source: the program and the library functions written in Alchem it uses.
+  def nc_compile_all(source: bytes): bytes do
+    if mx_stop(source) > nc_limit() do b[] else
+      listed = nc_module(source)
+      # A compiler entry is not traced.
+      table = if Enum.count(listed) == 0 do b[] else if nc_native_index(source,listed,0,nc_records(Enum.count(listed))) < 0 do zf_covered(source,jd_settle(source,listed)) else nz_off(listed) end end
+      if Enum.count(table) == 0 do b[] else
+        bundle = nc_build(source,table,0,nc_records(Enum.count(table)))
+        if nc_pos(bundle) < 0 do b[] else
+          # Shared runtime routines follow the user functions as extra table entries.
+          shared = zf_shared(nh_shared(ne_shared(na_shared(source,nc_records(Enum.count(table)),nz_blob(source,table)),source,nc_records(Enum.count(table))),source,nc_records(Enum.count(table))),table,nc_built_code(bundle))
+          # On ARM64 a compiler entry's input and output are a function of
+          # their own after the shared ones: translated they outgrow the entry.
+          io = if nc_arm() == 1 do nc_io_function(source,table) else b[] end
+          plain_meta = nc_join(nc_built_meta(bundle),nc_bundle_meta(shared),if Enum.count(io) == 0 do b[] else nc_u32(Enum.count(io)) end)
+          plain_code = nc_join(nc_built_code(bundle),nc_bundle_code(shared),io)
+          # The ARM64 compiler translates every function (spec/arm64.md).
+          arm = if nc_arm() == 1 do xa_bundle(plain_meta,plain_code,0,nc_units(Enum.count(plain_meta),4),0) else b[] end
+          meta = if nc_arm() == 1 do nc_slice(arm,4,4+nc_long(arm,0)) else plain_meta end
+          translated = if nc_arm() == 1 do nc_slice(arm,4+nc_long(arm,0),Enum.count(arm)) else plain_code end
+          # Coverage counts calls by where they stand: on ARM64 that is known now.
+          code = if nc_arm() == 1 do (if Enum.at(table,15,0) == 2 do zf_cover_arm_points(translated,meta,table) else translated end) else plain_code end
+          # The image's size and every address in it are 32-bit fields, and a
+          # jump reaches 2 GiB: 1 GiB of code keeps the image well within both.
+          if Enum.count(code) > 1073741824 do b[] else
+            entry = nc_choose_entry(source,table,if Enum.count(io) == 0 do -1 else nc_units(Enum.count(plain_meta),4)-1 end)
+            if Enum.count(entry) == 0 do b[] else
+              image = gm_image(entry,nc_addresses(meta,0,1152+nc_units(Enum.count(meta),4)*8),code)
+              Enum.concat(nc_header(128+Enum.count(image)),image)
+            end
+          end
+        end
+      end
+    end
+  end
+
+  # Native smoke test; bootstrap uses nc_compile through the native IO bridge.
+  def main() do System.halt(0) end
+end

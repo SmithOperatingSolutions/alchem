@@ -1,0 +1,60 @@
+{
+  "version": 3,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "const.i64",
+              "dest": "a",
+              "value": -9223372036854775808
+            },
+            {
+              "op": "const.i64",
+              "dest": "b",
+              "value": 9223372036854775807
+            },
+            {
+              "op": "const.i64",
+              "dest": "yes",
+              "value": 42
+            },
+            {
+              "op": "const.i64",
+              "dest": "no",
+              "value": 7
+            },
+            {
+              "op": "lt.i64",
+              "dest": "c",
+              "lhs": "a",
+              "rhs": "b"
+            },
+            {
+              "op": "if.i64",
+              "dest": "r",
+              "cond": "c",
+              "then": {
+                "instructions": [],
+                "value": "yes"
+              },
+              "else": {
+                "instructions": [],
+                "value": "no"
+              }
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    }
+  ]
+}

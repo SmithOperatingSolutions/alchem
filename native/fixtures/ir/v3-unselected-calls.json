@@ -1,0 +1,1428 @@
+{
+  "version": 3,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "const.i64",
+              "dest": "a",
+              "value": 1
+            },
+            {
+              "op": "const.i64",
+              "dest": "b",
+              "value": 2
+            },
+            {
+              "op": "const.i64",
+              "dest": "yes",
+              "value": 42
+            },
+            {
+              "op": "const.i64",
+              "dest": "no",
+              "value": 7
+            },
+            {
+              "op": "lt.i64",
+              "dest": "c",
+              "lhs": "a",
+              "rhs": "b"
+            },
+            {
+              "op": "if.i64",
+              "dest": "r",
+              "cond": "c",
+              "then": {
+                "instructions": [
+                  {
+                    "op": "const.i64",
+                    "dest": "private_yes",
+                    "value": 42
+                  }
+                ],
+                "value": "private_yes"
+              },
+              "else": {
+                "instructions": [
+                  {
+                    "op": "call",
+                    "dest": "expensive",
+                    "callee": "f0",
+                    "args": [
+                      "a"
+                    ]
+                  }
+                ],
+                "value": "expensive"
+              }
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f0",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f1",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f1",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f1",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f2",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f2",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f2",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f3",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f3",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f3",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f4",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f4",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f4",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f5",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f5",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f5",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f6",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f6",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f6",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f7",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f7",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f7",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f8",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f8",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f8",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f9",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f9",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f9",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f10",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f10",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f10",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f11",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f11",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f11",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f12",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f12",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f12",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f13",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f13",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f13",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f14",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f14",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f14",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f15",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f15",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f15",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f16",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f16",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f16",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f17",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f17",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f17",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f18",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f18",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f18",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f19",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f19",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f19",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f20",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f20",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f20",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f21",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f21",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f21",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f22",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f22",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f22",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f23",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f23",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f23",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f24",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f24",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f24",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f25",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f25",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f25",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f26",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f26",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f26",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f27",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f27",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f27",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f28",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f28",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f28",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f29",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f29",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f29",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f30",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f30",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f30",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "first",
+              "callee": "f31",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "second",
+              "callee": "f31",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "add.i64",
+              "dest": "sum",
+              "lhs": "first",
+              "rhs": "second"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "sum"
+          }
+        }
+      ]
+    },
+    {
+      "name": "f31",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [],
+          "terminator": {
+            "op": "ret",
+            "value": "x"
+          }
+        }
+      ]
+    }
+  ]
+}

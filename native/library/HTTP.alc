@@ -1,0 +1,2383 @@
+# HTTP: a client and a server for HTTP/1.1 over TCP, written to answer and
+# ask as Go's net/http does for the pinned runtime (compiler/library.go.txt,
+# "---- HTTP ----"; spec/alchem-network.md says what is not built).
+#
+# A server is a block: 0 its listening socket, 8 the process that stands
+# for it (stopping it stops the server), 16 its address, 24 the handler, 32
+# read_timeout, 40 write_timeout, 48 idle_timeout, 56 header_timeout, 64
+# max_header_bytes, 72 max_body_bytes, 80 keep_alive, 88 compress, 96 set
+# once it has stopped, 104 its connections (each cell: the socket, the
+# process that serves it).
+#
+# An exchange is a request being answered: 0 the server, 8 the connection,
+# 16 the process that runs the handler, 24 the answer (0: none yet), 32
+# where it stands (0 the handler runs, 1 it answered, 2 it is writing a
+# body in pieces, 3 it has written one, 4 the connection was taken over),
+# 40 the process that serves the connection, 48 the request was HEAD, 56 it
+# was HTTP/1.0, 64 the connection closes after the answer, 72 the request
+# takes gzip, 80 the request, 88 the head of a body in pieces was written,
+# 96 when a write must be done by (0: no limit), 104 its body goes out in
+# chunks. g + 312 holds a cell for each handler that runs: its process and
+# its exchange.
+#: struct http_server also HTTP WebSocket TCP
+  struct http_server do
+    at: integer
+    k: option[fn[integer, integer]]
+  end
+  struct HTTP.Request do
+    method: string
+    path: string
+    query: string
+    headers: list[tuple[string, string]]
+    body: string
+  end
+  struct HTTP.Response do
+    status: integer
+    headers: list[tuple[string, string]]
+    body: string
+    chunks: option[stream[string]] = none
+  end
+#: text/2
+  def text(status: integer, body: string): HTTP.Response do
+    %HTTP.Response{status: status, headers: [{"content-type", "text/plain; charset=utf-8"}], body: body, chunks: none}
+  end
+# The body is the value as JSON.encode writes it (library/JSON.alc).
+#: json/2 needs JSON.encode!/2
+  def json(status: integer, body: JSON): HTTP.Response do
+    %HTTP.Response{status: status, headers: [{"content-type", "application/json"}], body: JSON.encode!(JSON.__word(body), JSON.__kind(body)), chunks: none}
+  end
+#: chunked/3
+  def chunked(status: integer, headers: list[tuple[string, string]], chunks: stream[string]): HTTP.Response do
+    %HTTP.Response{status: status, headers: headers, body: "", chunks: some(chunks)}
+  end
+#: read/1 needs Enum.join/2
+  def read(r: HTTP.Response): string do
+    case r.chunks do
+      none -> r.body
+      some(s) -> r.body <> Enum.join(Stream.__list(s), "")
+    end
+  end
+#: header/2 needs TCP._lower/1
+  def header(h: list[tuple[string, string]], name: string): option[string] do
+    w = TCP._lower(name)
+    case h do
+      [] -> none
+      [{k, v} | rest] -> if TCP._lower(k) == w do some(v) else HTTP.header(rest, name) end
+    end
+  end
+# Whether a name is the word w, which is in lower case, in any case.
+#: _is/2 needs _is1/3
+  def _is(k: string, w: string): boolean do
+    n = byte_size(k)
+    if n != byte_size(w) do false else HTTP._is1(Sys.addr(k), Sys.addr(w), n) == 1 end
+  end
+#: _is1/3
+  def _is1(p: integer, q: integer, n: integer): integer do
+    if n == 0 do 1 else
+      c = Sys.byte(p)
+      if (if c >= 65 and c <= 90 do c + 32 else c end) != Sys.byte(q) do 0 else HTTP._is1(p + 1, q + 1, n - 1) end
+    end
+  end
+# The first value of the header whose name in lower case is w, "" for none.
+#: _get/2 needs _is/2
+  def _get(h: list[tuple[string, string]], w: string): string do
+    case h do
+      [] -> ""
+      [{k, v} | rest] -> if HTTP._is(k, w) do v else HTTP._get(rest, w) end
+    end
+  end
+#: _has/2 needs _is/2
+  def _has(h: list[tuple[string, string]], w: string): boolean do
+    case h do
+      [] -> false
+      [{k, v} | rest] -> if HTTP._is(k, w) do true else HTTP._has(rest, w) end
+    end
+  end
+# The text without the blanks at its ends.
+#: _trim/1 needs _blanks/3
+  def _trim(t: string): string do
+    n = byte_size(t)
+    p = Sys.addr(t)
+    a = HTTP._blanks(p, n, 1)
+    b = if a == n do 0 else HTTP._blanks(p + n - 1, n - a, -1) end
+    if a + b == 0 do t else Sys.text(p + a, n - a - b) end
+  end
+#: _blanks/3
+  def _blanks(p: integer, n: integer, step: integer): integer do
+    if n == 0 do 0 else
+      c = Sys.byte(p)
+      if c == 32 or c == 9 or c == 13 or c == 10 do 1 + HTTP._blanks(p + step, n - 1, step) else 0 end
+    end
+  end
+# The parts of a text around each byte c.
+#: _parts/2 needs TCP._sub/3
+  def _parts(t: string, c: integer): list[string] do
+    n = byte_size(t)
+    i = Sys.find(Sys.addr(t), n, c)
+    if i < 0 do [t] else [TCP._sub(t, 0, i)] ++ HTTP._parts(TCP._sub(t, i + 1, n - i - 1), c) end
+  end
+# 1 for a byte a header's name or a method may hold.
+#: _token/1
+  def _token(c: integer): integer do
+    if c >= 48 and c <= 57 or c >= 65 and c <= 90 or c >= 97 and c <= 122 do 1 else
+      if c == 33 or c >= 35 and c <= 39 or c == 42 or c == 43 or c == 45 or c == 46 or c == 94 or c == 95 or c == 96 or c == 124 or c == 126 do 1 else 0 end
+    end
+  end
+#: _tokens/2 needs _token/1
+  def _tokens(p: integer, n: integer): integer do
+    if n == 0 do 1 else if HTTP._token(Sys.byte(p)) == 0 do 0 else HTTP._tokens(p + 1, n - 1) end end
+  end
+# A header's name as Go writes it: Content-Type. A name that is no token
+# stays as it is.
+#: _canon/1 needs TCP._s/0 _canon1/4 _tokens/2
+  def _canon(k: string): string do
+    n = byte_size(k)
+    if n == 0 or n > 4096 or HTTP._tokens(Sys.addr(k), n) == 0 do k else
+      s = TCP._s() + 4096
+      HTTP._canon1(Sys.addr(k), s, n, 1)
+      Sys.text(s, n)
+    end
+  end
+#: _canon1/4
+  def _canon1(p: integer, q: integer, n: integer, up: integer): integer do
+    if n == 0 do 0 else
+      c = Sys.byte(p)
+      d = if up == 1 and c >= 97 and c <= 122 do c - 32 else if up == 0 and c >= 65 and c <= 90 do c + 32 else c end end
+      Sys.poke(q, d)
+      HTTP._canon1(p + 1, q + 1, n - 1, if c == 45 do 1 else 0 end)
+    end
+  end
+# Headers in the order of their names, those of one name as they came.
+#: _sorted/1 needs _into/2
+  def _sorted(h: list[tuple[string, string]]): list[tuple[string, string]] do
+    start: list[tuple[string, string]] = []
+    Enum.reduce(h, start, fn x, acc -> HTTP._into(acc, x) end)
+  end
+#: _into/2
+  def _into(l: list[tuple[string, string]], x: tuple[string, string]): list[tuple[string, string]] do
+    case l do
+      [] -> [x]
+      [y | rest] -> if elem(x, 0) < elem(y, 0) do [x] ++ l else [y] ++ HTTP._into(rest, x) end
+    end
+  end
+# A number in decimal digits alone: -1 for anything else.
+#: _num/1 needs TCP._digits/2 TCP._pnum/3
+  def _num(t: string): integer do
+    n = byte_size(t)
+    if n == 0 or n > 18 or TCP._digits(Sys.addr(t), n) != n do -1 else TCP._pnum(Sys.addr(t), n, 0) end
+  end
+# What Go's http.StatusText gives.
+#: _reason/1 needs Process._g/0 _reason1/3 _reasons/0
+  def _reason(c: integer): string do
+    g = Process._g()
+    if Sys.peek(g + 360) == 0 do Sys.poke(g + 360, Process.__word(HTTP._reasons())) end
+    known: string = Process.__any(Sys.peek(g + 360))
+    HTTP._reason1(Sys.addr(known), byte_size(known), c)
+  end
+# The table is made once: a text that is written in a program is made anew
+# each time it is come to.
+#: _reasons/0
+  def _reasons(): string do
+    "100Continue;101Switching Protocols;102Processing;103Early Hints;200OK;201Created;202Accepted;203Non-Authoritative Information;204No Content;205Reset Content;206Partial Content;207Multi-Status;208Already Reported;226IM Used;300Multiple Choices;301Moved Permanently;302Found;303See Other;304Not Modified;305Use Proxy;307Temporary Redirect;308Permanent Redirect;400Bad Request;401Unauthorized;402Payment Required;403Forbidden;404Not Found;405Method Not Allowed;406Not Acceptable;407Proxy Authentication Required;408Request Timeout;409Conflict;410Gone;411Length Required;412Precondition Failed;413Request Entity Too Large;414Request URI Too Long;415Unsupported Media Type;416Requested Range Not Satisfiable;417Expectation Failed;418I'm a teapot;421Misdirected Request;422Unprocessable Entity;423Locked;424Failed Dependency;425Too Early;426Upgrade Required;428Precondition Required;429Too Many Requests;431Request Header Fields Too Large;451Unavailable For Legal Reasons;500Internal Server Error;501Not Implemented;502Bad Gateway;503Service Unavailable;504Gateway Timeout;505HTTP Version Not Supported;506Variant Also Negotiates;507Insufficient Storage;508Loop Detected;510Not Extended;511Network Authentication Required;"
+  end
+#: _reason1/3
+  def _reason1(p: integer, n: integer, c: integer): string do
+    if n < 4 do "" else
+      e = Sys.find(p, n, 59)
+      if (Sys.byte(p) - 48) * 100 + (Sys.byte(p + 1) - 48) * 10 + Sys.byte(p + 2) - 48 == c do Sys.text(p + 3, e - 3) else HTTP._reason1(p + e + 1, n - e - 1, c) end
+    end
+  end
+# The time now as a Date header has it: Mon, 02 Jan 2006 15:04:05 GMT.
+#: _date/1 needs _date1/1
+  def _date(g: integer): string do
+    Sys.call(228, 0, g + 200)
+    t = Sys.peek(g + 200)
+    if t == Sys.peek(g + 344) do Process.__any(Sys.peek(g + 352)) else
+      Sys.poke(g + 344, t)
+      made = HTTP._date1(t)
+      Sys.poke(g + 352, Process.__word(made))
+      made
+    end
+  end
+#: _date1/1
+  def _date1(t: integer): string do
+    days = div(t, 86400)
+    left = rem(t, 86400)
+    z = days + 719468
+    era = div(z, 146097)
+    doe = z - era * 146097
+    yoe = div(doe - div(doe, 1460) + div(doe, 36524) - div(doe, 146096), 365)
+    doy = doe - (365 * yoe + div(yoe, 4) - div(yoe, 100))
+    mp = div(5 * doy + 2, 153)
+    d = doy - div(153 * mp + 2, 5) + 1
+    m = if mp < 10 do mp + 3 else mp - 9 end
+    y = yoe + era * 400 + (if m <= 2 do 1 else 0 end)
+    two = fn(v: integer): string do if v < 10 do "0#{v}" else "#{v}" end end
+    Sys.text(Sys.addr("ThuFriSatSunMonTueWed") + 3 * rem(days, 7), 3) <> ", " <> two(d) <> " " <> Sys.text(Sys.addr("JanFebMarAprMayJunJulAugSepOctNovDec") + 3 * (m - 1), 3) <> " #{y} " <> two(div(left, 3600)) <> ":" <> two(rem(div(left, 60), 60)) <> ":" <> two(rem(left, 60)) <> " GMT"
+  end
+# net/url's unescape of a path: "" with 0 when an escape is malformed.
+#: _unescape/1 needs TCP._atonv/4 TCP._s/0 TCP._sub/3
+  def _unescape(t: string): tuple[string, integer] do
+    n = byte_size(t)
+    i = Sys.find(Sys.addr(t), n, 37)
+    if i < 0 do {t, 1} else
+      {d, v} = if i + 2 < n + 0 and i + 3 <= n do TCP._atonv(Sys.addr(t) + i + 1, 2, 16, {0, 0}) else {0, 0} end
+      if d != 2 do {"", 0} else
+        {rest, fine} = HTTP._unescape(TCP._sub(t, i + 3, n - i - 3))
+        s = TCP._s() + 256
+        Sys.poke(s, v)
+        {TCP._sub(t, 0, i) <> Sys.text(s, 1) <> rest, fine}
+      end
+    end
+  end
+# HTTP.match and HTTP.route: the parameters a path gives a pattern.
+#: _path/2 needs _parts/2 _segments/5 _slashless/1
+  def _path(pattern: string, path: string): tuple[map[string, string], boolean] do
+    want = HTTP._parts(HTTP._slashless(pattern), 47)
+    got = HTTP._parts(HTTP._slashless(path), 47)
+    start: map[string, string] = %{}
+    HTTP._segments(want, got, 0, start, length(want) == length(got))
+  end
+#: _slashless/1 needs _slashes/3
+  def _slashless(t: string): string do
+    n = byte_size(t)
+    p = Sys.addr(t)
+    a = HTTP._slashes(p, n, 1)
+    b = if a == n do 0 else HTTP._slashes(p + n - 1, n - a, -1) end
+    Sys.text(p + a, n - a - b)
+  end
+#: _slashes/3
+  def _slashes(p: integer, n: integer, step: integer): integer do
+    if n == 0 do 0 else if Sys.byte(p) == 47 do 1 + HTTP._slashes(p + step, n - 1, step) else 0 end end
+  end
+#: _segments/5 needs Enum.at/3 Enum.drop/2 Enum.join/2 TCP._sub/3 _unescape/1
+  def _segments(want: list[string], got: list[string], i: integer, params: map[string, string], same: boolean): tuple[map[string, string], boolean] do
+    case want do
+      [] -> {params, same}
+      [w | rest] ->
+        n = byte_size(w)
+        c = if n == 0 do 0 else Sys.byte(Sys.addr(w)) end
+        if c == 42 do {Map.put(params, TCP._sub(w, 1, n - 1), Enum.join(Enum.drop(got, if i < length(got) do i else length(got) end), "/")), true} else
+          if i >= length(got) do {params, false} else
+            here = Enum.at(got, i, "")
+            if c == 58 do
+              {text, fine} = HTTP._unescape(here)
+              if fine == 0 do {params, false} else HTTP._segments(rest, got, i + 1, Map.put(params, TCP._sub(w, 1, n - 1), text), same) end
+            else
+              if w != here do {params, false} else HTTP._segments(rest, got, i + 1, params, same) end
+            end
+          end
+        end
+    end
+  end
+#: match/3 needs TCP._lower/1 _path/2
+  def match(r: HTTP.Request, method: string, pattern: string): option[map[string, string]] do
+    if method != "*" and TCP._lower(method) != TCP._lower(r.method) do none else
+      {params, fits} = HTTP._path(pattern, r.path)
+      if fits do some(params) else none end
+    end
+  end
+#: route/2 needs _routes/3
+  def route(r: HTTP.Request, routes: list[tuple[string, string, fn[HTTP.Request, map[string, string], HTTP.Response]]]): HTTP.Response do
+    HTTP._routes(r, routes, [])
+  end
+#: _routes/3 needs Enum.join/2 TCP._lower/1 _path/2 text/2
+  def _routes(r: HTTP.Request, routes: list[tuple[string, string, fn[HTTP.Request, map[string, string], HTTP.Response]]], allowed: list[string]): HTTP.Response do
+    case routes do
+      [] ->
+        if allowed == [] do HTTP.text(404, "not found") else
+          %HTTP.Response{status: 405, headers: [{"content-type", "text/plain; charset=utf-8"}, {"allow", Enum.join(allowed, ", ")}], body: "method not allowed", chunks: none}
+        end
+      [{method, pattern, handler} | rest] ->
+        {params, fits} = HTTP._path(pattern, r.path)
+        if not fits do HTTP._routes(r, rest, allowed) else
+          if method == "*" or TCP._lower(method) == TCP._lower(r.method) do handler(r, params) else HTTP._routes(r, rest, allowed ++ [String.upcase(method)]) end
+        end
+    end
+  end
+# ---- The server ----
+# A line of a message's head without its end, its bytes counted against
+# the room left at cb + 128's limit: "" with the reason at cb + 120 when it
+# did not come ("long": the head is larger than limit bytes).
+#: _hline/4 needs TCP._at/1 TCP._fill/4 TCP._move/2 TCP._taken/1 TCP._why/2
+  def _hline(g: integer, cb: integer, d: integer, limit: integer): string do
+    have = TCP._fill(g, cb, d, 4096)
+    if have == 0 do "" else
+      i = Sys.find(TCP._at(cb), have, 10)
+      if i >= 0 do
+        TCP._move(cb, i + 1)
+        t = TCP._taken(cb)
+        n = byte_size(t)
+        if n > limit do TCP._why(cb, "long") else Sys.text(Sys.addr(t), if n >= 2 and Sys.byte(Sys.addr(t) + n - 2) == 13 do n - 2 else n - 1 end) end
+      else
+        TCP._move(cb, have)
+        if Sys.peek(cb + 128) > limit do
+          TCP._taken(cb)
+          TCP._why(cb, "long")
+        else HTTP._hline(g, cb, d, limit) end
+      end
+    end
+  end
+# The lines of a head up to its empty line; [] with the reason at cb + 120.
+#: _hlines/5 needs _hline/4
+  def _hlines(g: integer, cb: integer, d: integer, limit: integer, got: list[string]): list[string] do
+    Sys.poke(cb + 120, 0)
+    line = HTTP._hline(g, cb, d, limit)
+    if Sys.peek(cb + 120) != 0 do [] else
+      if line == "" and got != [] do got else
+        if line == "" do [""] else HTTP._hlines(g, cb, d, limit - byte_size(line) - 2, got ++ [line]) end
+      end
+    end
+  end
+# The header lines of a head as names and values, a line that begins with
+# a blank going on the one before: the status (0 fine, 400 malformed) and
+# the headers with their names as Go writes them.
+#: _fields/2 needs Enum.take/2 List.last/2 TCP._sub/3 _canon/1 _keyok/2 _trim/1 _valbytes/2
+  def _fields(lines: list[string], got: list[tuple[string, string]]): tuple[integer, list[tuple[string, string]]] do
+    case lines do
+      [] -> {0, got}
+      [line | rest] ->
+        n = byte_size(line)
+        p = Sys.addr(line)
+        c = if n == 0 do 0 else Sys.byte(p) end
+        if c == 32 or c == 9 do
+          if got == [] do {400, []} else
+            {k, v} = List.last(got, {"", ""})
+            more = HTTP._trim(line)
+            HTTP._fields(rest, Enum.take(got, length(got) - 1) ++ [{k, if v == "" do more else if more == "" do v else v <> " " <> more end end}])
+          end
+        else
+          i = Sys.find(p, n, 58)
+          if i <= 0 do {400, []} else
+            k = TCP._sub(line, 0, i)
+            if HTTP._keyok(p, i) == 0 or HTTP._valbytes(p + i + 1, n - i - 1) == 0 do {400, []} else HTTP._fields(rest, got ++ [{HTTP._canon(k), HTTP._trim(TCP._sub(line, i + 1, n - i - 1))}]) end
+          end
+        end
+    end
+  end
+# A header's name may hold the bytes of a token, and blanks (which make it
+# an invalid name later, not a malformed line).
+#: _keyok/2 needs _token/1
+  def _keyok(p: integer, n: integer): integer do
+    if n == 0 do 1 else
+      c = Sys.byte(p)
+      if c != 32 and HTTP._token(c) == 0 do 0 else HTTP._keyok(p + 1, n - 1) end
+    end
+  end
+# 1 when a header's line holds no byte below a blank but a tab, which
+# makes the line malformed.
+#: _valbytes/2
+  def _valbytes(p: integer, n: integer): integer do
+    if n == 0 do 1 else
+      c = Sys.byte(p)
+      if c < 32 and c != 9 do 0 else HTTP._valbytes(p + 1, n - 1) end
+    end
+  end
+# 1 when the value of a header holds no control byte but a tab.
+#: _valok/2
+  def _valok(p: integer, n: integer): integer do
+    if n == 0 do 1 else
+      c = Sys.byte(p)
+      if c < 32 and c != 9 or c == 127 do 0 else HTTP._valok(p + 1, n - 1) end
+    end
+  end
+# 1 when a comma-separated header holds the word w (in lower case).
+#: _holds/3 needs Enum.any?/2 _is/2 _parts/2 _trim/1
+  def _holds(h: list[tuple[string, string]], name: string, w: string): boolean do
+    case h do
+      [] -> false
+      [{k, v} | rest] ->
+        if HTTP._is(k, name) and Enum.any?(HTTP._parts(v, 44), fn x -> HTTP._is(HTTP._trim(x), w) end) do true else HTTP._holds(rest, name, w) end
+    end
+  end
+# The first line of a request: 0 and the method, the target and the minor
+# version, or the status that refuses it and what is said with it.
+#: _reqline/1 needs TCP._sub/3 _tokens/2
+  def _reqline(line: string): tuple[integer, string, string, integer] do
+    n = byte_size(line)
+    p = Sys.addr(line)
+    a = Sys.find(p, n, 32)
+    b = if a < 0 do -1 else Sys.find(p + a + 1, n - a - 1, 32) end
+    if a <= 0 or b < 0 do {400, "", "", 0} else
+      method = TCP._sub(line, 0, a)
+      target = TCP._sub(line, a + 1, b)
+      proto = TCP._sub(line, a + b + 2, n - a - b - 2)
+      q = Sys.addr(proto)
+      shaped = byte_size(proto) == 8 and TCP._sub(proto, 0, 5) == "HTTP/" and Sys.byte(q + 6) == 46 and Sys.byte(q + 5) >= 48 and Sys.byte(q + 5) <= 57 and Sys.byte(q + 7) >= 48 and Sys.byte(q + 7) <= 57
+      if not shaped or HTTP._tokens(Sys.addr(method), a) == 0 do {400, "", "", 0} else
+        if Sys.byte(q + 5) != 49 do {505, ": unsupported protocol version", "", 0} else {0, method, target, Sys.byte(q + 7) - 48} end
+      end
+    end
+  end
+# The target of a request as net/url reads it: whether it is one, its
+# path, its query and the host it names ("" for none).
+#: _target/2 needs TCP._sub/3 _unescape/1 _valok/2
+  def _target(method: string, t: string): tuple[boolean, string, string, string] do
+    n = byte_size(t)
+    p = Sys.addr(t)
+    c = if n == 0 do 0 else Sys.byte(p) end
+    if n == 0 or HTTP._valok(p, n) == 0 or Sys.find(p, n, 9) >= 0 do {false, "", "", ""} else
+      if t == "*" do {true, "*", "", ""} else
+        if c == 47 do
+          q = Sys.find(p, n, 63)
+          {path, fine} = HTTP._unescape(if q < 0 do t else TCP._sub(t, 0, q) end)
+          {fine == 1, path, if q < 0 do "" else TCP._sub(t, q + 1, n - q - 1) end, ""}
+        else
+          i = Sys.find(p, n, 58)
+          if i <= 0 or i + 2 >= n or Sys.byte(p + i + 1) != 47 or Sys.byte(p + i + 2) != 47 do
+            if method == "CONNECT" do {true, "", "", t} else {false, "", "", ""} end
+          else
+            rest = TCP._sub(t, i + 3, n - i - 3)
+            m = byte_size(rest)
+            s = Sys.find(Sys.addr(rest), m, 47)
+            q = Sys.find(Sys.addr(rest), m, 63)
+            e = if s < 0 or q >= 0 and q < s do if q < 0 do m else q end else s end
+            {ok, path, query, _} = if e == m do {true, "", "", ""} else HTTP._target(method, if Sys.byte(Sys.addr(rest) + e) == 63 do "/" <> TCP._sub(rest, e, m - e) else TCP._sub(rest, e, m - e) end) end
+            {ok, if e < m and Sys.byte(Sys.addr(rest) + e) == 63 do "" else path end, query, TCP._sub(rest, 0, e)}
+          end
+        end
+      end
+    end
+  end
+# A refusal Go's server writes by itself, with nothing of the handler's.
+#: _refuse/5 needs TCP._write/5 _reason/1
+  def _refuse(g: integer, cb: integer, code: integer, more: string, body: string): integer do
+    said = "#{code} " <> HTTP._reason(code) <> more
+    out = "HTTP/1.1 " <> said <> "\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\n" <> (if body == "" do said else body end)
+    TCP._write(g, cb, Sys.addr(out), byte_size(out), 0)
+    0
+  end
+# The body of a request sent in chunks, up to limit bytes: its pieces, or
+# the reason at cb + 120 ("bad": it is malformed; "large": it is longer).
+#: _chunks/6 needs TCP._atonv/4 TCP._exact/5 TCP._why/2 _hline/4 _trailers/3 _trim/1
+  def _chunks(g: integer, cb: integer, d: integer, limit: integer, got: list[string], size: integer): list[string] do
+    Sys.poke(cb + 120, 0)
+    line = HTTP._hline(g, cb, d, 4096)
+    if Sys.peek(cb + 120) != 0 do [] else
+      semi = Sys.find(Sys.addr(line), byte_size(line), 59)
+      digits = if semi < 0 do byte_size(HTTP._trim(line)) else semi end
+      {used, n} = TCP._atonv(Sys.addr(line), digits, 16, {0, 0})
+      if used == 0 or used != digits or n < 0 do
+        TCP._why(cb, "bad")
+        []
+      else
+        if n == 0 do
+          HTTP._trailers(g, cb, d)
+          got
+        else
+          if size + n > limit do
+            TCP._why(cb, "large")
+            []
+          else
+            piece = TCP._exact(g, cb, d, n, 0)
+            ends = if Sys.peek(cb + 120) != 0 do "" else HTTP._hline(g, cb, d, 16) end
+            if Sys.peek(cb + 120) != 0 do [] else
+              if ends != "" do
+                TCP._why(cb, "bad")
+                []
+              else HTTP._chunks(g, cb, d, limit, got ++ [piece], size + n) end
+            end
+          end
+        end
+      end
+    end
+  end
+# What follows the last chunk, to the empty line.
+#: _trailers/3 needs _hline/4
+  def _trailers(g: integer, cb: integer, d: integer): integer do
+    line = HTTP._hline(g, cb, d, 65536)
+    if Sys.peek(cb + 120) != 0 or line == "" do 0 else HTTP._trailers(g, cb, d) end
+  end
+# Whether a status may have a body.
+#: _bodied/1
+  def _bodied(code: integer): boolean do
+    not (code >= 100 and code <= 199 or code == 204 or code == 304)
+  end
+# net/http's DetectContentType of the first bytes of a body.
+#: _sniff/1 needs Enum.any?/2 Process._g/0 TCP._lower/1 TCP._sub/3 _mp4/2 _sigs/0 _sniffs/2 _texty/2 _whites/2
+  def _sniff(body: string): string do
+    n = if byte_size(body) > 512 do 512 else byte_size(body) end
+    p = Sys.addr(body)
+    w = HTTP._whites(p, n)
+    low = TCP._lower(Sys.text(p + w, if n - w > 16 do 16 else n - w end))
+    g = Process._g()
+    if Sys.peek(g + 368) == 0 do
+      Sys.poke(g + 368, Process.__word(["<!doctype html", "<html", "<head", "<script", "<iframe", "<h1", "<div", "<font", "<table", "<a", "<style", "<title", "<b", "<body", "<br", "<p", "<!--"]))
+      Sys.poke(g + 376, Process.__word(HTTP._sigs()))
+    end
+    tags: list[string] = Process.__any(Sys.peek(g + 368))
+    sigs: list[tuple[string, string]] = Process.__any(Sys.peek(g + 376))
+    html = Enum.any?(tags, fn t ->
+      k = byte_size(t)
+      byte_size(low) > k and TCP._sub(low, 0, k) == t and (Sys.byte(Sys.addr(low) + k) == 32 or Sys.byte(Sys.addr(low) + k) == 62)
+    end)
+    if html do "text/html; charset=utf-8" else
+      if byte_size(low) >= 5 and TCP._sub(low, 0, 5) == "<?xml" do "text/xml; charset=utf-8" else
+        found = HTTP._sniffs(Sys.text(p, n), sigs)
+        if found != "" do found else
+          if n >= 12 and Sys.text(p + 4, 4) == "ftyp" and rem(Sys.byte(p + 3), 4) == 0 and HTTP._mp4(p, n) do "video/mp4" else
+            if HTTP._texty(p + w, n - w) == 1 do "text/plain; charset=utf-8" else "application/octet-stream" end
+          end
+        end
+      end
+    end
+  end
+# What files of some kinds begin with (a ? stands for any byte).
+#: _sigs/0
+  def _sigs(): list[tuple[string, string]] do
+    [{"%PDF-", "application/pdf"}, {"%!PS-Adobe-", "application/postscript"}, {"\xFE\xFF", "text/plain; charset=utf-16be"}, {"\xFF\xFE", "text/plain; charset=utf-16le"}, {"\xEF\xBB\xBF", "text/plain; charset=utf-8"}, {"\x00\x00\x01\x00", "image/x-icon"}, {"\x00\x00\x02\x00", "image/x-icon"}, {"BM", "image/bmp"}, {"GIF87a", "image/gif"}, {"GIF89a", "image/gif"}, {"RIFF????WEBPVP", "image/webp"}, {"\x89PNG\x0D\x0A\x1A\x0A", "image/png"}, {"\xFF\xD8\xFF", "image/jpeg"}, {"FORM????AIFF", "audio/aiff"}, {"ID3", "audio/mpeg"}, {"OggS\x00", "application/ogg"}, {"MThd\x00\x00\x00\x06", "audio/midi"}, {"RIFF????AVI ", "video/avi"}, {"RIFF????WAVE", "audio/wave"}, {"\x1A\x45\xDF\xA3", "video/webm"}, {"\x00\x01\x00\x00", "font/ttf"}, {"OTTO", "font/otf"}, {"ttcf", "font/collection"}, {"wOFF", "font/woff"}, {"wOF2", "font/woff2"}, {"\x1F\x8B\x08", "application/x-gzip"}, {"PK\x03\x04", "application/zip"}, {"Rar!\x1A\x07\x00", "application/x-rar-compressed"}, {"Rar!\x1A\x07\x01\x00", "application/x-rar-compressed"}, {"\x00asm", "application/wasm"}]
+  end
+# The blanks a document may begin with.
+#: _whites/2
+  def _whites(p: integer, n: integer): integer do
+    if n == 0 do 0 else
+      c = Sys.byte(p)
+      if c == 9 or c == 10 or c == 12 or c == 13 or c == 32 do 1 + HTTP._whites(p + 1, n - 1) else 0 end
+    end
+  end
+#: _mp4/2 needs _mp4at/3
+  def _mp4(p: integer, n: integer): boolean do
+    size = Sys.byte(p) * 16777216 + Sys.byte(p + 1) * 65536 + Sys.byte(p + 2) * 256 + Sys.byte(p + 3)
+    if n < size or size < 12 do false else HTTP._mp4at(p, 8, size) end
+  end
+#: _mp4at/3
+  def _mp4at(p: integer, i: integer, size: integer): boolean do
+    if i + 3 > size do false else
+      if i != 12 and Sys.text(p + i, 3) == "mp4" do true else HTTP._mp4at(p, i + 4, size) end
+    end
+  end
+# The first signature a body begins with (a ? stands for any byte).
+#: _sniffs/2 needs _sig/3
+  def _sniffs(body: string, sigs: list[tuple[string, string]]): string do
+    case sigs do
+      [] -> ""
+      [{sig, kind} | rest] -> if byte_size(body) >= byte_size(sig) and HTTP._sig(Sys.addr(body), Sys.addr(sig), byte_size(sig)) == 1 do kind else HTTP._sniffs(body, rest) end
+    end
+  end
+#: _sig/3
+  def _sig(p: integer, q: integer, n: integer): integer do
+    if n == 0 do 1 else
+      c = Sys.byte(q)
+      if c != 63 and c != Sys.byte(p) do 0 else HTTP._sig(p + 1, q + 1, n - 1) end
+    end
+  end
+# 1 when no byte is one that text does not hold.
+#: _texty/2
+  def _texty(p: integer, n: integer): integer do
+    if n == 0 do 1 else
+      c = Sys.byte(p)
+      if c <= 8 or c == 11 or c >= 14 and c <= 26 or c >= 28 and c <= 31 do 0 else HTTP._texty(p + 1, n - 1) end
+    end
+  end
+# The values of the header whose canonical name is k.
+#: _values/2
+  def _values(h: list[tuple[string, string]], k: string): list[string] do
+    case h do
+      [] -> []
+      [{name, v} | rest] -> if name == k do [v] ++ HTTP._values(rest, k) else HTTP._values(rest, k) end
+    end
+  end
+#: _without/2 needs Enum.filter/2
+  def _without(h: list[tuple[string, string]], k: string): list[tuple[string, string]] do
+    Enum.filter(h, fn {name, v} -> name != k end)
+  end
+# 1 when a Host header holds only what a host may.
+#: _hostok/2
+  def _hostok(p: integer, n: integer): integer do
+    if n == 0 do 1 else
+      c = Sys.byte(p)
+      fine = c >= 48 and c <= 59 or c >= 65 and c <= 91 or c >= 97 and c <= 122 or c == 33 or c == 36 or c >= 37 and c <= 46 or c == 61 or c == 93 or c == 95 or c == 126
+      if fine do HTTP._hostok(p + 1, n - 1) else 0 end
+    end
+  end
+# The head of an answer, as Go's server decides it from the status, the
+# handler's headers h, the first bytes p of the body and whether the body
+# is whole with them (done 1). The exchange learns whether the body goes
+# out in chunks and whether the connection closes after it.
+#: _whead/6 needs Enum.filter/2 Enum.flat_map/2 Enum.join/2 Enum.map/2 _bodied/1 _canon/1 _date/1 _flat/1 _get/2 _has/2 _holds/3 _num/1 _reason/1 _sniff/1 _sorted/1 _tokens/2 _trim/1
+  def _whead(g: integer, x: integer, status: integer, h0: list[tuple[string, string]], p: string, done: integer): string do
+    hs = Sys.peek(x)
+    code = if status < 100 or status > 999 do 500 else status end
+    named = Enum.filter(Enum.map(h0, fn {k, v} -> {HTTP._canon(k), v} end), fn {k, v} -> byte_size(k) > 0 and HTTP._tokens(Sys.addr(k), byte_size(k)) == 1 end)
+    cl = HTTP._get(named, "content-length")
+    h1 = named
+    declared = cl != "" and HTTP._num(cl) >= 0
+    te = HTTP._get(h1, "transfer-encoding")
+    head = Sys.peek(x + 48) == 1
+    old = Sys.peek(x + 56) == 1
+    bodied = HTTP._bodied(code)
+    auto = done == 1 and te == "" and bodied and cl == "" and (not head or byte_size(p) > 0)
+    sized = declared or auto
+    alive = Sys.peek(hs + 80) == 1 and Sys.peek(hs + 96) == 0
+    ten = Sys.peek(x + 112) == 1
+    given = HTTP._get(h1, "connection")
+    if ten and alive and declared and given == "keep-alive" do Sys.poke(x + 64, 0) end
+    kept = ten and (head or sized or not bodied)
+    if not kept and (old or Sys.peek(x + 120) == 1) do Sys.poke(x + 64, 1) end
+    if given == "close" or not alive do Sys.poke(x + 64, 1) end
+    kind = if bodied and HTTP._get(h1, "content-encoding") == "" and not HTTP._has(h1, "content-type") and te == "" and byte_size(p) > 0 do HTTP._sniff(p) else "" end
+    sized2 = sized and te == ""
+    chunking = not head and bodied and not sized2 and not old
+    if not head and bodied and not sized2 and old do Sys.poke(x + 64, 1) end
+    Sys.poke(x + 104, if chunking do 1 else 0 end)
+    closing = Sys.peek(x + 64) == 1
+    drop = closing and (not alive or not HTTP._holds(h1, "connection", "close"))
+    nolength = not bodied or sized and te != "" or chunking
+    h5 = Enum.filter(h1, fn {k, v} -> not (k == "Transfer-Encoding" or k == "Content-Length" and nolength or k == "Content-Type" and code == 304 or k == "Connection" and drop) end)
+    conn = if drop and not old do "close" else if kept and not HTTP._has(h1, "connection") and not drop do "keep-alive" else "" end end
+    said = HTTP._reason(code)
+    Sys.poke(x + 88, 1)
+    Sys.poke(x + 128, if bodied do 0 else 1 end)
+    lines = Enum.flat_map(HTTP._sorted(h5), fn {k, v} -> [k, ": ", HTTP._trim(HTTP._flat(v)), "\r\n"] end)
+    Enum.join([if old do "HTTP/1.0 " else "HTTP/1.1 " end, "#{code} ", if said == "" do "status code #{code}" else said end, "\r\n"] ++ lines ++ [if HTTP._has(h1, "date") do "" else "Date: " end, if HTTP._has(h1, "date") do "" else HTTP._date(g) end, if HTTP._has(h1, "date") do "" else "\r\n" end, if auto do "Content-Length: #{byte_size(p)}\r\n" else "" end, if kind == "" do "" else "Content-Type: " end, kind, if kind == "" do "" else "\r\n" end, if conn == "" do "" else "Connection: " end, conn, if conn == "" do "" else "\r\n" end, if chunking do "Transfer-Encoding: chunked\r\n" else "" end, "\r\n"], "")
+  end
+# A header's value on one line.
+#: _flat/1 needs TCP._s/0 _flat1/3
+  def _flat(v: string): string do
+    n = byte_size(v)
+    if n > 196608 or Sys.find(Sys.addr(v), n, 10) < 0 and Sys.find(Sys.addr(v), n, 13) < 0 do v else
+      s = TCP._s() + 4096
+      HTTP._flat1(Sys.addr(v), s, n)
+      Sys.text(s, n)
+    end
+  end
+#: _flat1/3
+  def _flat1(p: integer, q: integer, n: integer): integer do
+    if n == 0 do 0 else
+      c = Sys.byte(p)
+      Sys.poke(q, if c == 10 or c == 13 do 32 else c end)
+      HTTP._flat1(p + 1, q + 1, n - 1)
+    end
+  end
+# A number in hexadecimal digits.
+#: _hex/1
+  def _hex(v: integer): string do
+    (if v >= 16 do HTTP._hex(div(v, 16)) else "" end) <> Sys.text(Sys.addr("0123456789abcdef") + rem(v, 16), 1)
+  end
+# The n bytes at p go out as chunks of 2048 bytes and what is left, as Go's
+# server cuts them: 0, or 1 when the connection failed.
+#: _wchunks/4 needs TCP._write/5 _chunkfill/3
+  def _wchunks(g: integer, x: integer, p: integer, n: integer): integer do
+    if n == 0 do 0 else
+      room = n + (div(n, 2048) + 2) * 8
+      m = Sys.call(9, 0, room, 3, 34, -1, 0)
+      if m < 0 do System.halt(71) end
+      e = HTTP._chunkfill(m, p, n)
+      why = TCP._write(g, Sys.peek(x + 8), m, e - m, Sys.peek(x + 96))
+      Sys.call(11, m, room)
+      if why == "" do 0 else 1 end
+    end
+  end
+#: _chunkfill/3 needs _hex/1
+  def _chunkfill(m: integer, p: integer, n: integer): integer do
+    if n == 0 do m else
+      k = if n > 2048 do 2048 else n end
+      size = HTTP._hex(k) <> "\r\n"
+      a = Sys.copy(m, Sys.addr(size), byte_size(size))
+      b = Sys.copy(a, p, k)
+      Sys.poke(b, 2573)
+      HTTP._chunkfill(b + 2, p + k, n - k)
+    end
+  end
+# Bytes of the body go out after the head: 0, or 1 when the connection
+# failed. A request by HEAD and a status without a body get none.
+#: _wdata/3 needs TCP._write/5 _wchunks/4
+  def _wdata(g: integer, x: integer, data: string): integer do
+    if Sys.peek(x + 48) == 1 or Sys.peek(x + 128) == 1 or data == "" do 0 else
+      if Sys.peek(x + 104) == 1 do HTTP._wchunks(g, x, Sys.addr(data), byte_size(data)) else
+        if TCP._write(g, Sys.peek(x + 8), Sys.addr(data), byte_size(data), Sys.peek(x + 96)) == "" do 0 else 1 end
+      end
+    end
+  end
+# The end of a body: what closes one sent in chunks.
+#: _wend/2 needs TCP._write/5
+  def _wend(g: integer, x: integer): integer do
+    if Sys.peek(x + 104) == 1 and Sys.peek(x + 48) == 0 do
+      last = "0\r\n\r\n"
+      TCP._write(g, Sys.peek(x + 8), Sys.addr(last), 5, Sys.peek(x + 96))
+    end
+    0
+  end
+# A whole answer: head and body, as a handler of Go's that sets the
+# headers, writes the status and then the body in one piece.
+#: _wwhole/5 needs TCP._sub/3 TCP._write/5 _bodied/1 _get/2 _num/1 _wdata/3 _wend/2 _whead/6
+  def _wwhole(g: integer, x: integer, status: integer, h: list[tuple[string, string]], body0: string): integer do
+    code = if status < 100 or status > 999 do 500 else status end
+    cl = HTTP._num(HTTP._get(h, "content-length"))
+    short = cl >= 0 and byte_size(body0) != cl
+    body = if not HTTP._bodied(code) or cl >= 0 and byte_size(body0) > cl do "" else body0 end
+    n = byte_size(body)
+    if n <= 2048 do
+      head = HTTP._whead(g, x, code, h, body, 1)
+      out = if Sys.peek(x + 48) == 1 or Sys.peek(x + 104) == 1 do head else head <> body end
+      TCP._write(g, Sys.peek(x + 8), Sys.addr(out), byte_size(out), Sys.peek(x + 96))
+      if Sys.peek(x + 104) == 1 do HTTP._wdata(g, x, body) end
+    else
+      head = HTTP._whead(g, x, code, h, TCP._sub(body, 0, 2048), 0)
+      TCP._write(g, Sys.peek(x + 8), Sys.addr(head), byte_size(head), Sys.peek(x + 96))
+      HTTP._wdata(g, x, body)
+    end
+    if short do Sys.poke(x + 64, 1) end
+    HTTP._wend(g, x)
+  end
+# http.Error: a short text answer of the server's own.
+#: _werror/4 needs _wwhole/5
+  def _werror(g: integer, x: integer, code: integer, text: string): integer do
+    HTTP._wwhole(g, x, code, [{"Content-Type", "text/plain; charset=utf-8"}, {"X-Content-Type-Options", "nosniff"}], text <> "\n")
+  end
+# A body in pieces, written by the process that makes them: the head goes
+# out with the first piece, and each piece at once.
+#: _wstream/4 needs _wpiece/4
+  def _wstream(g: integer, x: integer, r: HTTP.Response, s: stream[string]): integer do
+    Stream.__run(s, fn it -> Stream.__until(it, fn piece -> HTTP._wpiece(g, x, r, piece) == 1 end) end)
+    0
+  end
+#: _wpiece/4 needs TCP._sub/3 TCP._write/5 _wdata/3 _whead/6
+  def _wpiece(g: integer, x: integer, r: HTTP.Response, piece: string): integer do
+    failed = if Sys.peek(x + 88) == 1 do 0 else
+      head = HTTP._whead(g, x, r.status, r.headers, if byte_size(piece) > 2048 do TCP._sub(piece, 0, 2048) else piece end, 0)
+      if TCP._write(g, Sys.peek(x + 8), Sys.addr(head), byte_size(head), Sys.peek(x + 96)) == "" do 0 else 1 end
+    end
+    if failed == 1 do 1 else HTTP._wdata(g, x, piece) end
+  end
+# What the process of a handler does.
+#: _work/3 needs Process._drop/3 Process._g/0 Process._push/5 Process._ready/2 _wstream/4
+  def _work(x: integer, f: fn[HTTP.Request, HTTP.Response], r: HTTP.Request): integer do
+    g = Process._g()
+    me = Sys.peek(g)
+    Process._push(g, g + 312, me, x, 0)
+    try do
+      resp = f(r)
+      if Sys.peek(x + 32) != 4 do
+        Sys.poke(x + 24, Process.__word(resp))
+        case resp.chunks do
+          none -> Sys.poke(x + 32, 1)
+          some(s) ->
+            Sys.poke(x + 32, 2)
+            HTTP._wstream(g, x, resp, s)
+            Sys.poke(x + 32, 3)
+        end
+      end
+      0
+    after
+      Process._drop(g, g + 312, me)
+      Process._ready(g, Sys.peek(x + 40))
+    end
+  end
+# The process that serves a connection waits for the handler's: until it
+# has answered, taken the connection or ended. A client that goes away
+# first has the handler stopped.
+#: _awaitw/2 needs Process._cancel/4 Process._fdwait/4 Process._has/2 Process._push/5 Process._wait/2 TCP._s/0
+  def _awaitw(g: integer, x: integer): integer do
+    w = Sys.peek(x + 16)
+    cb = Sys.peek(x + 8)
+    st = Sys.peek(x + 32)
+    if st == 1 or st == 3 or st == 4 or Sys.peek(w + 376) == 1 do 0 else
+      c = Sys.peek(g)
+      if Process._has(w + 248, c) == 0 do Process._push(g, w + 248, c, 0, 0) end
+      if Sys.peek(cb + 16) == 1 and Sys.peek(x + 136) == 0 do
+        Sys.poke(x + 136, 1)
+        Process._cancel(g, w, Process.__word("shutdown"), 0)
+      end
+      if Sys.peek(cb + 80) == 0 and Sys.peek(x + 144) == 0 and Sys.peek(x + 136) == 0 do
+        v = Process._fdwait(g, Sys.peek(cb), 1, 0)
+        n = if v == 0 or Sys.peek(cb + 16) == 1 do 1 else Sys.call(45, Sys.peek(cb), TCP._s() + 256, 1, 66, 0, 0) end
+        if v != 0 do
+          if n > 0 or n == -11 or n == -4 do Sys.poke(x + 144, 1) else
+            Sys.poke(x + 136, 1)
+            Process._cancel(g, w, Process.__word("shutdown"), 0)
+          end
+        end
+      else Process._wait(g, 0) end
+      HTTP._awaitw(g, x)
+    end
+  end
+# One request of a connection is read and answered: 1 when the connection
+# stays for another, 0 when it closes, 2 when the handler took it.
+#: _request/4 needs Process._due/2 TCP._fill/4 _handle/5 _hline/4 _hlines/5 _refuse/5 _reqline/1
+  def _request(g: integer, hs: integer, cb: integer, first: integer): integer do
+    idle = if Sys.peek(hs + 48) != 0 do Sys.peek(hs + 48) else Sys.peek(hs + 32) end
+    Sys.poke(cb + 120, 0)
+    here = if first == 1 do 1 else TCP._fill(g, cb, Process._due(g, if idle == 0 do -1 else idle end), 4096) end
+    if here == 0 do 0 else
+      rt = Sys.peek(hs + 32)
+      ht = Sys.peek(hs + 56)
+      dh = Process._due(g, if ht != 0 do ht else if rt != 0 do rt else -1 end end)
+      Sys.poke(cb + 120, 0)
+      line = HTTP._hline(g, cb, dh, Sys.peek(hs + 64) + 4096)
+      early = if Sys.peek(cb + 120) != 0 do 0 else elem(HTTP._reqline(line), 0) end
+      lines = if Sys.peek(cb + 120) != 0 do [] else if early != 0 do [line] else HTTP._hlines(g, cb, dh, Sys.peek(hs + 64) + 4096 - byte_size(line), [line]) end end
+      if lines == [] do
+        why: string = Process.__any(Sys.peek(cb + 120))
+        if why == "long" do HTTP._refuse(g, cb, 431, "", "") else 0 end
+      else HTTP._handle(g, hs, cb, lines, Process._due(g, if rt != 0 do rt else -1 end)) end
+    end
+  end
+# The head of a request is looked at as Go's server looks at one, the body
+# read, and the handler run.
+#: _handle/5 needs Enum.all?/2 Enum.any?/2 Enum.map/2 Process._due/2 Process._take/2 TCP._exact/5 TCP._join/2 TCP._lower/1 TCP._write/5 _chunks/6 _fields/2 _get/2 _has/2 _holds/3 _hostok/2 _num/1 _refuse/5 _reqline/1 _run/4 _sorted/1 _target/2 _tokens/2 _trim/1 _valok/2 _values/2 _werror/4 _without/2 _wwhole/5
+  def _handle(g: integer, hs: integer, cb: integer, lines: list[string], d: integer): integer do
+    {code, method, target, minor} = HTTP._reqline(hd(lines))
+    {bad, h0} = if code != 0 do {code, []} else HTTP._fields(tl(lines), []) end
+    {fine, path, query, named} = if bad != 0 do {false, "", "", ""} else HTTP._target(method, target) end
+    hosts = HTTP._values(h0, "Host")
+    names = Enum.all?(h0, fn {k, v} -> HTTP._tokens(Sys.addr(k), byte_size(k)) == 1 end)
+    values = Enum.all?(h0, fn {k, v} -> HTTP._valok(Sys.addr(v), byte_size(v)) == 1 end)
+    tes = if minor >= 1 do HTTP._values(h0, "Transfer-Encoding") else [] end
+    chunked = tes != []
+    cls = Enum.map(HTTP._values(h0, "Content-Length"), fn v -> HTTP._trim(v) end)
+    cl = if chunked or cls == [] do 0 else HTTP._num(hd(cls)) end
+    if code != 0 do HTTP._refuse(g, cb, code, method, "") else
+      if bad != 0 or not fine or length(hosts) > 1 do HTTP._refuse(g, cb, 400, "", "") else
+        if minor >= 1 and hosts == [] and method != "CONNECT" do HTTP._refuse(g, cb, 400, ": missing required Host header", "") else
+          if hosts != [] and HTTP._hostok(Sys.addr(hd(hosts)), byte_size(hd(hosts))) == 0 do HTTP._refuse(g, cb, 400, ": malformed Host header", "") else
+            if not names do HTTP._refuse(g, cb, 400, ": invalid header name", "") else
+              if not values do HTTP._refuse(g, cb, 400, ": invalid header value", "") else
+                if chunked and (length(tes) != 1 or TCP._lower(HTTP._trim(hd(tes))) != "chunked") do HTTP._refuse(g, cb, 501, "", "Unsupported transfer encoding") else
+                  if cl < 0 or Enum.any?(cls, fn v -> v != hd(cls) end) do HTTP._refuse(g, cb, 400, "", "") else
+                    h1 = if HTTP._get(h0, "pragma") == "no-cache" and not HTTP._has(h0, "cache-control") do h0 ++ [{"Cache-Control", "no-cache"}] else h0 end
+                    h2 = if chunked do HTTP._without(HTTP._without(h1, "Transfer-Encoding"), "Content-Length") else h1 end
+                    host = if named != "" do named else if hosts == [] do "" else hd(hosts) end end
+                    h3 = HTTP._sorted(HTTP._without(h2, "Host") ++ (if host == "" do [] else [{"Host", host}] end))
+                    x = Process._take(g, 152)
+                    Sys.poke(x, hs)
+                    Sys.poke(x + 8, cb)
+                    Sys.poke(x + 40, Sys.peek(g))
+                    Sys.poke(x + 48, if method == "HEAD" do 1 else 0 end)
+                    Sys.poke(x + 56, if minor == 0 do 1 else 0 end)
+                    Sys.poke(x + 112, if minor == 0 and HTTP._holds(h0, "connection", "keep-alive") do 1 else 0 end)
+                    Sys.poke(x + 120, if HTTP._holds(h0, "connection", "close") do 1 else 0 end)
+                    wt = Sys.peek(hs + 40)
+                    Sys.poke(x + 96, Process._due(g, if wt == 0 do -1 else wt end))
+                    expect = TCP._lower(HTTP._get(h0, "expect"))
+                    limit = Sys.peek(hs + 72)
+                    if expect == "100-continue" and minor >= 1 and (chunked or cl > 0) do
+                      go = "HTTP/1.1 100 Continue\r\n\r\n"
+                      TCP._write(g, cb, Sys.addr(go), byte_size(go), 0)
+                    end
+                    Sys.poke(cb + 120, 0)
+                    refused = minor >= 1 and expect != "" and expect != "100-continue"
+                    body = if refused do "" else if chunked do
+                      pieces = HTTP._chunks(g, cb, d, limit, [], 0)
+                      TCP._join(pieces, Enum.reduce(pieces, 0, fn piece, acc -> acc + byte_size(piece) end))
+                    else
+                      if cl == 0 do "" else if cl > limit + 262145 do TCP._exact(g, cb, d, limit + 1, 0) else TCP._exact(g, cb, d, cl, 0) end end
+                    end end
+                    why: string = if Sys.peek(cb + 120) == 0 do "" else Process.__any(Sys.peek(cb + 120)) end
+                    if refused do
+                      HTTP._wwhole(g, x, 417, [{"Connection", "close"}], "")
+                      0
+                    else if why == "large" or why == "" and cl > limit do
+                      if why == "large" or cl > limit + 262145 do Sys.poke(x + 120, 1) end
+                      HTTP._werror(g, x, 413, "request body too large")
+                      if Sys.peek(x + 64) == 1 do 0 else 1 end
+                    else
+                      if why != "" do
+                        Sys.poke(x + 120, 1)
+                        HTTP._werror(g, x, 400, "bad request")
+                        0
+                      else
+                        r = %HTTP.Request{method: method, path: path, query: query, headers: Enum.map(h3, fn {k, v} -> {TCP._lower(k), v} end), body: body}
+                        HTTP._run(g, x, r, target)
+                      end
+                    end end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# The handler runs in a process of its own and its answer is written.
+#: _run/4 needs _run1/4
+  def _run(g: integer, x: integer, r: HTTP.Request, target: string): integer do
+    hs = Sys.peek(x)
+    cb = Sys.peek(x + 8)
+    Sys.poke(x + 80, Process.__word(r))
+    HTTP._run1(g, x, r, target)
+    if Sys.peek(x + 32) == 4 do 2 else if Sys.peek(x + 64) == 1 or Sys.peek(hs + 96) == 1 or Sys.peek(cb + 16) == 1 do 0 else 1 end end
+  end
+#: _run1/4 needs Process._spawn/4 _awaitw/2 _wanswer/3 _wdata/3 _wend/2 _werror/4 _work/3 _wwhole/5
+  def _run1(g: integer, x: integer, r: HTTP.Request, target: string): integer do
+    hs = Sys.peek(x)
+    if target == "*" and r.method == "OPTIONS" do HTTP._wwhole(g, x, 200, [{"Content-Length", "0"}], "") else
+      if Sys.peek(g + 112) == 1 or Sys.peek(hs + 96) == 1 do HTTP._werror(g, x, 503, "server stopping") else
+        f: fn[HTTP.Request, HTTP.Response] = Process.__any(Sys.peek(hs + 24))
+        body: fn[pid[integer], integer] = fn(me: pid[integer]): integer do HTTP._work(x, f, r) end
+        Sys.poke(x + 16, Process._spawn(g, Process.__word(body), 1, 0))
+        HTTP._awaitw(g, x)
+        st = Sys.peek(x + 32)
+        if st == 4 do 0 else
+          if st == 1 do
+            got: HTTP.Response = Process.__any(Sys.peek(x + 24))
+            HTTP._wanswer(g, x, got)
+          else
+            if Sys.peek(x + 88) == 1 do
+              if st != 3 and Sys.peek(x + 136) == 0 do HTTP._wdata(g, x, "internal server error\n") end
+              HTTP._wend(g, x)
+            else
+              if st == 3 do
+                done: HTTP.Response = Process.__any(Sys.peek(x + 24))
+                HTTP._wwhole(g, x, done.status, done.headers, "")
+              else
+                bare: list[tuple[string, string]] = []
+                if Sys.peek(x + 136) == 1 do HTTP._wwhole(g, x, 200, bare, "") else HTTP._werror(g, x, 500, "internal server error") end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# httpBody: the answer of a handler that gave its body whole.
+#: _wanswer/3 needs Enum.any?/2 Enum.filter/2 Enum.map/2 TCP._lower/1 TCP._sub/3 _accepts/1 _get/2 _gzip/1 _has/2 _sniff/1 _values/2 _wwhole/5
+  def _wanswer(g: integer, x: integer, r: HTTP.Response): integer do
+    hs = Sys.peek(x)
+    req: HTTP.Request = Process.__any(Sys.peek(x + 80))
+    kind = TCP._lower(HTTP._get(r.headers, "content-type"))
+    media = Enum.any?(["image/", "video/", "audio/", "application/zip", "application/gzip", "font/woff"], fn pre -> byte_size(kind) >= byte_size(pre) and TCP._sub(kind, 0, byte_size(pre)) == pre end) and not (byte_size(kind) >= 9 and TCP._sub(kind, 0, 9) == "image/svg")
+    plain = Sys.peek(hs + 88) == 0 or HTTP._has(r.headers, "content-encoding") or HTTP._has(r.headers, "content-range") or media or byte_size(r.body) < 1024 or Sys.peek(x + 48) == 1 or not HTTP._accepts(req.headers) or r.status == 204 or r.status == 304
+    if plain do HTTP._wwhole(g, x, r.status, r.headers, r.body) else
+      packed = HTTP._gzip(r.body)
+      h = Enum.filter(r.headers, fn {k, v} -> TCP._lower(k) != "content-length" end) ++ (if kind == "" do [{"Content-Type", HTTP._sniff(r.body)}] else [] end)
+      vary = HTTP._values(Enum.map(h, fn {k, v} -> {TCP._lower(k), v} end), "vary")
+      HTTP._wwhole(g, x, r.status, Enum.filter(h, fn {k, v} -> TCP._lower(k) != "content-encoding" end) ++ [{"Content-Encoding", "gzip"}, {"Vary", "Accept-Encoding"}, {"Content-Length", "#{byte_size(packed)}"}], packed)
+    end
+  end
+# Whether a request takes a body in gzip.
+#: _accepts/1 needs Enum.any?/2 String.replace/3 String.trim/2 TCP._lower/1 TCP._sub/3 _parts/2 _trim/1 _values/2
+  def _accepts(h: list[tuple[string, string]]): boolean do
+    Enum.any?(HTTP._values(h, "accept-encoding"), fn value ->
+      Enum.any?(HTTP._parts(value, 44), fn part ->
+        t = HTTP._trim(part)
+        semi = Sys.find(Sys.addr(t), byte_size(t), 59)
+        coding = TCP._lower(HTTP._trim(if semi < 0 do t else TCP._sub(t, 0, semi) end))
+        weight = String.replace(if semi < 0 do "" else TCP._sub(t, semi + 1, byte_size(t) - semi - 1) end, " ", "")
+        refused = weight == "q=0" or byte_size(weight) >= 4 and TCP._sub(weight, 0, 4) == "q=0." and String.trim(TCP._sub(weight, 4, byte_size(weight) - 4), "0") == ""
+        (coding == "gzip" or coding == "*") and not refused
+      end)
+    end)
+  end
+# What the process of a connection does: requests, one after another,
+# once the connection speaks TLS when the server does (hs + 112: the
+# function that makes it, HTTP.serve_tls).
+#: _conn/2 needs Process._drop/3 Process._g/0 TCP._close/2 _requests/4
+  def _conn(hs: integer, cb: integer): integer do
+    g = Process._g()
+    spoken = if Sys.peek(hs + 112) == 0 do 1 else
+      f: fn[integer, integer, integer] = Process.__any(Sys.peek(hs + 112))
+      f(hs, cb)
+    end
+    r = if spoken == 1 do HTTP._requests(g, hs, cb, 1) else 0 end
+    Process._drop(g, hs + 104, cb)
+    if r != 2 do TCP._close(g, cb) end
+    0
+  end
+#: _requests/4 needs _request/4
+  def _requests(g: integer, hs: integer, cb: integer, first: integer): integer do
+    r = HTTP._request(g, hs, cb, first)
+    if r == 1 do HTTP._requests(g, hs, cb, 0) else r end
+  end
+# What the process that accepts connections does, until the listening
+# socket closes.
+#: _accepting/1 needs Process._due/2 Process._g/0 Process._go/2 Process._push/5 Process._sleep/2 TCP._accept/3 TCP._block/3 TCP._opt/4 _conn/2
+  def _accepting(hs: integer): integer do
+    g = Process._g()
+    lb = Sys.peek(hs)
+    Sys.poke(lb + 120, 0)
+    fd = TCP._accept(g, lb, 0)
+    if Sys.peek(lb + 120) != 0 do
+      if Sys.peek(lb + 16) == 1 do 0 else
+        Process._sleep(g, Process._due(g, 5))
+        HTTP._accepting(hs)
+      end
+    else
+      TCP._opt(fd, 6, 1, 1)
+      TCP._opt(fd, 1, 9, 1)
+      TCP._opt(fd, 6, 5, 15)
+      TCP._opt(fd, 6, 4, 15)
+      cb = TCP._block(g, fd, 2)
+      f: fn[integer] = fn(): integer do HTTP._conn(hs, cb) end
+      Process._push(g, hs + 104, cb, Process._go(g, Process.__word(f)), 0)
+      HTTP._accepting(hs)
+    end
+  end
+# The server stops: its listening socket and its connections close.
+#: _stopped/1 needs Process._g/0 TCP._close/2 _shut/2
+  def _stopped(hs: integer): integer do
+    g = Process._g()
+    Sys.poke(hs + 96, 1)
+    TCP._close(g, Sys.peek(hs))
+    HTTP._shut(g, Sys.peek(hs + 104))
+  end
+#: _shut/2 needs Process._ready/2 TCP._close/2
+  def _shut(g: integer, c: integer): integer do
+    if c == 0 do 0 else
+      next = Sys.peek(c)
+      TCP._close(g, Sys.peek(c + 8))
+      Process._ready(g, Sys.peek(c + 16))
+      HTTP._shut(g, next)
+    end
+  end
+# What the process that stands for a server does: it waits to be stopped.
+#: _owner/1 needs Process._check/1 Process._g/0 Process._wait/2
+  def _owner(hs: integer): integer do
+    g = Process._g()
+    Process._wait(g, 0)
+    Process._check(g)
+    HTTP._owner(hs)
+  end
+#: _serveopts/2 needs Atom.to_string/1
+  def _serveopts(hs: integer, o: list[tuple[atom, integer]]): integer do
+    case o do
+      [] -> 0
+      [{k, v} | rest] ->
+        if v < 0 do raise("HTTP.serve: " <> Atom.to_string(k) <> ": cannot be negative") end
+        at = Enum.reduce([{:read_timeout, 32}, {:write_timeout, 40}, {:idle_timeout, 48}, {:header_timeout, 56}, {:max_header_bytes, 64}, {:max_body_bytes, 72}, {:keep_alive, 80}, {:compress, 88}], 0, fn {name, where}, acc -> if name == k do where else acc end end)
+        if at == 0 do raise("HTTP.serve: unknown option :" <> Atom.to_string(k) <> "; the options are read_timeout:, write_timeout:, idle_timeout:, header_timeout:, max_header_bytes:, max_body_bytes:, keep_alive: and compress:") end
+        Sys.poke(hs + at, if at == 64 and v == 0 do 1048576 else if at >= 80 and v != 0 do 1 else v end end)
+        HTTP._serveopts(hs, rest)
+    end
+  end
+#: _listen/4 needs Process._check/1 Process._g/0 Process._go/2 Process._onend/3 Process._spawn/4 Process._take/2 TCP._bind/3 _accepting/1 _owner/1 _serveopts/2 _stopped/1
+  def _listen(a: string, f: fn[HTTP.Request, HTTP.Response], o: list[tuple[atom, integer]], tls: integer): result[http_server, string] do
+    g = Process._g()
+    Process._check(g)
+    hs = Process._take(g, 128)
+    Sys.poke(hs + 112, tls)
+    Sys.poke(hs + 64, 1048576)
+    Sys.poke(hs + 72, 67108864)
+    Sys.poke(hs + 80, 1)
+    HTTP._serveopts(hs, o)
+    case TCP._bind("tcp", a, 1) do
+      error(why) -> error(why)
+      ok(s) ->
+        lb = s.at
+        Sys.poke(lb + 24, 0)
+        Sys.poke(hs, lb)
+        Sys.poke(hs + 16, Sys.peek(lb + 104))
+        Sys.poke(hs + 24, Process.__word(f))
+        body: fn[pid[integer], integer] = fn(me: pid[integer]): integer do HTTP._owner(hs) end
+        owner = Process._spawn(g, Process.__word(body), 1, 0)
+        Sys.poke(hs + 8, owner)
+        stop: fn[string, integer] = fn(r: string): integer do HTTP._stopped(hs) end
+        Process._onend(g, owner, Process.__word(stop))
+        loop: fn[integer] = fn(): integer do HTTP._accepting(hs) end
+        Process._go(g, Process.__word(loop))
+        made: http_server = %http_server{at: hs, k: none}
+        ok(made)
+    end
+  end
+#: serve/2 needs _listen/4
+  def serve(a: string, f: fn[HTTP.Request, HTTP.Response]): result[http_server, string] do
+    empty: list[tuple[atom, integer]] = []
+    HTTP._listen(a, f, empty, 0)
+  end
+#: serve/3 needs _listen/4
+  def serve(a: string, f: fn[HTTP.Request, HTTP.Response], o: list[tuple[atom, integer]]): result[http_server, string] do
+    HTTP._listen(a, f, o, 0)
+  end
+#: address/1
+  def address(s: http_server): string do
+    Process.__any(Sys.peek(s.at + 16))
+  end
+#: stop/1 needs Process._g/0 Process._halt/1 Process._joined/3 _stopped/1
+  def stop(s: http_server): boolean do
+    HTTP._stopped(s.at)
+    stopped = Process._halt(Sys.peek(s.at + 8))
+    Process._joined(Process._g(), Sys.peek(s.at + 8), 5000)
+    stopped
+  end
+#: await/2 needs Process._check/1 Process._g/0 Process._joined/3
+  def await(s: http_server, ms: integer): boolean do
+    g = Process._g()
+    Process._check(g)
+    Process._joined(g, Sys.peek(s.at + 8), ms) == 1
+  end
+#: take_over/1 needs Process._g/0 Process._has/2 Process._ready/2 TCP._own/3
+  def take_over(r: HTTP.Request): result[socket, string] do
+    g = Process._g()
+    me = Sys.peek(g)
+    c = Process._has(g + 312, me)
+    if c == 0 do error("HTTP.take_over must be called by the process handling the request") else
+      x = Sys.peek(c + 16)
+      if Sys.peek(x + 32) == 4 do error("the connection has already been taken over") else
+        Sys.poke(x + 32, 4)
+        cb = Sys.peek(x + 8)
+        TCP._own(g, cb, me)
+        Process._ready(g, Sys.peek(x + 40))
+        made: socket = %socket{at: cb, k: none}
+        ok(made)
+      end
+    end
+  end
+# ---- The client ----
+# An address as Go's net/url reads one. What is wrong with it ("": nothing)
+# and its parts: 0 the scheme, 1 the user and password, 2 "1" when it has
+# them, 3 the host, 4 the path as it is sent, 5 the query, 6 "1" when a ?
+# ends it, 7 the fragment with its #, 8 what follows the scheme when no
+# slash does, 9 "1" when one slash follows the scheme.
+#: _url/1 needs TCP._lower/1 TCP._sub/3 _authority/1 _scheme/2 _urlpath/1 _valok/2
+  def _url(a: string): tuple[string, list[string]] do
+    n = byte_size(a)
+    p = Sys.addr(a)
+    blank: list[string] = []
+    if HTTP._valok(p, n) == 0 or Sys.find(p, n, 9) >= 0 do {"net/url: invalid control character in URL", blank} else
+      h = Sys.find(p, n, 35)
+      frag = if h < 0 do "" else TCP._sub(a, h, n - h) end
+      rest0 = if h < 0 do a else TCP._sub(a, 0, h) end
+      colon = HTTP._scheme(Sys.addr(rest0), byte_size(rest0))
+      if colon == 0 do {"missing protocol scheme", blank} else
+        scheme = if colon < 0 do "" else TCP._lower(TCP._sub(rest0, 0, colon)) end
+        rest1 = if colon < 0 do rest0 else TCP._sub(rest0, colon + 1, byte_size(rest0) - colon - 1) end
+        q = Sys.find(Sys.addr(rest1), byte_size(rest1), 63)
+        query = if q < 0 do "" else TCP._sub(rest1, q + 1, byte_size(rest1) - q - 1) end
+        force = if q >= 0 and query == "" do "1" else "" end
+        rest = if q < 0 do rest1 else TCP._sub(rest1, 0, q) end
+        m = byte_size(rest)
+        r = Sys.addr(rest)
+        slash = m > 0 and Sys.byte(r) == 47
+        if not slash and scheme != "" do {"", [scheme, "", "", "", "", query, force, frag, rest, ""]} else
+          if not slash and scheme == "" and Sys.find(r, if Sys.find(r, m, 47) < 0 do m else Sys.find(r, m, 47) end, 58) >= 0 do {"first path segment in URL cannot contain colon", blank} else
+            double = m >= 2 and Sys.byte(r + 1) == 47 and slash and (scheme != "" or not (m >= 3 and Sys.byte(r + 2) == 47))
+            e = if not double do 0 else if Sys.find(r + 2, m - 2, 47) < 0 do m else Sys.find(r + 2, m - 2, 47) + 2 end end
+            {why, user, has, host} = if double do HTTP._authority(TCP._sub(rest, 2, e - 2)) else {"", "", "", ""} end
+            {path, bad} = HTTP._urlpath(TCP._sub(rest, e, m - e))
+            if why != "" do {why, blank} else
+              if bad != "" do {bad, blank} else {"", [scheme, user, has, host, path, query, force, frag, "", if scheme != "" and slash and not double do "1" else "" end]} end
+            end
+          end
+        end
+      end
+    end
+  end
+# Where the colon after a scheme stands: -1 for an address without one, 0
+# for one that begins with a colon.
+#: _scheme/2 needs _scheme1/3
+  def _scheme(p: integer, n: integer): integer do
+    HTTP._scheme1(p, n, 0)
+  end
+#: _scheme1/3
+  def _scheme1(p: integer, n: integer, i: integer): integer do
+    if i == n do -1 else
+      c = Sys.byte(p + i)
+      if c >= 65 and c <= 90 or c >= 97 and c <= 122 do HTTP._scheme1(p, n, i + 1) else
+        if c >= 48 and c <= 57 or c == 43 or c == 45 or c == 46 do if i == 0 do -1 else HTTP._scheme1(p, n, i + 1) end else
+          if c == 58 do i else -1 end
+        end
+      end
+    end
+  end
+# The user and the host of an address: what is wrong, the user, whether
+# there is one, the host.
+#: _authority/1 needs TCP._digits/2 TCP._last/3 TCP._sub/3 _hostbad/2
+  def _authority(t: string): tuple[string, string, string, string] do
+    n = byte_size(t)
+    p = Sys.addr(t)
+    at = TCP._last(p, n, 64)
+    user = if at < 0 do "" else TCP._sub(t, 0, at) end
+    host = if at < 0 do t else TCP._sub(t, at + 1, n - at - 1) end
+    m = byte_size(host)
+    h = Sys.addr(host)
+    if m > 0 and Sys.byte(h) == 91 do
+      e = TCP._last(h, m, 93)
+      if e < 0 do {"missing ']' in host", "", "", ""} else
+        port = TCP._sub(host, e + 1, m - e - 1)
+        if port != "" and (Sys.byte(Sys.addr(port)) != 58 or TCP._digits(Sys.addr(port) + 1, byte_size(port) - 1) != byte_size(port) - 1) do {"invalid port " <> inspect(port) <> " after host", "", "", ""} else {"", user, if at < 0 do "" else "1" end, host} end
+      end
+    else
+      c = TCP._last(h, m, 58)
+      port = if c < 0 do "" else TCP._sub(host, c, m - c) end
+      if port != "" and TCP._digits(Sys.addr(port) + 1, byte_size(port) - 1) != byte_size(port) - 1 do {"invalid port " <> inspect(port) <> " after host", "", "", ""} else
+        odd = HTTP._hostbad(h, m)
+        if odd >= 0 do {"invalid character " <> inspect(Sys.text(h + odd, 1)) <> " in host name", "", "", ""} else {"", user, if at < 0 do "" else "1" end, host} end
+      end
+    end
+  end
+# Where a byte stands that a host's name may not hold, or -1.
+#: _hostbad/2
+  def _hostbad(p: integer, n: integer): integer do
+    if n == 0 do -1 else
+      c = Sys.byte(p)
+      if c == 32 or c == 34 or c == 60 or c == 62 or c == 92 or c == 94 or c == 96 or c == 123 or c == 124 or c == 125 or c == 35 do 0 else
+        r = HTTP._hostbad(p + 1, n - 1)
+        if r < 0 do -1 else r + 1 end
+      end
+    end
+  end
+# The path of an address as it is sent: as it was written when that is a
+# fit encoding, else its bytes escaped. And what is wrong with it.
+#: _urlpath/1 needs _badescape/1 _escape/3 _fits/2 _unescape/1
+  def _urlpath(t: string): tuple[string, string] do
+    {plain, fine} = HTTP._unescape(t)
+    if fine == 0 do
+      i = Sys.find(Sys.addr(t), byte_size(t), 37)
+      {"", "invalid URL escape " <> inspect(HTTP._badescape(t))}
+    else
+      if HTTP._fits(Sys.addr(t), byte_size(t)) == 1 do {t, ""} else {HTTP._escape(Sys.addr(plain), byte_size(plain), ""), ""} end
+    end
+  end
+# The first escape of t that is none, as Go names it.
+#: _badescape/1 needs TCP._atonv/4 TCP._sub/3
+  def _badescape(t: string): string do
+    n = byte_size(t)
+    i = Sys.find(Sys.addr(t), n, 37)
+    if i < 0 do "" else
+      {d, v} = if i + 3 <= n do TCP._atonv(Sys.addr(t) + i + 1, 2, 16, {0, 0}) else {0, 0} end
+      if d == 2 do HTTP._badescape(TCP._sub(t, i + 3, n - i - 3)) else TCP._sub(t, i, if n - i < 3 do n - i else 3 end) end
+    end
+  end
+# 1 when every byte of a written path may stand in one.
+#: _fits/2 needs _pathbyte/1
+  def _fits(p: integer, n: integer): integer do
+    if n == 0 do 1 else
+      c = Sys.byte(p)
+      if c == 37 or c == 33 or c == 39 or c == 40 or c == 41 or c == 42 or c == 91 or c == 93 or HTTP._pathbyte(c) == 1 do HTTP._fits(p + 1, n - 1) else 0 end
+    end
+  end
+# 1 for a byte a path holds unescaped.
+#: _pathbyte/1
+  def _pathbyte(c: integer): integer do
+    if c >= 48 and c <= 59 or c >= 64 and c <= 90 or c >= 97 and c <= 122 or c == 45 or c == 46 or c == 95 or c == 126 or c == 36 or c == 38 or c == 43 or c == 44 or c == 47 or c == 61 do 1 else 0 end
+  end
+#: _escape/3 needs _pathbyte/1
+  def _escape(p: integer, n: integer, acc: string): string do
+    if n == 0 do acc else
+      c = Sys.byte(p)
+      hex = "0123456789ABCDEF"
+      HTTP._escape(p + 1, n - 1, acc <> (if HTTP._pathbyte(c) == 1 do Sys.text(p, 1) else "%" <> Sys.text(Sys.addr(hex) + div(c, 16), 1) <> Sys.text(Sys.addr(hex) + rem(c, 16), 1) end))
+    end
+  end
+# An address as text again, its password hidden when strip is set.
+#: _urltext/2 needs TCP._sub/3
+  def _urltext(u: list[string], strip: boolean): string do
+    [scheme, user, has, host, path, query, force, frag, opaque, omit] = u
+    colon = Sys.find(Sys.addr(user), byte_size(user), 58)
+    shown = if strip and colon >= 0 do TCP._sub(user, 0, colon) <> ":***" else user end
+    head = if scheme == "" do "" else scheme <> ":" end
+    middle = if opaque != "" do opaque else
+      auth = if (scheme != "" or host != "" or has != "") and not (omit == "1" and host == "" and has == "") do
+        (if host != "" or path != "" or has != "" do "//" else "" end) <> (if has != "" do shown <> "@" else "" end) <> host
+      else "" end
+      auth <> (if path != "" and Sys.byte(Sys.addr(path)) != 47 and host != "" do "/" else "" end) <> path
+    end
+    head <> middle <> (if force != "" or query != "" do "?" <> query else "" end) <> frag
+  end
+# The address a reference names from the address base (RFC 3986, 5.2).
+#: _resolve/2 needs TCP._last/3 TCP._sub/3 _dots/1
+  def _resolve(base: list[string], ref: list[string]): list[string] do
+    [bs, bu, bh, bhost, bpath, bq, bf, _, _, _] = base
+    [scheme, user, has, host, path, query, force, frag, opaque, omit] = ref
+    if scheme != "" do [scheme, user, has, host, HTTP._dots(path), query, force, frag, opaque, omit] else
+      if host != "" or has != "" do [bs, user, has, host, HTTP._dots(path), query, force, frag, "", ""] else
+        if path == "" do [bs, bu, bh, bhost, bpath, if query != "" or force != "" do query else bq end, if query != "" or force != "" do force else bf end, frag, "", ""] else
+          if Sys.byte(Sys.addr(path)) == 47 do [bs, bu, bh, bhost, HTTP._dots(path), query, force, frag, "", ""] else
+            cut = TCP._last(Sys.addr(bpath), byte_size(bpath), 47)
+            merged = if cut < 0 do "/" <> path else TCP._sub(bpath, 0, cut + 1) <> path end
+            [bs, bu, bh, bhost, HTTP._dots(merged), query, force, frag, "", ""]
+          end
+        end
+      end
+    end
+  end
+# A path without its . and .. segments.
+#: _dots/1 needs Enum.join/2 List.last/2 _dotted/2 _parts/2
+  def _dots(path: string): string do
+    if path == "" do "" else
+      parts = HTTP._parts(path, 47)
+      keep: list[string] = []
+      out = HTTP._dotted(parts, keep)
+      last = List.last(parts, "")
+      text = Enum.join(out, "/")
+      rooted = if Sys.byte(Sys.addr(path)) == 47 and (text == "" or Sys.byte(Sys.addr(text)) != 47) do "/" <> text else text end
+      if (last == "." or last == "..") and rooted != "/" do rooted <> "/" else rooted end
+    end
+  end
+#: _dotted/2 needs Enum.take/2
+  def _dotted(parts: list[string], acc: list[string]): list[string] do
+    case parts do
+      [] -> acc
+      [x | rest] ->
+        if x == "." do HTTP._dotted(rest, acc) else
+          if x == ".." do HTTP._dotted(rest, if length(acc) > 1 or acc != [] and hd(acc) != "" do Enum.take(acc, length(acc) - 1) else acc end) else HTTP._dotted(rest, acc ++ [x]) end
+        end
+    end
+  end
+# The text of a request as Go's transport writes it.
+#: _reqtext/6 needs Base.encode64/1 Enum.filter/2 Enum.flat_map/2 Enum.join/2 Enum.map/2 TCP._sub/3 _canon/1 _flat/1 _get/2 _has/2 _sorted/1 _trim/1
+  def _reqtext(method: string, u: list[string], h0: list[tuple[string, string]], body: string, zip: boolean, via: string): string do
+    [scheme, user, has, host, path, query, force, frag, opaque, omit] = u
+    target = (if via == "" do "" else scheme <> "://" <> host end) <> (if path == "" do "/" else path end) <> (if force != "" or query != "" do "?" <> query else "" end)
+    agent = if HTTP._has(h0, "user-agent") do HTTP._get(h0, "user-agent") else "Go-http-client/1.1" end
+    len0 = if body != "" do "Content-Length: #{byte_size(body)}\r\n" else if method == "POST" or method == "PUT" or method == "PATCH" do "Content-Length: 0\r\n" else "" end end
+    h1 = if has != "" and HTTP._get(h0, "authorization") == "" do h0 ++ [{"Authorization", "Basic " <> Base.encode64(if Sys.find(Sys.addr(user), byte_size(user), 58) < 0 do user <> ":" else user end)}] else h0 end
+    kept = Enum.filter(Enum.map(h1, fn {k, v} -> {HTTP._canon(k), v} end), fn {k, v} -> k != "Host" and k != "User-Agent" and k != "Content-Length" and k != "Transfer-Encoding" and k != "Trailer" end)
+    lines = Enum.flat_map(HTTP._sorted(kept), fn {k, v} -> [k, ": ", HTTP._trim(HTTP._flat(v)), "\r\n"] end)
+    Enum.join([method, " ", target, " HTTP/1.1\r\nHost: ", host, "\r\n", if agent == "" do "" else "User-Agent: " end, agent, if agent == "" do "" else "\r\n" end, len0] ++ lines ++ [if zip do "Accept-Encoding: gzip\r\n" else "" end, if via == "" do "" else TCP._sub(via, 1, byte_size(via) - 1) end, "\r\n", body], "")
+  end
+# The head of an answer is read, answers that only say to go on passed
+# over: what went wrong ("" nothing), the status and the headers.
+#: _reshead/3 needs Enum.filter/2 TCP._sub/3 _fields/2 _hlines/5 _num/1
+  def _reshead(g: integer, cb: integer, d: integer): tuple[string, integer, list[tuple[string, string]]] do
+    blank: list[tuple[string, string]] = []
+    empty: list[string] = []
+    lines = HTTP._hlines(g, cb, d, 10485760, empty)
+    broken = "net/http: HTTP/1.x transport connection broken: "
+    if lines == [] do
+      why: string = Process.__any(Sys.peek(cb + 120))
+      {if why == "closed" do if Sys.peek(cb + 144) == 0 do "EOF" else broken <> "unexpected EOF" end else if why == "long" do "net/http: server response headers exceeded 10485760 bytes; aborted" else why end end, 0, blank}
+    else
+      line = hd(lines)
+      n = byte_size(line)
+      p = Sys.addr(line)
+      a = Sys.find(p, n, 32)
+      proto = if a < 0 do line else TCP._sub(line, 0, a) end
+      rest = if a < 0 do "" else TCP._sub(line, a + 1, n - a - 1) end
+      b = Sys.find(Sys.addr(rest), byte_size(rest), 32)
+      code = if b < 0 do rest else TCP._sub(rest, 0, b) end
+      q = Sys.addr(proto)
+      shaped = byte_size(proto) == 8 and TCP._sub(proto, 0, 5) == "HTTP/" and Sys.byte(q + 6) == 46 and Sys.byte(q + 5) >= 48 and Sys.byte(q + 5) <= 57 and Sys.byte(q + 7) >= 48 and Sys.byte(q + 7) <= 57
+      Sys.poke(cb + 160, Process.__word(rest))
+      if a < 0 do {broken <> "malformed HTTP response " <> inspect(line), 0, blank} else
+        if byte_size(code) != 3 or HTTP._num(code) < 0 do {broken <> "malformed HTTP status code " <> inspect(code), 0, blank} else
+          if not shaped do {broken <> "malformed HTTP version " <> inspect(proto), 0, blank} else
+            {bad, h} = HTTP._fields(tl(lines), blank)
+            if bad != 0 do
+              odd = Enum.filter(tl(lines), fn l -> Sys.find(Sys.addr(l), byte_size(l), 58) < 0 end)
+              {broken <> (if odd == [] do "malformed MIME header line: " <> hd(tl(lines)) else "malformed MIME header: missing colon: " <> inspect(hd(odd)) end), 0, blank}
+            else
+              status = HTTP._num(code)
+              if status >= 100 and status <= 199 and status != 101 do HTTP._reshead(g, cb, d) else {"", status, h} end
+            end
+          end
+        end
+      end
+    end
+  end
+# What is read until the other end closes, up to limit bytes: its pieces.
+#: _rest/5 needs TCP._fill/4 TCP._some/2
+  def _rest(g: integer, cb: integer, d: integer, limit: integer, got: list[string]): list[string] do
+    Sys.poke(cb + 120, 0)
+    n = TCP._fill(g, cb, d, 32768)
+    if n == 0 do
+      why: string = Process.__any(Sys.peek(cb + 120))
+      if why == "closed" do Sys.poke(cb + 120, 0) end
+      got
+    else
+      if n >= limit do got ++ [TCP._some(cb, limit)] else HTTP._rest(g, cb, d, limit - n, got ++ [TCP._some(cb, n)]) end
+    end
+  end
+# The body of an answer whose head h was read: the text, or "" with what
+# went wrong at cb + 120.
+#: _resbody/6 needs TCP._exact/5 TCP._join/2 TCP._lower/1 TCP._why/2 _bodied/1 _chunks/6 _get/2 _num/1 _rest/5 _trim/1
+  def _resbody(g: integer, cb: integer, d: integer, method: string, status: integer, h: list[tuple[string, string]]): string do
+    Sys.poke(cb + 120, 0)
+    limit = 67108864
+    empty: list[string] = []
+    if method == "HEAD" or not HTTP._bodied(status) do "" else
+      if TCP._lower(HTTP._trim(HTTP._get(h, "transfer-encoding"))) == "chunked" do
+        pieces = HTTP._chunks(g, cb, d, limit, empty, 0)
+        why: string = if Sys.peek(cb + 120) == 0 do "" else Process.__any(Sys.peek(cb + 120)) end
+        if why == "closed" or why == "bad" do TCP._why(cb, if why == "bad" do "malformed chunked encoding" else "unexpected EOF" end) else TCP._join(pieces, Enum.reduce(pieces, 0, fn piece, acc -> acc + byte_size(piece) end)) end
+      else
+        cl = HTTP._num(HTTP._trim(HTTP._get(h, "content-length")))
+        if cl >= 0 do
+          t = if cl == 0 do "" else TCP._exact(g, cb, d, if cl > limit do limit else cl end, 0) end
+          why: string = if Sys.peek(cb + 120) == 0 do "" else Process.__any(Sys.peek(cb + 120)) end
+          if why == "closed" do TCP._why(cb, "unexpected EOF") else t end
+        else
+          pieces = HTTP._rest(g, cb, d, limit, empty)
+          TCP._join(pieces, Enum.reduce(pieces, 0, fn piece, acc -> acc + byte_size(piece) end))
+        end
+      end
+    end
+  end
+# The headers of an answer as a program sees them: in the order of their
+# names, which are in lower case, without those of the transfer.
+#: _reshdrs/2 needs Enum.map/2 TCP._lower/1 _sorted/1 _without/2
+  def _reshdrs(h: list[tuple[string, string]], unzip: boolean): list[tuple[string, string]] do
+    h1 = HTTP._without(HTTP._without(h, "Transfer-Encoding"), "Trailer")
+    h2 = if unzip do HTTP._without(HTTP._without(h1, "Content-Encoding"), "Content-Length") else h1 end
+    Enum.map(HTTP._sorted(h2), fn {k, v} -> {TCP._lower(k), v} end)
+  end
+# The host of an address without its port and brackets, as it is written
+# and in lower case.
+#: _barehost/1 needs Enum.at/3 TCP._last/3 TCP._sub/3
+  def _barehost(u: list[string]): string do
+    host = Enum.at(u, 3, "")
+    n = byte_size(host)
+    p = Sys.addr(host)
+    if n > 0 and Sys.byte(p) == 91 do
+      e = Sys.find(p, n, 93)
+      TCP._sub(host, 1, if e < 0 do n - 1 else e - 1 end)
+    else
+      c = TCP._last(p, n, 58)
+      if c < 0 do host else TCP._sub(host, 0, c) end
+    end
+  end
+#: _hostname/1 needs Enum.at/3 TCP._last/3 TCP._lower/1 TCP._sub/3 _barehost/1
+  def _hostname(u: list[string]): string do
+    TCP._lower(HTTP._barehost(u))
+  end
+# The host and port a request to the address is sent to.
+#: _hostport/1 needs Enum.at/3 TCP._last/3
+  def _hostport(u: list[string]): string do
+    host = Enum.at(u, 3, "")
+    n = byte_size(host)
+    p = Sys.addr(host)
+    c = TCP._last(p, n, 58)
+    bare = c < 0 or n > 0 and Sys.byte(p) == 91 and Sys.byte(p + n - 1) == 93
+    if bare do host <> (if Enum.at(u, 0, "") == "https" do ":443" else ":80" end) else host end
+  end
+# One request and its answer; an answer that sends elsewhere is followed
+# (left times at most). op is the first request's method as Go names it in
+# a failure.
+#: _hop/9 needs Enum.at/3 Enum.filter/2 Process._g/0 TCP._block/3 TCP._close/2 TCP._dial/3 _canon/1 _hostport/1 _parts/2 _proxy/2 _talk/7 _tokens/2 _urltext/2 _valok/2
+  def _hop(op: string, method: string, u: list[string], h: list[tuple[string, string]], body: string, d: integer, stream: boolean, follow: boolean, left: integer): result[HTTP.Response, string] do
+    g = Process._g()
+    scheme = Enum.at(u, 0, "")
+    where = hd(HTTP._parts(op, 10)) <> " " <> inspect(HTTP._urltext(u, true)) <> ": "
+    names = Enum.filter(h, fn {k, v} -> byte_size(k) == 0 or HTTP._tokens(Sys.addr(k), byte_size(k)) == 0 end)
+    values = Enum.filter(h, fn {k, v} -> HTTP._valok(Sys.addr(v), byte_size(v)) == 0 end)
+    web = scheme == "http" or scheme == "https"
+    if web and names != [] do error(where <> "net/http: invalid header field name " <> inspect(elem(hd(names), 0))) else
+      if web and values != [] do error(where <> "net/http: invalid header field value for " <> inspect(HTTP._canon(elem(hd(values), 0)))) else
+        if not web do error(where <> "unsupported protocol scheme " <> inspect(scheme)) else
+          if Enum.at(u, 3, "") == "" do error(where <> "http: no Host in request URL") else
+            {to, via} = HTTP._proxy(g, u)
+            {fd, why} = if to == "\x00" do {-1, via} else TCP._dial(g, if to == "" do HTTP._hostport(u) else to end, d) end
+            if fd < 0 do error(if why == "timeout" do why else where <> (if to == "" or to == "\x00" do "" else "proxyconnect tcp: " end) <> why end) else
+              cb = TCP._block(g, fd, 2)
+              try do
+                HTTP._talk(g, cb, {op, method, where <> "\n" <> via}, u, {h, body}, d, {stream, follow, left})
+              after
+                if Sys.peek(cb + 152) == 0 do TCP._close(g, cb) end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# The request is written to the connection and the answer read from it.
+#: _talk/7 needs Enum.at/3 TCP._close/2 TCP._lower/1 TCP._sub/3 TCP._write/5 _follow/9 _get/2 _has/2 _hostport/1 _reqtext/6 _resbody/6 _reshdrs/2 _reshead/3 _secure/5 _streamed/5 _tunnel/5 _unzip/1
+  def _talk(g: integer, cb: integer, names: tuple[string, string, string], u: list[string], sent: tuple[list[tuple[string, string]], string], d: integer, how: tuple[boolean, boolean, integer]): result[HTTP.Response, string] do
+    {op, method, both} = names
+    cut = Sys.find(Sys.addr(both), byte_size(both), 10)
+    where = TCP._sub(both, 0, cut)
+    via = TCP._sub(both, cut + 1, byte_size(both) - cut - 1)
+    {h, body} = sent
+    {stream, follow, left} = how
+    zip = method != "HEAD" and not HTTP._has(h, "accept-encoding") and not HTTP._has(h, "range")
+    tunnel = byte_size(via) > 0 and Sys.byte(Sys.addr(via)) == 2
+    out = HTTP._reqtext(method, u, h, body, zip, if tunnel do "" else via end)
+    through = if tunnel do HTTP._tunnel(g, cb, d, HTTP._hostport(u), TCP._sub(via, 1, byte_size(via) - 1)) else "" end
+    secure = if through != "" do through else if Enum.at(u, 0, "") == "https" do HTTP._secure(g, cb, d, op, u) else "" end end
+    gone = if secure != "" do secure else TCP._write(g, cb, Sys.addr(out), byte_size(out), d) end
+    {wrong, status, rh} = if gone != "" do {gone, 0, h} else HTTP._reshead(g, cb, d) end
+    if wrong != "" do error(if wrong == "timeout" do wrong else where <> wrong end) else
+      unzip = zip and TCP._lower(HTTP._get(rh, "content-encoding")) == "gzip"
+      to = HTTP._get(rh, "location")
+      moved = follow and to != "" and (status == 301 or status == 302 or status == 303 or status == 307 or status == 308)
+      if stream and not moved do
+        Sys.poke(cb + 152, 1)
+        ok(HTTP._streamed(cb, method, status, rh, unzip))
+      else
+        text = HTTP._resbody(g, cb, d, method, status, rh)
+        failed: string = if Sys.peek(cb + 120) == 0 do "" else Process.__any(Sys.peek(cb + 120)) end
+        TCP._close(g, cb)
+        if moved do HTTP._follow(op, method, u, h, body, d, stream, left, {status, to}) else
+          if failed != "" do error(failed) else
+            {plain, bad} = if unzip do HTTP._unzip(text) else {text, ""} end
+            if bad != "" do error(bad) else ok(%HTTP.Response{status: status, headers: HTTP._reshdrs(rh, unzip), body: plain, chunks: none}) end
+          end
+        end
+      end
+    end
+  end
+# An answer sent the request elsewhere: the next request, as Go's client
+# makes it.
+#: _follow/9 needs Enum.at/3 Enum.drop/2 Enum.filter/2 Enum.map/2 Enum.take/2 TCP._sub/3 _canon/1 _hop/9 _hostname/1 _parts/2 _resolve/2 _url/1 _urltext/2 _without/2
+  def _follow(op: string, method: string, u: list[string], h: list[tuple[string, string]], body: string, d: integer, stream: boolean, left: integer, moved: tuple[integer, string]): result[HTTP.Response, string] do
+    {status, to} = moved
+    {why, ref} = HTTP._url(to)
+    named0 = hd(HTTP._parts(op, 10))
+    first = Enum.at(HTTP._parts(op, 10), 1, "")
+    given = Enum.at(HTTP._parts(op, 10), 2, "")
+    if why != "" do error(named0 <> " " <> inspect(HTTP._urltext(u, true)) <> ": failed to parse Location header " <> inspect(to) <> ": parse " <> inspect(to) <> ": " <> why) else
+      if left == 0 do error(named0 <> " " <> inspect(to) <> ": stopped after 10 redirects") else
+        next = HTTP._resolve(u, ref)
+        same = status == 307 or status == 308
+        m = if same or method == "HEAD" do method else "GET" end
+        named = Enum.map(h, fn {k, v} -> {HTTP._canon(k), v} end)
+        h1 = if same do named else HTTP._without(HTTP._without(HTTP._without(HTTP._without(named, "Content-Type"), "Content-Encoding"), "Content-Language"), "Content-Location") end
+        to_host = HTTP._hostname(next)
+        k = byte_size(to_host) - byte_size(first)
+        near = to_host == first or k > 0 and Sys.find(Sys.addr(to_host), byte_size(to_host), 58) < 0 and Sys.find(Sys.addr(to_host), byte_size(to_host), 37) < 0 and TCP._sub(to_host, k, byte_size(first)) == first and Sys.byte(Sys.addr(to_host) + k - 1) == 46
+        h15 = if near do h1 else Enum.filter(h1, fn {name, v} -> name != "Authorization" and name != "Www-Authenticate" and name != "Cookie" and name != "Cookie2" and name != "Proxy-Authorization" and name != "Proxy-Authenticate" end) end
+        h2 = if given == "1" do h15 else if Enum.at(u, 0, "") == "https" and Enum.at(next, 0, "") == "http" do HTTP._without(h15, "Referer") else HTTP._without(h15, "Referer") ++ [{"Referer", HTTP._urltext(Enum.take(u, 1) ++ ["", ""] ++ Enum.drop(Enum.take(u, 7), 3) ++ ["", Enum.at(u, 8, ""), Enum.at(u, 9, "")], false)}] end end
+        HTTP._hop(named0 <> "\n" <> (if near do first else "\x00" end) <> "\n" <> given, m, next, h2, if same do body else "" end, d, stream, true, left - 1)
+      end
+    end
+  end
+# An answer whose body is read in pieces as it comes, by whoever reads the
+# stream; the connection closes when the stream is read no further. st: 0
+# the connection, 8 how the body ends (0 it has, 1 after the bytes at 16,
+# 2 chunks, 3 when the other end closes, 4 it is gzip and still to be
+# read), 16 bytes left, 24 text made ready, 32 the headers.
+#: _streamed/5 needs Process._g/0 Process._take/2 Stream.resource/3 TCP._close/2 TCP._lower/1 _bodied/1 _get/2 _num/1 _pull/1 _reshdrs/2 _trim/1
+  def _streamed(cb: integer, method: string, status: integer, rh: list[tuple[string, string]], unzip: boolean): HTTP.Response do
+    g = Process._g()
+    st = Process._take(g, 48)
+    cl = HTTP._num(HTTP._trim(HTTP._get(rh, "content-length")))
+    mode = if method == "HEAD" or not HTTP._bodied(status) do 0 else if unzip do 4 else if TCP._lower(HTTP._trim(HTTP._get(rh, "transfer-encoding"))) == "chunked" do 2 else if cl >= 0 do 1 else 3 end end end end
+    Sys.poke(st, cb)
+    Sys.poke(st + 8, mode)
+    Sys.poke(st + 16, if cl < 0 do 0 else cl end)
+    Sys.poke(st + 32, Process.__word(rh))
+    Sys.poke(st + 40, Process.__word(method) + 0 * status)
+    start: fn[integer] = fn(): integer do st end
+    next: fn[integer, option[tuple[list[string], integer]]] = fn(s: integer): option[tuple[list[string], integer]] do HTTP._pull(s) end
+    done: fn[integer, integer] = fn(s: integer): integer do TCP._close(Process._g(), Sys.peek(s)) end
+    %HTTP.Response{status: status, headers: HTTP._reshdrs(rh, unzip), body: "", chunks: some(Stream.resource(start, next, done))}
+  end
+# The next piece of a body read as it comes.
+#: _pull/1 needs Process._check/1 Process._g/0 TCP._atonv/4 TCP._exact/5 TCP._fill/4 TCP._some/2 TCP._sub/3 _hline/4 _resbody/6 _trailers/3 _trim/1 _unzip/1
+  def _pull(st: integer): option[tuple[list[string], integer]] do
+    g = Process._g()
+    Process._check(g)
+    cb = Sys.peek(st)
+    mode = Sys.peek(st + 8)
+    Sys.poke(cb + 120, 0)
+    if mode == 0 do none else
+      if mode == 4 do
+        rh: list[tuple[string, string]] = Process.__any(Sys.peek(st + 32))
+        {plain, bad} = HTTP._unzip(HTTP._resbody(g, cb, 0, "GET", 200, rh))
+        Sys.poke(st + 24, Process.__word(plain))
+        Sys.poke(st + 16, byte_size(plain))
+        Sys.poke(st + 8, 5)
+        HTTP._pull(st)
+      else
+        if mode == 5 do
+          left = Sys.peek(st + 16)
+          plain: string = Process.__any(Sys.peek(st + 24))
+          k = if left > 32768 do 32768 else left end
+          Sys.poke(st + 16, left - k)
+          if k == 0 do none else some({[TCP._sub(plain, byte_size(plain) - left, k)], st}) end
+        else
+          if mode == 2 do
+            line = HTTP._hline(g, cb, 0, 4096)
+            semi = Sys.find(Sys.addr(line), byte_size(line), 59)
+            digits = if semi < 0 do byte_size(HTTP._trim(line)) else semi end
+            {used, n} = TCP._atonv(Sys.addr(line), digits, 16, {0, 0})
+            if Sys.peek(cb + 120) != 0 or used == 0 or used != digits or n <= 0 do
+              if n == 0 and used > 0 do HTTP._trailers(g, cb, 0) end
+              Sys.poke(st + 8, 0)
+              none
+            else
+              piece = TCP._exact(g, cb, 0, n, 0)
+              if Sys.peek(cb + 120) != 0 do
+                Sys.poke(st + 8, 0)
+                none
+              else
+                HTTP._hline(g, cb, 0, 16)
+                some({[piece], st})
+              end
+            end
+          else
+            left = Sys.peek(st + 16)
+            if mode == 1 and left == 0 do none else
+              n = TCP._fill(g, cb, 0, if mode == 1 and left < 32768 do left else 32768 end)
+              if n == 0 do
+                Sys.poke(st + 8, 0)
+                none
+              else
+                k = if mode == 1 and left < n do left else n end
+                Sys.poke(st + 16, left - k)
+                some({[TCP._some(cb, k)], st})
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# A proxy is asked for a tunnel to an https address (Go's transport, for
+# HTTPS_PROXY): "" when it gives one, else what it said or what went wrong.
+#: _tunnel/5 needs TCP._sub/3 TCP._write/5 _reshead/3
+  def _tunnel(g: integer, cb: integer, d: integer, to: string, auth: string): string do
+    out = "CONNECT " <> to <> " HTTP/1.1\r\nHost: " <> to <> "\r\nUser-Agent: Go-http-client/1.1\r\n" <> auth <> "\r\n"
+    sent = TCP._write(g, cb, Sys.addr(out), byte_size(out), d)
+    {wrong, status, rh} = if sent != "" do {sent, 0, []} else HTTP._reshead(g, cb, d) end
+    if wrong != "" do (if wrong == "EOF" do "unexpected EOF" else wrong end) else
+      line: string = Process.__any(Sys.peek(cb + 160))
+      cut = Sys.find(Sys.addr(line), byte_size(line), 32)
+      if status == 200 do "" else if cut < 0 do line else TCP._sub(line, cut + 1, byte_size(line) - cut - 1) end end
+    end
+  end
+# A connection to an https address starts to speak TLS, for the host of
+# the address, offering http/1.1; what a request's options say of it is
+# behind the fourth line of op: 1 when nothing is verified, then the file
+# of roots. "" or what went wrong.
+#: _secure/5 needs TCP._sub/3 TLS._cafile/1 TLS._dial/5 TLS._find/3 _hostname/1
+  def _secure(g: integer, cb: integer, d: integer, op: string, u: list[string]): string do
+    a = TLS._find(op, "\n", 0)
+    b = TLS._find(op, "\n", a + 1)
+    c = TLS._find(op, "\n", b + 1)
+    e = TLS._find(op, "\n", c + 1)
+    insecure = c >= 0 and TCP._sub(op, c + 1, 1) == "1"
+    ca = if e < 0 do "" else TCP._sub(op, e + 1, byte_size(op) - e - 1) end
+    empty: list[tuple[string, string]] = []
+    {roots, wrong} = if ca == "" do {empty, ""} else TLS._cafile(ca) end
+    if wrong != "" do wrong else
+      {t, why} = TLS._dial(g, cb, d, HTTP._hostname(u), {4 + (if insecure do 1 else 0 end), roots})
+      first: string = if Sys.peek(t + 360) == 0 do "" else Process.__any(Sys.peek(t + 360)) end
+      if why == "tls: first record does not look like a TLS handshake" and first == "HTTP/" do "http: server gave HTTP response to HTTPS client" else why end
+    end
+  end
+# httpDo: a request with a method, headers and a body, waited for ms
+# milliseconds.
+#: _do/8 needs Process._check/1 Process._due/2 Process._g/0 TCP._sub/3 _has/2 _hop/9 _hostname/1 _tokens/2 _url/1
+  def _do(method: string, address: string, h: list[tuple[string, string]], body: string, ms: integer, stream: boolean, follow: boolean, tls: string): result[HTTP.Response, string] do
+    g = Process._g()
+    Process._check(g)
+    up = String.upcase(method)
+    m = if up == "" do "GET" else up end
+    if HTTP._tokens(Sys.addr(m), byte_size(m)) == 0 do error("net/http: invalid method " <> inspect(m)) else
+      {why, u} = HTTP._url(address)
+      if why != "" do error("parse " <> inspect(address) <> ": " <> why) else
+        HTTP._hop(TCP._sub(m, 0, 1) <> String.downcase(TCP._sub(m, 1, byte_size(m) - 1)) <> "\n" <> HTTP._hostname(u) <> "\n" <> (if HTTP._has(h, "referer") do "1" else "" end) <> "\n" <> tls, m, u, h, body, Process._due(g, ms), stream, follow, 10)
+      end
+    end
+  end
+#: _do/7 needs Process._check/1 Process._due/2 Process._g/0 TCP._sub/3 _do/8 _has/2 _hop/9 _hostname/1 _tokens/2 _url/1
+  def _do(method: string, address: string, h: list[tuple[string, string]], body: string, ms: integer, stream: boolean, follow: boolean): result[HTTP.Response, string] do
+    HTTP._do(method, address, h, body, ms, stream, follow, "0\n")
+  end
+#: get/1 needs _do/7
+  def get(a: string): result[HTTP.Response, string] do
+    empty: list[tuple[string, string]] = []
+    HTTP._do("GET", a, empty, "", 30000, false, true)
+  end
+#: get/2 needs _do/7
+  def get(a: string, h: list[tuple[string, string]]): result[HTTP.Response, string] do
+    HTTP._do("GET", a, h, "", 30000, false, true)
+  end
+#: post/3 needs _do/7
+  def post(a: string, body: string, h: list[tuple[string, string]]): result[HTTP.Response, string] do
+    HTTP._do("POST", a, h, body, 30000, false, true)
+  end
+#: request/4 needs _do/7
+  def request(method: string, a: string, h: list[tuple[string, string]], body: string): result[HTTP.Response, string] do
+    HTTP._do(method, a, h, body, 30000, false, true)
+  end
+#: request/5 needs _do/7
+  def request(method: string, a: string, h: list[tuple[string, string]], body: string, ms: integer): result[HTTP.Response, string] do
+    HTTP._do(method, a, h, body, ms, false, true)
+  end
+#: request/5 form 2 needs TCP._sub/3 TLS._cafile/1 _do/7 _do/8 _reqopts/2
+  def request(method: string, a: string, h: list[tuple[string, string]], body: string, o: list[tuple[atom, string]]): result[HTTP.Response, string] do
+    {ms, stream, follow, tls} = HTTP._reqopts(o, {30000, false, true, "0\n"})
+    ca = TCP._sub(tls, 2, byte_size(tls) - 2)
+    why = if ca == "" do "" else elem(TLS._cafile(ca), 1) end
+    if why != "" do error(why) else HTTP._do(method, a, h, body, ms, stream, follow, tls) end
+  end
+#: _reqopts/2 needs Atom.to_string/1 TCP._sub/3
+  def _reqopts(o: list[tuple[atom, string]], acc: tuple[integer, boolean, boolean, string]): tuple[integer, boolean, boolean, string] do
+    {ms, stream, follow, ca} = acc
+    case o do
+      [] -> acc
+      [{k, v} | rest] ->
+        if k == :ca_file do HTTP._reqopts(rest, {ms, stream, follow, TCP._sub(ca, 0, 2) <> v}) else
+          if k == :insecure do HTTP._reqopts(rest, {ms, stream, follow, (if v == "true" do "1" else "0" end) <> TCP._sub(ca, 1, byte_size(ca) - 1)}) else
+            if k == :timeout do
+              case Integer.parse(v) do
+                ok(n) -> HTTP._reqopts(rest, {n, stream, follow, ca})
+                error(_) -> raise("HTTP.request: timeout: is a number of milliseconds")
+              end
+            else
+              if k == :stream do HTTP._reqopts(rest, {ms, v == "true", follow, ca}) else
+                if k == :redirect do
+                  if v != "true" and v != "false" do raise("HTTP.request: redirect: is \"true\" or \"false\"") end
+                  HTTP._reqopts(rest, {ms, stream, v == "true", ca})
+                else raise("HTTP.request: unknown option :" <> Atom.to_string(k) <> "; the options are ca_file:, insecure:, timeout:, stream: and redirect:") end
+              end
+            end
+          end
+        end
+    end
+  end
+#: stream/4 needs _do/7
+  def stream(method: string, a: string, h: list[tuple[string, string]], body: string): result[HTTP.Response, string] do
+    HTTP._do(method, a, h, body, -1, true, true)
+  end
+# ---- Compression ----
+# g + 320 is a mapping of tables and working memory for gzip and deflate:
+# 0 the exclusive or of two bytes (a * 256 + b), 65536 the table of CRC-32,
+# 67584 the powers of two, 68096 the state of a reader of bits (0 where it
+# reads, 8 where that ends, 16 the bits in hand, 24 how many, 32, 40 and 48
+# the output, how much of it is written and its room, 56 set when the input
+# is no deflate stream, 64 the most the output may be), 69632 up the two
+# codes of a block (for each: how many codes of each length, then the
+# symbols in the order of their codes), 75520 up what lengths and distances
+# start at and how many more bits they take, 78848 the same for a writer,
+# 131072 where three bytes were last seen and 393216 where before that,
+# 655360 up the fixed codes as a writer needs them.
+#: _k/0 needs Process._g/0 _kinit/1
+  def _k(): integer do
+    g = Process._g()
+    k = Sys.peek(g + 320)
+    if k != 0 do k else
+      m = Sys.call(9, 0, 1048576, 3, 34, -1, 0)
+      if m < 0 do System.halt(71) end
+      Sys.poke(g + 320, m)
+      HTTP._kinit(m)
+      m
+    end
+  end
+#: _kinit/1 needs _kcodes/1 _kcrc/2 _kpow/3 _kxor/2
+  def _kinit(k: integer): integer do
+    HTTP._kpow(k + 67584, 0, 1)
+    HTTP._kxor(k, 0)
+    HTTP._kcrc(k, 0)
+    Enum.reduce([3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258], k + 76800, fn v, a -> Sys.poke(a, v) - v + a + 8 end)
+    Enum.reduce([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0], k + 77056, fn v, a -> Sys.poke(a, v) - v + a + 8 end)
+    Enum.reduce([1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577], k + 77312, fn v, a -> Sys.poke(a, v) - v + a + 8 end)
+    Enum.reduce([0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13], k + 77568, fn v, a -> Sys.poke(a, v) - v + a + 8 end)
+    Enum.reduce([16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15], k + 77824, fn v, a -> Sys.poke(a, v) - v + a + 8 end)
+    HTTP._kcodes(k)
+  end
+#: _kpow/3
+  def _kpow(a: integer, i: integer, v: integer): integer do
+    Sys.poke(a + 8 * i, v)
+    if i == 62 do 0 else HTTP._kpow(a, i + 1, v * 2) end
+  end
+# The exclusive or of two numbers, bit by bit: for the tables only.
+#: _xslow/2
+  def _xslow(a: integer, b: integer): integer do
+    if a == 0 do b else if b == 0 do a else (if rem(a, 2) == rem(b, 2) do 0 else 1 end) + 2 * HTTP._xslow(div(a, 2), div(b, 2)) end end
+  end
+#: _kxor/2 needs _xslow/2
+  def _kxor(k: integer, i: integer): integer do
+    if i == 65536 do Sys.poke(k + 65536, 0) else
+      a = div(i, 256)
+      b = rem(i, 256)
+      v = if a < 16 and b < 16 do HTTP._xslow(a, b) else Sys.byte(k + div(a, 16) * 256 + div(b, 16)) * 16 + Sys.byte(k + rem(a, 16) * 256 + rem(b, 16)) end
+      Sys.poke(k + i, v)
+      HTTP._kxor(k, i + 1)
+    end
+  end
+# The exclusive or of two numbers below 2 to the 32.
+#: _x32/3
+  def _x32(k: integer, a: integer, b: integer): integer do
+    Sys.byte(k + rem(a, 256) * 256 + rem(b, 256)) + Sys.byte(k + rem(div(a, 256), 256) * 256 + rem(div(b, 256), 256)) * 256 + Sys.byte(k + rem(div(a, 65536), 256) * 256 + rem(div(b, 65536), 256)) * 65536 + Sys.byte(k + div(a, 16777216) * 256 + div(b, 16777216)) * 16777216
+  end
+#: _kcrc/2 needs _kcrc1/3
+  def _kcrc(k: integer, i: integer): integer do
+    if i == 256 do 0 else
+      Sys.poke(k + 65536 + 8 * i, HTTP._kcrc1(k, i, 8))
+      HTTP._kcrc(k, i + 1)
+    end
+  end
+#: _kcrc1/3 needs _x32/3
+  def _kcrc1(k: integer, c: integer, n: integer): integer do
+    if n == 0 do c else HTTP._kcrc1(k, if rem(c, 2) == 1 do HTTP._x32(k, 3988292384, div(c, 2)) else div(c, 2) end, n - 1) end
+  end
+# The CRC-32 of the n bytes at p, carried on from c (0 at the start).
+#: _crc/4 needs _crc1/4
+  def _crc(k: integer, p: integer, n: integer, c: integer): integer do
+    4294967295 - HTTP._crc1(k, p, n, 4294967295 - c)
+  end
+#: _crc1/4
+  def _crc1(k: integer, p: integer, n: integer, c: integer): integer do
+    if n == 0 do c else
+      t = Sys.peek(k + 65536 + 8 * Sys.byte(k + rem(c, 256) * 256 + Sys.byte(p)))
+      d = div(c, 256)
+      HTTP._crc1(k, p + 1, n - 1, Sys.byte(k + rem(t, 256) * 256 + rem(d, 256)) + Sys.byte(k + rem(div(t, 256), 256) * 256 + rem(div(d, 256), 256)) * 256 + Sys.byte(k + rem(div(t, 65536), 256) * 256 + div(d, 65536)) * 65536 + div(t, 16777216) * 16777216)
+    end
+  end
+# n bits of the input, the lowest first; 0 and the mark at s + 56 past its
+# end.
+#: _bits/2
+  def _bits(s: integer, n: integer): integer do
+    have = Sys.peek(s + 24)
+    if have < n do
+      p = Sys.peek(s)
+      if p >= Sys.peek(s + 8) do Sys.poke(s + 56, 1) - 1 else
+        Sys.poke(s + 16, Sys.peek(s + 16) + Sys.byte(p) * Sys.peek(s - 512 + 8 * have))
+        Sys.poke(s, p + 1)
+        Sys.poke(s + 24, have + 8)
+        HTTP._bits(s, n)
+      end
+    else
+      v = Sys.peek(s + 16)
+      m = Sys.peek(s - 512 + 8 * n)
+      Sys.poke(s + 16, div(v, m))
+      Sys.poke(s + 24, have - n)
+      rem(v, m)
+    end
+  end
+# The next symbol of a code (its table at t): -1 when the bits are none.
+#: _sym/6 needs _bits/2
+  def _sym(s: integer, t: integer, len: integer, code: integer, first: integer, index: integer): integer do
+    c = code + HTTP._bits(s, 1)
+    count = Sys.peek(t + 8 * len)
+    if c - count < first do Sys.peek(t + 128 + 8 * (index + c - first)) else
+      if len == 15 or Sys.peek(s + 56) == 1 do Sys.poke(s + 56, 1) - 2 else HTTP._sym(s, t, len + 1, c * 2, (first + count) * 2, index + count) end
+    end
+  end
+# The table of a code from the lengths of its n symbols (words at l): how
+# many codes are left unused (below 0: the lengths are no code).
+#: _built/3 needs _bcount/3 _bleft/3 _boffs/3 _bplace/4
+  def _built(t: integer, l: integer, n: integer): integer do
+    Sys.poke(t, 0)
+    Sys.copy(t + 8, t, 120)
+    HTTP._bcount(t, l, n)
+    if Sys.peek(t) == n do 0 else
+      left = HTTP._bleft(t, 1, 1)
+      if left < 0 do left else
+        HTTP._boffs(t, 1, 0)
+        HTTP._bplace(t, l, 0, n)
+        left
+      end
+    end
+  end
+#: _bcount/3
+  def _bcount(t: integer, l: integer, n: integer): integer do
+    if n == 0 do 0 else
+      a = t + 8 * Sys.peek(l)
+      Sys.poke(a, Sys.peek(a) + 1)
+      HTTP._bcount(t, l + 8, n - 1)
+    end
+  end
+#: _bleft/3
+  def _bleft(t: integer, len: integer, left: integer): integer do
+    if len > 15 do left else
+      now = left * 2 - Sys.peek(t + 8 * len)
+      if now < 0 do now else HTTP._bleft(t, len + 1, now) end
+    end
+  end
+# Where the symbols of each length start, kept behind the table.
+#: _boffs/3
+  def _boffs(t: integer, len: integer, at: integer): integer do
+    Sys.poke(t + 2816 + 8 * len, at)
+    if len == 15 do 0 else HTTP._boffs(t, len + 1, at + Sys.peek(t + 8 * len)) end
+  end
+#: _bplace/4
+  def _bplace(t: integer, l: integer, i: integer, n: integer): integer do
+    if i == n do 0 else
+      len = Sys.peek(l + 8 * i)
+      if len != 0 do
+        o = t + 2816 + 8 * len
+        Sys.poke(t + 128 + 8 * Sys.peek(o), i)
+        Sys.poke(o, Sys.peek(o) + 1)
+      end
+      HTTP._bplace(t, l, i + 1, n)
+    end
+  end
+# Room for n more bytes of output: 0 when that is past what it may be.
+#: _room/2
+  def _room(s: integer, n: integer): integer do
+    need = Sys.peek(s + 40) + n
+    cap = Sys.peek(s + 48)
+    if need > Sys.peek(s + 64) do Sys.poke(s + 56, 2) - 2 else
+      if need + 8 <= cap do 1 else
+        m = Sys.call(25, Sys.peek(s + 32), cap, cap * 2, 1)
+        if m < 0 do System.halt(71) end
+        Sys.poke(s + 32, m)
+        Sys.poke(s + 48, cap * 2)
+        HTTP._room(s, n)
+      end
+    end
+  end
+# The symbols of a block, to its end.
+#: _codes/1 needs _bits/2 _room/2 _sym/6
+  def _codes(s: integer): integer do
+    k = s - 68096
+    sym = HTTP._sym(s, k + 69632, 1, 0, 0, 0)
+    if sym < 0 or Sys.peek(s + 56) != 0 do 0 else
+      if sym < 256 do
+        if HTTP._room(s, 1) == 0 do 0 else
+          Sys.poke(Sys.peek(s + 32) + Sys.peek(s + 40), sym)
+          Sys.poke(s + 40, Sys.peek(s + 40) + 1)
+          HTTP._codes(s)
+        end
+      else
+        if sym == 256 do 1 else
+          if sym >= 286 do Sys.poke(s + 56, 1) - 1 else
+            len = Sys.peek(k + 76800 + 8 * (sym - 257)) + HTTP._bits(s, Sys.peek(k + 77056 + 8 * (sym - 257)))
+            d = HTTP._sym(s, k + 72704, 1, 0, 0, 0)
+            if d < 0 or d >= 30 do Sys.poke(s + 56, 1) - 1 else
+              dist = Sys.peek(k + 77312 + 8 * d) + HTTP._bits(s, Sys.peek(k + 77568 + 8 * d))
+              at = Sys.peek(s + 40)
+              if dist > at or Sys.peek(s + 56) != 0 do Sys.poke(s + 56, 1) - 1 else
+                if HTTP._room(s, len) == 0 do 0 else
+                  o = Sys.peek(s + 32) + at
+                  Sys.copy(o, o - dist, len)
+                  Sys.poke(s + 40, at + len)
+                  HTTP._codes(s)
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# The lengths of the codes of a block that brings its own: n of them are
+# read into the words at l, by the code at t.
+#: _lengths/5 needs _bits/2 _fill8/3 _sym/6
+  def _lengths(s: integer, t: integer, l: integer, i: integer, n: integer): integer do
+    if i >= n do if i == n do 1 else 0 end else
+      sym = HTTP._sym(s, t, 1, 0, 0, 0)
+      if sym < 0 do 0 else
+        if sym < 16 do
+          Sys.poke(l + 8 * i, sym)
+          HTTP._lengths(s, t, l, i + 1, n)
+        else
+          if sym == 16 and i == 0 do 0 else
+            v = if sym == 16 do Sys.peek(l + 8 * i - 8) else 0 end
+            r = if sym == 16 do 3 + HTTP._bits(s, 2) else if sym == 17 do 3 + HTTP._bits(s, 3) else 11 + HTTP._bits(s, 7) end end
+            if i + r > n do 0 else
+              HTTP._fill8(l + 8 * i, r, v)
+              HTTP._lengths(s, t, l, i + r, n)
+            end
+          end
+        end
+      end
+    end
+  end
+#: _fill8/3
+  def _fill8(a: integer, n: integer, v: integer): integer do
+    if n == 0 do 0 else
+      Sys.poke(a, v)
+      HTTP._fill8(a + 8, n - 1, v)
+    end
+  end
+# One block: 1 when it was the last, 0 when another follows, -1 when it is
+# none.
+#: _block/1 needs _bits/2 _built/3 _codes/1 _fill8/3 _lengths/5 _order/4 _room/2
+  def _block(s: integer): integer do
+    k = s - 68096
+    last = HTTP._bits(s, 1)
+    kind = HTTP._bits(s, 2)
+    l = k + 81920
+    fine = if kind == 0 do
+      Sys.poke(s + 16, 0)
+      Sys.poke(s + 24, 0)
+      p = Sys.peek(s)
+      if p + 4 > Sys.peek(s + 8) do 0 else
+        n = Sys.byte(p) + Sys.byte(p + 1) * 256
+        if n + Sys.byte(p + 2) + Sys.byte(p + 3) * 256 != 65535 or p + 4 + n > Sys.peek(s + 8) or HTTP._room(s, n) == 0 do 0 else
+          Sys.copy(Sys.peek(s + 32) + Sys.peek(s + 40), p + 4, n)
+          Sys.poke(s + 40, Sys.peek(s + 40) + n)
+          Sys.poke(s, p + 4 + n)
+          1
+        end
+      end
+    else
+      if kind == 1 do
+        HTTP._fill8(l, 144, 8)
+        HTTP._fill8(l + 1152, 112, 9)
+        HTTP._fill8(l + 2048, 24, 7)
+        HTTP._fill8(l + 2240, 8, 8)
+        HTTP._built(k + 69632, l, 288)
+        HTTP._fill8(l, 30, 5)
+        HTTP._built(k + 72704, l, 30)
+        HTTP._codes(s)
+      else
+        if kind == 3 do 0 else
+          nlen = HTTP._bits(s, 5) + 257
+          ndist = HTTP._bits(s, 5) + 1
+          ncode = HTTP._bits(s, 4) + 4
+          if nlen > 286 or ndist > 30 do 0 else
+            HTTP._fill8(l, 19, 0)
+            HTTP._order(s, l, k + 77824, ncode)
+            if HTTP._built(k + 69632, l, 19) != 0 do 0 else
+              if HTTP._lengths(s, k + 69632, l + 256, 0, nlen + ndist) == 0 or Sys.peek(l + 256 + 2048) == 0 do 0 else
+                a = HTTP._built(k + 69632, l + 256, nlen)
+                b = HTTP._built(k + 72704, l + 256 + 8 * nlen, ndist)
+                if a < 0 or a > 0 and nlen != Sys.peek(k + 69632) + Sys.peek(k + 69640) or b < 0 or b > 0 and ndist != Sys.peek(k + 72704) + Sys.peek(k + 72712) do 0 else HTTP._codes(s) end
+              end
+            end
+          end
+        end
+      end
+    end
+    if fine == 0 or Sys.peek(s + 56) != 0 do -1 else last end
+  end
+# The lengths of the code that the lengths are written in come in an order
+# of their own.
+#: _order/4 needs _bits/2
+  def _order(s: integer, l: integer, o: integer, n: integer): integer do
+    if n == 0 do 0 else
+      Sys.poke(l + 8 * Sys.peek(o), HTTP._bits(s, 3))
+      HTTP._order(s, l, o + 8, n - 1)
+    end
+  end
+#: _blocks/1 needs _block/1
+  def _blocks(s: integer): integer do
+    r = HTTP._block(s)
+    if r == 0 do HTTP._blocks(s) else r end
+  end
+# RFC 1951: the n bytes at p as they were before deflate made them, when
+# they come to at most limit bytes: the text and 0, or "" and 1 (they are
+# no deflate stream) or 2 (they come to more). s + 0 says where the stream
+# ended.
+#: _inflate/3 needs _blocks/1 _k/0
+  def _inflate(p: integer, n: integer, limit: integer): tuple[string, integer] do
+    s = HTTP._k() + 68096
+    cap = 65536
+    m = Sys.call(9, 0, cap, 3, 34, -1, 0)
+    if m < 0 do System.halt(71) end
+    Sys.poke(s, p)
+    Sys.poke(s + 8, p + n)
+    Sys.poke(s + 16, 0)
+    Sys.poke(s + 24, 0)
+    Sys.poke(s + 32, m)
+    Sys.poke(s + 40, 0)
+    Sys.poke(s + 48, cap)
+    Sys.poke(s + 56, 0)
+    Sys.poke(s + 64, limit)
+    r = HTTP._blocks(s)
+    out = if r == 1 or Sys.peek(s + 56) == 2 do Sys.text(Sys.peek(s + 32), Sys.peek(s + 40)) else "" end
+    Sys.call(11, Sys.peek(s + 32), Sys.peek(s + 48))
+    {out, if r == 1 do 0 else if Sys.peek(s + 56) == 2 do 2 else 1 end end}
+  end
+# A gzip file (RFC 1952) as it was before: the text, or "" and what Go's
+# reader says of it.
+#: _unzip/1 needs _crc/4 _inflate/3 _k/0 _zskip/3
+  def _unzip(text: string): tuple[string, string] do
+    n = byte_size(text)
+    p = Sys.addr(text)
+    if n == 0 do {"", "EOF"} else
+      if n < 10 do {"", "unexpected EOF"} else
+        if Sys.byte(p) != 31 or Sys.byte(p + 1) != 139 or Sys.byte(p + 2) != 8 do {"", "gzip: invalid header"} else
+          flags = Sys.byte(p + 3)
+          a = 10 + (if rem(div(flags, 4), 2) == 1 and n >= 12 do 2 + Sys.byte(p + 10) + Sys.byte(p + 11) * 256 else 0 end)
+          b = if rem(div(flags, 8), 2) == 1 do HTTP._zskip(p, a, n) else a end
+          c = if rem(div(flags, 16), 2) == 1 do HTTP._zskip(p, b, n) else b end
+          d = if rem(div(flags, 2), 2) == 1 do c + 2 else c end
+          if d > n do {"", "unexpected EOF"} else
+            {plain, bad} = HTTP._inflate(p + d, n - d, 67108864)
+            k = HTTP._k()
+            e = Sys.peek(k + 68096)
+            if bad == 2 do {plain, ""} else if bad != 0 do {"", if e >= p + n do "unexpected EOF" else "flate: corrupt input before offset #{e - p - d}" end} else
+              if e + 8 > p + n do {"", "unexpected EOF"} else
+                sum = Sys.byte(e) + Sys.byte(e + 1) * 256 + Sys.byte(e + 2) * 65536 + Sys.byte(e + 3) * 16777216
+                size = Sys.byte(e + 4) + Sys.byte(e + 5) * 256 + Sys.byte(e + 6) * 65536 + Sys.byte(e + 7) * 16777216
+                if sum != HTTP._crc(k, Sys.addr(plain), byte_size(plain), 0) or size != rem(byte_size(plain), 4294967296) do {"", "gzip: invalid checksum"} else
+                  if e + 8 == p + n do {plain, ""} else
+                    {more, wrong} = HTTP._unzip(Sys.text(e + 8, p + n - e - 8))
+                    {if wrong == "" do plain <> more else "" end, wrong}
+                  end
+                end
+              end
+            end end
+          end
+        end
+      end
+    end
+  end
+# Past a name that a zero byte ends.
+#: _zskip/3
+  def _zskip(p: integer, a: integer, n: integer): integer do
+    if a >= n do n + 1 else
+      z = Sys.find(p + a, n - a, 0)
+      if z < 0 do n + 1 else a + z + 1 end
+    end
+  end
+# The codes of deflate's fixed block, each with its bits in the order they
+# are written, and the symbols lengths and distances are written as.
+#: _kcodes/1 needs _kdist/3 _klen/3 _krev/3
+  def _kcodes(k: integer): integer do
+    Enum.reduce(0..287, 0, fn i, acc ->
+      len = if i < 144 do 8 else if i < 256 do 9 else if i < 280 do 7 else 8 end end end
+      code = if i < 144 do 48 + i else if i < 256 do 400 + i - 144 else if i < 280 do i - 256 else 192 + i - 280 end end end
+      Sys.poke(k + 90112 + 8 * i, HTTP._krev(code, len, 0))
+      Sys.poke(k + 92416 + 8 * i, len)
+      0
+    end)
+    Enum.reduce(0..29, 0, fn i, acc -> Sys.poke(k + 94720 + 8 * i, HTTP._krev(i, 5, 0)) - HTTP._krev(i, 5, 0) end)
+    HTTP._klen(k, 3, 0)
+    HTTP._kdist(k, 1, 0)
+  end
+#: _krev/3
+  def _krev(code: integer, len: integer, acc: integer): integer do
+    if len == 0 do acc else HTTP._krev(div(code, 2), len - 1, acc * 2 + rem(code, 2)) end
+  end
+#: _klen/3
+  def _klen(k: integer, len: integer, i: integer): integer do
+    if len > 258 do 0 else
+      j = if i < 28 and Sys.peek(k + 76800 + 8 * (i + 1)) <= len do i + 1 else i end
+      Sys.poke(k + 95232 + 8 * (len - 3), 257 + j)
+      HTTP._klen(k, len + 1, j)
+    end
+  end
+# The code of every distance up to 256, and of each 128 distances above.
+#: _kdist/3
+  def _kdist(k: integer, d: integer, i: integer): integer do
+    if d > 32768 do 0 else
+      j = if i < 29 and Sys.peek(k + 77312 + 8 * (i + 1)) <= d do i + 1 else i end
+      if d <= 256 do Sys.poke(k + 97280 + 8 * (d - 1), j) end
+      if d > 256 and rem(d - 1, 128) == 0 do Sys.poke(k + 99584 + 8 * div(d - 1, 128), j) end
+      HTTP._kdist(k, d + 1, j)
+    end
+  end
+# n bits v are written, the lowest first. w: 0 where the next byte goes, 8
+# the bits in hand, 16 how many.
+#: _put/3 needs _putout/3
+  def _put(w: integer, v: integer, n: integer): integer do
+    have = Sys.peek(w + 16)
+    HTTP._putout(w, Sys.peek(w + 8) + v * Sys.peek(w - 640 + 8 * have), have + n)
+  end
+#: _putout/3
+  def _putout(w: integer, b: integer, c: integer): integer do
+    if c < 8 do
+      Sys.poke(w + 8, b)
+      Sys.poke(w + 16, c)
+    else
+      o = Sys.peek(w)
+      Sys.poke(o, rem(b, 256))
+      Sys.poke(w, o + 1)
+      HTTP._putout(w, div(b, 256), c - 8)
+    end
+  end
+# How many bytes at a and b are the same, up to most.
+#: _mlen/4
+  def _mlen(a: integer, b: integer, l: integer, most: integer): integer do
+    if l == most or Sys.byte(a + l) != Sys.byte(b + l) do l else HTTP._mlen(a, b, l + 1, most) end
+  end
+# The longest run before position i that the bytes at i repeat, looked for
+# at the last places the three bytes there were seen: its length times
+# 65536 and how far back it is.
+#: _best/7 needs _mlen/4
+  def _best(k: integer, p: integer, i: integer, n: integer, cand: integer, depth: integer, best: integer): integer do
+    if cand < 0 or depth == 0 or i - cand >= 32768 do best else
+      most = if n - i > 258 do 258 else n - i end
+      l = HTTP._mlen(p + cand, p + i, 0, most)
+      better = if l > div(best, 65536) do l * 65536 + i - cand else best end
+      next = Sys.peek(k + 393216 + 8 * rem(cand, 32768)) - 1
+      if l == most or next >= cand do better else HTTP._best(k, p, i, n, next, depth - 1, better) end
+    end
+  end
+# Position i is entered where its three bytes are looked up: the position
+# they were seen at before, or -1.
+#: _seen/3
+  def _seen(k: integer, p: integer, i: integer): integer do
+    h = k + 131072 + 8 * rem(Sys.byte(p + i) * 7919 + Sys.byte(p + i + 1) * 263 + Sys.byte(p + i + 2), 32768)
+    was = Sys.peek(h)
+    Sys.poke(k + 393216 + 8 * rem(i, 32768), was)
+    Sys.poke(h, i + 1)
+    was - 1
+  end
+#: _seens/4 needs _seen/3
+  def _seens(k: integer, p: integer, i: integer, e: integer): integer do
+    if i >= e do 0 else
+      HTTP._seen(k, p, i)
+      HTTP._seens(k, p, i + 1, e)
+    end
+  end
+# The n bytes at p from position i on, as literals and repeats in the
+# fixed codes.
+#: _lz/5 needs _best/7 _put/3 _seen/3 _seens/4
+  def _lz(k: integer, w: integer, p: integer, i: integer, n: integer): integer do
+    if i >= n do 0 else
+      found = if i + 3 > n do 0 else HTTP._best(k, p, i, n, HTTP._seen(k, p, i), 24, 0) end
+      len = div(found, 65536)
+      if len < 3 do
+        c = Sys.byte(p + i)
+        HTTP._put(w, Sys.peek(k + 90112 + 8 * c), Sys.peek(k + 92416 + 8 * c))
+        HTTP._lz(k, w, p, i + 1, n)
+      else
+        dist = rem(found, 65536)
+        sym = Sys.peek(k + 95232 + 8 * (len - 3))
+        HTTP._put(w, Sys.peek(k + 90112 + 8 * sym), Sys.peek(k + 92416 + 8 * sym))
+        HTTP._put(w, len - Sys.peek(k + 76800 + 8 * (sym - 257)), Sys.peek(k + 77056 + 8 * (sym - 257)))
+        d = if dist <= 256 do Sys.peek(k + 97280 + 8 * (dist - 1)) else Sys.peek(k + 99584 + 8 * div(dist - 1, 128)) end
+        HTTP._put(w, Sys.peek(k + 94720 + 8 * d), 5)
+        HTTP._put(w, dist - Sys.peek(k + 77312 + 8 * d), Sys.peek(k + 77568 + 8 * d))
+        e = if i + len + 3 > n do n - 2 else i + len end
+        HTTP._seens(k, p, i + 1, e)
+        HTTP._lz(k, w, p, i + len, n)
+      end
+    end
+  end
+# RFC 1951: the text as one block of deflate's fixed codes. last 1: it is
+# the last block of a stream. last 0: an empty block follows it, up to the
+# four bytes 00 00 FF FF that end a message of permessage-deflate and are
+# left off.
+#: _deflate/2 needs _k/0 _lz/5 _put/3
+  def _deflate(text: string, last: integer): string do
+    k = HTTP._k()
+    w = k + 68224
+    n = byte_size(text)
+    room = n + div(n, 8) + 64
+    m = Sys.call(9, 0, room, 3, 34, -1, 0)
+    if m < 0 do System.halt(71) end
+    Sys.poke(k + 131072, 0)
+    Sys.copy(k + 131080, k + 131072, 262136)
+    Sys.poke(w, m)
+    Sys.poke(w + 8, 0)
+    Sys.poke(w + 16, 0)
+    HTTP._put(w, last + 2, 3)
+    HTTP._lz(k, w, Sys.addr(text), 0, n)
+    HTTP._put(w, 0, 7)
+    if last == 0 do HTTP._put(w, 0, 3) end
+    HTTP._put(w, 0, 7)
+    out = Sys.text(m, Sys.peek(w) - m)
+    Sys.call(11, m, room)
+    out
+  end
+# Four bytes of a number, the lowest first.
+#: _le32/1 needs TCP._s/0
+  def _le32(v: integer): string do
+    s = TCP._s() + 256
+    Sys.poke(s, v)
+    Sys.text(s, 4)
+  end
+# The text as blocks of deflate that hold it as it is.
+#: _stored/2 needs TCP._sub/3 _le32/1
+  def _stored(text: string, at: integer): string do
+    n = byte_size(text) - at
+    k = if n > 65535 do 65535 else n end
+    head = (if k == n do "\x01" else "\x00" end) <> TCP._sub(HTTP._le32(k + (65535 - k) * 65536), 0, 4) <> TCP._sub(text, at, k)
+    if k == n do head else head <> HTTP._stored(text, at + k) end
+  end
+# RFC 1952: the text as a gzip file.
+#: _gzip/1 needs _crc/4 _deflate/2 _k/0 _le32/1 _stored/2
+  def _gzip(text: string): string do
+    n = byte_size(text)
+    packed = HTTP._deflate(text, 1)
+    body = if byte_size(packed) > n + 5 * (div(n, 65535) + 1) do HTTP._stored(text, 0) else packed end
+    "\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff" <> body <> HTTP._le32(HTTP._crc(HTTP._k(), Sys.addr(text), n, 0)) <> HTTP._le32(rem(n, 4294967296))
+  end
+# HTTP.serve_tls: the files named, in their order (httpServeTLSWith).
+#: _tlsfiles/2 needs Atom.to_string/1 String.contains?/2 Sys.open/3 TCP._file/1
+  def _tlsfiles(files: list[tuple[atom, string]], got: tuple[string, string]): tuple[string, string] do
+    case files do
+      [{k, v} | rest] ->
+        if k != :certfile and k != :keyfile do raise("HTTP.serve_tls: unknown option :" <> Atom.to_string(k) <> "; it takes certfile: and keyfile:") end
+        HTTP._tlsfiles(rest, if k == :certfile do {v, elem(got, 1)} else {elem(got, 0), v} end)
+      [] -> got
+    end
+  end
+# A connection of a server that speaks TLS makes its handshake, within
+# the least of the times the server sets for reading and writing: 1, or 0
+# when it failed. A client that speaks plain HTTP is told so, as Go's
+# server tells it.
+#: _tlsconn/3 needs Enum.member?/2 Process._due/2 Process._g/0 TCP._rawwrite/5 TLS._accept/5
+  def _tlsconn(hs: integer, cb: integer, id: tuple[list[string], integer, integer, list[string]]): integer do
+    g = Process._g()
+    ms = Enum.reduce([Sys.peek(hs + 56), Sys.peek(hs + 32), Sys.peek(hs + 40)], 0, fn v, acc -> if v > 0 and (acc == 0 or v < acc) do v else acc end end)
+    {t, why} = TLS._accept(g, cb, if ms == 0 do 0 else Process._due(g, ms) end, id, 0)
+    if why == "" do 1 else
+      first: string = if Sys.peek(t + 360) == 0 do "" else Process.__any(Sys.peek(t + 360)) end
+      if Enum.member?(["GET /", "HEAD ", "POST ", "PUT /", "OPTIO"], first) do
+        said = "HTTP/1.0 400 Bad Request\r\n\r\nClient sent an HTTP request to an HTTPS server.\n"
+        TCP._rawwrite(g, cb, Sys.addr(said), byte_size(said), Process._due(g, 5000))
+      end
+      0
+    end
+  end
+#: serve_tls/4 needs Process._g/0 Process._take/2 TLS._keypair/2 _listen/4 _serveopts/2 _tlsconn/3 _tlsfiles/2
+  def serve_tls(a: string, f: fn[HTTP.Request, HTTP.Response], files: list[tuple[atom, string]], o: list[tuple[atom, integer]]): result[http_server, string] do
+    {cert, key} = HTTP._tlsfiles(files, {"", ""})
+    {id, why} = TLS._keypair(cert, key)
+    if why != "" do error(why) else
+      speak: fn[integer, integer, integer] = fn(hs: integer, cb: integer): integer do HTTP._tlsconn(hs, cb, id) end
+      HTTP._listen(a, f, o, Process.__word(speak))
+    end
+  end
+#: serve_tls/3 needs _tlsfiles/2 serve_tls/4
+  def serve_tls(a: string, f: fn[HTTP.Request, HTTP.Response], files: list[tuple[atom, string]]): result[http_server, string] do
+    empty: list[tuple[atom, integer]] = []
+    HTTP.serve_tls(a, f, files, empty)
+  end
+# ---- Proxies ----
+# The proxy a request to an address goes through, as Go's
+# http.ProxyFromEnvironment chooses it: where to connect ("" for the
+# address itself, a zero byte when the proxy cannot be used, with why) and
+# what the request then carries (a byte 1, then a header for the proxy).
+# HTTP_PROXY and NO_PROXY are read at the first request and kept.
+#: _proxy/2 needs Base.encode64/1 Enum.at/3 TCP._literal/1 TCP._lower/1 _hostname/1 _hostport/1 _parts/2 _spared/3 _url/1
+  def _proxy(g: integer, u: list[string]): tuple[string, string] do
+    if Sys.peek(g + 400) == 0 do
+      env = fn(a: string, b: string): string do
+        case System.get_env(a) do
+          some(v) -> v
+          none ->
+            case System.get_env(b) do
+              some(w) -> w
+              none -> ""
+            end
+        end
+      end
+      cgi = System.get_env("REQUEST_METHOD") != none
+      Sys.poke(g + 392, Process.__word([if cgi do "" else env("HTTP_PROXY", "http_proxy") end, env("NO_PROXY", "no_proxy"), env("HTTPS_PROXY", "https_proxy")]))
+      Sys.poke(g + 400, 1)
+    end
+    kept: list[string] = Process.__any(Sys.peek(g + 392))
+    [plain, spare, secure] = kept
+    tunnel = Enum.at(u, 0, "") == "https"
+    proxy = if tunnel do secure else plain end
+    host = HTTP._hostname(u)
+    there = TCP._literal(host)
+    loop = there != "" and (Sys.byte(Sys.addr(there)) == 2 and Sys.byte(Sys.addr(there) + 4) == 127 or Sys.byte(Sys.addr(there)) == 10 and TCP._lower(host) == "::1")
+    if proxy == "" or Enum.at(u, 0, "") != "http" and not tunnel or host == "localhost" or loop or HTTP._spared(HTTP._parts(TCP._lower(spare), 44), host, HTTP._hostport(u)) do {"", ""} else
+      {bad, first} = HTTP._url(proxy)
+      {worse, p} = if bad != "" or Enum.at(first, 0, "") == "" or Enum.at(first, 3, "") == "" do HTTP._url("http://" <> proxy) else {bad, first} end
+      if worse != "" do {"", ""} else
+        if Enum.at(p, 0, "") != "http" do {"\x00", "proxy: the scheme " <> Enum.at(p, 0, "") <> " is not built (spec/alchem-network.md)"} else
+          user = Enum.at(p, 1, "")
+          {HTTP._hostport(p), (if tunnel do "\x02" else "\x01" end) <> (if Enum.at(p, 2, "") == "" do "" else "Proxy-Authorization: Basic " <> Base.encode64(if Sys.find(Sys.addr(user), byte_size(user), 58) < 0 do user <> ":" else user end) <> "\r\n" end)}
+        end
+      end
+    end
+  end
+# Whether NO_PROXY, as its entries in lower case, spares a host.
+#: _spared/3 needs TCP._last/3 TCP._literal/1 TCP._pnum/3 TCP._sub/3 _prefix/3 _trim/1
+  def _spared(entries: list[string], host: string, hostport: string): boolean do
+    case entries do
+      [] -> false
+      [raw | rest] ->
+        e = HTTP._trim(raw)
+        n = byte_size(e)
+        p = Sys.addr(e)
+        slash = Sys.find(p, n, 47)
+        colon = TCP._last(p, n, 58)
+        ported = colon > 0 and Sys.find(p, colon, 58) < 0 and TCP._pnum(p + colon + 1, n - colon - 1, 0) >= 0 and n - colon - 1 > 0
+        name0 = if ported do TCP._sub(e, 0, colon) else e end
+        name1 = if byte_size(name0) > 1 and Sys.byte(Sys.addr(name0)) == 42 and Sys.byte(Sys.addr(name0) + 1) == 46 do TCP._sub(name0, 1, byte_size(name0) - 1) else name0 end
+        dotted = if byte_size(name1) > 0 and Sys.byte(Sys.addr(name1)) == 46 do name1 else "." <> name1 end
+        k = byte_size(host) - byte_size(dotted)
+        port_fits = not ported or TCP._sub(e, colon, n - colon) == TCP._sub(hostport, byte_size(hostport) - (n - colon), n - colon)
+        here = TCP._literal(host)
+        hit = if n == 0 do false else
+          if e == "*" do true else
+            if slash > 0 do
+              net = TCP._literal(TCP._sub(e, 0, slash))
+              bits = TCP._pnum(p + slash + 1, n - slash - 1, 0)
+              here != "" and net != "" and byte_size(here) == 16 and byte_size(net) == 16 and bits >= 0 and bits <= 32 and HTTP._prefix(Sys.addr(here) + 4, Sys.addr(net) + 4, bits)
+            else
+              if TCP._literal(name0) != "" do here != "" and TCP._sub(TCP._literal(name0), 4, byte_size(here) - 4) == TCP._sub(here, 4, byte_size(here) - 4) and port_fits else
+                (k >= 0 and TCP._sub(host, if k < 0 do 0 else k end, byte_size(dotted)) == dotted or name1 == name0 and dotted == "." <> host and Sys.byte(Sys.addr(name0)) != 46) and port_fits
+              end
+            end
+          end
+        end
+        if hit do true else HTTP._spared(rest, host, hostport) end
+    end
+  end
+# Whether two IPv4 addresses (four bytes at a and b) share their first
+# bits.
+#: _prefix/3 needs Enum.at/3
+  def _prefix(a: integer, b: integer, bits: integer): boolean do
+    if bits <= 0 do true else
+      if bits >= 8 do Sys.byte(a) == Sys.byte(b) and HTTP._prefix(a + 1, b + 1, bits - 8) else
+        div(Sys.byte(a), Enum.at([256, 128, 64, 32, 16, 8, 4, 2], bits, 1)) == div(Sys.byte(b), Enum.at([256, 128, 64, 32, 16, 8, 4, 2], bits, 1))
+      end
+    end
+  end

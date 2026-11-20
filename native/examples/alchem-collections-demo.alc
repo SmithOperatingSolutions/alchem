@@ -1,0 +1,15 @@
+defmodule CollectionsDemo do
+  def text(n: integer): string do Integer.to_string(n) end
+  def positive(n: integer): boolean do n > 0 end
+  def total(pair: tuple[string,integer],acc: integer): integer do acc+elem(pair,1) end
+  def main() do
+    values=[1000,-958,42]
+    IO.puts(Enum.join(Enum.map(values,&text),", "))
+    IO.puts(Enum.join(Enum.map(Enum.filter(values,&positive),&text)," + "))
+    ledger=%{"second" => 2,"first" => 40}
+    IO.write("total: ")
+    IO.puts(Integer.to_string(Enum.reduce(Map.to_list(ledger),0,&total)))
+    IO.puts(Enum.join(Map.keys(ledger),", "))
+    System.halt(0)
+  end
+end

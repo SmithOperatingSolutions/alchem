@@ -1,0 +1,690 @@
+defmodule NativeFailures do
+  # Failures of the library's machine code (spec/alchem-failures.md). A
+  # routine of spec/library-x86_64.s or spec/collections-x86_64.s that cannot
+  # go on leaves the program with a status from 80 to 99: twelve bytes, mov
+  # edi,status; mov eax,60; syscall. Where the compiler puts such a routine
+  # into a traced program, zf_wrap turns each of these exits into a jump to
+  # code after the routine that fails as the pinned runtime does, at the
+  # call and with its message, so that a try can rescue it. Status 91 fails
+  # with the string RSI points at; 96, 98, 99 and 97 (with RSI) are panics of the
+  # pinned runtime, which name no place.
+  def zf_text(code: integer): bytes do
+    # slice needs a nonnegative amount
+    if code == 80 do b[115,108,105,99,101,32,110,101,101,100,115,32,97,32,110,111,110,110,101,103,97,116,105,118,101,32,97,109,111,117,110,116] else
+    # duplicate needs a nonnegative count and a result under 1 GiB
+    if code == 81 do b[100,117,112,108,105,99,97,116,101,32,110,101,101,100,115,32,97,32,110,111,110,110,101,103,97,116,105,118,101,32,99,111,117,110,116,32,97,110,100,32,97,32,114,101,115,117,108,116,32,117,110,100,101,114,32,49,32,71,105,66] else
+    # base must be between 2 and 36
+    if code == 82 do b[98,97,115,101,32,109,117,115,116,32,98,101,32,98,101,116,119,101,101,110,32,50,32,97,110,100,32,51,54] else
+    # base must be at least 2
+    if code == 83 do b[98,97,115,101,32,109,117,115,116,32,98,101,32,97,116,32,108,101,97,115,116,32,50] else
+    # digit out of range for the base
+    if code == 84 do b[100,105,103,105,116,32,111,117,116,32,111,102,32,114,97,110,103,101,32,102,111,114,32,116,104,101,32,98,97,115,101] else
+    # integer overflow
+    if code == 85 do b[105,110,116,101,103,101,114,32,111,118,101,114,102,108,111,119] else
+    # separator must not be empty
+    if code == 86 do b[115,101,112,97,114,97,116,111,114,32,109,117,115,116,32,110,111,116,32,98,101,32,101,109,112,116,121] else
+    # slice bounds must be nonnegative
+    if code == 87 do b[115,108,105,99,101,32,98,111,117,110,100,115,32,109,117,115,116,32,98,101,32,110,111,110,110,101,103,97,116,105,118,101] else
+    # input line exceeds 1048576 bytes
+    if code == 88 do b[105,110,112,117,116,32,108,105,110,101,32,101,120,99,101,101,100,115,32,49,48,52,56,53,55,54,32,98,121,116,101,115] else
+    # input is not valid UTF-8
+    if code == 89 do b[105,110,112,117,116,32,105,115,32,110,111,116,32,118,97,108,105,100,32,85,84,70,45,56] else
+    # cannot read standard input
+    if code == 90 do b[99,97,110,110,111,116,32,114,101,97,100,32,115,116,97,110,100,97,114,100,32,105,110,112,117,116] else
+    # panic: strings: Repeat output length overflow
+    if code == 96 do b[112,97,110,105,99,58,32,115,116,114,105,110,103,115,58,32,82,101,112,101,97,116,32,111,117,116,112,117,116,32,108,101,110,103,116,104,32,111,118,101,114,102,108,111,119] else
+    zf_text_more(code)
+    end end end end end end end end end end end end
+  end
+  def zf_text_more(code: integer): bytes do
+    # panic: strings: negative Repeat count
+    if code == 98 do b[112,97,110,105,99,58,32,115,116,114,105,110,103,115,58,32,110,101,103,97,116,105,118,101,32,82,101,112,101,97,116,32,99,111,117,110,116] else
+    # panic: runtime error: makeslice: len out of range
+    if code == 99 do b[112,97,110,105,99,58,32,114,117,110,116,105,109,101,32,101,114,114,111,114,58,32,109,97,107,101,115,108,105,99,101,58,32,108,101,110,32,111,117,116,32,111,102,32,114,97,110,103,101] else b[] end end
+  end
+  # The program fails at pos with text as the reason; nothing follows.
+  def zf_fail(table: bytes, pos: integer, text: bytes): bytes do
+    at = if nc_cursor(table,21) == 0 do pos else nc_cursor(table,21) end
+    nc_join(Enum.concat(b[191],nc_u32(at)),Enum.concat(xa_mark(8+Enum.count(text),b[72,141,53,9,0,0,0]),nc_call(nz_slot(table))),Enum.concat(nt_word(Enum.count(text)),text))
+  end
+  def zf_fail_given(table: bytes, pos: integer): bytes do
+    at = if nc_cursor(table,21) == 0 do pos else nc_cursor(table,21) end
+    Enum.concat(Enum.concat(b[191],nc_u32(at)),nc_call(nz_slot(table)))
+  end
+  # A failure of the runtime itself (a panic of the pinned one): it names no
+  # place and shows no calls (position 0x7FFFFFFE in spec/trace-x86_64.s).
+  def zf_panic(table: bytes, text: bytes): bytes do
+    nc_join(b[191,254,255,255,127],Enum.concat(xa_mark(8+Enum.count(text),b[72,141,53,9,0,0,0]),nc_call(nz_slot(table))),Enum.concat(nt_word(Enum.count(text)),text))
+  end
+  # 1 when the twelve bytes at at are such an exit.
+  def zf_exit(code: bytes, at: integer): integer do
+    status = Enum.at(code,at+1,0)
+    if (status-80)*(99-status) < 0 do 0 else if Enum.at(code,at+5,0)*256+Enum.at(code,at+6,0) != 47164 do 0 else if Enum.at(code,at+10,0)*256+Enum.at(code,at+11,0) != 3845 do 0 else
+      if Enum.at(code,at+2,0)+Enum.at(code,at+3,0)+Enum.at(code,at+4,0)+Enum.at(code,at+7,0)+Enum.at(code,at+8,0)+Enum.at(code,at+9,0) == 0 do 1 else 0 end
+    end end end
+  end
+  # Where the first exit stands from first up to stop, or -1.
+  def zf_find(code: bytes, first: integer, stop: integer): integer do
+    if stop-first > 64 do
+      middle = first+nc_half(stop-first)
+      left = zf_find(code,first,middle)
+      if left >= 0 do left else zf_find(code,middle,stop) end
+    else zf_scan(code,first,stop) end
+  end
+  def zf_scan(code: bytes, first: integer, stop: integer): integer do
+    if first >= stop do -1 else
+      if Enum.at(code,first,0) != 191 do zf_scan(code,first+1,stop) else if zf_exit(code,first) == 1 do first else zf_scan(code,first+1,stop) end end
+    end
+  end
+  # An exit found in data that lies in the code (a byte literal the
+  # arguments hold, a program that writes machine code) is data: the search
+  # goes on after it.
+  def zf_patch(code: bytes, table: bytes, pos: integer, first: integer): bytes do
+    size = Enum.count(code)
+    at = zf_find(code,first,size-11)
+    status = Enum.at(code,at+1,0)
+    data = if at < 0 do -1 else zf_last_data(code,0,at) end
+    if at < 0 do code else if data > at do zf_patch(code,table,pos,data) else
+      tail = if status == 91 do zf_fail_given(table,pos) else if status == 97 do Enum.concat(b[191,254,255,255,127],nc_call(nz_slot(table))) else if (status-96)*(status-98)*(status-99) == 0 do zf_panic(table,zf_text(status)) else zf_fail(table,pos,zf_text(status)) end end end
+      jump = Enum.concat(b[233],nc_u32(size-at))
+      over = Enum.concat(b[233],nc_u32(Enum.count(tail)))
+      zf_patch(nc_join(nc_join(nc_slice(code,0,at),jump,b[144,144,144,144,144,144,144]),nc_slice(code,at+12,size),Enum.concat(over,tail)),table,pos,at+12)
+    end end
+  end
+  # Data in the code stands behind a jump over it (233 at p): a literal
+  # copied when it is evaluated (nc_literal_emit) or one that is its own
+  # value (nc_text_emit, sg_static). Each form spells the data's length
+  # twice, so bytes that only look like one are not taken for it. The end
+  # of the data the jump at p passes over, or -1.
+  def zf_data_end(code: bytes, p: integer): integer do
+    n = nc_long(code,p+1)
+    copied = if p < 22 do 0 else if zf_same(code,p-22,b[72,141,53,20,0,0,0,72,141,122,8,185],0) == 0 do 0 else if nc_long(code,p-10) != n do 0 else zf_same(code,p-6,b[252,243,164,72,137,208],0) end end end
+    owned = if p < 7 do 0 else if zf_same(code,p-7,b[72,141,5,5,0,0,0],0) == 0 do 0 else if nc_long(code,p+9) != 0 do 0 else if nc_long(code,p+5)+8 == n do 1 else 0 end end end end
+    if Enum.at(code,p,0) != 233 do -1 else if copied+owned == 0 do -1 else p+5+n end end
+  end
+  # The end of the last such data whose jump stands from first up to stop,
+  # or -1: searched from stop down, by halves, so that it costs the distance
+  # to that data.
+  def zf_last_data(code: bytes, first: integer, stop: integer): integer do
+    if stop-first > 64 do
+      middle = first+nc_half(stop-first)
+      right = zf_last_data(code,middle,stop)
+      if right >= 0 do right else zf_last_data(code,first,middle) end
+    else zf_last_data_run(code,first,stop-1) end
+  end
+  def zf_last_data_run(code: bytes, first: integer, p: integer): integer do
+    if p < first do -1 else
+      found = if Enum.at(code,p,0) != 233 do -1 else zf_data_end(code,p) end
+      if found >= 0 do found else zf_last_data_run(code,first,p-1) end
+    end
+  end
+  # value, a library call that starts at pos, with the exits of its routine
+  # (the end of its code) made failures of that call.
+  def zf_wrap(value: bytes, table: bytes, pos: integer): bytes do
+    if nc_pos(value) < 0 do value else if nz_on(table) == 0 do value else
+      code = nc_code(value)
+      size = Enum.count(code)
+      fixed = zf_patch(code,table,pos,if size > 1400 do size-1400 else 0 end)
+      if Enum.count(fixed) == size do value else Enum.concat(nc_slice(value,0,nt_after(value,4)),fixed) end
+    end end
+  end
+  # The range in RAX, written where a stream is expected: one written with
+  # a step of 0 fails, naming its dots (the fifth word of nn_range_emit).
+  def zf_stepped(table: bytes): bytes do
+    text = b[114,97,110,103,101,32,115,116,101,112,32,99,97,110,110,111,116,32,98,101,32,122,101,114,111]
+    if nz_on(table) == 0 do b[] else nc_join(Enum.concat(b[139,120,32,133,255,116,49+xa_mark_size()],xa_mark(33,b[72,141,53,9,0,0,0])),nc_call(nz_slot(table)),Enum.concat(nt_word(25),text)) end
+  end
+  # The code that leaves in RAX the value the pinned runtime has where there
+  # is none (Go's zero value) for a type: 0, false, 0.0, an empty string,
+  # atom, list, map or set, none, a tuple or a struct of such, the range
+  # 0..0//0; for a sum type a value of variant -1, for a result one of
+  # discriminant -1 and for an option the address 0x400000 (the image's
+  # first byte, which no value has): the pinned runtime's nil, equal only to
+  # itself, shown as nil and matched by no constructor. budget bounds the
+  # nesting.
+  def zf_zero(source: bytes, table: bytes, kind: bytes, budget: integer): bytes do
+    tag = nt_tag(kind)
+    if budget == 0 do b[49,192] else
+      if (tag-2)*(tag-22) == 0 do nc_text_emit(b[]) else if (tag-7)*(tag-8)*(tag-25) == 0 do nl_empty() else
+        if tag == 5 do zf_record(source,table,nq_tuple_cells(kind,0),Enum.concat(b[nt_count(kind),budget],nc_u16(0))) else
+          if (tag-13)*(tag-18) == 0 do zf_struct(source,table,kind,budget) else
+            if (tag-14)*(tag-19) == 0 do nc_join(nc_allocate_emit(8),b[72,199,2,1,0,0,0,72,199,66,8,255,255,255,255],b[72,137,208]) else
+              if tag == 23 do nc_join(nc_allocate_emit(32),Enum.concat(b[72,199,2,0,0,0,0,72,199,66,8,0,0,0,0,72,199,66,16,0,0,0,0],b[72,199,66,24,0,0,0,0,72,199,66,32,0,0,0,0]),b[72,137,208]) else
+                if tag == 6 do nc_join(nc_allocate_emit(8),b[72,199,2,255,255,255,255,72,199,66,8,0,0,0,0],b[72,137,208]) else if tag == 4 do b[184,0,0,64,0] else b[49,192] end end
+              end
+            end
+          end
+        end
+      end end
+    end
+  end
+  # 1 for a type whose values may hold a nil (zf_zero): a case over one that
+  # no arm matches fails as the pinned runtime's does.
+  def zf_nil(kind: bytes, index: integer): integer do
+    tag = nt_tag(kind)
+    if (tag-4)*(tag-6)*(tag-13)*(tag-14)*(tag-16)*(tag-18)*(tag-19) == 0 do 1 else
+      if tag == 7 do zf_nil(nt_child(kind,0),0) else
+        if tag != 5 do 0 else if index >= nt_count(kind) do 0 else
+          if zf_nil(nt_child(kind,index),0) == 1 do 1 else zf_nil(kind,index+1) end
+        end end
+      end
+    end
+  end
+  # What follows the arms of a case that match every value of the type in
+  # slot: the failure of a nil, named where the case stands (np_case).
+  def zf_unmatched(table: bytes, env: bytes, slot: integer): bytes do
+    at = nc_env_offset(env,slot)
+    if zf_nil(nt_read(env,at+7),0) == 0 do b[] else wc_fail(table,nc_cursor(env,at),b[110,111,32,99,97,115,101,32,98,114,97,110,99,104,32,109,97,116,99,104,101,100]) end
+  end
+  # The test that the option in RAX is none. In the library a nil is one
+  # too: the pinned runtime's own functions ask only whether a value is some.
+  def zf_none(source: bytes, table: bytes, env: bytes): bytes do
+    if nc_word_at(source,nc_meta(table,nc_owner(table,nc_read(env,0)),0),b[65,108,99,104,101,109],0) == 1 do b[72,61,0,0,64,0,15,135] else b[72,133,192,15,133] end
+  end
+  # 1 when the count trees from offset on are names, _, none, and tuples and structs of such.
+  def zf_bare(tree: bytes, offset: integer, count: integer): integer do
+    layout = np_layout(tree,offset)
+    if count == 0 do 1 else
+      if Enum.at(tree,offset,0) < 2 do zf_bare(tree,np_size(tree,offset),count-1) else
+        if layout == 2 do zf_bare(tree,np_size(tree,offset),count-1) else
+          if layout*(layout-11) != 0 do 0 else if zf_bare(tree,np_below(tree,offset),np_count(tree,offset)) == 0 do 0 else zf_bare(tree,np_size(tree,offset),count-1) end end
+        end
+      end
+    end
+  end
+  # What the statement from start on, whose value was compiled, is to the
+  # pinned compiler though it is written as a call: 1 for elem(...) and
+  # put_elem(...), also after Kernel. and at the end of a pipeline or in
+  # brackets (it makes them an index and a tuple), which no statement may
+  # be; 2 for a variant of a sum type by its name, which only the last
+  # statement of a block may be; else 0.
+  def zf_formed(source: bytes, table: bytes, env: bytes, value: bytes, start: integer): integer do
+    stop = nc_start(source,nc_pos(value))
+    close = if byte_at(source,start) != 40 do -1 else np_close(source,start,0,16777216) end
+    last = zf_last(source,start,stop)
+    name = if nc_word(source,last,b[75,101,114,110,101,108])*nc_word(source,nc_end(source,last),b[46]) == 1 do nc_start(source,nc_end(source,nc_end(source,last))) else last end
+    owner = nc_owner(table,nc_read(env,0))
+    if close > 0 do if nc_start(source,close) != stop do 0 else zf_formed(source,table,env,nc_value(close-1,b[],nc_kind(value)),nc_start(source,start+1)) end else
+      if (nc_word(source,name,b[101,108,101,109])+nc_word(source,name,b[112,117,116,95,101,108,101,109]))*nc_word(source,nc_end(source,name),b[40]) == 1 do
+        if nc_find(source,name,table,owner) >= 0 do 0 else 1 end
+      else
+        # Process.self(n) takes its type from where its value goes: a statement gives it none.
+        if nc_word(source,start,b[80,114,111,99,101,115,115])*nc_word(source,nc_end(source,start),b[46])*nc_word(source,nc_start(source,nc_end(source,nc_end(source,start))),b[115,101,108,102]) == 1 do if last != start do 0 else 2 end else
+        if (nc_tag(value)-14)*(nc_tag(value)-19) != 0 do 0 else if last != start do 0 else if (byte_at(source,start)-65)*(90-byte_at(source,start)) < 0 do 0 else if nd_find(source,start,table,owner)+nd_named(source,start,table,owner) < -1 do 0 else 2 end end end end end
+      end
+    end
+  end
+  # Kernel.name(...) at start is the name alone when it is no function of
+  # the library (nk_else): a name that is called, written without blanks,
+  # and not the word not. A function of the program is not reached that
+  # way (nk_else).
+  def zf_kernel(source: bytes, start: integer, env: bytes, table: bytes): integer do
+    name = start+7
+    if byte_at(source,start+6) != 46 do 0 else if nc_start(source,name) != name do 0 else if nc_identifier(source,name)*nc_word(source,nc_end(source,name),b[40]) == 0 do 0 else
+      1-nc_word(source,name,b[110,111,116])
+    end end end
+  end
+  # Where the last part of the pipeline from start up to stop begins.
+  def zf_last(source: bytes, start: integer, stop: integer): integer do
+    state = zf_pipe_run(source,nk_state(start,0,2),16777216,stop)
+    if Enum.at(state,5,0) != 1 do start else zf_last(source,nc_start(source,nc_cursor(state,0)),stop) end
+  end
+  # As nk_pipe_step, with the position after the |> it finds.
+  def zf_pipe_step(source: bytes, pos: integer, depth: integer, stop: integer): bytes do
+    found = nk_pipe_step(source,pos,depth,stop)
+    if Enum.at(found,5,0) != 1 do found else nk_state(nc_start(source,pos)+2,0,1) end
+  end
+  def zf_pipe_run(source: bytes, state: bytes, size: integer, stop: integer): bytes do
+    half = nc_half(size)
+    if Enum.at(state,5,0) != 2 do state else
+      if size == 1 do zf_pipe_step(source,nc_cursor(state,0),nc_read(state,3),stop) else
+        zf_pipe_run(source,zf_pipe_run(source,state,half,stop),size-half,stop)
+      end
+    end
+  end
+  # 1 for a function of the library that gives no value in the pinned
+  # compiler (its result is void there): the call may only be a statement.
+  # Logger.metadata() without arguments gives the metadata.
+  # pos: the module's name, or -1 for a name written without one.
+  def zf_void(source: bytes, pos: integer, name: integer): integer do
+    # IO.puts(:stderr, text) gives none; IO.puts(file, text) gives a result (2).
+    if nc_word(source,pos,b[73,79])*nc_word(source,name,b[112,117,116,115]) == 1 do 2 else
+    if pos < 0 do nc_word(source,name,b[97,115,115,101,114,116,95,114,97,105,115,101])+nc_word(source,name,b[102,108,117,110,107])+nc_word(source,name,b[111,110,95,101,120,105,116])+nc_word(source,name,b[114,101,102,117,116,101]) else
+      if nc_word(source,pos,b[65,103,101,110,116]) == 1 do nc_word(source,name,b[117,112,100,97,116,101]) else if nc_word(source,pos,b[70,105,108,101]) == 1 do nc_word(source,name,b[114,109,33])+nc_word(source,name,b[119,114,105,116,101,33]) else if nc_word(source,pos,b[71,101,110]) == 1 do nc_word(source,name,b[99,104,101,99,107]) else if nc_word(source,pos,b[76,111,103,103,101,114]) == 1 do nc_word(source,name,b[100,101,98,117,103])+nc_word(source,name,b[105,110,102,111])+nc_word(source,name,b[119,97,114,110,105,110,103])+nc_word(source,name,b[101,114,114,111,114])+nc_word(source,name,b[108,111,103])+nc_word(source,name,b[109,101,116,97,100,97,116,97])*(1-nc_word(source,nc_start(source,nc_end(source,nc_end(source,name))),b[41]))+nc_word(source,name,b[99,111,110,102,105,103,117,114,101]) else if nc_word(source,pos,b[83,121,115,116,101,109]) == 1 do nc_word(source,name,b[99,111,108,108,101,99,116,95,103,97,114,98,97,103,101])+nc_word(source,name,b[112,117,116,95,101,110,118]) else 0 end end end end end
+    end end
+  end
+  # The value of such a call in a program: no value (the library's own
+  # calls keep the tuple[] they are written with).
+  def zf_voided(source: bytes, table: bytes, env: bytes, made: bytes, void: integer): bytes do
+    if void == 0 do made else if nc_pos(made) < 0 do made else if (void-1)*nt_tag(nc_kind(made)) > 0 do if nt_tag(nc_kind(made)) != 5 do made else zf_voided(source,table,env,made,1) end else
+      if nc_word_at(source,nc_meta(table,nc_owner(table,nc_read(env,0)),0),b[65,108,99,104,101,109],0) == 1 do made else nc_join(nc_slice(made,0,4),b[1,12],nc_code(made)) end
+    end end end
+  end
+  def zf_nils(cells: bytes, count: integer): integer do
+    if count == 0 do 0 else if zf_nil(nt_item(cells,count-1),0) == 1 do 1 else zf_nils(cells,count-1) end end
+  end
+  # The same after the clauses of function head, whose parameters' types are cells.
+  def zf_clauses(table: bytes, head: integer, cells: bytes): bytes do
+    if zf_nils(cells,nt_items(cells,0)) == 0 do b[] else wc_fail(table,nc_meta(table,head,0),b[110,111,32,99,97,115,101,32,98,114,97,110,99,104,32,109,97,116,99,104,101,100]) end
+  end
+  def zf_struct(source: bytes, table: bytes, kind: bytes, budget: integer): bytes do
+    id = nd_id(table,kind)
+    cells = if id < 0 do b[] else nu_apply_cells(nq_struct_cells(source,table,id,0),nd_subst(source,table,kind),0) end
+    count = if id < 0 do 0 else nd_fields(source,table,id,0) end
+    if id < 0 do b[49,192] else zf_record(source,table,cells,Enum.concat(b[count,budget],nc_u16(0))) end
+  end
+  # A record of count words, each the zero of its type in cells. plan: the
+  # count, the budget and the index (two bytes).
+  def zf_record(source: bytes, table: bytes, cells: bytes, plan: bytes): bytes do
+    count = Enum.at(plan,0,0)
+    index = nc_read(plan,2)
+    if index >= count do nc_join(nc_allocate_emit(count*8),Enum.concat(b[72,199,2],nc_u32(count)),zf_stores(count)) else
+      nc_join(zf_zero(source,table,nt_item(cells,index),Enum.at(plan,1,0)-1),b[80],zf_record(source,table,cells,Enum.concat(nc_slice(plan,0,2),nc_u16(index+1))))
+    end
+  end
+  def zf_stores(left: integer): bytes do
+    if left == 0 do b[72,137,208] else Enum.concat(Enum.concat(b[88,72,137,130],nc_u32(left*8)),zf_stores(left-1)) end
+  end
+  # A zero the pinned runtime has as a nil pointer (a file, a socket, a
+  # port, a task, an agent, a regular expression in the struct or the tuple
+  # a receive left) fails there, when it is used, with Go's panic for a nil
+  # pointer; here it is a record of zeros, and using it reads an address in
+  # the first page. Where such a zero is made the program starts to take
+  # that fault as the panic: a handler of SIGSEGV that, for an address below
+  # 4096, goes on at code that fails as Sys.panic does (and for any other
+  # address puts the default back, so the fault ends the program as before).
+  # The code: a jump over the handler, the restorer, that code and its
+  # message; then rt_sigaction.
+  def zf_guard(table: bytes): bytes do
+    if nz_on(table) == 0 do b[] else if nc_arm() == 1 do xa_raw(zf_guard_arm(table)) else nc_join(b[233,187,0,0,0,72,139,70,16,72,61,0,16,0,0,115,15,72,141,5,68,0,0,0,72,137,130,168,0,0,0,195,72,131,236,32,49,192,72,137,4,36,72,137,68,36,8,72,137,68,36,16,72,137,68,36,24,191,11,0,0,0,72,137,230,49,210,65,186,8,0,0,0,184,13,0,0,0,15,5,72,131,196,32,195,184,15,0,0,0,15,5,72,141,53,14,0,0,0,191,254,255,255,127],nc_call(nz_slot(table)),Enum.concat(b[71,0,0,0,0,0,0,0,112,97,110,105,99,58,32,114,117,110,116,105,109,101,32,101,114,114,111,114,58,32,105,110,118,97,108,105,100,32,109,101,109,111,114,121,32,97,100,100,114,101,115,115,32,111,114,32,110,105,108,32,112,111,105,110,116,101,114,32,100,101,114,101,102,101,114,101,110,99,101,72,131,236,32,72,141,5,58,255,255,255,72,137,4,36,72,199,68,36,8,4,0,0,4,72,141,5,118,255,255,255,72,137,68,36,16,72,199,68,36,24],b[0,0,0,0,191,11,0,0,0,72,137,230,49,210,65,186,8,0,0,0,184,13,0,0,0,15,5,72,131,196,32])) end end
+  end
+  # The same on ARM64, as ARM64 code among the translated (xa_raw): a
+  # signal handler is called with the signal, the information and the
+  # context in X0 to X2 and returns by X30, and the context keeps the
+  # program counter at 440 (fault_address at 176, x0..x30, sp, pc). The
+  # code: a branch to the installing part; the handler; putting the default
+  # back; the restorer (rt_sigreturn); the failure, which calls Sys.panic as
+  # a translated call does (its return address on the X28 stack), and its
+  # message; then rt_sigaction, which keeps X3 and X8 (RBX and R8).
+  def zf_guard_arm(table: bytes): bytes do
+    fail = zf_guard_fail(nz_slot(table))
+    restorer = Enum.concat(a_mov_imm(8,139),a_svc())
+    default = nc_join(Enum.concat(a_sub_imm(31,31,32,0),zf_guard_clear()),nc_join(a_mov_imm(0,11),a_add_imm(1,31,0,0),a_mov_imm(2,0)),nc_join(Enum.concat(a_mov_imm(3,8),a_mov_imm(8,134)),a_svc(),Enum.concat(a_add_imm(31,31,32,0),a_br(30))))
+    check = Enum.concat(a_ldr(17,1,16),a_cmp_value(17,4096))
+    size = Enum.count(check)+16
+    handler = nc_join(check,Enum.concat(a_bcond(2,16),a_adr(16,size-Enum.count(check)-4+Enum.count(default)+Enum.count(restorer))),Enum.concat(a_str(16,2,440),a_br(30)))
+    body = nc_join(handler,Enum.concat(default,restorer),fail)
+    install = zf_guard_install(4+Enum.count(body),4+Enum.count(handler)+Enum.count(default))
+    nc_join(a_b(4+Enum.count(body)),body,install)
+  end
+  def zf_guard_clear(): bytes do nc_join(Enum.concat(a_str(31,31,0),a_str(31,31,8)),Enum.concat(a_str(31,31,16),a_str(31,31,24)),b[]) end
+  # The failure: Sys.panic (the function at slot) with the position
+  # 0x7ffffffe and the message, which follows the code.
+  def zf_guard_fail(slot: integer): bytes do
+    call = nc_join(Enum.concat(a_mov_imm(5,2147483646),a_mov_imm(11,4195456+slot*8)),Enum.concat(a_ldr(16,11,0),a_adr(30,12)),nc_join(a_push(30),a_br(16),a_udf()))
+    message = b[71,0,0,0,0,0,0,0,112,97,110,105,99,58,32,114,117,110,116,105,109,101,32,101,114,114,111,114,58,32,105,110,118,97,108,105,100,32,109,101,109,111,114,121,32,97,100,100,114,101,115,115,32,111,114,32,110,105,108,32,112,111,105,110,116,101,114,32,100,101,114,101,102,101,114,101,110,99,101,0]
+    nc_join(a_adr(4,4+Enum.count(call)),call,message)
+  end
+  # rt_sigaction(SIGSEGV, {the handler, SA_SIGINFO | SA_RESTORER, the
+  # restorer, no mask}, 0, 8) at at in the block; handler and restorer: where
+  # they start in it.
+  def zf_guard_install(at: integer, restorer: integer): bytes do
+    save = nc_join(Enum.concat(a_mov(19,3),a_mov(20,8)),a_sub_imm(31,31,32,0),b[])
+    first = Enum.count(save)
+    table = nc_join(Enum.concat(a_adr(16,4-at-first),a_str(16,31,0)),Enum.concat(a_mov_imm(16,67108868),a_str(16,31,8)),b[])
+    second = first+Enum.count(table)
+    rest = nc_join(Enum.concat(a_adr(16,restorer-at-second),a_str(16,31,16)),a_str(31,31,24),nc_join(Enum.concat(a_mov_imm(0,11),a_add_imm(1,31,0,0)),Enum.concat(a_mov_imm(2,0),a_mov_imm(3,8)),Enum.concat(a_mov_imm(8,134),a_svc())))
+    nc_join(save,table,Enum.concat(rest,nc_join(a_add_imm(31,31,32,0),a_mov(3,19),a_mov(8,20))))
+  end
+  # Process.receive gives {false, zero} when it ran out of time: the zero of
+  # a message type that holds structs, sum types or ranges is made here,
+  # where the type's declaration is known (the library has only the type's
+  # bytes: Process._zero).
+  def zf_received(source: bytes, table: bytes, pos: integer, made: bytes): bytes do
+    name = nc_start(source,nc_expect(source,nc_end(source,pos),b[46]))
+    kind = nc_kind(made)
+    ours = if nc_pos(made) < 0 do 0 else if nt_tag(kind) != 5 do 0 else if nc_word(source,pos,b[80,114,111,99,101,115,115])*nc_word(source,name,b[114,101,99,101,105,118,101]) == 0 do 0 else zf_named(nt_child(kind,1),0) end end end
+    zero = if ours == 0 do b[] else zf_zero(source,table,nt_child(kind,1),24) end
+    if ours == 0 do made else
+      guarded = Enum.concat(zf_guard(table),zero)
+      Enum.concat(made,nc_join(Enum.concat(b[72,131,120,8,0,15,133],nc_u32(Enum.count(guarded)+9)),Enum.concat(b[80],guarded),b[89,72,137,65,16,72,137,200]))
+    end
+  end
+  # 1 for a type that holds a struct, a sum type or a range outside any
+  # option, list, map or set.
+  def zf_named(kind: bytes, index: integer): integer do
+    tag = nt_tag(kind)
+    if (tag-13)*(tag-14)*(tag-18)*(tag-19)*(tag-23) == 0 do 1 else
+      if tag == 6 do 0 else
+        if tag != 5 do 0 else if index >= nt_count(kind) do 0 else
+          if zf_named(nt_child(kind,index),0) == 1 do 1 else zf_named(kind,index+1) end
+        end end
+      end
+    end
+  end
+  # A field of a struct or a range that a call of the compiler's own gave:
+  # hd(points).x, Enum.at(ranges, 0, 1..1).first.
+  def zf_fields(source: bytes, value: bytes, env: bytes, table: bytes, depth: integer): bytes do
+    tag = nc_tag(value)
+    if (tag-13)*(tag-18)*(tag-23) != 0 do value else if nc_word(source,nc_pos(value),b[46]) != 1 do value else nw_keep(nd_access(source,value,env,table,depth),value,b[]) end end
+  end
+  # The text of an assertion shows ~h"..." as the call the pinned compiler
+  # makes of it: Markup.template("name", ["text", ...], [Markup.of(value),
+  # ...]), the name as mh_template has it. The result is the inside of a
+  # string literal, as the texts of native-testing.alc are.
+  def zf_markup(source: bytes, s: integer): bytes do
+    shape = sg_shape(source,s)
+    plan = Enum.concat(nc_slice(shape,3,12),nc_u24(s))
+    first = nc_cursor(shape,0)
+    if Enum.count(shape) == 0 do tm_no() else
+      name = mh_hex(zf_markup_sum(source,plan,first,b[37,35,34,132,228,156,242,203]),7)
+      fixed = zf_markup_fixed(source,plan,first,0)
+      values = zf_markup_values(source,plan,first,0)
+      tm_cat(nc_join(b[77,97,114,107,117,112,46,116,101,109,112,108,97,116,101,40,92,34],name,b[92,34,44,32,91]),tm_cat(zf_listed(fixed),b[93,44,32,91],zf_listed(values)),b[93,41])
+    end
+  end
+  # The pinned formatter writes a list of two or more items that is longer
+  # than 98 bytes over several lines, and an assertion is then shown without
+  # its text. items: the inside of the list, as the inside of a string
+  # literal; an item after the first starts with ", ".
+  def zf_listed(items: bytes): bytes do
+    if tm_bad(items) == 1 do items else if zf_several(items,0,0) == 0 do items else if zf_shown(items,0,Enum.count(items)) > 96 do tm_no() else items end end end
+  end
+  # How many bytes the text from first up to stop shows: an escape is one.
+  def zf_shown(text: bytes, first: integer, stop: integer): integer do
+    if stop-first > 64 do
+      middle = zf_whole(text,first+nc_half(stop-first),first)
+      zf_shown(text,first,middle)+zf_shown(text,middle,stop)
+    else zf_shown_run(text,first,stop) end
+  end
+  def zf_shown_run(text: bytes, pos: integer, stop: integer): integer do
+    if pos >= stop do 0 else if Enum.at(text,pos,0) == 92 do 1+zf_shown_run(text,pos+2,stop) else 1+zf_shown_run(text,pos+1,stop) end end
+  end
+  # at, or one further when at stands inside an escape (an odd number of
+  # backslashes before it).
+  def zf_whole(text: bytes, at: integer, first: integer): integer do
+    if zf_slashes(text,at-1,first) == 1 do at+1 else at end
+  end
+  def zf_slashes(text: bytes, pos: integer, first: integer): integer do
+    if pos < first do 0 else if Enum.at(text,pos,0) != 92 do 0 else 1-zf_slashes(text,pos-1,first) end end
+  end
+  # 1 when the items hold a ", " outside any bracket, parenthesis or string.
+  def zf_several(items: bytes, pos: integer, depth: integer): integer do
+    value = Enum.at(items,pos,0)
+    if pos >= Enum.count(items) do 0 else
+      if value == 92 do if Enum.at(items,pos+1,0) == 34 do zf_several(items,zf_quote_end(items,pos+2),depth) else zf_several(items,pos+2,depth) end else
+        if (value-40)*(value-91)*(value-123) == 0 do zf_several(items,pos+1,depth+1) else if (value-41)*(value-93)*(value-125) == 0 do zf_several(items,pos+1,depth-1) else
+          if value == 44 do if depth == 0 do 1 else zf_several(items,pos+1,depth) end else zf_several(items,pos+1,depth) end
+        end end
+      end
+    end
+  end
+  # Past the \" that closes a string shown in the text, from pos inside it.
+  def zf_quote_end(items: bytes, pos: integer): integer do
+    if pos >= Enum.count(items) do pos else
+      if Enum.at(items,pos,0) != 92 do zf_quote_end(items,pos+1) else if Enum.at(items,pos+1,0) == 34 do pos+2 else if Enum.at(items,pos+1,0) == 92 do zf_quote_end(items,if Enum.at(items,pos+2,0) == 92 do pos+4 else pos+3 end) else zf_quote_end(items,pos+2) end end end
+    end
+  end
+  # Where the #{ of the next value stands from from on, the text's end for none.
+  def zf_markup_hole(source: bytes, plan: bytes, from: integer): integer do
+    if Enum.at(plan,2,0) == 0 do nc_cursor(plan,6) else sg_hole_at(source,from,nc_cursor(plan,6)) end
+  end
+  def zf_markup_sum(source: bytes, plan: bytes, from: integer, sum: bytes): bytes do
+    hole = zf_markup_hole(source,plan,from)
+    text = sg_text(source,from,hole,plan)
+    next = mh_hash(mh_hash(sum,text,0,Enum.count(text)),b[0],0,1)
+    close = if hole >= nc_cursor(plan,6) do -1 else sg_hole_end(source,hole+2,1) end
+    if close < 0 do next else zf_markup_sum(source,plan,close+1,next) end
+  end
+  def zf_markup_fixed(source: bytes, plan: bytes, from: integer, count: integer): bytes do
+    hole = zf_markup_hole(source,plan,from)
+    piece = nc_join(if count == 0 do b[92,34] else b[44,32,92,34] end,tm_quoted_all(sg_text(source,from,hole,plan),0),b[92,34])
+    close = if hole >= nc_cursor(plan,6) do -1 else sg_hole_end(source,hole+2,1) end
+    if close < 0 do piece else Enum.concat(piece,zf_markup_fixed(source,plan,close+1,count+1)) end
+  end
+  def zf_markup_values(source: bytes, plan: bytes, from: integer, count: integer): bytes do
+    hole = zf_markup_hole(source,plan,from)
+    close = if hole >= nc_cursor(plan,6) do -1 else sg_hole_end(source,hole+2,1) end
+    if close < 0 do b[] else
+      tm_cat(if count == 0 do b[77,97,114,107,117,112,46,111,102,40] else b[44,32,77,97,114,107,117,112,46,111,102,40] end,tm_fmt(source,hole+2,close,0),Enum.concat(b[41],zf_markup_values(source,plan,close+1,count+1)))
+    end
+  end
+  # Coverage (spec/alchem-testing-gen.md). A program the test rewriting gave
+  # a main (module Alchem<127>TProcess) counts how often each statement of
+  # the files under test runs: byte 15 of the first table record is 2.
+  def zf_covered(source: bytes, table: bytes): bytes do
+    count = nc_records(Enum.count(table))
+    test = ny_module(source,table,b[65,108,99,104,101,109,127,84,80,114,111,99,101,115,115],Enum.concat(nc_u24(0),nc_u24(count)))
+    if test < 0 do table else if count+8 > nc_slot_limit() do table else nc_join(nc_slice(table,0,15),b[2],nc_slice(table,16,Enum.count(table))) end end
+  end
+  def zf_cover_slot(table: bytes): integer do nc_records(Enum.count(table))+8 end
+  # The routine of spec/cover-x86_64.s.
+  def zf_cover_code(): bytes do nc_join(b[235,6,0,0,0,0,0,0,80,87,72,139,124,36,16,72,131,68,36,16,4,72,141,5,228,255,255,255,72,41,248,137,199,129,231,255,255,255,0,73,139,6,73,139,68,198,8,72,133,192,116,16,72,139,64,80,72,133,192,116,7,240,255,4,184,95,88,195,81,82,86,65,80,65,81,65,82,65,83,87,73,139,6,73,131,124,198,8,0,117,51,49,255,190,0,64,0,0,186,3,0,0,0,65,186,34,0,0,0,73,199,192,255,255,255,255,69,49,201,184,9,0,0,0,15,5,72,61],b[0,240,255,255,119,80,73,139,14,73,137,68,206,8,49,255,190,8,0,0,4,186,3,0,0,0,65,186,33,64,0,0,73,199,192,255,255,255,255,69,49,201,184,9,0,0,0,15,5,72,61,0,240,255,255,119,29,73,139,14,73,139,76,206,8,72,137,65,80,95,65,91,65,90,65,89,65,88,94,90,89,233,81,255,255,255,191,71,0,0,0,184,60,0,0,0,15,5],b[]) end
+  # A statement at pos starts by counting itself, when it stands in a module
+  # of the program other than the one that holds the tests (the first) and
+  # in no test or setup block: a call of the routine and the position.
+  def zf_cover(source: bytes, table: bytes, env: bytes, pos: integer): bytes do
+    if Enum.at(table,15,0) != 2 do b[] else zf_cover_in(source,table,nc_read(env,0),pos) end
+  end
+  def zf_cover_in(source: bytes, table: bytes, id: integer, pos: integer): bytes do
+    owner = nc_owner(table,id)
+    if Enum.at(table,15,0) != 2 do b[] else if owner == zf_entry(table,0) do b[] else if nc_word_at(source,nc_meta(table,owner,0),b[65,108,99,104,101,109],0) == 1 do b[] else if tm_ours(source,nc_meta(table,id,0)) > 0 do b[] else
+      zf_cover_call(table,pos)
+    end end end end
+  end
+  # A call of the routine and the word behind it, which the routine returns
+  # past. On ARM64 it is ARM64 code among the translated (xa_raw) whose
+  # return address is the word: X11 the table's slot, as nc_call has it.
+  def zf_cover_call(table: bytes, word: integer): bytes do
+    if nc_arm() == 1 do xa_raw(Enum.concat(zf_cover_arm_call(zf_cover_slot(table)),nc_u32(word))) else Enum.concat(nc_call(zf_cover_slot(table)),nc_u32(word)) end
+  end
+  def zf_cover_arm_call(slot: integer): bytes do
+    nc_join(a_mov_imm(11,4195456+slot*8),a_ldr(16,11,0),Enum.concat(a_adr(30,12),Enum.concat(a_push(30),a_br(16))))
+  end
+  # The ARM64 code of a program that counts, with the list of calls in the
+  # routine's blob made where they stand in it: for each, 9 before its word
+  # (the routine's return address there) and the word, so that the counts
+  # are found as on x86-64 (Testing._centries: how far before the routine a
+  # call returns). meta: the translated lengths of the table's entries.
+  def zf_cover_arm_points(code: bytes, meta: bytes, table: bytes): bytes do
+    start = nc_length_sum(meta,0,zf_cover_slot(table))
+    at = start+nc_long(code,start+4)+16
+    count = nc_long(code,at-8)
+    call = zf_cover_arm_call(zf_cover_slot(table))
+    points = zf_arm_sites(code,call,0,a_div(start,4))
+    if Enum.count(points) != count*8 do b[] else nc_join(nc_slice(code,0,at),points,nc_slice(code,at+count*8,Enum.count(code))) end
+  end
+  # The calls in the words first..stop of code: for each, where its word
+  # stands less 9, and the word.
+  def zf_arm_sites(code: bytes, call: bytes, first: integer, stop: integer): bytes do
+    if stop-first > 64 do
+      middle = first+nc_half(stop-first)
+      Enum.concat(zf_arm_sites(code,call,first,middle),zf_arm_sites(code,call,middle,stop))
+    else zf_arm_sites_run(code,call,first,stop) end
+  end
+  def zf_arm_sites_run(code: bytes, call: bytes, word: integer, stop: integer): bytes do
+    if word >= stop do b[] else
+      if zf_same(code,word*4,call,0) == 0 do zf_arm_sites_run(code,call,word+1,stop) else
+        nc_join(nc_u32(word*4+Enum.count(call)-9),nc_slice(code,word*4+Enum.count(call),word*4+Enum.count(call)+4),zf_arm_sites_run(code,call,word+1,stop))
+      end
+    end
+  end
+  # What a call stands as before its word, in the code that is compiled.
+  def zf_cover_site(table: bytes): bytes do
+    call = zf_cover_call(table,0)
+    nc_slice(call,0,Enum.count(call)-4)
+  end
+  # The pinned compiler makes a cond nested ifs, each a statement of its own
+  # on its arm's line, and counts no statement where the cond stands: the
+  # statement that starts with one counts nothing here (nk_cond_arms counts
+  # the arms).
+  def zf_cover_step(source: bytes, table: bytes, env: bytes, pos: integer): bytes do
+    if Enum.at(table,15,0) != 2 do b[] else if nc_word(source,pos,b[99,111,110,100])*nc_word(source,nc_end(source,pos),b[100,111]) == 1 do b[] else if zf_asserting(source,pos) == 1 do b[] else zf_cover(source,table,env,pos) end end end
+  end
+  # 1 for a statement the rewriting of an assert made inside the one that
+  # stands for it (tm_: case left do l -> case T.__as(l, right) do r -> if
+  # not (l op r) do flunk(...) end end end, or if not (...) do flunk(...)
+  # end): the pinned compiler counts the assert alone.
+  def zf_asserting(source: bytes, pos: integer): integer do
+    if nc_word_at(source,pos,b[99,97,115,101,32,84,127,46,95,95,97,115,40],0)+nc_word_at(source,pos,b[105,102,32,110,111,116,32,40,108,127,32],0) > 0 do 1 else
+      if nc_word_at(source,pos,b[102,108,117,110,107,40,34,97,115,115,101,114,116,105,111,110,32,102,97,105,108,101,100],0) == 0 do 0 else if mx_stop(source) == Enum.count(source) do 0 else zf_placed(mx_part(source,0),pos) end end
+    end
+  end
+  # 1 when the position of the rewritten text is in a piece that stands for
+  # one place: text the rewriting wrote. records: the moved records.
+  def zf_placed(records: bytes, pos: integer): integer do
+    at = zf_moved(records,0,nc_units(Enum.count(records),16),pos)
+    if at < 0 do 0 else if nc_long(records,at*16+4) >= 1073741824 do 1 else 0 end end
+  end
+  # The last of the records first up to stop that starts at or before pos; -1 for none.
+  def zf_moved(records: bytes, first: integer, stop: integer, pos: integer): integer do
+    middle = first+nc_half(stop-first)
+    if stop-first <= 0 do -1 else if nc_long(records,first*16) > pos do -1 else
+      if stop-first == 1 do first else if nc_long(records,middle*16) > pos do zf_moved(records,first,middle,pos) else zf_moved(records,middle,stop,pos) end end
+    end end
+  end
+  # An arm of a cond whose condition starts at pos: its if is counted, but
+  # for an arm that is just true, which is the else of the one before.
+  def zf_cover_arm(source: bytes, table: bytes, env: bytes, condition: bytes, pos: integer): bytes do
+    count = if Enum.at(table,15,0) != 2 do b[] else if zf_else(source,pos) == 1 do b[] else zf_cover(source,table,env,nc_start(source,pos)) end end
+    if Enum.count(count) == 0 do condition else if nc_pos(condition) < 0 do condition else Enum.concat(nc_slice(condition,0,nt_after(condition,4)),Enum.concat(count,nc_code(condition))) end end
+  end
+  def zf_else(source: bytes, pos: integer): integer do
+    nc_word(source,pos,b[116,114,117,101])*nc_word(source,nc_end(source,pos),b[45,62])
+  end
+  # What follows the last arm of a cond fails, and is a statement where the
+  # cond stands; after an arm that is just true there is none.
+  def zf_cover_end(source: bytes, table: bytes, env: bytes, origin: integer): bytes do
+    zf_cover(source,table,env,origin)
+  end
+  def zf_cover_rest(source: bytes, table: bytes, env: bytes, pos: integer, rest: bytes): bytes do
+    lead = zf_cover(source,table,env,0)
+    size = Enum.count(lead)
+    if size == 0 do rest else if zf_else(source,pos) == 0 do rest else if nc_pos(rest) < 0 do rest else if nc_tag(rest) != 9 do rest else
+      code = nc_code(rest)
+      if zf_same(code,0,nc_slice(lead,0,size-4),0) == 0 do rest else Enum.concat(nc_slice(rest,0,nt_after(rest,4)),nc_slice(code,size,Enum.count(code))) end
+    end end end end
+  end
+  # A function value. A capture (&(...), &name(&1), a library function by
+  # its arity) is a function of one statement where it stands; a fn whose
+  # parameters are patterns matches them in a statement of its own. plan:
+  # the form (0 for fn), where the body starts and where the parameters
+  # stand. A capture compiled from a text of the compiler's own (byte 15 is
+  # 3: zf_cover_text) is counted where the table says the capture stands.
+  def zf_cover_fn(source: bytes, table: bytes, env: bytes, plan: bytes, shaped: integer): bytes do
+    flag = Enum.at(table,15,0)
+    if flag < 2 do b[] else
+      if Enum.at(plan,0,0) == 0 do if shaped == 0 do b[] else if nc_cursor(plan,4) == 0 do b[] else zf_cover(source,table,env,nc_cursor(plan,4)) end end else
+        if flag == 3 do zf_cover_call(table,nc_cursor(table,21)) else zf_cover(source,table,env,nc_cursor(plan,1)) end
+      end
+    end
+  end
+  # The table for compiling a capture from a text of the compiler's own:
+  # nothing in that text is counted but the capture itself (byte 15: 3), and
+  # not even that where the capture stands in code that is not counted.
+  def zf_cover_text(source: bytes, table: bytes, env: bytes, pos: integer): bytes do
+    flag = Enum.at(table,15,0)
+    if flag != 2 do table else nc_join(nc_slice(table,0,15),b[if Enum.count(zf_cover(source,table,env,pos)) == 0 do 0 else 3 end],nc_slice(table,16,Enum.count(table))) end
+  end
+  # An if, unless, case or with used as a value is a statement of its own to
+  # the pinned compiler, where it stands.
+  def zf_valued(source: bytes, table: bytes, env: bytes, value: bytes, pos: integer): bytes do
+    count = if Enum.at(table,15,0) != 2 do b[] else if nc_pos(value) < 0 do b[] else zf_cover(source,table,env,pos) end end
+    if Enum.count(count) == 0 do value else Enum.concat(nc_slice(value,0,nt_after(value,4)),Enum.concat(count,nc_code(value))) end
+  end
+  # The first module of the program: the one whose tests run.
+  def zf_entry(table: bytes, index: integer): integer do
+    if index >= nc_records(Enum.count(table)) do -1 else if Enum.at(table,index*27+16,0) == 32 do index else zf_entry(table,index+1) end end
+  end
+  # Sys.cover(): the address of the coverage routine and what follows it, 0
+  # in a program that counts nothing.
+  def zf_cover_at(table: bytes): bytes do
+    if Enum.at(table,15,0) != 2 do b[49,192] else Enum.concat(b[72,139,4,37],nc_u32(4195456+zf_cover_slot(table)*8)) end
+  end
+  # The routine as an extra table entry, slot functions+8: its code (the word
+  # at 4 says how long it is), then the address of the trace routine's
+  # table slot and that routine's length (the tables of places follow it),
+  # the number of statements counted and their positions, 32 bits each, as
+  # the calls stand in the code.
+  def zf_shared(shared: bytes, table: bytes, code: bytes): bytes do
+    # On ARM64 the routine and the trace routine are their translations, and
+    # the blob is ARM64 code with its data (xa_raw); where the calls stand is
+    # put in once the code is translated (zf_cover_arm_points).
+    routine = if nc_arm() == 1 do cv_blob_arm() else zf_cover_code() end
+    call = zf_cover_site(table)
+    points = if Enum.at(table,15,0) != 2 do b[] else zf_points(code,call,0,Enum.count(code)-Enum.count(call)-3) end
+    head = nc_join(nc_slice(routine,0,4),nc_u32(Enum.count(routine)),nc_slice(routine,8,Enum.count(routine)))
+    trace = if nc_arm() == 1 do Enum.count(tr_blob_arm()) else Enum.count(tr_blob()) end
+    # Where the code starts: after the table, which has nine more slots than the program has records.
+    blob = nc_join(head,nc_join(nc_u32(4195456+nz_slot(table)*8),nc_u32(trace),Enum.concat(nc_u32(nc_units(Enum.count(points),8)),nc_u32(4195456+nc_records(Enum.count(table))*8+72))),points)
+    if Enum.at(table,15,0) != 2 do shared else nh_slot(shared,if nc_arm() == 1 do xa_raw(blob) else blob end,32) end
+  end
+  # The calls of the routine in code from first up to stop: where each
+  # stands (32 bits) and the word behind it, which is the position of its
+  # statement, or with 4 in its high four bits the mark of a try (zf_tried)
+  # and with 3 there a number that follows such a mark.
+  def zf_points(code: bytes, call: bytes, first: integer, stop: integer): bytes do
+    if stop-first > 64 do
+      middle = first+nc_half(stop-first)
+      Enum.concat(zf_points(code,call,first,middle),zf_points(code,call,middle,stop))
+    else zf_points_run(code,call,first,stop) end
+  end
+  def zf_points_run(code: bytes, call: bytes, pos: integer, stop: integer): bytes do
+    if pos >= stop do b[] else
+      if Enum.at(code,pos,0) != Enum.at(call,0,0) do zf_points_run(code,call,pos+1,stop) else
+        if zf_same(code,pos,call,1) == 0 do zf_points_run(code,call,pos+1,stop) else nc_join(nc_u32(pos),nc_slice(code,pos+Enum.count(call),pos+Enum.count(call)+4),zf_points_run(code,call,pos+1,stop)) end
+      end
+    end
+  end
+  def zf_same(code: bytes, at: integer, word: bytes, index: integer): integer do
+    if index >= Enum.count(word) do 1 else if Enum.at(code,at+index,0) != Enum.at(word,index,0) do 0 else zf_same(code,at,word,index+1) end end
+  end
+  # A value whose code counts one more statement at pos before it runs.
+  def zf_counted(source: bytes, table: bytes, env: bytes, value: bytes, pos: integer): bytes do
+    count = if nc_pos(value) < 0 do b[] else zf_cover(source,table,env,pos) end
+    if Enum.count(count) == 0 do value else Enum.concat(nc_slice(value,0,nt_after(value,4)),Enum.concat(count,nc_code(value))) end
+  end
+  # How many calls of the routine a piece of code holds.
+  def zf_count(table: bytes, code: bytes): integer do
+    call = zf_cover_site(table)
+    nc_units(Enum.count(zf_points(code,call,0,Enum.count(code)-Enum.count(call)-3)),8)
+  end
+  # The pinned compiler lists the statements of a try's after block first,
+  # then those of its catch arms, its rescue arms, its body and its else
+  # arms; the code has the body, the rescue arms, the catch arms, the else
+  # arms, the block. A mark before them, which never runs, says how many
+  # calls each of the five holds, and the list is put in the pinned order
+  # when it is written (Testing._cordered). arms: the code of the arms;
+  # cuts: where its catch arms and its else arms start (32 bits each).
+  def zf_tried(table: bytes, body: bytes, arms: bytes, cuts: bytes, block: bytes): bytes do
+    first = zf_count(table,body)
+    second = zf_count(table,nc_slice(arms,0,nc_long(cuts,0)))
+    third = zf_count(table,nc_slice(arms,nc_long(cuts,0),nc_long(cuts,4)))
+    fourth = zf_count(table,nc_slice(arms,nc_long(cuts,4),Enum.count(arms)))
+    fifth = zf_count(table,block)
+    if Enum.at(table,15,0) != 2 do b[] else if first+second+third+fourth+fifth == 0 do b[] else
+      marks = nc_join(zf_cover_call(table,1073741824+first),nc_join(zf_cover_call(table,805306368+second),zf_cover_call(table,805306368+third),zf_cover_call(table,805306368+fourth)),zf_cover_call(table,805306368+fifth))
+      Enum.concat(if Enum.count(marks) < 128 do b[235,Enum.count(marks)] else Enum.concat(b[233],nc_u32(Enum.count(marks))) end,marks)
+    end end
+  end
+  # A block run for its effects ends, in the pinned compiler, in a {} of its
+  # own on the line of its last statement (unitTail), which is counted: the
+  # body of a for that is a statement or ends in a call without a value, and
+  # the body and the arms of a try that is a statement. last: where the last
+  # statement starts; a block that ends in {} has it already.
+  def zf_unit(source: bytes, table: bytes, env: bytes, value: bytes, last: integer): bytes do
+    count = if nc_pos(value) < 0 do b[] else if last < 0 do b[] else if byte_at(source,last)*256+byte_at(source,nc_start(source,last+1)) == 31613 do b[] else zf_cover(source,table,env,last) end end end
+    if Enum.count(count) == 0 do value else Enum.concat(nc_slice(value,0,nt_after(value,4)),Enum.concat(nc_code(value),count)) end
+  end
+  # Sys.panic(text): the library fails as the pinned runtime's own panics do.
+  def zf_panic_call(table: bytes, args: bytes): bytes do
+    if nc_pos(args) < 0 do b[] else if nc_arg_count(args) != 1 do b[] else if nt_tag(nc_arg_kind(args,0)) != 2 do b[] else if nz_on(table) == 0 do b[] else
+      nc_value(nc_pos(args),nc_join(nc_arg_code(args),b[94,191,254,255,255,127],nc_call(nz_slot(table))),b[0])
+    end end end end
+  end
+  # String.slice's bounds before the grapheme runtime (spec/failures-x86_64.s).
+  def zf_slice_check(): bytes do if nc_arm() == 1 do zf_slice_check_marked() else zf_slice_check_plain() end end
+  def zf_slice_check_plain(): bytes do Enum.concat(Enum.concat(b[72,137,240,72,9,208,121,12,191,87,0,0,0,184,60,0,0,0,15,5,72,137,240,72,1,208,15,129,237,0,0,0,72,59,55,15,131,228,0,0,0,72,139,15,76,141,71,8,72,133,201,116,28,65,128,56,128,15,131,206,0,0,0,65,128,56,13],b[15,132,196,0,0,0,73,255,192,72,255,201,235,223,73,137,193,77,141,92,36,96,77,57,235,118,12,255,20,37,120,4,64,0,15,31,68,0,0,73,141,124,36,8,72,141,53,100,0,0,0,185,51,0,0,0,252,243,164,73,247,217,76,137,200,72,131]),Enum.concat(b[236,32,76,141,68,36,32,185,10,0,0,0,49,210,72,247,241,128,194,48,73,255,200,65,136,16,72,133,192,117,237,72,141,76,36,32,76,41,193,76,137,198,243,164,72,131,196,32,198,7,93,72,255,199,73,141,68,36,8,72,41,199,73,137,60,36,76],b[137,230,77,137,220,191,97,0,0,0,184,60,0,0,0,15,5,112,97,110,105,99,58,32,114,117,110,116,105,109,101,32,101,114,114,111,114,58,32,115,108,105,99,101,32,98,111,117,110,100,115,32,111,117,116,32,111,102,32,114,97,110,103,101,32,91,58,45])) end
+  # Native smoke test; assembled with the compiler.
+  def main() do System.halt(0) end
+end

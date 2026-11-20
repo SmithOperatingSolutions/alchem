@@ -1,0 +1,394 @@
+# Gen: generators of random values, after the pinned runtime. A generator
+# is a function from a source of random numbers and a size to a tree: a
+# value and, made only when asked for, the trees of the smaller values it
+# could shrink to. The numbers are those of Go's math/rand/v2 PCG, drawn
+# in the pinned order (the machine code of spec/crypto-x86_64.s, through
+# Sys.hash), so under ALCHEM_SEED a generator gives here what it gives
+# upstream. A source is 88 bytes: the two words of the PCG and the block
+# Sys.hash takes.
+#: struct generator
+  struct generator[a] do
+    run: fn[integer, integer, GenTree[a]]
+  end
+  struct GenTree[a] do
+    value: a
+    shrinks: fn[list[GenTree[a]]]
+  end
+#: source/2
+  def source(hi: integer, lo: integer): integer do
+    r = Sys.addr(String.duplicate("\x00", 88))
+    Sys.poke(r, hi)
+    Sys.poke(r + 8, lo)
+    Sys.poke(r + 32, r)
+    r
+  end
+# The next 64 bits, and a number from 0 below n.
+#: next/1
+  def next(r: integer): integer do
+    Sys.poke(r + 16, 3)
+    Sys.hash(r + 16)
+  end
+#: below/2
+  def below(r: integer, n: integer): integer do
+    Sys.poke(r + 16, 4)
+    Sys.poke(r + 72, n)
+    Sys.hash(r + 16)
+  end
+# genRandom: seeded by ALCHEM_SEED when that is a number other than 0, as
+# the test runner sets it, else by the clock.
+#: random/0 needs Bitwise.bxor/2 seed/1 source/2
+  def random(): integer do
+    given = Gen.seed(System.get_env("ALCHEM_SEED", ""))
+    s = if given == 0 do System.system_time() else given end
+    Gen.source(s, Bitwise.bxor(s, 6364136223846793005))
+  end
+# A number of up to 64 bits in decimal, as strconv.ParseUint reads it and
+# an int64 holds it; 0 for anything else.
+#: seed/1 needs Kernel.binary_part/3 digit/2 wadd/2 wmul/2
+  def seed(t: string): integer do
+    n = byte_size(t)
+    a = if n > 9 do Integer.parse(binary_part(t, 0, n - 9)) else ok(0) end
+    b = Integer.parse(if n > 9 do binary_part(t, n - 9, 9) else t end)
+    digits = n > 0 and n <= 20 and Gen.digit(Sys.addr(t), n)
+    case {a, b} do
+      {ok(x), ok(y)} -> if not digits or x > 18446744073 or (x == 18446744073 and y > 709551615) do 0 else Gen.wadd(Gen.wmul(x, 1000000000), y) end
+      _ -> 0
+    end
+  end
+#: digit/2 needs digit/2
+  def digit(a: integer, n: integer): boolean do
+    n == 0 or (Sys.byte(a) >= 48 and Sys.byte(a) <= 57 and Gen.digit(a + 1, n - 1))
+  end
+# A sum, a difference and a product as an int64 gives them, modulo 2**64.
+#: wadd/2
+  def wadd(a: integer, b: integer): integer do
+    m = -9223372036854775807 - 1
+    if a > 0 and b > 0 and a > 9223372036854775807 - b do a + m + (b + m) else if a < 0 and b < 0 and a < m - b do a - m + (b - m) else a + b end end
+  end
+#: wsub/2 needs wadd/2
+  def wsub(a: integer, b: integer): integer do
+    m = -9223372036854775807 - 1
+    if b == m do Gen.wadd(Gen.wadd(a, 9223372036854775807), 1) else Gen.wadd(a, 0 - b) end
+  end
+#: wmul/2 needs wadd/2 wmul/2
+  def wmul(a: integer, n: integer): integer do
+    h = if n == 0 do 0 else Gen.wmul(Gen.wadd(a, a), div(n, 2)) end
+    if n == 0 do 0 else if rem(n, 2) == 1 do Gen.wadd(h, a) else h end end
+  end
+# A value that shrinks to nothing.
+#: leaf/1
+  def leaf(v: a): GenTree[a] do
+    f: fn[list[GenTree[a]]] = fn ->
+      e: list[GenTree[a]] = []
+      e
+    end
+    %GenTree{value: v, shrinks: f}
+  end
+# mapTree: the tree with every value changed by f.
+#: mtree/2 needs Enum.map/2 mtree/2
+  def mtree(t: GenTree[a], f: fn[a, b]): GenTree[b] do
+    g: fn[list[GenTree[b]]] = fn ->
+      more = t.shrinks
+      Enum.map(more.(), fn s -> Gen.mtree(s, f) end)
+    end
+    %GenTree{value: f.(t.value), shrinks: g}
+  end
+# intTree: n shrinks toward a number by halving what is between them, the
+# nearest to that number first.
+#: itree/2 needs Enum.map/2 itree/2 nearer/2 wsub/2
+  def itree(n: integer, toward: integer): GenTree[integer] do
+    f: fn[list[GenTree[integer]]] = fn -> Enum.map(Gen.nearer(n, Gen.wsub(n, toward)), fn c -> Gen.itree(c, toward) end) end
+    %GenTree{value: n, shrinks: f}
+  end
+#: nearer/2 needs nearer/2 wsub/2
+  def nearer(n: integer, gap: integer): list[integer] do
+    if gap == 0 do [] else [Gen.wsub(n, gap)] ++ Gen.nearer(n, div(gap, 2)) end
+  end
+#: integer/0 needs below/2 itree/2
+  def integer(): generator[integer] do
+    f: fn[integer, integer, GenTree[integer]] = fn r, size -> Gen.itree(Gen.below(r, 2 * size + 1) - size, 0) end
+    %generator{run: f}
+  end
+#: integer/2 needs below/2 itree/2 next/1 wadd/2 wsub/2
+  def integer(low: integer, high: integer): generator[integer] do
+    if low > high do raise("Gen.integer needs its low bound no greater than its high one") end
+    toward = min(max(0, low), high)
+    span = Gen.wsub(high, low)
+    f: fn[integer, integer, GenTree[integer]] = fn r, size -> Gen.itree((if span == -1 do Gen.next(r) else Gen.wadd(low, Gen.below(r, Gen.wadd(span, 1))) end), toward) end
+    %generator{run: f}
+  end
+#: positive_integer/0 needs below/2 itree/2
+  def positive_integer(): generator[integer] do
+    f: fn[integer, integer, GenTree[integer]] = fn r, size -> Gen.itree(1 + Gen.below(r, size + 1), 1) end
+    %generator{run: f}
+  end
+# Floats between -size and size: the low 53 bits of a draw over 2**53, as
+# Rand.Float64 has it. A float shrinks to 0, to its whole part and to its
+# half, those of them that are nearer 0.
+#: float/0 needs ftree/1 next/1
+  def float(): generator[float] do
+    f: fn[integer, integer, GenTree[float]] = fn r, size -> Gen.ftree((Float.from_integer(rem(rem(Gen.next(r), 9007199254740992) + 9007199254740992, 9007199254740992)) / 9007199254740992.0 * 2.0 - 1.0) * Float.from_integer(size)) end
+    %generator{run: f}
+  end
+#: ftree/1 needs Enum.filter/2 Enum.map/2 ftree/1 size/1
+  def ftree(x: float): GenTree[float] do
+    whole = Float.from_integer(trunc(x))
+    f: fn[list[GenTree[float]]] = fn -> Enum.map(Enum.filter([0.0, (if whole == 0.0 and x < 0.0 do 0.0 * -1.0 else whole end), x / 2.0], fn c -> c != x and Gen.size(c) < Gen.size(x) end), fn c -> Gen.ftree(c) end) end
+    %GenTree{value: x, shrinks: f}
+  end
+#: size/1
+  def size(x: float): float do
+    if x < 0.0 do 0.0 - x else x end
+  end
+#: boolean/0 needs below/2 leaf/1
+  def boolean(): generator[boolean] do
+    f: fn[integer, integer, GenTree[boolean]] = fn r, size ->
+      if Gen.below(r, 2) == 0 do Gen.leaf(false) else
+        g: fn[list[GenTree[boolean]]] = fn -> [Gen.leaf(false)] end
+        %GenTree{value: true, shrinks: g}
+      end
+    end
+    %generator{run: f}
+  end
+#: constant/1 needs leaf/1
+  def constant(v: a): generator[a] do
+    f: fn[integer, integer, GenTree[a]] = fn r, size -> Gen.leaf(v) end
+    %generator{run: f}
+  end
+# listTree: a list shrinks by leaving out its first half, its second half
+# and each element, as long as least are left, then by shrinking an element.
+#: ltree/2 needs Enum.drop/2 Enum.flat_map/2 Enum.map/2 Enum.take/2 Enum.to_list/1 ltree/2 without/4
+  def ltree(items: list[GenTree[a]], least: integer): GenTree[list[a]] do
+    n = length(items)
+    f: fn[list[GenTree[list[a]]]] = fn ->
+      halves = if n > 1 do Gen.without(items, 0, div(n, 2), least) ++ Gen.without(items, div(n, 2), n, least) else [] end
+      ones = Enum.flat_map(Enum.to_list(0..(n - 1)//1), fn i -> Gen.without(items, i, i + 1, least) end)
+      inner = Enum.flat_map(Enum.to_list(0..(n - 1)//1), fn i ->
+        item = hd(Enum.drop(items, i))
+        more = item.shrinks
+        Enum.map(more.(), fn smaller -> Gen.ltree(Enum.take(items, i) ++ [smaller] ++ Enum.drop(items, i + 1), least) end)
+      end)
+      halves ++ ones ++ inner
+    end
+    %GenTree{value: Enum.map(items, fn t -> t.value end), shrinks: f}
+  end
+#: without/4 needs Enum.drop/2 Enum.take/2 ltree/2
+  def without(items: list[GenTree[a]], from: integer, to: integer, least: integer): list[GenTree[list[a]]] do
+    if length(items) - (to - from) >= least do [Gen.ltree(Enum.take(items, from) ++ Enum.drop(items, to), least)] else [] end
+  end
+#: list_of/1 needs lists/3
+  def list_of(g: generator[a]): generator[list[a]] do
+    Gen.lists(g, 0, -1)
+  end
+#: list_of/3 needs lists/3
+  def list_of(g: generator[a], least: integer, most: integer): generator[list[a]] do
+    if least < 0 or (most >= 0 and most < least) do raise("Gen.list_of needs 0 <= min <= max") end
+    Gen.lists(g, least, most)
+  end
+#: lists/3 needs Enum.map/2 Enum.to_list/1 below/2 ltree/2
+  def lists(g: generator[a], least: integer, most: integer): generator[list[a]] do
+    f: fn[integer, integer, GenTree[list[a]]] = fn r, size ->
+      n = least + Gen.below(r, max((if most >= 0 do most else size end), least) - least + 1)
+      one = g.run
+      Gen.ltree(Enum.map(Enum.to_list(1..n//1), fn i -> one.(r, size) end), least)
+    end
+    %generator{run: f}
+  end
+#: string/1 needs Enum.at/3 Enum.join/2 String.graphemes/1 below/2 itree/2 lists/3 mtree/2
+  def string(kind: atom): generator[string] do
+    alphabet = cond do
+      kind == :alphanumeric -> "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+      kind == :ascii -> " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+      kind == :alpha -> "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      kind == :lower -> "abcdefghijklmnopqrstuvwxyz"
+      kind == :digit -> "0123456789"
+      kind == :printable -> "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 éüñßøλжあ中😀"
+      true -> raise("Gen.string takes :alphanumeric, :alpha, :lower, :digit, :ascii or :printable")
+    end
+    letters = String.graphemes(alphabet)
+    letter: fn[integer, integer, GenTree[string]] = fn r, size -> Gen.mtree(Gen.itree(Gen.below(r, length(letters)), 0), fn i -> Enum.at(letters, i, "") end) end
+    texts = Gen.lists(%generator{run: letter}, 0, -1)
+    words = texts.run
+    f: fn[integer, integer, GenTree[string]] = fn r, size -> Gen.mtree(words.(r, size), fn l -> Enum.join(l, "") end) end
+    %generator{run: f}
+  end
+#: member_of/1 needs Enum.at/3 below/2 itree/2 mtree/2
+  def member_of(items: list[a]): generator[a] do
+    if length(items) == 0 do raise("Gen.member_of needs at least one value") end
+    f: fn[integer, integer, GenTree[a]] = fn r, size -> Gen.mtree(Gen.itree(Gen.below(r, length(items)), 0), fn i -> Enum.at(items, i, hd(items)) end) end
+    %generator{run: f}
+  end
+#: one_of/1 needs Enum.at/3 below/2
+  def one_of(gens: list[generator[a]]): generator[a] do
+    if length(gens) == 0 do raise("Gen.one_of needs at least one generator") end
+    f: fn[integer, integer, GenTree[a]] = fn r, size ->
+      pick = Enum.at(gens, Gen.below(r, length(gens)), hd(gens))
+      one = pick.run
+      one.(r, size)
+    end
+    %generator{run: f}
+  end
+#: map/2 needs mtree/2
+  def map(g: generator[a], f: fn[a, b]): generator[b] do
+    one = g.run
+    h: fn[integer, integer, GenTree[b]] = fn r, size -> Gen.mtree(one.(r, size), f) end
+    %generator{run: h}
+  end
+# filterTree: the shrinks that still pass the test.
+#: ktree/2 needs Enum.filter/2 Enum.map/2 ktree/2
+  def ktree(t: GenTree[a], keep: fn[a, boolean]): GenTree[a] do
+    f: fn[list[GenTree[a]]] = fn ->
+      more = t.shrinks
+      Enum.map(Enum.filter(more.(), fn s -> keep.(s.value) end), fn s -> Gen.ktree(s, keep) end)
+    end
+    %GenTree{value: t.value, shrinks: f}
+  end
+#: filter/2 needs kept/4
+  def filter(g: generator[a], keep: fn[a, boolean]): generator[a] do
+    place = Stream.__where()
+    one = g.run
+    f: fn[integer, integer, GenTree[a]] = fn r, size -> Gen.kept(one, keep, r, [size, 100, place]) end
+    %generator{run: f}
+  end
+#: kept/4 needs Enum.at/3 kept/4 ktree/2
+  def kept(one: fn[integer, integer, GenTree[a]], keep: fn[a, boolean], r: integer, plan: list[integer]): GenTree[a] do
+    t = one.(r, Enum.at(plan, 0, 0))
+    if keep.(t.value) do Gen.ktree(t, keep) else
+      if Enum.at(plan, 1, 0) <= 1 do Stream.__fail(Enum.at(plan, 2, 0), "Gen.filter rejected 100 values in a row; generate more of the values wanted instead") end
+      Gen.kept(one, keep, r, [Enum.at(plan, 0, 0), Enum.at(plan, 1, 0) - 1, Enum.at(plan, 2, 0)])
+    end
+  end
+# bindTree: the first value shrinks, the second made anew from each by the
+# same seed, then the second shrinks.
+#: btree/4 needs Enum.map/2 btree/4 source/2
+  def btree(seed: integer, size: integer, outer: GenTree[a], f: fn[a, generator[b]]): GenTree[b] do
+    made = f.(outer.value)
+    one = made.run
+    inner = one.(Gen.source(seed, seed), size)
+    g: fn[list[GenTree[b]]] = fn ->
+      first = outer.shrinks
+      rest = inner.shrinks
+      Enum.map(first.(), fn smaller -> Gen.btree(seed, size, smaller, f) end) ++ rest.()
+    end
+    %GenTree{value: inner.value, shrinks: g}
+  end
+#: bind/2 needs btree/4 next/1
+  def bind(g: generator[a], f: fn[a, generator[b]]): generator[b] do
+    one = g.run
+    h: fn[integer, integer, GenTree[b]] = fn r, size ->
+      outer = one.(r, size)
+      Gen.btree(Gen.next(r), size, outer, f)
+    end
+    %generator{run: h}
+  end
+# pairTree: the first shrinks, then the second.
+#: ptree/2 needs Enum.map/2 ptree/2
+  def ptree(x: GenTree[a], y: GenTree[b]): GenTree[tuple[a, b]] do
+    f: fn[list[GenTree[tuple[a, b]]]] = fn ->
+      first = x.shrinks
+      second = y.shrinks
+      Enum.map(first.(), fn s -> Gen.ptree(s, y) end) ++ Enum.map(second.(), fn s -> Gen.ptree(x, s) end)
+    end
+    %GenTree{value: {x.value, y.value}, shrinks: f}
+  end
+#: tuple/2 needs ptree/2
+  def tuple(x: generator[a], y: generator[b]): generator[tuple[a, b]] do
+    first = x.run
+    second = y.run
+    f: fn[integer, integer, GenTree[tuple[a, b]]] = fn r, size ->
+      one = first.(r, size)
+      Gen.ptree(one, second.(r, size))
+    end
+    %generator{run: f}
+  end
+#: tuple/3 needs mtree/2 tuple/2
+  def tuple(x: generator[a], y: generator[b], z: generator[c]): generator[tuple[a, b, c]] do
+    pairs = Gen.tuple(Gen.tuple(x, y), z)
+    inner = pairs.run
+    f: fn[integer, integer, GenTree[tuple[a, b, c]]] = fn r, size -> Gen.mtree(inner.(r, size), fn p -> {elem(elem(p, 0), 0), elem(elem(p, 0), 1), elem(p, 1)} end) end
+    %generator{run: f}
+  end
+#: map_of/2 needs Map.new/1 lists/3 mtree/2 tuple/2
+  def map_of(keys: generator[k], values: generator[v]): generator[map[k, v]] do
+    listed = Gen.lists(Gen.tuple(keys, values), 0, -1)
+    entries = listed.run
+    f: fn[integer, integer, GenTree[map[k, v]]] = fn r, size -> Gen.mtree(entries.(r, size), fn l -> Map.new(l) end) end
+    %generator{run: f}
+  end
+#: resize/2
+  def resize(g: generator[a], size: integer): generator[a] do
+    one = g.run
+    f: fn[integer, integer, GenTree[a]] = fn r, unused -> one.(r, max(size, 0)) end
+    %generator{run: f}
+  end
+#: sample/2 needs Enum.map/2 Enum.to_list/1 random/0
+  def sample(g: generator[a], count: integer): list[a] do
+    r = Gen.random()
+    one = g.run
+    Enum.map(Enum.to_list(1..count//1), fn i ->
+      t = one.(r, min(i, 100))
+      t.value
+    end)
+  end
+# Gen.check(generator, property) and Gen.check(generator, property, runs),
+# with the description of the generator's values that the compiler adds
+# (native-json.alc): the property runs on values of growing size, 100 times
+# unless ALCHEM_PROPERTY_RUNS or runs says otherwise; the first value it
+# fails for is shrunk, the first smaller value that fails taking its place
+# until none does or 1000 were tried, and that one is reported.
+#: check/3 needs checked/4
+  def check(g: generator[a], p: fn[a, b], k: integer): tuple[] do
+    Gen.checked(g, p, 0, k)
+  end
+#: check/4 needs checked/4
+  def check(g: generator[a], p: fn[a, b], runs: integer, k: integer): tuple[] do
+    Gen.checked(g, p, runs, k)
+  end
+#: checked/4 needs random/0 trial/4
+  def checked(g: generator[a], p: fn[a, b], runs: integer, k: integer): tuple[] do
+    given = case Integer.parse(System.get_env("ALCHEM_PROPERTY_RUNS", "")) do
+      ok(n) -> if n > 0 do n else 100 end
+      error(_) -> 100
+    end
+    Gen.trial(g.run, p, Gen.random(), [0, (if runs <= 0 do given else runs end), k])
+  end
+#: trial/4 needs Enum.at/3 attempt/2 shrink/4 trial/4
+  def trial(one: fn[integer, integer, GenTree[a]], p: fn[a, b], r: integer, plan: list[integer]): tuple[] do
+    run = Enum.at(plan, 0, 0)
+    runs = Enum.at(plan, 1, 0)
+    if run >= runs do {} else
+      t = one.(r, min(run * 2 + 1, 100))
+      why = Gen.attempt(p, t.value)
+      if why == "" do Gen.trial(one, p, r, [run + 1, runs, Enum.at(plan, 2, 0)]) else
+        s = Gen.shrink(p, t, why, 0)
+        least = elem(s, 0)
+        raise("property failed after " <> Integer.to_string(run + 1) <> " of " <> Integer.to_string(runs) <> " runs; smallest failing value, after " <> Integer.to_string(elem(s, 2)) <> " shrinking steps:\n" <> Gen.__show(Gen.__word(least.value), Enum.at(plan, 2, 0)) <> "\n" <> elem(s, 1))
+      end
+    end
+  end
+# What the property fails with for a value; "" when it does not.
+#: attempt/2 needs Testing._spawn/1 Testing._applied/2 Task._yield/2 Process._reason/1
+  def attempt(p: fn[a, b], v: a): string do
+    w: fn[integer] = fn(): integer do Testing._applied(p, v) end
+    t = Testing._spawn(w)
+    if Task._yield(t, -1) == 1 do "" else Process._reason(t) end
+  end
+#: shrink/4 needs smaller/3
+  def shrink(p: fn[a, b], t: GenTree[a], why: string, steps: integer): tuple[GenTree[a], string, integer] do
+    more = t.shrinks
+    if steps >= 1000 do {t, why, steps} else Gen.smaller(p, more.(), {t, why, steps}) end
+  end
+# The first of the candidates that fails is shrunk in its turn; when none
+# does, or 1000 were tried, what is held stays.
+#: smaller/3 needs attempt/2 shrink/4 smaller/3
+  def smaller(p: fn[a, b], candidates: list[GenTree[a]], held: tuple[GenTree[a], string, integer]): tuple[GenTree[a], string, integer] do
+    steps = elem(held, 2) + 1
+    if length(candidates) == 0 do held else
+      c = hd(candidates)
+      why = Gen.attempt(p, c.value)
+      if why != "" do Gen.shrink(p, c, why, steps) else
+        if steps >= 1000 do {elem(held, 0), elem(held, 1), steps} else Gen.smaller(p, tl(candidates), {elem(held, 0), elem(held, 1), steps}) end
+      end
+    end
+  end
+

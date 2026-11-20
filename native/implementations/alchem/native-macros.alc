@@ -1,0 +1,1241 @@
+defmodule NativeMacros do
+  # Macros, protocols and templates are taken out of a program before it is
+  # compiled (spec/alchem-macros.md): the program is rewritten as text, and a
+  # table says where each piece of the rewritten text stands in the program
+  # as written, so that a failure names the place the pinned compiler names.
+  #
+  # A rewritten source ends in a tail: a line break and a zero byte, the
+  # moved records, the newline positions, files and continuation bytes of
+  # the program as written, the four lengths (32 bits each) and four bytes
+  # that say a tail is there.
+  def mx_tail(source: bytes): integer do
+    size = Enum.count(source)
+    if size < 22 do 0 else
+      if nc_word_at(source,size-4,b[0,77,88,0],0) == 0 do 0 else
+        22+nc_long(source,size-20)+nc_long(source,size-16)+nc_long(source,size-12)+nc_long(source,size-8)
+      end
+    end
+  end
+  # Where the text of a source ends: at its tail's zero byte, or its length.
+  def mx_stop(source: bytes): integer do
+    tail = mx_tail(source)
+    if tail == 0 do Enum.count(source) else Enum.count(source)-tail+1 end
+  end
+  # A table of the tail: 0 the moved records, 1 lines, 2 files, 3 continuations.
+  def mx_part(source: bytes, index: integer): bytes do
+    size = Enum.count(source)
+    first = mx_stop(source)+1+mx_part_skip(source,size,0,index)
+    nc_slice(source,first,first+nc_long(source,size-20+index*4))
+  end
+  def mx_part_skip(source: bytes, size: integer, at: integer, index: integer): integer do
+    if at >= index do 0 else nc_long(source,size-20+at*4)+mx_part_skip(source,size,at+1,index) end
+  end
+  def mx_fail(): bytes do b[255] end
+  # 1 when the text from first up to stop holds the bytes of word anywhere.
+  def mx_raw(source: bytes, first: integer, stop: integer, word: bytes): integer do
+    if stop-first > 64 do
+      middle = first+nc_half(stop-first)
+      if mx_raw(source,first,middle,word) == 1 do 1 else mx_raw(source,middle,stop,word) end
+    else mx_raw_scan(source,first,stop,word) end
+  end
+  def mx_raw_scan(source: bytes, pos: integer, stop: integer, word: bytes): integer do
+    if pos >= stop do 0 else
+      if byte_at(source,pos) != Enum.at(word,0,0) do mx_raw_scan(source,pos+1,stop,word) else
+        if nc_word_at(source,pos,word,0) == 1 do 1 else mx_raw_scan(source,pos+1,stop,word) end
+      end
+    end
+  end
+  def mx_none(): integer do 16777215 end
+
+  # Pieces. The rewritten text is a list of pieces of 13 bytes: a flag, then
+  # for flag 0 the bytes of the program from a up to b, standing where they
+  # stood; for flag 1 the same bytes standing for the place t; for flag 2
+  # up to five bytes of their own (a count, then the bytes) standing for t.
+  # The last field names a place whose file the piece is shown in, for the
+  # functions use adds to a module.
+  def mx_piece(flag: integer, a: integer, b: integer, t: integer, f: integer): bytes do
+    nc_join(Enum.concat(b[flag],nc_u24(a)),Enum.concat(nc_u24(b),nc_u24(t)),nc_u24(f))
+  end
+  def mx_text5(text: bytes, t: integer, f: integer): bytes do
+    nc_join(Enum.concat(b[2,Enum.count(text)],text),nc_zeros(5-Enum.count(text)),Enum.concat(nc_u24(t),nc_u24(f)))
+  end
+  # A context is twelve bytes: the mode (0 the program's own code, 1 the
+  # template of a macro, 3 the functions of a __using__ template), the module
+  # bare names are looked up in, the module the code ends up in, the place a
+  # template stands for, how deep expansion is, and the place whose file is
+  # shown. Four sections follow, each after its length in three bytes: the
+  # suffix of the names the template binds, those names, the arguments (name,
+  # 1 when it needs no parentheses, its pieces after their length) and the
+  # block (the name of its parameter, then its pieces).
+  def mx_context(mode: integer, scope: integer, user: integer, t: integer, depth: integer, f: integer): bytes do
+    nc_join(Enum.concat(b[mode],nc_u16(scope)),Enum.concat(nc_u16(user),nc_u24(t)),Enum.concat(b[depth],nc_u24(f)))
+  end
+  def mx_pack(data: bytes): bytes do Enum.concat(nc_u24(Enum.count(data)),data) end
+  def mx_section(ctx: bytes, at: integer, index: integer): integer do
+    if index == 0 do at+3 else mx_section(ctx,at+3+nc_cursor(ctx,at),index-1) end
+  end
+  def mx_sec(ctx: bytes, index: integer): integer do mx_section(ctx,12,index) end
+  def mx_sec_size(ctx: bytes, index: integer): integer do nc_cursor(ctx,mx_sec(ctx,index)-3) end
+  def mx_sec_data(ctx: bytes, index: integer): bytes do
+    first = mx_sec(ctx,index)
+    nc_slice(ctx,first,first+nc_cursor(ctx,first-3))
+  end
+  def mx_plain_context(scope: integer): bytes do
+    Enum.concat(mx_context(0,scope,scope,0,0,mx_none()),b[0,0,0,0,0,0,0,0,0,0,0,0])
+  end
+  # The bytes from a up to b as the context has them.
+  def mx_run(ctx: bytes, a: integer, b: integer): bytes do
+    if b <= a do b[] else
+      if Enum.at(ctx,0,0) == 1 do mx_piece(1,a,b,nc_cursor(ctx,5),nc_cursor(ctx,9)) else mx_piece(0,a,b,0,nc_cursor(ctx,9)) end
+    end
+  end
+  # The bytes from a up to b standing for one place: the template's, or at.
+  def mx_fixed(ctx: bytes, a: integer, b: integer, at: integer): bytes do
+    mx_piece(1,a,b,if Enum.at(ctx,0,0) == 1 do nc_cursor(ctx,5) else at end,nc_cursor(ctx,9))
+  end
+  def mx_lit(ctx: bytes, text: bytes, at: integer): bytes do
+    mx_text5(text,if Enum.at(ctx,0,0) == 1 do nc_cursor(ctx,5) else at end,nc_cursor(ctx,9))
+  end
+  # Four characters of a name for a number below 63*63*63*63.
+  def mx_digit(value: integer): integer do
+    if value < 26 do 97+value else if value < 52 do 39+value else if value < 62 do value-4 else 95 end end end
+  end
+  def mx_code4(value: integer): bytes do
+    a = nc_units(value,63)
+    b = nc_units(a,63)
+    c = nc_units(b,63)
+    b[mx_digit(value-a*63),mx_digit(a-b*63),mx_digit(b-c*63),mx_digit(c-nc_units(c,63)*63)]
+  end
+
+  # The index of a program: the macros (24 bytes each) after their length,
+  # then records of 24 bytes in the order of the text: a kind, the module's
+  # number and seven places.
+  #   1 a module: its name, where defmodule stands
+  #   3 a function: its name
+  #   4 use: from, to, the module named
+  #   5 a protocol: from, to, its name, its body
+  #   6 a function of a defimpl: its name, the protocol's name, the type, the block's number, where the def stands
+  #   7 text to leave out: from, to
+  #   8 a name to complete: where, the protocol's name, the block's number
+  #   9 a type to write: where, the type
+  #  10 text that is left as it is: from, to (a type's declaration, a
+  #     function's parameters)
+  # A macro: its module, name, where its parameters start, its template
+  # (from, to), the name of its block parameter and 1 for __using__.
+  def mx_record(kind: integer, mod: integer, first: bytes, rest: bytes): bytes do
+    made = nc_join(Enum.concat(b[kind],nc_u16(mod)),first,rest)
+    Enum.concat(made,nc_zeros(24-Enum.count(made)))
+  end
+  def mx_two(a: integer, b: integer): bytes do Enum.concat(nc_u24(a),nc_u24(b)) end
+  def mx_three(a: integer, b: integer, c: integer): bytes do nc_join(nc_u24(a),nc_u24(b),nc_u24(c)) end
+  def mx_base(ix: bytes): integer do 3+nc_cursor(ix,0) end
+  def mx_upper(value: integer): integer do if (value-65)*(90-value) >= 0 do 1 else 0 end end
+  def mx_name(work: bytes, pos: integer): integer do
+    if classify_ascii(byte_at(work,pos)) == 2 do 1 else 0 end
+  end
+  # 1 when the names at a and b, of one size, are the same.
+  def mx_same(work: bytes, a: integer, b: integer, size: integer): integer do
+    if nc_end(work,b)-b != size do 0 else nc_equal(work,a,b,size) end
+  end
+  # The macro called name in module mod: where its record starts, -1 for
+  # none. __using__ is not called.
+  def mx_macro_in(work: bytes, ix: bytes, mod: integer, pos: integer, at: integer): integer do
+    base = 3+at*24
+    if base >= mx_base(ix) do -1 else
+      same = if nc_read(ix,base) != mod do 0 else if Enum.at(ix,base+23,0) == 1 do 0 else mx_same(work,nc_cursor(ix,base+2),pos,nc_cursor(ix,base+5)-nc_cursor(ix,base+2)) end end
+      if same == 1 do base else mx_macro_in(work,ix,mod,pos,at+1) end
+    end
+  end
+  # 1 when some module has a macro of the name at pos.
+  def mx_macro_any(work: bytes, ix: bytes, pos: integer, at: integer): integer do
+    base = 3+at*24
+    if base >= mx_base(ix) do 0 else
+      if mx_same(work,nc_cursor(ix,base+2),pos,nc_cursor(ix,base+5)-nc_cursor(ix,base+2)) == 1 do 1 else mx_macro_any(work,ix,pos,at+1) end
+    end
+  end
+  # The record of a kind whose name (its first two places) is the name at
+  # pos, in module mod or in any for mod -1: where it starts, -1 for none.
+  def mx_find(work: bytes, ix: bytes, plan: bytes, pos: integer, first: integer, stop: integer): integer do
+    middle = first+nc_half(stop-first)
+    base = mx_base(ix)+middle*24
+    wanted = if Enum.at(ix,base,0) != Enum.at(plan,0,0) do 0 else if Enum.at(plan,1,0) == 1 do 1 else if nc_read(ix,base+1) == nc_read(plan,2) do 1 else 0 end end end
+    same = if wanted == 0 do 0 else mx_same(work,nc_cursor(ix,base+3),pos,nc_cursor(ix,base+6)-nc_cursor(ix,base+3)) end
+    if first >= stop do -1 else if same == 1 do base else
+      left = mx_find(work,ix,plan,pos,first,middle)
+      if left >= 0 do left else mx_find(work,ix,plan,pos,middle+1,stop) end
+    end end
+  end
+  def mx_count(ix: bytes): integer do nc_units(Enum.count(ix)-mx_base(ix),24) end
+  # The number of the module called by the name at pos, -1 for none.
+  def mx_module(work: bytes, ix: bytes, pos: integer): integer do
+    found = mx_find(work,ix,b[1,1,0,0],pos,0,mx_count(ix))
+    if found < 0 do -1 else nc_read(ix,found+1) end
+  end
+  # The record of module mod.
+  def mx_module_at(ix: bytes, mod: integer, first: integer, stop: integer): integer do
+    middle = first+nc_half(stop-first)
+    base = mx_base(ix)+middle*24
+    same = if Enum.at(ix,base,0) != 1 do 0 else if nc_read(ix,base+1) == mod do 1 else 0 end end
+    if first >= stop do -1 else if same == 1 do base else
+      left = mx_module_at(ix,mod,first,middle)
+      if left >= 0 do left else mx_module_at(ix,mod,middle+1,stop) end
+    end end
+  end
+  # 1 when module mod has a function or a macro of the name at pos.
+  def mx_local(work: bytes, ix: bytes, mod: integer, pos: integer): integer do
+    if mx_macro_in(work,ix,mod,pos,0) >= 0 do 1 else
+      if mx_find(work,ix,Enum.concat(b[3,0],nc_u16(mod)),pos,0,mx_count(ix)) >= 0 do 1 else 0 end
+    end
+  end
+  # The macro a call at pos names: Module.name from anywhere, or a bare name
+  # of the context's own module, then of the module the code ends up in.
+  def mx_resolve(work: bytes, ix: bytes, ctx: bytes, pos: integer): integer do
+    stop = nc_end(work,pos)
+    if mx_upper(byte_at(work,pos)) == 1 do
+      if mx_macro_any(work,ix,stop+1,0) == 0 do -1 else
+        mod = mx_module(work,ix,pos)
+        if mod < 0 do -1 else mx_macro_in(work,ix,mod,stop+1,0) end
+      end
+    else
+      own = mx_macro_in(work,ix,nc_read(ctx,1),pos,0)
+      if own >= 0 do own else mx_macro_in(work,ix,nc_read(ctx,3),pos,0) end
+    end
+  end
+  # 1 when a call's parenthesis follows the name that ends at stop, on its line.
+  def mx_called(work: bytes, stop: integer): integer do
+    if byte_at(work,nc_blank_end(work,stop)) == 40 do 1 else 0 end
+  end
+  # 1 when the template binds the name at pos.
+  def mx_bound_has(work: bytes, ctx: bytes, pos: integer, at: integer, stop: integer): integer do
+    if at >= stop do 0 else
+      if mx_same(work,nc_cursor(ctx,at),pos,nc_cursor(ctx,at+3)-nc_cursor(ctx,at)) == 1 do 1 else mx_bound_has(work,ctx,pos,at+6,stop) end
+    end
+  end
+  def mx_is_bound(work: bytes, ctx: bytes, pos: integer): integer do
+    first = mx_sec(ctx,1)
+    mx_bound_has(work,ctx,pos,first,first+nc_cursor(ctx,first-3))
+  end
+  # The argument of the name at pos: where its record starts in the context, -1.
+  def mx_argument(work: bytes, ctx: bytes, pos: integer, at: integer, stop: integer): integer do
+    if at >= stop do -1 else
+      if mx_same(work,nc_cursor(ctx,at),pos,nc_cursor(ctx,at+3)-nc_cursor(ctx,at)) == 1 do at else mx_argument(work,ctx,pos,at+10+nc_cursor(ctx,at+7),stop) end
+    end
+  end
+
+  # What the token at pos asks for: 0 nothing, 1 a string that holds values,
+  # 2 a macro call, 3 unquote, 4 a name the template binds, 5 a function of
+  # the macro's own module, 6 fn(, 7 an HTML template, 9 a token that does
+  # not end.
+  def mx_class(work: bytes, ix: bytes, ctx: bytes, pos: integer): integer do
+    value = byte_at(work,pos)
+    if value == 34 do mx_holed(work,pos,nc_end(work,pos)) else
+      if value == 126 do mx_class_sigil(work,pos) else
+        if classify_ascii(value) != 2 do 0 else mx_class_name(work,ix,ctx,pos) end
+      end
+    end
+  end
+  def mx_holed(work: bytes, pos: integer, stop: integer): integer do
+    if stop < 0 do 9 else if sg_hole_at(work,pos,stop) < stop do 1 else 0 end end
+  end
+  def mx_class_sigil(work: bytes, pos: integer): integer do
+    letter = byte_at(work,pos+1)
+    if sg_starts(work,pos) == 0 do 0 else
+      if (letter-104)*(letter-72) == 0 do mh_wanted() else if sg_lower(letter) == 0 do 0 else mx_holed(work,pos,nc_end(work,pos)) end end
+    end
+  end
+  def mx_class_name(work: bytes, ix: bytes, ctx: bytes, pos: integer): integer do
+    stop = nc_end(work,pos)
+    mode = Enum.at(ctx,0,0)
+    called = mx_called(work,stop)
+    if byte_at(work,pos-1) == 46 do 0 else
+      if mx_upper(byte_at(work,pos)) == 1 do
+        if byte_at(work,stop) != 46 do 0 else if mp_referred(work,ix,pos) == 1 do 8 else if mx_called(work,nc_end(work,stop+1)) == 0 do 0 else if mx_resolve(work,ix,ctx,pos) >= 0 do 2 else 0 end end end end
+      else
+        if mx_clausal(work,pos) == 1 do 10 else if called*mode*nc_word(work,pos,b[117,110,113,117,111,116,101]) > 0 do 3 else
+          if mx_base(ix) == 3 do mx_class_template(work,ix,ctx,pos) else
+            if called == 0 do mx_class_template(work,ix,ctx,pos) else if mx_resolve(work,ix,ctx,pos) >= 0 do 2 else mx_class_template(work,ix,ctx,pos) end end
+          end
+        end end
+      end
+    end
+  end
+  # 1 when the fn at pos has its clauses on the lines after it: pattern ->
+  # body, one after another.
+  def mx_clausal(work: bytes, pos: integer): integer do
+    after = nc_blank_end(work,pos+2)
+    next = nc_start(work,pos+2)
+    if byte_at(work,pos)*256+byte_at(work,pos+1) != 26222 do 0 else if (byte_at(work,after)-10)*(byte_at(work,after)-13)*(byte_at(work,after)-35) != 0 do 0 else
+      if is_identifier_continue(byte_at(work,pos-1)) == 1 do 0 else if byte_at(work,next)*256+byte_at(work,next+1) == 11582 do 0 else 1 end end
+    end end
+  end
+  # fn and its clauses are fn name -> case name do clauses end end, the case
+  # standing where fn stands, as the pinned compiler has it.
+  def mx_clauses(work: bytes, ix: bytes, ctx: bytes, state: bytes): bytes do
+    pos = nc_cursor(state,0)
+    stop = nc_body_end(work,pos+2,16777216)
+    name = Enum.concat(b[127],mx_code4(pos))
+    inner = if stop < 0 do mx_fail() else mx_walk(work,ix,ctx,pos+2,stop,1) end
+    head = nc_join(nc_join(mx_run(ctx,nc_cursor(state,9),pos+2),mx_lit(ctx,b[32,99],pos),mx_lit(ctx,name,pos)),nc_join(mx_lit(ctx,b[32,45,62,32],pos),mx_lit(ctx,b[99,97,115,101],pos),mx_lit(ctx,b[32,99],pos)),Enum.concat(mx_lit(ctx,name,pos),mx_lit(ctx,b[32,100,111],pos)))
+    if Enum.count(inner) == 1 do b[] else mx_done(state,stop,stop,nc_join(head,inner,mx_lit(ctx,b[101,110,100,32],pos))) end
+  end
+  def mx_class_template(work: bytes, ix: bytes, ctx: bytes, pos: integer): integer do
+    stop = nc_end(work,pos)
+    mode = Enum.at(ctx,0,0)
+    called = mx_called(work,stop)
+    referred = if byte_at(work,pos-1) != 38 do 0 else if byte_at(work,stop) == 47 do 1 else 0 end end
+    if mode == 0 do 0 else
+      if mode*mx_is_bound(work,ctx,pos) == 1 do 4 else
+        if mode*called*nc_word(work,pos,b[102,110]) == 1 do 6 else
+          if nc_read(ctx,1) == nc_read(ctx,3) do 0 else
+            if called+referred == 0 do 0 else if mx_local(work,ix,nc_read(ctx,1),pos) == 1 do 5 else 0 end end
+          end
+        end
+      end
+    end
+  end
+
+  # A cursor steps over tokens: the position, the token before it and where
+  # to stop (3 bytes each), then what the token at the position asks for and
+  # 1 when the steps are over.
+  def mx_cursor(pos: integer, prev: integer, stop: integer, kind: integer, done: integer): bytes do
+    nc_join(nc_u24(pos),nc_u24(prev),Enum.concat(nc_u24(stop),b[kind,done]))
+  end
+  def mx_seek_chunk(work: bytes, ix: bytes, ctx: bytes, cursor: bytes, count: integer): bytes do
+    pos = nc_start(work,nc_cursor(cursor,0))
+    stop = nc_cursor(cursor,6)
+    if pos < 0 do mx_cursor(0,0,stop,9,1) else if pos >= stop do mx_cursor(stop,nc_cursor(cursor,3),stop,0,1) else
+      kind = mx_class(work,ix,ctx,pos)
+      if kind != 0 do mx_cursor(pos,nc_cursor(cursor,3),stop,kind,1) else
+        if count == 0 do mx_cursor(pos,nc_cursor(cursor,3),stop,0,0) else
+          if nc_end(work,pos) < 0 do mx_cursor(0,0,stop,9,1) else mx_seek_chunk(work,ix,ctx,mx_cursor(nc_end(work,pos),pos,stop,0,0),count-1) end
+        end
+      end
+    end end
+  end
+  def mx_seek(work: bytes, ix: bytes, ctx: bytes, cursor: bytes, level: integer, remaining: integer): bytes do
+    if Enum.at(cursor,10,0) == 1 do cursor else if remaining == 0 do cursor else
+      next = if level == 0 do mx_seek_chunk(work,ix,ctx,cursor,16) else mx_seek(work,ix,ctx,cursor,level-1,16) end
+      mx_seek(work,ix,ctx,next,level,remaining-1)
+    end end
+  end
+
+  # The pieces of the text from first up to stop. statement: 1 when the text
+  # is statements, 0 when it is one value. A state is a cursor's first nine
+  # bytes, then where the text not yet written starts, that flag and where
+  # the text starts: sixteen bytes.
+  def mx_walk(work: bytes, ix: bytes, ctx: bytes, first: integer, stop: integer, statement: integer): bytes do
+    if first >= stop do b[] else mx_go(work,ix,ctx,nc_join(mx_three(first,mx_none(),stop),Enum.concat(nc_u24(first),b[statement]),nc_u24(first)),b[]) end
+  end
+  def mx_go(work: bytes, ix: bytes, ctx: bytes, state: bytes, acc: bytes): bytes do
+    found = mx_seek(work,ix,ctx,Enum.concat(nc_slice(state,0,9),b[0,0]),4,16)
+    kind = Enum.at(found,9,0)
+    if kind == 9 do mx_fail() else
+      if kind == 0 do Enum.concat(acc,mx_run(ctx,nc_cursor(state,9),nc_cursor(state,6))) else
+        # The tokens before a piped call are | and >.
+        piped = if kind != 2 do 0 else if byte_at(work,nc_cursor(found,3)-1)*256+byte_at(work,nc_cursor(found,3)) == 31806 do 1 else 0 end end
+        done = if piped == 1 do mx_pipe(work,ix,ctx,Enum.concat(nc_slice(found,0,9),nc_slice(state,9,16)),acc) else mx_handle(work,ix,ctx,Enum.concat(nc_slice(found,0,9),nc_slice(state,9,16)),kind) end
+        if Enum.count(done) < 16 do mx_fail() else
+          if piped == 1 do mx_go(work,ix,ctx,nc_slice(done,0,16),nc_slice(done,16,Enum.count(done))) else
+            mx_go(work,ix,ctx,nc_slice(done,0,16),if Enum.count(done) == 16 do acc else Enum.concat(acc,nc_slice(done,16,Enum.count(done))) end)
+          end
+        end
+      end
+    end
+  end
+  # What a handler leaves: the state to go on from and the pieces it made.
+  def mx_done(state: bytes, pos: integer, from: integer, pieces: bytes): bytes do
+    nc_join(nc_join(nc_u24(pos),nc_slice(state,0,3),nc_slice(state,6,9)),Enum.concat(nc_u24(from),nc_slice(state,12,16)),pieces)
+  end
+  def mx_handle(work: bytes, ix: bytes, ctx: bytes, state: bytes, kind: integer): bytes do
+    if kind == 1 do mx_string(work,ix,ctx,state) else
+      if kind == 2 do mx_call(work,ix,ctx,state) else
+        if kind == 3 do mx_hole(work,ctx,state) else
+          if kind == 4 do mx_rename(work,ctx,state) else
+            if kind == 5 do mx_adopt(work,ix,ctx,state) else
+              if kind == 6 do mx_lambda(work,ctx,state) else if kind == 8 do mp_refer(work,ctx,state) else if kind == 10 do mx_clauses(work,ix,ctx,state) else mh_template(work,ix,ctx,state) end end end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  # A string or sigil that holds values: the code of each is walked.
+  def mx_string(work: bytes, ix: bytes, ctx: bytes, state: bytes): bytes do
+    pos = nc_cursor(state,0)
+    stop = nc_end(work,pos)
+    made = mx_holes(work,ix,ctx,b[byte_at(work,pos)],nc_join(nc_u24(pos+1),nc_u24(stop),nc_u24(nc_cursor(state,9))),b[])
+    if Enum.count(made) < 3 do b[] else mx_done(state,stop,nc_cursor(made,0),nc_slice(made,3,Enum.count(made))) end
+  end
+  # The first #{ from pos up to stop that no backslash keeps as text.
+  def mx_hole_at(work: bytes, pos: integer, stop: integer): integer do
+    found = sg_hole_at(work,pos,stop)
+    if found >= stop do stop else if mx_escaped(work,found-1,0) == 1 do mx_hole_at(work,found+1,stop) else found end end
+  end
+  def mx_escaped(work: bytes, pos: integer, count: integer): integer do
+    if byte_at(work,pos) == 92 do mx_escaped(work,pos-1,1-count) else count end
+  end
+  # places: where to look from, where the token ends, where the text not yet
+  # written starts. The result is that last place, then the pieces.
+  def mx_holes(work: bytes, ix: bytes, ctx: bytes, opener: bytes, places: bytes, acc: bytes): bytes do
+    stop = nc_cursor(places,3)
+    from = nc_cursor(places,6)
+    hole = if Enum.at(opener,0,0) == 34 do mx_hole_at(work,nc_cursor(places,0),stop) else sg_hole_at(work,nc_cursor(places,0),stop) end
+    close = if hole >= stop do stop else if Enum.at(opener,0,0) == 34 do np_close(work,hole+2,1,100000)-1 else sg_hole_end(work,hole+2,1) end end
+    inner = if hole >= stop do b[] else if close < hole+2 do mx_fail() else mx_walk(work,ix,ctx,hole+2,close,1) end end
+    same = if Enum.count(inner) != 13 do 0 else if Enum.at(inner,0,0) != 0 do 0 else if nc_cursor(inner,1) != hole+2 do 0 else if nc_cursor(inner,4) == close do 1 else 0 end end end end
+    if hole >= stop do Enum.concat(nc_u24(from),acc) else
+      if Enum.count(inner) == 1 do b[] else
+        if same == 1 do mx_holes(work,ix,ctx,opener,nc_join(nc_u24(close+1),nc_u24(stop),nc_u24(from)),acc) else
+          mx_holes(work,ix,ctx,opener,nc_join(nc_u24(close+1),nc_u24(stop),nc_u24(close)),nc_join(acc,mx_run(ctx,from,hole+2),inner))
+        end
+      end
+    end
+  end
+
+  # 1 when the token at the state's position starts a statement.
+  def mx_starts(work: bytes, state: bytes): integer do
+    pos = nc_cursor(state,0)
+    prev = nc_cursor(state,3)
+    value = byte_at(work,prev)
+    opening = nc_word(work,prev,b[100,111])+nc_word(work,prev,b[101,108,115,101])+nc_word(work,prev,b[45,62])
+    joining = nc_word(work,prev,b[97,110,100])+nc_word(work,prev,b[111,114])+nc_word(work,prev,b[110,111,116])+nc_word(work,prev,b[105,110])+nc_word(work,prev,b[119,104,101,110])
+    if prev == mx_none() do 1 else if opening > 0 do 1 else
+      if nz_line_end(work,nc_end(work,prev)) >= pos do 0 else
+        if mx_operator(value) == 1 do 0 else if joining > 0 do 0 else 1 end end
+      end
+    end end
+  end
+  def mx_operator(value: integer): integer do
+    if nc_and((value-40)*(value-91)*(value-123)*(value-44),(value-61)*(value-43)*(value-45)*(value-42)) == 0 do 1 else
+      if nc_and((value-47)*(value-60)*(value-62)*(value-124),(value-38)*(value-46)*(value-58)*(value-92)) == 0 do 1 else 0 end
+    end
+  end
+  # 1 when a statement ends at after: nothing more comes on its line and the
+  # next line does not go on with an operator.
+  def mx_ends(work: bytes, after: integer, stop: integer): integer do
+    next = nc_start(work,after)
+    value = byte_at(work,next)
+    closing = nc_word(work,next,b[101,110,100])+nc_word(work,next,b[101,108,115,101])+nc_word(work,next,b[114,101,115,99,117,101])+nc_word(work,next,b[99,97,116,99,104])+nc_word(work,next,b[97,102,116,101,114])
+    joining = nc_word(work,next,b[97,110,100])+nc_word(work,next,b[111,114])+nc_word(work,next,b[105,110])+nc_word(work,next,b[119,104,101,110])
+    if next < 0 do 1 else if next >= stop do 1 else if closing > 0 do 1 else
+      if nz_line_end(work,after) >= next do 0 else
+        if (value-124)*(value-46)*(value-42)*(value-47)*(value-60)*(value-62)*(value-61) == 0 do 0 else
+          if value*256+byte_at(work,next+1) == 8509 do 0 else if value*256+byte_at(work,next+1) == 9766 do 0 else if joining > 0 do 0 else 1 end end end
+        end
+      end
+    end end end
+  end
+  # 1 when a value put at the state's position, up to after, stands alone:
+  # between brackets, commas or the ends of a statement.
+  def mx_alone(work: bytes, state: bytes, after: integer): integer do
+    prev = nc_cursor(state,3)
+    value = byte_at(work,prev)
+    next = nc_start(work,after)
+    close = byte_at(work,next)
+    assigned = if value != 61 do 0 else if nc_end(work,prev)-prev == 1 do 1 else 0 end end
+    left = if prev == mx_none() do 1 else if (value-40)*(value-91)*(value-123)*(value-44) == 0 do 1 else if assigned == 1 do 1 else mx_starts(work,state) end end end
+    right = if next >= nc_cursor(state,6) do 1 else if (close-41)*(close-93)*(close-125)*(close-44) == 0 do 1 else mx_ends(work,after,nc_cursor(state,6)) end end
+    left*right
+  end
+  # 1 when the text from first up to stop is one value that needs no
+  # parentheses around it: one token, one bracket, or a name and its call.
+  def mx_atomic(work: bytes, first: integer, stop: integer): integer do
+    value = byte_at(work,first)
+    after = nc_end(work,first)
+    if nc_start(work,after) >= stop do 1 else
+      if (value-40)*(value-91)*(value-123) == 0 do if nc_start(work,np_close(work,first,0,16777216)) >= stop do 1 else 0 end else
+        if value == 37 do if nc_start(work,np_skip(work,first)) >= stop do 1 else 0 end else
+          if classify_ascii(value) != 2 do 0 else
+            if nc_word(work,first,b[102,110]) == 1 do 1 else mx_atomic_name(work,first,stop,8) end
+          end
+        end
+      end
+    end
+  end
+  def mx_atomic_name(work: bytes, first: integer, stop: integer, budget: integer): integer do
+    after = nc_end(work,first)
+    if budget == 0 do 0 else if nc_start(work,after) >= stop do 1 else
+      if byte_at(work,after) == 46 do mx_atomic_name(work,after+1,stop,budget-1) else
+        if byte_at(work,after) != 40 do 0 else if nc_start(work,np_close(work,after,0,16777216)) >= stop do 1 else 0 end end
+      end
+    end end
+  end
+  # The text from first up to stop without the blanks it ends in.
+  def mx_trimmed(work: bytes, first: integer, stop: integer): integer do
+    last = nz_before(work,stop-1)
+    if last < first do first else last+1 end
+  end
+
+  # unquote(name): the argument of that name, or the block.
+  def mx_hole(work: bytes, ctx: bytes, state: bytes): bytes do
+    pos = nc_cursor(state,0)
+    name = nc_start(work,nc_blank_end(work,nc_end(work,pos))+1)
+    close = nc_start(work,nc_end(work,name))
+    after = close+1
+    first = mx_sec(ctx,2)
+    found = mx_argument(work,ctx,name,first,first+nc_cursor(ctx,first-3))
+    block = mx_sec(ctx,3)
+    blocked = if nc_cursor(ctx,block-3) < 6 do 0 else mx_same(work,nc_cursor(ctx,block),name,nc_cursor(ctx,block+3)-nc_cursor(ctx,block)) end
+    before = mx_run(ctx,nc_cursor(state,9),pos)
+    if mx_name(work,name) == 0 do b[] else if byte_at(work,close) != 41 do b[] else if mx_patterned(work,state,after) == 1 do b[] else
+      if found >= 0 do
+        # An argument that is a whole statement of the template stands
+        # for the pinned compiler where the macro was called, and what it
+        # holds where it was written: the parentheses are the statement.
+        whole = if Enum.at(ctx,0,0) != 1 do 0 else Enum.at(state,12,0)*mx_starts(work,state)*mx_ends(work,after,nc_cursor(state,6)) end
+        bare = if whole == 1 do 0 else if Enum.at(ctx,found+6,0) == 1 do 1 else mx_alone(work,state,after) end end
+        mx_done(state,after,after,Enum.concat(before,mx_wrapped(ctx,nc_slice(ctx,found+10,found+10+nc_cursor(ctx,found+7)),pos,bare)))
+      else
+        if blocked == 0 do b[] else
+          bare = Enum.at(state,12,0)*mx_starts(work,state)*mx_ends(work,after,nc_cursor(state,6))
+          mx_done(state,after,after,Enum.concat(before,mx_wrapped(ctx,nc_slice(ctx,block+6,block+nc_cursor(ctx,block-3)),pos,bare)))
+        end
+      end
+    end end end
+  end
+  # 1 when unquote stands where a pattern does, which the pinned parser does
+  # not read: before the = of a binding, or as the pattern of a receive
+  # assertion (ac_receives has written that as case m__N do pattern -> ...).
+  def mx_patterned(work: bytes, state: bytes, after: integer): integer do
+    next = nc_start(work,after)
+    prev = nc_cursor(state,3)
+    named = mx_word_start(work,nz_before(work,prev-1))
+    bound = if byte_at(work,next) != 61 do 0 else if nc_end(work,next)-next == 1 do 1 else 0 end end
+    if bound == 1 do 1 else if prev == mx_none() do 0 else if nc_word(work,prev,b[100,111]) == 0 do 0 else nc_word_at(work,named,b[109,95,95],0) end end end
+  end
+  def mx_word_start(work: bytes, pos: integer): integer do
+    if pos <= 0 do 0 else if is_identifier_continue(byte_at(work,pos-1)) == 1 do mx_word_start(work,pos-1) else pos end end
+  end
+  def mx_wrapped(ctx: bytes, pieces: bytes, at: integer, bare: integer): bytes do
+    if bare == 1 do pieces else nc_join(mx_lit(ctx,b[40],at),pieces,mx_lit(ctx,b[41],at)) end
+  end
+  # A name the template binds takes the suffix of this expansion. A key
+  # (name: value) and an atom are not names.
+  def mx_rename(work: bytes, ctx: bytes, state: bytes): bytes do
+    pos = nc_cursor(state,0)
+    stop = nc_end(work,pos)
+    prev = byte_at(work,nc_cursor(state,3))
+    atom = if byte_at(work,pos-1) != 58 do 0 else if byte_at(work,pos-2) == 58 do 0 else 1 end end
+    inside = if nc_cursor(state,3) == mx_none() do 0 else if (prev-40)*(prev-91)*(prev-123)*(prev-44) == 0 do 1 else 0 end end
+    key = if byte_at(work,stop) != 58 do 0 else if byte_at(work,stop+1) == 58 do 0 else inside end end
+    if atom+key > 0 do mx_done(state,stop,nc_cursor(state,9),b[]) else
+      mx_done(state,stop,stop,Enum.concat(mx_run(ctx,nc_cursor(state,9),stop),mx_sec_data(ctx,0)))
+    end
+  end
+  # A function of the macro's own module, called from another: Module.name.
+  def mx_adopt(work: bytes, ix: bytes, ctx: bytes, state: bytes): bytes do
+    pos = nc_cursor(state,0)
+    home = mx_module_at(ix,nc_read(ctx,1),0,mx_count(ix))
+    named = Enum.concat(mx_fixed(ctx,nc_cursor(ix,home+3),nc_cursor(ix,home+6),pos),mx_lit(ctx,b[46],pos))
+    if home < 0 do b[] else mx_done(state,nc_end(work,pos),pos,Enum.concat(mx_run(ctx,nc_cursor(state,9),pos),named)) end
+  end
+  # fn(name: type, ...): the names are bound.
+  def mx_lambda(work: bytes, ctx: bytes, state: bytes): bytes do
+    pos = nc_cursor(state,0)
+    paren = nc_blank_end(work,nc_end(work,pos))
+    spans = if nc_word(work,paren+1,b[41]) == 1 do nc_value(nc_end(work,paren+1),b[],b[1]) else nc_list_collect(work,paren+1,b[],0,41) end
+    made = if nc_pos(spans) < 0 do b[] else mx_lambda_names(work,ctx,nc_code(spans),0,Enum.concat(nc_u24(nc_cursor(state,9)),b[])) end
+    if Enum.count(made) < 3 do b[] else mx_done(state,nc_pos(spans),nc_cursor(made,0),nc_slice(made,3,Enum.count(made))) end
+  end
+  def mx_lambda_names(work: bytes, ctx: bytes, spans: bytes, at: integer, made: bytes): bytes do
+    name = nc_cursor(spans,at)
+    stop = nc_end(work,name)
+    from = nc_cursor(made,0)
+    if at >= Enum.count(spans) do made else
+      if mx_name(work,name)*mx_is_bound(work,ctx,name) == 0 do mx_lambda_names(work,ctx,spans,at+6,made) else
+        mx_lambda_names(work,ctx,spans,at+6,nc_join(nc_u24(stop),nc_slice(made,3,Enum.count(made)),Enum.concat(mx_run(ctx,from,stop),mx_sec_data(ctx,0))))
+      end
+    end
+  end
+
+  # A macro call. Its shape: the name, the parenthesis, where the arguments
+  # end, the block (from, to; equal for none) and where the call ends.
+  def mx_shape(work: bytes, pos: integer, wanted: integer): bytes do
+    name = if mx_upper(byte_at(work,pos)) == 1 do nc_end(work,pos)+1 else pos end
+    paren = nc_blank_end(work,nc_end(work,name))
+    spans = if nc_word(work,paren+1,b[41]) == 1 do nc_value(nc_end(work,paren+1),b[],b[1]) else nc_list_collect(work,paren+1,b[],0,41) end
+    after = nc_pos(spans)
+    word = nc_blank_end(work,after)
+    blocked = if wanted == 0 do 0 else if byte_at(work,word) != 100 do 0 else nc_opens(work,word) end end
+    from = if blocked == 0 do after else nc_end(work,word) end
+    to = if blocked == 0 do after else nc_body_end(work,from,16777216) end
+    if after < 0 do b[] else if to < 0 do b[] else
+      nc_join(nc_join(mx_three(name,paren,after),mx_two(from,to),nc_u24(if blocked == 0 do after else nc_end(work,to) end)),b[blocked],nc_code(spans))
+    end end
+  end
+  # The names of a macro's parameters from pos, six bytes each: do: name is
+  # the block and is left out.
+  def mx_params(work: bytes, pos: integer, acc: bytes): bytes do
+    start = nc_start(work,pos)
+    stop = nc_end(work,start)
+    block = if nc_word(work,start,b[100,111]) == 0 do 0 else if byte_at(work,stop) == 58 do 1 else 0 end end
+    if mx_name(work,start) == 0 do acc else if block == 1 do acc else
+      if nc_word(work,stop,b[44]) == 0 do Enum.concat(acc,mx_two(start,stop)) else mx_params(work,nc_end(work,stop),Enum.concat(acc,mx_two(start,stop))) end
+    end end
+  end
+  # The arguments of a call as the section of a context: each walked where
+  # it was written. The result is b[255] when one fails.
+  def mx_arguments(work: bytes, ix: bytes, ctx: bytes, spans: bytes, params: bytes, at: integer): bytes do
+    first = nc_cursor(spans,at)
+    stop = mx_trimmed(work,first,nc_cursor(spans,at+3))
+    pieces = if at >= Enum.count(spans) do b[] else mx_walk(work,ix,ctx,first,stop,0) end
+    rest = if at >= Enum.count(spans) do b[] else if Enum.count(pieces) == 1 do mx_fail() else mx_arguments(work,ix,ctx,spans,params,at+6) end end
+    if at >= Enum.count(spans) do b[] else if Enum.count(rest) == 1 do rest else
+      nc_join(Enum.concat(nc_slice(params,at,at+6),b[mx_atomic(work,first,stop)]),mx_pack(pieces),rest)
+    end end
+  end
+  def mx_call(work: bytes, ix: bytes, ctx: bytes, state: bytes): bytes do
+    mx_call_with(work,ix,ctx,state,b[])
+  end
+  # piped: nothing, or a value piped into the call, which is its first
+  # argument: 1 when it needs no parentheses, 1 when the call is a whole
+  # statement, then its pieces.
+  def mx_call_with(work: bytes, ix: bytes, ctx: bytes, state: bytes, piped: bytes): bytes do
+    pos = nc_cursor(state,0)
+    macro = mx_resolve(work,ix,ctx,pos)
+    params = mx_params(work,nc_cursor(ix,macro+8),b[])
+    blocked = if nc_cursor(ix,macro+17) == nc_cursor(ix,macro+20) do 0 else 1 end
+    shape = mx_shape(work,pos,blocked)
+    extra = if Enum.count(piped) == 0 do 0 else 6 end
+    # The value of a module constant is not expanded.
+    if byte_at(work,nc_blank_end(work,mx_line_start(work,pos))) == 64 do mx_done(state,nc_end(work,pos),nc_cursor(state,9),b[]) else
+      if Enum.count(shape) == 0 do b[] else if Enum.at(ctx,8,0) >= 64 do b[] else
+        if Enum.count(shape)-19+extra != Enum.count(params) do b[] else if Enum.at(shape,18,0) != blocked do b[] else
+          mx_expand(work,ix,ctx,state,Enum.concat(nc_u24(macro),shape),piped)
+        end end
+      end end
+    end
+  end
+  def mx_line_start(work: bytes, pos: integer): integer do
+    if pos <= 0 do 0 else if byte_at(work,pos-1) == 10 do pos else mx_line_start(work,pos-1) end end
+  end
+  # The arguments of a call, a piped value first.
+  def mx_given(work: bytes, ix: bytes, ctx: bytes, shape: bytes, piped: bytes): bytes do
+    params = mx_params(work,nc_cursor(ix,nc_cursor(shape,0)+8),b[])
+    spans = nc_slice(shape,22,Enum.count(shape))
+    rest = mx_arguments(work,ix,ctx,spans,if Enum.count(piped) == 0 do params else nc_slice(params,6,Enum.count(params)) end,0)
+    if Enum.count(piped) == 0 do rest else if Enum.count(rest) == 1 do rest else
+      nc_join(Enum.concat(nc_slice(params,0,6),nc_slice(piped,0,1)),mx_pack(nc_slice(piped,2,Enum.count(piped))),rest)
+    end end
+  end
+  # What a token does to the start of the value a later |> takes: 1 opens a
+  # bracket or block, 2 closes one, 3 starts a value anew (what binds less
+  # tightly than |>), 0 nothing.
+  def mx_lhs_kind(work: bytes, start: integer): integer do
+    value = byte_at(work,start)
+    next = byte_at(work,start+1)
+    size = nc_end(work,start)-start
+    words = nc_word(work,start,b[97,110,100])+nc_word(work,start,b[111,114])+nc_word(work,start,b[105,110])+nc_word(work,start,b[119,104,101,110])+nc_word(work,start,b[101,108,115,101])+nc_word(work,start,b[110,111,116])+nc_word(work,start,b[114,101,116,117,114,110])
+    if (value-40)*(value-91)*(value-123) == 0 do 1 else if nc_opens(work,start)+nf_untyped(work,start) > 0 do 1 else
+      if (value-41)*(value-93)*(value-125) == 0 do 2 else if nc_word(work,start,b[101,110,100]) == 1 do 2 else
+        if (value-61)*(value-44) == 0 do 3 else if words > 0 do 3 else
+          if value == 33 do if next == 61 do 3 else 0 end else
+            if value == 45 do if next == 62 do 3 else 0 end else
+              if value == 58 do if size == 1 do if is_space(next) == 1 do 3 else 0 end else 0 end else
+                if (value-60)*(value-62) != 0 do if size == 3 do if (value-38)*(value-124)*(value-94) == 0 do 3 else 0 end else 0 end else
+                  if size == 3 do 0 else if value*256+next == 15422 do 0 else if byte_at(work,start-1)*256+value == 31806 do 0 else 3 end end end
+                end
+              end
+            end
+          end
+        end end
+      end end
+    end end
+  end
+  # Where the value starts that the |> at stop takes, scanning from pos, the
+  # start of its statement's first line: -1 when a bracket closes that the
+  # scan did not see open. stack: the starts, three bytes for each bracket.
+  def mx_lhs(work: bytes, pos: integer, stop: integer, stack: bytes): integer do
+    start = nc_start(work,pos)
+    after = nc_end(work,start)
+    kind = mx_lhs_kind(work,start)
+    size = Enum.count(stack)
+    next = nc_u24(nc_start(work,after))
+    if start < 0 do -1 else if size < 3 do -1 else if start >= stop do nc_cursor(stack,size-3) else if after < 0 do -1 else
+      if kind == 1 do mx_lhs(work,after,stop,Enum.concat(stack,next)) else
+        if kind == 2 do mx_lhs(work,after,stop,nc_slice(stack,0,size-3)) else
+          if kind == 3 do mx_lhs(work,after,stop,Enum.concat(nc_slice(stack,0,size-3),next)) else mx_lhs(work,after,stop,stack) end
+        end
+      end
+    end end end end
+  end
+  # The first line of the statement the |> at pos stands in: a line that
+  # starts with |> goes on from the line before it.
+  def mx_lhs_line(work: bytes, pos: integer): integer do
+    line = mx_line_start(work,pos)
+    first = nc_blank_end(work,line)
+    if line <= 0 do 0 else if byte_at(work,first)*256+byte_at(work,first+1) == 31806 do mx_lhs_line(work,line-1) else line end end
+  end
+  # The pieces before the place at: a piece that starts there or later was
+  # written for text after it, and one of the program's own text that
+  # reaches past it is cut there.
+  def mx_cut(acc: bytes, at: integer, count: integer): bytes do
+    base = count*13-13
+    flag = Enum.at(acc,base,0)
+    key = if flag == 0 do nc_cursor(acc,base+1) else nc_cursor(acc,base+7) end
+    if count <= 0 do b[] else
+      if key >= at do mx_cut(acc,at,count-1) else
+        if flag != 0 do nc_slice(acc,0,count*13) else if nc_cursor(acc,base+4) <= at do nc_slice(acc,0,count*13) else
+          nc_join(nc_slice(acc,0,base+4),nc_u24(at),nc_slice(acc,base+7,base+13))
+        end end
+      end
+    end
+  end
+  # value |> macro(arguments): the value is the first argument. The result
+  # is the state to go on from and all the pieces so far.
+  def mx_pipe(work: bytes, ix: bytes, ctx: bytes, state: bytes, acc: bytes): bytes do
+    pos = nc_cursor(state,0)
+    bar = nc_cursor(state,3)-1
+    from = nc_cursor(state,9)
+    # A value is looked for in the text being walked: the code of a
+    # #{...} is all there is of its line.
+    line = if mx_lhs_line(work,bar) < nc_cursor(state,13) do nc_cursor(state,13) else mx_lhs_line(work,bar) end
+    first = nc_start(work,line)
+    start = mx_lhs(work,line,bar,nc_u24(first))
+    stop = mx_trimmed(work,start,bar)
+    value = if start < 0 do mx_fail() else if start >= stop do mx_fail() else mx_walk(work,ix,ctx,start,stop,0) end end
+    kept = if start >= from do Enum.concat(acc,mx_run(ctx,from,start)) else if Enum.at(ctx,0,0) != 0 do mx_fail() else mx_cut(acc,start,nc_units(Enum.count(acc),13)) end end
+    done = if Enum.count(value) == 1 do b[] else mx_call_with(work,ix,ctx,nc_join(nc_slice(state,0,9),nc_u24(pos),nc_slice(state,12,16)),nc_join(b[mx_atomic(work,start,stop),if start == first do 1 else 0 end],value,b[])) end
+    if Enum.count(kept) == 1 do b[] else if Enum.count(done) < 16 do b[] else nc_join(nc_slice(done,0,16),kept,nc_slice(done,16,Enum.count(done))) end end
+  end
+  # Where the last token before stop ends, from pos on.
+  def mx_last(work: bytes, pos: integer, stop: integer, last: integer): integer do
+    start = nc_start(work,pos)
+    if start < 0 do last else if start >= stop do last else if nc_end(work,start) < 0 do last else mx_last(work,nc_end(work,start),stop,nc_end(work,start)) end end end
+  end
+  # shape: the macro's record, then the call's shape.
+  def mx_expand(work: bytes, ix: bytes, ctx: bytes, state: bytes, shape: bytes, piped: bytes): bytes do
+    pos = nc_cursor(state,0)
+    macro = nc_cursor(shape,0)
+    given = mx_given(work,ix,ctx,shape,piped)
+    block = if Enum.at(shape,21,0) == 0 do b[] else mx_walk(work,ix,ctx,nc_start(work,nc_cursor(shape,12)),nc_cursor(shape,15),1) end
+    t = if Enum.at(ctx,0,0) == 1 do nc_cursor(ctx,5) else pos end
+    head = mx_context(1,nc_read(ix,macro),nc_read(ctx,3),t,Enum.at(ctx,8,0)+1,nc_cursor(ctx,9))
+    suffix = Enum.concat(mx_sec_data(ctx,0),mx_text5(Enum.concat(b[127],mx_code4(pos)),t,nc_cursor(ctx,9)))
+    first = nc_start(work,nc_cursor(ix,macro+11))
+    bound = mb_names(work,first,nc_cursor(ix,macro+14))
+    held = if Enum.at(shape,21,0) == 0 do b[] else Enum.concat(nc_slice(ix,macro+17,macro+23),block) end
+    inner = nc_join(nc_join(head,mx_pack(suffix),mx_pack(bound)),mx_pack(given),mx_pack(held))
+    if Enum.count(given) == 1 do b[] else if Enum.count(block) == 1 do b[] else
+      body = mx_walk(work,ix,inner,first,nc_cursor(ix,macro+14),1)
+      after = nc_cursor(shape,18)
+      bare = Enum.at(state,12,0)*(if Enum.count(piped) == 0 do mx_starts(work,state) else Enum.at(piped,1,0) end)*mx_ends(work,after,nc_cursor(state,6))
+      if Enum.count(body) == 1 do b[] else
+        mx_done(state,after,after,Enum.concat(mx_run(ctx,nc_cursor(state,9),pos),mx_wrapped(ctx,body,pos,bare)))
+      end
+    end end
+  end
+
+  # The names a template binds, six bytes each: what stands before = and <-,
+  # the patterns before ->, and the parameters of fn. marks: where the
+  # statement or arm starts, where the pattern starts, the token before
+  # (3 bytes each), the depth of brackets from 100 and the depth the pattern
+  # started at.
+  def mb_names(work: bytes, first: integer, stop: integer): bytes do
+    mb_walk(work,first,stop,mb_marks(first,first,mx_none(),100,100),b[])
+  end
+  def mb_marks(statement: integer, pattern: integer, prev: integer, depth: integer, level: integer): bytes do
+    nc_join(nc_u24(statement),nc_u24(pattern),Enum.concat(nc_u24(prev),b[depth,level]))
+  end
+  def mb_walk(work: bytes, pos: integer, stop: integer, marks: bytes, acc: bytes): bytes do
+    start = nc_start(work,pos)
+    if start < 0 do acc else if start >= stop do acc else if nc_end(work,start) < 0 do acc else
+      mb_token(work,start,stop,mb_fresh(work,start,marks),acc)
+    end end end
+  end
+  # A token on a new line outside brackets starts a statement.
+  def mb_fresh(work: bytes, start: integer, marks: bytes): bytes do
+    prev = nc_cursor(marks,6)
+    if prev == mx_none() do marks else
+      if nz_line_end(work,nc_end(work,prev)) >= start do marks else
+        if Enum.at(marks,9,0) != 100 do marks else Enum.concat(mb_marks(start,start,prev,100,100),nc_slice(marks,11,Enum.count(marks))) end
+      end
+    end
+  end
+  # 1 ->, 2 <-, 3 =, 4 a comma, 5 an opening bracket, 6 a closing one, 7 a
+  # word a pattern may follow, 8 fn(, 0 anything else.
+  def mb_kind(work: bytes, start: integer): integer do
+    value = byte_at(work,start)
+    size = nc_end(work,start)-start
+    pair = value*256+byte_at(work,start+1)
+    words = nc_word(work,start,b[100,111])+nc_word(work,start,b[101,108,115,101])+nc_word(work,start,b[102,111,114])+nc_word(work,start,b[119,105,116,104])
+    if size == 2 do if pair == 11582 do 1 else if pair == 15405 do 2 else if nc_word(work,start,b[102,110]) == 1 do if mx_called(work,start+2) == 1 do 8 else 7 end else words*7 end end end else
+      if size == 1 do
+        if value == 61 do 3 else if value == 44 do 4 else if (value-40)*(value-91)*(value-123) == 0 do 5 else if (value-41)*(value-93)*(value-125) == 0 do 6 else 0 end end end end
+      else words*7 end
+    end
+  end
+  # The blocks open at a token, a byte each after the marks: 2 for the block
+  # of a cond, whose arms start with conditions, not patterns.
+  def mb_blocks(work: bytes, start: integer, marks: bytes): bytes do
+    held = nc_slice(marks,11,Enum.count(marks))
+    prev = nc_cursor(marks,6)
+    if nc_opens(work,start) == 1 do Enum.concat(held,b[if prev == mx_none() do 1 else 1+nc_word(work,prev,b[99,111,110,100]) end]) else
+      if nf_untyped(work,start) == 1 do Enum.concat(held,b[1]) else
+        if nc_word(work,start,b[101,110,100]) == 1 do nc_slice(held,0,Enum.count(held)-1) else held end
+      end
+    end
+  end
+  def mb_token(work: bytes, start: integer, stop: integer, marks: bytes, acc: bytes): bytes do
+    kind = mb_kind(work,start)
+    after = nc_end(work,start)
+    depth = Enum.at(marks,9,0)
+    level = Enum.at(marks,10,0)
+    statement = nc_cursor(marks,0)
+    pattern = nc_cursor(marks,3)
+    arms = if Enum.at(marks,Enum.count(marks)-1,0) == 2 do if Enum.count(marks) > 11 do 0 else 1 end else 1 end
+    gained = if kind == 1 do if arms == 1 do mb_region(work,statement,start,0) else b[] end else if kind == 2 do mb_region(work,pattern,start,0) else if kind == 3 do if depth == level do mb_region(work,pattern,start,0) else b[] end else if kind == 8 do mb_typed(work,start) else b[] end end end end
+    next = if (kind-1)*(kind-7)*(kind-8) == 0 do mb_marks(after,after,start,depth,depth) else
+      if kind == 4 do mb_marks(statement,if depth == level do after else pattern end,start,depth,level) else
+        if kind == 5 do mb_marks(statement,pattern,start,depth+1,level) else if kind == 6 do mb_marks(statement,pattern,start,depth-1,level) else mb_marks(statement,pattern,start,depth,level) end end
+      end
+    end
+    inside = if byte_at(work,start) != 34 do b[] else mb_holes(work,start+1,after) end
+    mb_walk(work,after,stop,Enum.concat(next,mb_blocks(work,start,marks)),if Enum.count(gained)+Enum.count(inside) == 0 do acc else nc_join(acc,gained,inside) end)
+  end
+  # The names bound in the code of the values a string holds.
+  def mb_holes(work: bytes, pos: integer, stop: integer): bytes do
+    hole = mx_hole_at(work,pos,stop)
+    close = if hole >= stop do stop else np_close(work,hole+2,1,100000)-1 end
+    if hole >= stop do b[] else if close < hole+2 do b[] else Enum.concat(mb_names(work,hole+2,close),mb_holes(work,close+1,stop)) end end
+  end
+  def mb_keyword(work: bytes, start: integer): integer do
+    first = nc_word(work,start,b[116,114,117,101])+nc_word(work,start,b[102,97,108,115,101])+nc_word(work,start,b[110,105,108])+nc_word(work,start,b[110,111,110,101])+nc_word(work,start,b[95])
+    second = nc_word(work,start,b[97,110,100])+nc_word(work,start,b[111,114])+nc_word(work,start,b[110,111,116])+nc_word(work,start,b[105,110])+nc_word(work,start,b[100,111])+nc_word(work,start,b[101,110,100])+nc_word(work,start,b[102,110])
+    if first+second > 0 do 1 else 0 end
+  end
+  # The names of a pattern from pos up to stop; a guard is no part of it.
+  def mb_region(work: bytes, pos: integer, stop: integer, depth: integer): bytes do
+    start = nc_start(work,pos)
+    value = byte_at(work,start)
+    after = nc_end(work,start)
+    before = byte_at(work,start-1)
+    typed = if byte_at(work,after) != 58 do 0 else if byte_at(work,after+1) == 58 do 0 else 1 end end
+    barred = if (before-46)*(before-58)*(before-94)*(before-38) == 0 do 1 else mx_called(work,after)+mx_upper(value)+mb_keyword(work,start) end
+    if start < 0 do b[] else if start >= stop do b[] else if after < 0 do b[] else if nc_word(work,start,b[119,104,101,110]) == 1 do b[] else
+      if (value-40)*(value-91)*(value-123) == 0 do mb_region(work,after,stop,depth+1) else if (value-41)*(value-93)*(value-125) == 0 do mb_region(work,after,stop,depth-1) else
+        if classify_ascii(value) != 2 do mb_region(work,after,stop,depth) else
+          if barred > 0 do mb_region(work,after,stop,depth) else
+            if typed == 0 do Enum.concat(mx_two(start,after),mb_region(work,after,stop,depth)) else
+              if depth == 0 do mx_two(start,after) else mb_region(work,after,stop,depth) end
+            end
+          end
+        end
+      end end
+    end end end end
+  end
+  # The parameters of fn(name: type, ...) at start.
+  def mb_typed(work: bytes, start: integer): bytes do
+    paren = nc_blank_end(work,nc_end(work,start))
+    spans = if nc_word(work,paren+1,b[41]) == 1 do b[] else nc_list_collect(work,paren+1,b[],0,41) end
+    if nc_pos(spans) < 0 do b[] else mb_typed_names(work,nc_code(spans),0) end
+  end
+  def mb_typed_names(work: bytes, spans: bytes, at: integer): bytes do
+    name = nc_cursor(spans,at)
+    if at >= Enum.count(spans) do b[] else
+      if mx_name(work,name) == 0 do mb_typed_names(work,spans,at+6) else Enum.concat(mx_two(name,nc_end(work,name)),mb_typed_names(work,spans,at+6)) end
+    end
+  end
+
+  # The index. A cursor: the position, the depth of blocks (0 outside a
+  # module, 1 among its declarations) and 1 at a token of interest, 2 at the
+  # end of the text.
+  def mt_cursor(pos: integer, depth: integer, found: integer): bytes do Enum.concat(nc_u24(pos),b[depth,found]) end
+  def mt_wanted(work: bytes, pos: integer, depth: integer): integer do
+    value = byte_at(work,pos)
+    if depth == 0 do 1 else if depth != 1 do 0 else if (value-100)*(value-117)*(value-101)*(value-115)*(value-116) != 0 do 0 else
+      words = nc_word(work,pos,b[100,101,102])+nc_word(work,pos,b[100,101,102,112])+nc_word(work,pos,b[101,110,100])+nc_word(work,pos,b[117,115,101])+mt_typed(work,pos)
+      if words+nc_word(work,pos,b[100,101,102,109,97,99,114,111])+nc_word(work,pos,b[100,101,102,112,114,111,116,111,99,111,108])+nc_word(work,pos,b[100,101,102,105,109,112,108]) > 0 do 1 else 0 end
+    end end end
+  end
+  # 1 for the words that declare a type.
+  def mt_typed(work: bytes, pos: integer): integer do
+    nc_word(work,pos,b[115,116,114,117,99,116])+nc_word(work,pos,b[116,121,112,101])+nc_word(work,pos,b[100,101,102,101,120,99,101,112,116,105,111,110])
+  end
+  # Where the block ends that the first do from pos on opens, -1 for none
+  # within budget tokens.
+  def mt_block_end(work: bytes, pos: integer, budget: integer): integer do
+    start = nc_start(work,pos)
+    after = nc_end(work,start)
+    if budget == 0 do -1 else if start < 0 do -1 else if after < 0 do -1 else if start >= Enum.count(work) do -1 else
+      if nc_opens(work,start) == 0 do mt_block_end(work,after,budget-1) else
+        if nc_body_end(work,after,16777216) < 0 do -1 else nc_end(work,nc_body_end(work,after,16777216)) end
+      end
+    end end end end
+  end
+  def mt_chunk(work: bytes, cursor: bytes, count: integer): bytes do
+    pos = nc_start(work,nc_cursor(cursor,0))
+    depth = Enum.at(cursor,3,0)
+    after = nc_end(work,pos)
+    if pos < 0 do b[] else if pos >= Enum.count(work) do mt_cursor(pos,depth,2) else
+      if mt_wanted(work,pos,depth) == 1 do mt_cursor(pos,depth,1) else
+        if count == 0 do mt_cursor(pos,depth,0) else
+          if after < 0 do b[] else
+            next = if nc_opens(work,pos)+nf_untyped(work,pos) > 0 do depth+1 else if nc_word(work,pos,b[101,110,100]) == 1 do depth-1 else depth end end
+            if next > 200 do b[] else if next < 1 do b[] else mt_chunk(work,mt_cursor(after,next,0),count-1) end end
+          end
+        end
+      end
+    end end
+  end
+  def mt_steps(work: bytes, cursor: bytes, level: integer, remaining: integer): bytes do
+    if Enum.count(cursor) == 0 do cursor else if Enum.at(cursor,4,0) != 0 do cursor else if remaining == 0 do cursor else
+      next = if level == 0 do mt_chunk(work,cursor,16) else mt_steps(work,cursor,level-1,16) end
+      mt_steps(work,next,level,remaining-1)
+    end end end
+  end
+  # macs and ix: the macros and the records so far; cur: the module's number.
+  def mt_index(work: bytes, cursor: bytes, macs: bytes, ix: bytes, cur: integer): bytes do
+    found = mt_steps(work,cursor,4,16)
+    pos = nc_cursor(found,0)
+    if Enum.count(found) == 0 do b[] else
+      if Enum.at(found,4,0) != 1 do Enum.concat(mx_pack(macs),ix) else
+        if Enum.at(found,3,0) == 0 do mt_module(work,pos,macs,ix,cur) else mt_declared(work,pos,macs,ix,cur) end
+      end
+    end
+  end
+  def mt_module(work: bytes, pos: integer, macs: bytes, ix: bytes, cur: integer): bytes do
+    name = nc_start(work,nc_end(work,pos))
+    body = nc_expect(work,nc_end(work,name),b[100,111])
+    if nc_word(work,pos,b[100,101,102,109,111,100,117,108,101]) == 0 do Enum.concat(mx_pack(macs),ix) else
+      if body < 0 do b[] else if cur >= 65000 do b[] else
+        mt_index(work,mt_cursor(body,1,0),macs,Enum.concat(ix,mx_record(1,cur+1,mx_three(name,nc_end(work,name),pos),b[])),cur+1)
+      end end
+    end
+  end
+  def mt_declared(work: bytes, pos: integer, macs: bytes, ix: bytes, cur: integer): bytes do
+    name = nc_start(work,nc_end(work,pos))
+    if nc_word(work,pos,b[101,110,100]) == 1 do mt_index(work,mt_cursor(nc_end(work,pos),0,0),macs,ix,cur) else
+      if nc_word(work,pos,b[100,101,102])+nc_word(work,pos,b[100,101,102,112]) == 1 do
+        if name < 0 do b[] else if nc_end(work,name) < 0 do b[] else mt_defined(work,pos,macs,ix,cur) end end
+      else
+        if nc_word(work,pos,b[100,101,102,109,97,99,114,111]) == 1 do
+          made = mt_macro(work,pos,cur)
+          if Enum.count(made) == 0 do b[] else if mx_macro_in(work,mx_pack(macs),cur,name,0) >= 0 do b[] else
+            mt_index(work,mt_cursor(nc_cursor(made,0),1,0),Enum.concat(macs,nc_slice(made,3,27)),Enum.concat(ix,mx_record(7,cur,mx_two(pos,nc_cursor(made,0)),b[])),cur)
+          end end
+        else mt_other(work,pos,macs,ix,cur) end
+      end
+    end
+  end
+  # def name(parameters): a record for the function, and one for its
+  # parameters, which are left as they are: a default value is a constant.
+  def mt_defined(work: bytes, pos: integer, macs: bytes, ix: bytes, cur: integer): bytes do
+    name = nc_start(work,nc_end(work,pos))
+    stop = nc_end(work,name)
+    close = if byte_at(work,nc_blank_end(work,stop)) != 40 do stop else np_close(work,stop,0,16777216) end
+    if close < 0 do b[] else
+      mt_index(work,mt_cursor(close,1,0),macs,nc_join(ix,mx_record(3,cur,mx_two(name,stop),b[]),mx_record(10,cur,mx_two(pos,close),b[])),cur)
+    end
+  end
+  def mt_other(work: bytes, pos: integer, macs: bytes, ix: bytes, cur: integer): bytes do
+    name = nc_start(work,nc_end(work,pos))
+    if mt_typed(work,pos) == 1 do
+      stop = mt_block_end(work,pos,64)
+      if stop < 0 do b[] else mt_index(work,mt_cursor(stop,1,0),macs,Enum.concat(ix,mx_record(10,cur,mx_two(pos,stop),b[])),cur) end
+    else mt_rest(work,pos,macs,ix,cur) end
+  end
+  def mt_rest(work: bytes, pos: integer, macs: bytes, ix: bytes, cur: integer): bytes do
+    name = nc_start(work,nc_end(work,pos))
+    if nc_word(work,pos,b[117,115,101]) == 1 do
+      stop = if mx_upper(byte_at(work,name)) == 0 do nc_end(work,pos) else mt_use_end(work,nc_end(work,name)) end
+      if stop < 0 do b[] else
+        mt_index(work,mt_cursor(stop,1,0),macs,if mx_upper(byte_at(work,name)) == 0 do ix else Enum.concat(ix,mx_record(4,cur,mx_three(pos,stop,name),b[])) end,cur)
+      end
+    else
+      made = if nc_word(work,pos,b[100,101,102,105,109,112,108]) == 1 do mp_impl(work,ix,pos,cur) else mp_protocol(work,pos,cur) end
+      if Enum.count(made) < 3 do b[] else mt_index(work,mt_cursor(nc_cursor(made,0),1,0),macs,Enum.concat(ix,nc_slice(made,3,Enum.count(made))),cur) end
+    end
+  end
+  # defmacro name(parameters) do quote do ... end end at pos: where it ends,
+  # then its record.
+  def mt_macro(work: bytes, pos: integer, cur: integer): bytes do
+    name = nc_start(work,nc_end(work,pos))
+    open = nc_expect(work,nc_end(work,name),b[40])
+    shape = if open < 0 do b[] else mt_params(work,open) end
+    quoted = nc_expect(work,nc_expect(work,if Enum.count(shape) == 0 do -1 else nc_cursor(shape,0) end,b[100,111]),b[113,117,111,116,101])
+    body = nc_expect(work,quoted,b[100,111])
+    stop = if body < 0 do -1 else nc_body_end(work,body,16777216) end
+    after = if stop < 0 do -1 else nc_expect(work,nc_end(work,stop),b[101,110,100]) end
+    using = nc_word(work,name,b[95,95,117,115,105,110,103,95,95])
+    holds = nc_word(work,body,b[100,101,102])+nc_word(work,body,b[100,101,102,112])
+    if mx_name(work,name) == 0 do b[] else if after < 0 do b[] else if using*(1-holds) == 1 do b[] else
+      Enum.concat(nc_u24(after),nc_join(Enum.concat(nc_u16(cur),mx_three(name,nc_end(work,name),open)),mx_two(body,mx_last(work,body,stop,body)),Enum.concat(nc_slice(shape,3,9),b[using])))
+    end end end
+  end
+  # The parameters from pos: where they end, then the name of the block
+  # parameter (zeros for none).
+  def mt_params(work: bytes, pos: integer): bytes do
+    start = nc_start(work,pos)
+    stop = nc_end(work,start)
+    block = nc_start(work,stop+1)
+    if nc_word(work,start,b[41]) == 1 do Enum.concat(nc_u24(stop),b[0,0,0,0,0,0]) else
+      if mx_name(work,start) == 0 do b[] else
+        if nc_word(work,start,b[100,111])*(if byte_at(work,stop) == 58 do 1 else 0 end) == 1 do
+          if mx_name(work,block) == 0 do b[] else if nc_expect(work,nc_end(work,block),b[41]) < 0 do b[] else Enum.concat(nc_u24(nc_expect(work,nc_end(work,block),b[41])),mx_two(block,nc_end(work,block))) end end
+        else
+          if nc_word(work,stop,b[44]) == 1 do mt_params(work,nc_end(work,stop)) else
+            if nc_word(work,stop,b[41]) == 0 do b[] else Enum.concat(nc_u24(nc_end(work,stop)),b[0,0,0,0,0,0]) end
+          end
+        end
+      end
+    end
+  end
+  # use Module, name: value, ...: where it ends, from the end of the name.
+  def mt_use_end(work: bytes, pos: integer): integer do
+    name = nc_start(work,nc_end(work,pos))
+    colon = nc_end(work,name)
+    if pos < 0 do -1 else if nc_word(work,pos,b[44]) == 0 do pos else
+      if mx_name(work,name) == 0 do -1 else if byte_at(work,colon) != 58 do -1 else mt_use_end(work,mt_value(work,colon+1,-1,0,16777216)) end end
+    end end
+  end
+  # Where the value that starts at pos ends: at a comma, or where its line
+  # ends outside brackets and blocks. last: the end of the token before.
+  def mt_value(work: bytes, pos: integer, last: integer, depth: integer, budget: integer): integer do
+    start = nc_start(work,pos)
+    value = byte_at(work,start)
+    after = nc_end(work,start)
+    over = if last < 0 do 0 else if depth > 0 do 0 else if value == 44 do 1 else if mx_operator(byte_at(work,last-1)) == 1 do 0 else mx_ends(work,last,Enum.count(work)) end end end end
+    opens = if (value-40)*(value-91)*(value-123) == 0 do 1 else if nc_opens(work,start)+nf_untyped(work,start) > 0 do 1 else 0 end end
+    closes = if (value-41)*(value-93)*(value-125) == 0 do 1 else nc_word(work,start,b[101,110,100]) end
+    if budget == 0 do -1 else if start < 0 do last else if start >= Enum.count(work) do last else if over == 1 do last else
+      if after < 0 do -1 else if closes*(if depth == 0 do 1 else 0 end) == 1 do last else mt_value(work,after,after,depth+opens-closes,budget-1) end end
+    end end end end
+  end
+
+  # The edits of a program, in the order of its records. state: where the
+  # text not yet written starts, the module it is in and 1 when its code is
+  # walked.
+  def mx_edits(work: bytes, ix: bytes, at: integer, state: bytes, acc: bytes): bytes do
+    base = mx_base(ix)+at*24
+    kind = Enum.at(ix,base,0)
+    if base >= Enum.count(ix) do mx_joined(acc,mx_between(work,ix,state,mx_stop(work))) else
+      if (kind-3)*(kind-5)*(kind-6) == 0 do mx_edits(work,ix,at+1,state,acc) else
+        start = if kind == 1 do nc_cursor(ix,base+9) else nc_cursor(ix,base+3) end
+        before = mx_between(work,ix,state,start)
+        made = if kind == 1 do b[] else mx_edit(work,ix,base,nc_read(state,3)) end
+        next = if kind == 1 do nc_join(nc_u24(start),nc_slice(ix,base+1,base+3),nc_slice(state,5,6)) else Enum.concat(nc_slice(ix,base+6,base+9),nc_slice(state,3,6)) end
+        if Enum.count(before) == 1 do before else if Enum.count(made) == 1 do made else
+          mx_edits(work,ix,at+1,next,nc_join(acc,before,made))
+        end end
+      end
+    end
+  end
+  def mx_joined(acc: bytes, pieces: bytes): bytes do
+    if Enum.count(pieces) == 1 do pieces else Enum.concat(acc,pieces) end
+  end
+  def mx_between(work: bytes, ix: bytes, state: bytes, stop: integer): bytes do
+    from = nc_cursor(state,0)
+    if stop <= from do b[] else
+      if nc_read(state,3) == 65535 do mx_piece(0,from,stop,0,mx_none()) else
+        if Enum.at(state,5,0) == 0 do mx_piece(0,from,stop,0,mx_none()) else mx_walk(work,ix,mx_plain_context(nc_read(state,3)),from,stop,1) end
+      end
+    end
+  end
+  def mx_edit(work: bytes, ix: bytes, base: integer, scope: integer): bytes do
+    kind = Enum.at(ix,base,0)
+    at = nc_cursor(ix,base+3)
+    if kind == 4 do mx_use(work,ix,base,scope) else
+      if kind == 8 do nc_join(mx_text5(b[127],at,mx_none()),mx_piece(1,nc_cursor(ix,base+9),nc_cursor(ix,base+12),at,mx_none()),mx_text5(Enum.concat(b[127],mp_digits(nc_cursor(ix,base+15))),at,mx_none())) else
+        if kind == 9 do Enum.concat(mx_text5(b[58,32],at,mx_none()),mx_piece(1,nc_cursor(ix,base+9),nc_cursor(ix,base+12),at,mx_none())) else
+          if kind == 10 do mx_piece(0,at,nc_cursor(ix,base+6),0,mx_none()) else b[] end
+        end
+      end
+    end
+  end
+  # The __using__ macro of module owner.
+  def mx_using(ix: bytes, owner: integer, at: integer): integer do
+    base = 3+at*24
+    if base >= mx_base(ix) do -1 else
+      if nc_read(ix,base) == owner do if Enum.at(ix,base+23,0) == 1 do base else mx_using(ix,owner,at+1) end else mx_using(ix,owner,at+1) end
+    end
+  end
+  # use Module, name: value: the functions of Module's __using__ template,
+  # with each unquote(name) the value given.
+  def mx_use(work: bytes, ix: bytes, base: integer, scope: integer): bytes do
+    pos = nc_cursor(ix,base+3)
+    named = nc_cursor(ix,base+9)
+    owner = mx_module(work,ix,named)
+    macro = if owner < 0 do -1 else mx_using(ix,owner,0) end
+    params = mx_params(work,nc_cursor(ix,macro+8),b[])
+    given = if macro < 0 do mx_fail() else mx_options(work,ix,mx_plain_context(scope),nc_end(work,named),params) end
+    ctx = nc_join(mx_context(3,if owner < 0 do 0 else owner end,scope,0,0,pos),b[0,0,0,0,0,0],Enum.concat(mx_pack(given),b[0,0,0]))
+    if macro < 0 do mx_fail() else if Enum.count(given) == 1 do mx_fail() else
+      if mx_option_count(work,nc_end(work,named)) != nc_units(Enum.count(params),6) do mx_fail() else if mx_use_clash(work,ix,scope,nc_cursor(ix,macro+11),64) == 1 do mx_fail() else
+        mx_walk(work,ix,ctx,nc_start(work,nc_cursor(ix,macro+11)),nc_cursor(ix,macro+14),1)
+      end end
+    end end
+  end
+  # 1 when a function of the template from pos on has the name of a
+  # function the module defines itself.
+  def mx_use_clash(work: bytes, ix: bytes, scope: integer, pos: integer, budget: integer): integer do
+    start = nc_start(work,pos)
+    name = nc_start(work,nc_end(work,start))
+    after = mt_block_end(work,start,64)
+    if budget == 0 do 0 else if nc_word(work,start,b[100,101,102])+nc_word(work,start,b[100,101,102,112]) == 0 do 0 else
+      if mx_find(work,ix,Enum.concat(b[3,0],nc_u16(scope)),name,0,mx_count(ix)) >= 0 do 1 else if after < 0 do 0 else mx_use_clash(work,ix,scope,after,budget-1) end end
+    end end
+  end
+  def mx_option_count(work: bytes, pos: integer): integer do
+    if nc_word(work,pos,b[44]) == 0 do 0 else 1+mx_option_count(work,mt_value(work,nc_end(work,nc_start(work,nc_end(work,pos)))+1,-1,0,16777216)) end
+  end
+  def mx_param_has(work: bytes, params: bytes, name: integer, at: integer): integer do
+    if at >= Enum.count(params) do 0 else
+      if mx_same(work,nc_cursor(params,at),name,nc_cursor(params,at+3)-nc_cursor(params,at)) == 1 do 1 else mx_param_has(work,params,name,at+6) end
+    end
+  end
+  # The options from pos as the arguments of a context.
+  def mx_options(work: bytes, ix: bytes, ctx: bytes, pos: integer, params: bytes): bytes do
+    name = nc_start(work,nc_end(work,pos))
+    first = nc_start(work,nc_end(work,name)+1)
+    stop = mt_value(work,first,-1,0,16777216)
+    pieces = if nc_word(work,pos,b[44]) == 0 do b[] else if stop < 0 do mx_fail() else mx_walk(work,ix,ctx,first,stop,0) end end
+    rest = if nc_word(work,pos,b[44]) == 0 do b[] else if Enum.count(pieces) == 1 do mx_fail() else mx_options(work,ix,ctx,stop,params) end end
+    if nc_word(work,pos,b[44]) == 0 do b[] else if Enum.count(rest) == 1 do rest else if mx_param_has(work,params,name,0) == 0 do mx_fail() else
+      nc_join(Enum.concat(mx_two(name,nc_end(work,name)),b[mx_atomic(work,first,stop)]),mx_pack(pieces),rest)
+    end end end
+  end
+
+  # The text of the pieces from first up to stop, and their length.
+  def mx_text(work: bytes, pieces: bytes, first: integer, stop: integer): bytes do
+    base = first*13
+    if stop-first <= 0 do b[] else
+      if stop-first == 1 do
+        if (Enum.at(pieces,base,0)-2)*(Enum.at(pieces,base,0)-6) == 0 do nc_slice(pieces,base+2,base+2+Enum.at(pieces,base+1,0)) else nc_slice(work,nc_cursor(pieces,base+1),nc_cursor(pieces,base+4)) end
+      else
+        middle = first+nc_half(stop-first)
+        Enum.concat(mx_text(work,pieces,first,middle),mx_text(work,pieces,middle,stop))
+      end
+    end
+  end
+  def mx_size(pieces: bytes, first: integer, stop: integer): integer do
+    base = first*13
+    if stop-first <= 0 do 0 else
+      if stop-first == 1 do
+        if (Enum.at(pieces,base,0)-2)*(Enum.at(pieces,base,0)-6) == 0 do Enum.at(pieces,base+1,0) else nc_cursor(pieces,base+4)-nc_cursor(pieces,base+1) end
+      else
+        middle = first+nc_half(stop-first)
+        mx_size(pieces,first,middle)+mx_size(pieces,middle,stop)
+      end
+    end
+  end
+  # The moved records of the pieces: where each starts in the rewritten
+  # text, the place it stands for (with bit 31 one place for all of it) and
+  # the place whose file it is shown in (all ones for its own). A piece that
+  # goes on where the one before it stopped needs none.
+  def mx_moved(pieces: bytes, first: integer, stop: integer, offset: integer): bytes do
+    if stop-first <= 0 do b[] else
+      if stop-first == 1 do mx_moved_one(pieces,first*13,offset) else
+        middle = first+nc_half(stop-first)
+        Enum.concat(mx_moved(pieces,first,middle,offset),mx_moved(pieces,middle,stop,offset+mx_size(pieces,first,middle)))
+      end
+    end
+  end
+  # How a piece stands: 0 where it stood, 1 for one place, 2 anchored at a
+  # place with its column counted from there, 3 anchored for one place.
+  def mx_standing(flag: integer): integer do
+    if flag == 0 do 0 else if flag <= 2 do 1 else if flag == 4 do 2 else 3 end end end
+  end
+  def mx_moved_one(pieces: bytes, base: integer, offset: integer): bytes do
+    flag = Enum.at(pieces,base,0)
+    kind = mx_standing(flag)
+    before = if base == 0 do 9 else mx_standing(Enum.at(pieces,base-13,0)) end
+    file = nc_cursor(pieces,base+10)
+    place = if flag == 0 do nc_cursor(pieces,base+1) else nc_cursor(pieces,base+7) end
+    last = if before == 0 do nc_cursor(pieces,base-9) else nc_cursor(pieces,base-6) end
+    # An anchored piece goes on when the one before it ends where it starts,
+    # in the text and in its column.
+    column = if kind != 2 do file else if nc_cursor(pieces,base-9) != nc_cursor(pieces,base+1) do -1 else file-nc_cursor(pieces,base-9)+nc_cursor(pieces,base-12) end end
+    alike = if before != kind do 0 else if column != nc_cursor(pieces,base-3) do 0 else if place == last do 1 else 0 end end end
+    if alike == 1 do b[] else
+      nc_join(nc_u32(offset),Enum.concat(nc_u24(place),b[if kind == 0 do 0 else if kind == 1 do 128 else if kind == 2 do 64 else 192 end end end]),Enum.concat(if kind >= 2 do b[255,255,255,255] else if file == mx_none() do b[255,255,255,255] else nc_u32(file) end end,nc_u32(if kind >= 2 do file else 0 end)))
+    end
+  end
+  # 1 when the program may hold a macro, a protocol or a template; a
+  # compiler entry holds none.
+  def mx_wanted(given: bytes): integer do
+    size = Enum.count(given)
+    if ny_has(given,0,size,b[110,97,116,105,118,101,95,99,111,109,112,105,108,101]) == 1 do 0 else
+      if mx_raw(given,0,size,b[100,101,102,109,97,99,114,111])+mx_raw(given,0,size,b[100,101,102,105,109,112,108])+mx_raw(given,0,size,b[100,101,102,112,114,111,116,111,99,111,108]) > 0 do 1 else
+        if mx_raw(given,0,size,b[126,104])+mx_raw(given,0,size,b[126,72])+mx_raw(given,0,size,b[127]) > 0 do 1 else mx_clausal_any(given,0,size) end
+      end
+    end
+  end
+  # 1 when some fn of the text has its clauses on the lines after it.
+  def mx_clausal_any(given: bytes, first: integer, stop: integer): integer do
+    if stop-first > 64 do
+      if mx_clausal_any(given,first,first+nc_half(stop-first)) == 1 do 1 else mx_clausal_any(given,first+nc_half(stop-first),stop) end
+    else mx_clausal_run(given,first,stop) end
+  end
+  def mx_clausal_run(given: bytes, pos: integer, stop: integer): integer do
+    if pos >= stop do 0 else if byte_at(given,pos) != 102 do mx_clausal_run(given,pos+1,stop) else if mx_clausal(given,pos) == 1 do 1 else mx_clausal_run(given,pos+1,stop) end end end
+  end
+  # Byte 127 continues the names the compiler makes (those of a template's
+  # bindings and of the functions of a defimpl); no name of the program may
+  # hold it. The next position, -1 for such a name, -2 at the end.
+  def mx_tainted_chunk(work: bytes, pos: integer, count: integer): integer do
+    start = nc_start(work,pos)
+    stop = nc_end(work,start)
+    if start < 0 do -2 else if start >= Enum.count(work) do -2 else if stop < 0 do -2 else
+      if classify_ascii(byte_at(work,start)) == 2 do
+        if mx_raw(work,start,stop,b[127]) == 1 do -1 else if count == 0 do stop else mx_tainted_chunk(work,stop,count-1) end end
+      else if count == 0 do stop else mx_tainted_chunk(work,stop,count-1) end end
+    end end end
+  end
+  def mx_tainted(work: bytes, pos: integer): integer do
+    next = mx_tainted_chunk(work,pos,64)
+    if next == -1 do 1 else if next < 0 do 0 else mx_tainted(work,next) end end
+  end
+  # 1 when the records hold an edit from at on.
+  def mx_edited(ix: bytes, first: integer, stop: integer): integer do
+    middle = first+nc_half(stop-first)
+    kind = Enum.at(ix,mx_base(ix)+first*24,0)
+    if stop-first <= 0 do 0 else
+      if stop-first == 1 do if (kind-1)*(kind-3)*(kind-5)*(kind-6)*(kind-10) == 0 do 0 else 1 end else
+        if mx_edited(ix,first,middle) == 1 do 1 else mx_edited(ix,middle,stop) end
+      end
+    end
+  end
+  # A macro may not share its name with a function of its module.
+  def mx_clash(work: bytes, ix: bytes, at: integer): integer do
+    base = 3+at*24
+    if base >= mx_base(ix) do 0 else
+      if mx_find(work,ix,Enum.concat(b[3,0],nc_slice(ix,base,base+2)),nc_cursor(ix,base+2),0,mx_count(ix)) >= 0 do 1 else mx_clash(work,ix,at+1) end
+    end
+  end
+  # The program as it is compiled: b[0] as it is, b[] for one that cannot be
+  # compiled, or 1, the length of the rewritten text, the text and its tail.
+  def mx_prepare(given: bytes): bytes do
+    if mx_wanted(given) == 0 do b[0] else mx_indexed(given,mt_index(given,mt_cursor(0,0,0),b[],b[],-1)) end
+  end
+  def mx_indexed(given: bytes, ix: bytes): bytes do
+    if Enum.count(ix) < 3 do b[] else mx_planned(given,ix) end
+  end
+  def mx_planned(given: bytes, ix: bytes): bytes do
+    templated = if mx_raw(given,0,Enum.count(given),b[126,104])+mx_raw(given,0,Enum.count(given),b[126,72]) > 0 do mh_wanted() else 0 end
+    walked = if mx_base(ix) > 3 do 1 else if templated > 0 do 1 else if mp_any(ix,0,mx_count(ix)) == 1 do 1 else mx_clausal_any(given,0,Enum.count(given)) end end end
+    # A test file comes with names of the compiler's own (native-testing.alc),
+    # which stand after its first byte 127; it was looked at before.
+    tainted = if mx_raw(given,0,Enum.count(given),b[127]) == 0 do 0 else if mx_raw(given,0,Enum.count(given),b[65,108,99,104,101,109,127,84]) == 1 do 0 else mx_tainted(given,0) end end
+    if tainted == 1 do b[] else
+      if walked+mx_edited(ix,0,mx_count(ix)) == 0 do b[0] else
+        if mx_clash(given,ix,0)+mp_wrong(given,ix) > 0 do b[] else mx_made(given,mx_edits(given,ix,0,Enum.concat(b[0,0,0,255,255],b[walked]),b[])) end
+      end
+    end
+  end
+  def mx_made(given: bytes, pieces: bytes): bytes do
+    count = nc_units(Enum.count(pieces),13)
+    code = mx_text(given,pieces,0,count)
+    moved = mx_moved(pieces,0,count,0)
+    lines = nz_marks(given,0,Enum.count(given),10,10)
+    files = nz_files(given)
+    inside = nz_marks(given,0,Enum.count(given),128,191)
+    sizes = nc_join(Enum.concat(nc_u32(Enum.count(moved)),nc_u32(Enum.count(lines))),Enum.concat(nc_u32(Enum.count(files)),nc_u32(Enum.count(inside))),b[0,77,88,0])
+    if Enum.count(pieces) == 1 do b[] else if Enum.count(code) > nc_limit() do b[] else
+      nc_join(Enum.concat(b[1],nc_u24(Enum.count(code))),code,nc_join(nc_join(b[10,0],moved,lines),Enum.concat(files,inside),sizes))
+    end end
+  end
+  # Native smoke test; assembled with the compiler.
+  def main() do System.halt(0) end
+end

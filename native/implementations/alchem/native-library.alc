@@ -1,0 +1,357 @@
+defmodule NativeLibrary do
+  def na_integer(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    dot = nc_expect(source,nc_end(source,pos),b[46])
+    op = if nc_word(source,dot,b[116,111,95,115,116,114,105,110,103]) == 1 do 1 else
+      if nc_word(source,dot,b[100,105,103,105,116,115]) == 1 do 2 else if nc_word(source,dot,b[117,110,100,105,103,105,116,115]) == 1 do 3 else
+        if nc_word(source,dot,b[112,97,114,115,101]) == 1 do 4 else 0 end
+      end end
+    end
+    begin = nc_expect(source,nc_end(source,dot),b[40])
+    args = if begin < 0 do b[] else nc_arguments(source,begin,env,table,depth) end
+    if nc_pos(args) < 0 do b[] else if op == 0 do b[] else na_integer_call(args,op,nc_records(Enum.count(table))) end end
+  end
+  def na_integer_call(args: bytes, op: integer, functions: integer): bytes do
+    count = nc_arg_count(args)
+    if count < 1 do b[] else if count > 2 do b[] else
+      expected = if op == 4 do 2 else 0 end
+      valid = if op == 3 do no_compatible(b[7,0],nc_arg_kind(args,0)) else if nt_tag(nc_arg_kind(args,0)) == expected do 1 else 0 end end
+      base = if count == 1 do 0 else nt_tag(nc_arg_kind(args,1)) end
+      # Integer.parse needs a free table slot for its shared runtime.
+      full = if op == 4 do functions >= nc_slot_limit() else false end
+      if valid == 0 do b[] else if base != 0 do b[] else if full do b[] else
+        prepare = if count == 2 do b[] else if op == 4 do b[] else b[106,10] end end
+        runtime = if op == 4 do na_parse_call(count,functions) else if op == 1 do na_base_emit() else if op == 2 do na_digits_emit() else na_undigits_emit() end end end
+        kind = if op == 1 do b[2] else if op == 2 do b[7,0] else if op == 3 do b[0] else b[6,0,2] end end end
+        nc_value(nc_pos(args),nc_join(nc_arg_code(args),prepare,runtime),kind)
+      end end end
+    end end
+  end
+  # RSI base, RDI string, RDX 1 when the base is explicit and named by errors.
+  def na_parse_call(count: integer, functions: integer): bytes do
+    registers = if count == 1 do b[95,190,10,0,0,0,49,210] else nc_join(b[94,95],na_base_check(),b[186,1,0,0,0]) end
+    Enum.concat(registers,nc_call(functions))
+  end
+  # A base in RSI outside 2..36 fails (status 82: native-failures.alc).
+  def na_base_check(): bytes do Enum.concat(b[72,131,254,2,124,6,72,131,254,36,126,12],nc_exit_code(82)) end
+  # Whether the source may call Module.name; a false positive only adds a runtime.
+  def na_mentions(source: bytes, first: integer, stop: integer, module: bytes, name: bytes): integer do
+    if stop-first > 64 do
+      middle = first+nc_half(stop-first)
+      if na_mentions(source,first,middle,module,name) == 1 do 1 else na_mentions(source,middle,stop,module,name) end
+    else na_scan(source,first,stop,module,name) end
+  end
+  def na_scan(source: bytes, pos: integer, stop: integer, module: bytes, name: bytes): integer do
+    if pos >= stop do 0 else
+      found = if byte_at(source,pos) != Enum.at(module,0,0) do 0 else
+        if nc_word(source,pos,module) != 1 do 0 else
+          dot = nc_expect(source,nc_end(source,pos),b[46])
+          if dot < 0 do 0 else nc_word(source,dot,name) end
+        end
+      end
+      if found == 1 do 1 else na_scan(source,pos+1,stop,module,name) end
+    end
+  end
+  # Shared runtimes after the user functions: Integer.parse (also String.to_integer),
+  # the file runtime, String case mapping, then the grapheme runtime. Earlier unused
+  # slots stay empty.
+  def na_shared(source: bytes, functions: integer, trace: bytes): bytes do
+    size = Enum.count(source)
+    limit = nc_slot_limit()
+    seen = na_seen(source,nc_zeros(17),0,size)
+    parse = if functions >= limit do b[] else if na_parsing(source,size,seen) > 0 do xa_runtime(ip_blob(),ip_blob_arm()) else b[] end end
+    file = if functions+1 >= limit do b[] else if na_filing(seen) > 0 do xa_runtime(fr_blob(),fr_blob_arm()) else b[] end end
+    case_map = if functions+2 >= limit do b[] else if na_casing(seen) > 0 do xa_runtime(cm_blob(),cm_blob_arm()) else b[] end end
+    clusters = if functions+3 >= limit do b[] else if na_graphemes(seen) > 0 do xa_runtime(ng_blob(),ng_blob_arm()) else b[] end end
+    na_shared_bundle(parse,file,case_map,clusters,trace)
+  end
+  def na_shared_bundle(parse: bytes, file: bytes, case_map: bytes, clusters: bytes, trace: bytes): bytes do
+    slots = if Enum.count(trace) > 0 do 5 else if Enum.count(clusters) > 0 do 4 else if Enum.count(case_map) > 0 do 3 else if Enum.count(file) > 0 do 2 else if Enum.count(parse) > 0 do 1 else 0 end end end end end
+    first = Enum.concat(nc_u32(Enum.count(parse)),nc_u32(Enum.count(file)))
+    second = nc_join(nc_u32(Enum.count(case_map)),nc_u32(Enum.count(clusters)),nc_u32(Enum.count(trace)))
+    meta = nc_slice(Enum.concat(first,second),0,slots*4)
+    nc_join(nc_u16(Enum.count(meta)),meta,nc_join(Enum.concat(parse,file),Enum.concat(case_map,clusters),trace))
+  end
+  def na_text(): bytes do b[83,116,114,105,110,103] end
+  # The functions that need a shared runtime, in the order of their bytes
+  # in what na_seen gives: String.to_integer, capitalize, upcase, downcase,
+  # length, slice, first, last, pad_leading, pad_trailing, reverse,
+  # Integer.parse, File.read, write, append, remove, Sys.errno. Each is a
+  # letter for its module (S, I, F, and y for Sys), the length of its name
+  # and the name.
+  def na_names(): bytes do
+    Enum.concat(Enum.concat(b[83,10,116,111,95,105,110,116,101,103,101,114,83,10,99,97,112,105,116,97,108,105,122,101,83,6,117,112,99,97,115,101,83,8,100,111,119,110,99,97,115,101,83,6,108,101,110,103,116,104,83,5,115,108,105,99,101,83,5,102],b[105,114,115,116,83,4,108,97,115,116,83,11,112,97,100,95,108,101,97,100,105,110,103,83,12,112,97,100,95,116,114,97,105,108,105,110,103,83,7,114,101,118,101,114,115,101,73,5,112,97,114,115,101,70,4,114,101,97,100,70]),b[5,119,114,105,116,101,70,6,97,112,112,101,110,100,70,6,114,101,109,111,118,101,121,5,101,114,114,110,111])
+  end
+  # One byte per function of na_names, 1 when the source may call it: the
+  # source is read once for all of them, where na_mentions reads it for one.
+  def na_seen(source: bytes, seen: bytes, first: integer, stop: integer): bytes do
+    if stop-first > 64 do
+      middle = first+nc_half(stop-first)
+      na_seen(source,na_seen(source,seen,first,middle),middle,stop)
+    else na_seen_scan(source,seen,first,stop) end
+  end
+  def na_seen_scan(source: bytes, seen: bytes, pos: integer, stop: integer): bytes do
+    letter = Enum.at(source,pos,0)
+    if pos >= stop do seen else
+      if (letter-83)*(letter-73)*(letter-70) != 0 do na_seen_scan(source,seen,pos+1,stop) else na_seen_scan(source,na_seen_at(source,seen,pos,letter),pos+1,stop) end
+    end
+  end
+  def na_seen_at(source: bytes, seen: bytes, pos: integer, letter: integer): bytes do
+    inner = if letter != 83 do 0 else nc_word(source,pos,b[83,121,115]) end
+    module = if inner == 1 do b[83,121,115] else if letter == 83 do na_text() else if letter == 73 do b[73,110,116,101,103,101,114] else b[70,105,108,101] end end end
+    dot = if nc_word(source,pos,module) != 1 do -1 else nc_expect(source,nc_end(source,pos),b[46]) end
+    start = nc_start(source,dot)
+    if start < 0 do seen else na_seen_name(source,seen,start,(letter+inner*38)*256+nc_end(source,start)-start,0) end
+  end
+  # key: the module's letter and the length of the name at start; at counts
+  # the bytes of na_names passed, and seen grows by a byte per name passed.
+  def na_seen_name(source: bytes, seen: bytes, start: integer, key: integer, at: integer): bytes do
+    names = na_names()
+    size = Enum.at(names,at+1,0)
+    if at >= Enum.count(names) do seen else
+      same = if Enum.at(names,at,0)*256+size != key do 0 else nc_word_at(source,start,nc_slice(names,at+2,at+2+size),0) end
+      if same == 0 do Enum.concat(nc_slice(seen,0,1),na_seen_name(source,nc_slice(seen,1,Enum.count(seen)),start,key,at+2+size)) else Enum.concat(b[1],nc_slice(seen,1,Enum.count(seen))) end
+    end
+  end
+  def na_parsing(source: bytes, size: integer, seen: bytes): integer do
+    Enum.at(seen,11,0)+ni_mentions(source,0,size)+Enum.at(seen,0,0)+ne_quoting(source,size)
+  end
+  def na_filing(seen: bytes): integer do
+    Enum.at(seen,12,0)+Enum.at(seen,13,0)+Enum.at(seen,14,0)+Enum.at(seen,15,0)+Enum.at(seen,16,0)
+  end
+  def na_casing(seen: bytes): integer do
+    Enum.at(seen,2,0)+Enum.at(seen,3,0)+Enum.at(seen,1,0)
+  end
+  # Whether the source may call a grapheme-based String function.
+  def na_graphemes(seen: bytes): integer do
+    basic = Enum.at(seen,4,0)+Enum.at(seen,5,0)+Enum.at(seen,6,0)+Enum.at(seen,7,0)
+    basic+Enum.at(seen,8,0)+Enum.at(seen,9,0)+Enum.at(seen,10,0)+Enum.at(seen,1,0)
+  end
+  # String.to_integer(s[,base]): the parse runtime in failing mode, unwrapped.
+  # String.upcase/downcase(s): the case runtime in slot functions+2.
+  def na_string_shared(args: bytes, op: integer, functions: integer): bytes do
+    count = nc_arg_count(args)
+    if nt_tag(nc_arg_kind(args,0)) != 2 do b[] else
+      if op == 7 do
+        base = if count == 1 do 0 else if count == 2 do nt_tag(nc_arg_kind(args,1)) else 1 end end
+        if base != 0 do b[] else if functions >= nc_slot_limit() do b[] else
+          registers = if count == 1 do b[95,190,10,0,0,0] else Enum.concat(b[94,95],na_base_check()) end
+          call = nc_join(Enum.concat(b[49,210],nc_call(functions)),Enum.concat(b[72,131,56,0,117,16,72,139,112,8],nc_exit_code(91)),b[72,139,64,8])
+          nc_value(nc_pos(args),nc_join(nc_arg_code(args),registers,call),b[0])
+        end end
+      else
+        if count != 1 do b[] else if functions+2 >= nc_slot_limit() do b[] else
+          nc_value(nc_pos(args),nc_join(nc_arg_code(args),b[95,190,op-8,0,0,0],nc_call(functions+2)),b[2])
+        end end
+      end
+    end
+  end
+  # File.read(path): result[string,string]; File.write/append(path,content) and
+  # File.remove(path): result[tuple[],string]. All use the shared file runtime in
+  # slot functions+1 with ESI 0 read, 1 write, 2 append, 3 remove.
+  def na_file(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    dot = nc_expect(source,nc_end(source,pos),b[46])
+    mode = if nc_word(source,dot,b[114,101,97,100]) == 1 do 0 else
+      if nc_word(source,dot,b[119,114,105,116,101]) == 1 do 1 else
+        if nc_word(source,dot,b[97,112,112,101,110,100]) == 1 do 2 else
+          if nc_word(source,dot,b[114,101,109,111,118,101]) == 1 do 3 else -1 end
+        end
+      end
+    end
+    begin = if mode < 0 do -1 else nc_expect(source,nc_end(source,dot),b[40]) end
+    args = if begin < 0 do b[] else nc_arguments(source,begin,env,table,depth) end
+    functions = nc_records(Enum.count(table))
+    content = if mode == 1 do 1 else if mode == 2 do 1 else 0 end end
+    text = if content == 1 do nt_tag(nc_arg_kind(args,1)) else 2 end
+    if nc_pos(args) < 0 do b[] else if nc_arg_count(args) != 1+content do b[] else
+      if nt_tag(nc_arg_kind(args,0)) != 2 do b[] else if text != 2 do b[] else if functions+1 >= nc_slot_limit() do b[] else
+        registers = if content == 1 do b[90,95,190,mode,0,0,0] else b[95,190,mode,0,0,0] end
+        kind = if mode == 0 do b[6,2,2] else nt_binary(6,b[5,0],b[2]) end
+        nc_value(nc_pos(args),nc_join(nc_arg_code(args),registers,Enum.concat(nc_call(functions+1),if mode == 0 do na_file_limit() else b[] end)),kind)
+      end end end
+    end end
+  end
+  def na_string(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    dot = nc_expect(source,nc_end(source,pos),b[46])
+    op = na_string_op(source,dot)
+    begin = if op == 0 do -1 else nc_expect(source,nc_end(source,dot),b[40]) end
+    args = if begin < 0 do b[] else nc_arguments(source,begin,env,table,depth) end
+    shared = if op > 6 do op < 10 else false end
+    functions = nc_records(Enum.count(table))
+    if nc_pos(args) < 0 do b[] else
+      if op > 11 do na_string_grapheme(args,op,functions) else
+        if shared do na_string_shared(args,op,functions) else na_string_call(args,op) end
+      end
+    end
+  end
+  # 1 duplicate, 2 count, 3 split, 4 replace, 5 valid?, 6 trim, 7 to_integer, 8 upcase,
+  # 9 downcase, 10 trim_leading, 11 trim_trailing, 12 reverse, 13 capitalize,
+  # 14 pad_leading, 15 pad_trailing.
+  # Grapheme-based operations call the shared grapheme runtime.
+  def na_string_grapheme(args: bytes, op: integer, functions: integer): bytes do
+    count = nc_arg_count(args)
+    if functions+3 >= nc_slot_limit() do b[] else if nt_tag(nc_arg_kind(args,0)) != 2 do b[] else
+      if op == 12 do
+        if count != 1 do b[] else nc_value(nc_pos(args),nc_join(nc_arg_code(args),b[95],ng_call(5,functions)),b[2]) end
+      else
+        if op == 13 do
+          # First grapheme length in RDX, then the case runtime in capitalize mode.
+          if count != 1 do b[] else
+            measure = nc_join(b[95,87],ng_call(6,functions),b[72,137,194,95,190,2,0,0,0])
+            nc_value(nc_pos(args),nc_join(nc_arg_code(args),measure,nc_call(functions+2)),b[2])
+          end
+        else
+          # Stack: s, width, with (0 selects the default space); RAX grapheme count, R8D side.
+          width = if count < 2 do 1 else nt_tag(nc_arg_kind(args,1)) end
+          filler = if count == 2 do 2 else if count == 3 do nt_tag(nc_arg_kind(args,2)) else 0 end end
+          if width != 0 do b[] else if filler != 2 do b[] else
+            space = if count == 2 do b[106,0] else b[] end
+            counting = nc_join(b[72,139,124,36,16],ng_call(1,functions),b[65,184,op-14,0,0,0])
+            nc_value(nc_pos(args),nc_join(Enum.concat(nc_arg_code(args),space),counting,na_pad_emit()),b[2])
+          end end
+        end
+      end
+    end end
+  end
+  def na_string_op(source: bytes, dot: integer): integer do
+    if nc_word(source,dot,b[100,117,112,108,105,99,97,116,101]) == 1 do 1 else
+      if nc_word(source,dot,b[99,111,117,110,116]) == 1 do 2 else
+        if nc_word(source,dot,b[115,112,108,105,116]) == 1 do 3 else
+          if nc_word(source,dot,b[114,101,112,108,97,99,101]) == 1 do 4 else
+            if nc_word(source,dot,b[118,97,108,105,100,63]) == 1 do 5 else
+              if nc_word(source,dot,b[116,114,105,109]) == 1 do 6 else na_string_op_shared(source,dot) end
+            end
+          end
+        end
+      end
+    end
+  end
+  def na_string_op_shared(source: bytes, dot: integer): integer do
+    if nc_word(source,dot,b[116,111,95,105,110,116,101,103,101,114]) == 1 do 7 else
+      if nc_word(source,dot,b[117,112,99,97,115,101]) == 1 do 8 else
+        if nc_word(source,dot,b[100,111,119,110,99,97,115,101]) == 1 do 9 else
+          if nc_word(source,dot,b[116,114,105,109,95,108,101,97,100,105,110,103]) == 1 do 10 else
+            if nc_word(source,dot,b[116,114,105,109,95,116,114,97,105,108,105,110,103]) == 1 do 11 else na_string_op_grapheme(source,dot) end
+          end
+        end
+      end
+    end
+  end
+  def na_string_op_grapheme(source: bytes, dot: integer): integer do
+    if nc_word(source,dot,b[114,101,118,101,114,115,101]) == 1 do 12 else
+      if nc_word(source,dot,b[99,97,112,105,116,97,108,105,122,101]) == 1 do 13 else
+        if nc_word(source,dot,b[112,97,100,95,108,101,97,100,105,110,103]) == 1 do 14 else
+          if nc_word(source,dot,b[112,97,100,95,116,114,97,105,108,105,110,103]) == 1 do 15 else 0 end
+        end
+      end
+    end
+  end
+  def na_string_call(args: bytes, op: integer): bytes do
+    count = nc_arg_count(args)
+    wanted = if op < 4 do 2 else if op == 4 do 3 else 1 end end
+    # Every argument is a string except the duplicate count.
+    second = if op == 1 do 0 else 2 end
+    valid = if count != wanted do 0 else
+      if nt_tag(nc_arg_kind(args,0)) != 2 do 0 else
+        if count == 1 do 1 else
+          if nt_tag(nc_arg_kind(args,1)) != second do 0 else if count == 2 do 1 else if nt_tag(nc_arg_kind(args,2)) == 2 do 1 else 0 end end end
+        end
+      end
+    end
+    if valid == 0 do b[] else
+      runtime = if op == 1 do na_duplicate_emit() else if op == 2 do na_count_emit() else if op == 3 do na_split_emit() else
+        if op == 4 do na_replace_emit() else if op == 5 do na_valid_emit() else
+          if op == 6 do na_trim_emit() else if op == 10 do na_trim_leading_emit() else na_trim_trailing_emit() end end
+        end end
+      end end end
+      kind = if op == 2 do b[0] else if op == 3 do b[7,2] else if op == 5 do b[3] else b[2] end end end
+      nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),runtime),kind)
+    end
+  end
+  def na_system(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    dot = nc_expect(source,nc_end(source,pos),b[46])
+    if nc_word(source,dot,b[97,114,103,118]) == 1 do na_argv(source,dot) else
+      if nc_word(source,dot,b[103,101,116,95,101,110,118]) == 1 do na_get_env(source,dot,env,table,depth) else na_system_other(source,dot) end
+    end
+  end
+  def na_argv(source: bytes, dot: integer): bytes do
+    stop = nc_expect(source,nc_expect(source,nc_end(source,dot),b[40]),b[41])
+    if stop < 0 do b[] else nc_value(stop,na_argv_emit(),nt_unary(7,b[2])) end
+  end
+  # get_env(name): option[string]; get_env(name,default): string. RAX selects the form.
+  def na_get_env(source: bytes, dot: integer, env: bytes, table: bytes, depth: integer): bytes do
+    begin = nc_expect(source,nc_end(source,dot),b[40])
+    args = if begin < 0 do b[] else nc_arguments(source,begin,env,table,depth) end
+    count = nc_arg_count(args)
+    if nc_pos(args) < 0 do b[] else if count < 1 do b[] else if count > 2 do b[] else
+      default = if count == 1 do 2 else nt_tag(nc_arg_kind(args,1)) end
+      if nt_tag(nc_arg_kind(args,0)) != 2 do b[] else if default != 2 do b[] else
+        form = if count == 1 do b[49,192] else b[184,1,0,0,0] end
+        nc_value(nc_pos(args),nc_join(nc_arg_code(args),form,na_get_env_emit()),if count == 1 do b[4,2] else b[2] end)
+      end end
+    end end end
+  end
+  def na_system_other(source: bytes, dot: integer): bytes do
+    pid = nc_word(source,dot,b[112,105,100])
+    clock = nc_word(source,dot,b[115,121,115,116,101,109,95,116,105,109,101])+nc_word(source,dot,b[111,115,95,116,105,109,101])
+    begin = nc_expect(source,nc_end(source,dot),b[40])
+    stop = nc_expect(source,begin,b[41])
+    if pid+clock != 1 do b[] else if stop < 0 do b[] else
+      nc_value(stop,if pid == 1 do nc_join(na_pid_emit(),b[80],ns_integer_emit()) else na_clock_emit() end,if pid == 1 do b[2] else b[0] end)
+    end end
+  end
+  # The pinned runtime reads a file of at most 16,777,216 bytes: a longer one
+  # is error("file exceeds 16777216 bytes"), which the fresh record of the
+  # result becomes once the file is read (the arena, 16 GiB, is no bound).
+  def na_file_limit(): bytes do
+    made = Enum.concat(nc_literal_emit(b[102,105,108,101,32,101,120,99,101,101,100,115,32,49,54,55,55,55,50,49,54,32,98,121,116,101,115]),b[72,139,20,36,72,199,2,0,0,0,0,72,137,66,8])
+    nc_join(nc_join(b[80,72,139,16,72,133,210,15,132],nc_u32(17+Enum.count(made)),b[72,139,80,8,72,129,58,0,0,0,1,15,134]),Enum.concat(nc_u32(Enum.count(made)),made),b[88])
+  end
+  # And standard input of at most as much: more ends the program at the
+  # IO.read_all, as the pinned runtime does.
+  def na_input_limit(source: bytes, table: bytes, pos: integer, value: bytes): bytes do
+    fail = nc_join(nc_literal_emit(b[105,110,112,117,116,32,101,120,99,101,101,100,115,32,49,54,55,55,55,50,49,54,32,98,121,116,101,115]),b[72,137,198],Enum.concat(Enum.concat(b[191],nc_u32(nc_start(source,pos))),nc_call(nz_slot(table))))
+    if nc_pos(value) < 0 do value else if nc_tag(value) != 2 do value else if nz_on(table) == 0 do value else
+      nc_value(nc_pos(value),nc_join(nc_code(value),Enum.concat(b[72,129,56,0,0,0,1,15,134],nc_u32(Enum.count(fail))),fail),b[2])
+    end end end
+  end
+  # IO.read_all(): string and IO.read_line(): option[string] read standard input.
+  def na_io(source: bytes, pos: integer): bytes do
+    dot = nc_expect(source,nc_end(source,pos),b[46])
+    all = nc_word(source,dot,b[114,101,97,100,95,97,108,108])
+    line = nc_word(source,dot,b[114,101,97,100,95,108,105,110,101])
+    begin = nc_expect(source,nc_end(source,dot),b[40])
+    stop = nc_expect(source,begin,b[41])
+    if all+line != 1 do b[] else if stop < 0 do b[] else
+      if all == 1 do nc_value(stop,na_read_all_emit(),b[2]) else nc_value(stop,na_read_line_emit(),b[4,2]) end
+    end end
+  end
+  def na_enum(args: bytes, op: integer): bytes do
+    if op == 13 do na_filter(args) else
+      count = nc_arg_count(args)
+      if count < 1 do b[] else if count > 2 do b[] else
+        if no_compatible(b[7,2],nc_arg_kind(args,0)) == 0 do b[] else
+          valid = if count == 1 do 1 else if nt_tag(nc_arg_kind(args,1)) == 2 do 1 else 0 end end
+          if valid == 0 do b[] else
+            prepare = if count == 1 do b[106,0] else b[] end
+            nc_value(nc_pos(args),nc_join(nc_arg_code(args),prepare,na_join_emit()),b[2])
+          end
+        end
+      end end
+    end
+  end
+  def na_filter(args: bytes): bytes do
+    if nc_arg_count(args) != 2 do b[] else
+      callback = nc_arg_kind(args,1)
+      if nt_tag(callback) != 10 do b[] else if nt_count(callback) != 1 do b[] else
+        if nt_tag(nt_child(callback,1)) != 3 do b[] else
+          element = nt_child(nc_arg_kind(args,0),0)
+          expected = nt_child(callback,0)
+          kind = nt_unary(7,expected)
+          if nt_tag(kind) < 0 do b[] else if no_compatible(expected,element) == 0 do b[] else nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),na_filter_emit()),kind) end end
+        end
+      end end
+    end
+  end
+  # Native smoke test; typed library expansion.
+  def main() do System.halt(0) end
+end

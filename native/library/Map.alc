@@ -1,0 +1,182 @@
+# Map: the functions written in Alchem.
+#: drop/2
+  def drop(m0: map[k, v], keys: list[k]): map[k, v] do
+    Enum.reduce(keys, m0, fn key, acc -> Map.delete(acc, key) end)
+  end
+#: take/2
+  def take(m0: map[k, v], keys: list[k]): map[k, v] do
+    Enum.reduce(keys, %{}, fn key, acc ->
+      case Map.get(m0, key) do
+        some(value) -> Map.put(acc, key, value)
+        none -> acc
+      end
+    end)
+  end
+#: split/2 needs take/2 drop/2
+  def split(m0: map[k, v], keys: list[k]): tuple[map[k, v], map[k, v]] do
+    {Map.take(m0, keys), Map.drop(m0, keys)}
+  end
+#: equal?/2
+  def equal?(left: map[k, v], right: map[k, v]): boolean do
+    left == right
+  end
+#: fetch!/2
+  def fetch!(m0: map[k, v], key: k): v do
+    case Map.get(m0, key) do
+      some(value) -> value
+      none -> raise("map key not found")
+    end
+  end
+#: filter/2
+  def filter(m0: map[k, v], f: fn[tuple[k, v], boolean]): map[k, v] do
+    Map.new(Enum.filter(Map.to_list(m0), f))
+  end
+#: reject/2
+  def reject(m0: map[k, v], f: fn[tuple[k, v], boolean]): map[k, v] do
+    Map.new(Enum.filter(Map.to_list(m0), fn entry -> not f(entry) end))
+  end
+#: split_with/2
+  def split_with(m0: map[k, v], f: fn[tuple[k, v], boolean]): tuple[map[k, v], map[k, v]] do
+    {Map.new(Enum.filter(Map.to_list(m0), f)), Map.new(Enum.filter(Map.to_list(m0), fn entry -> not f(entry) end))}
+  end
+#: from_keys/2
+  def from_keys(keys: list[k], value: v): map[k, v] do
+    Map.new(Enum.map(keys, fn key -> {key, value} end))
+  end
+#: get_lazy/3
+  def get_lazy(m0: map[k, v], key: k, f: fn[v]): v do
+    case Map.get(m0, key) do
+      some(value) -> value
+      none -> f()
+    end
+  end
+#: get_and_update/3
+  def get_and_update(m0: map[k, v], key: k, f: fn[option[v], tuple[r, option[v]]]): tuple[r, map[k, v]] do
+    step = f(Map.get(m0, key))
+    case elem(step, 1) do
+      some(value) -> {elem(step, 0), Map.put(m0, key, value)}
+      none -> {elem(step, 0), Map.delete(m0, key)}
+    end
+  end
+#: intersect/2
+  def intersect(left: map[k, v], right: map[k, v]): map[k, v] do
+    Map.new(Enum.filter(Map.to_list(right), fn entry -> Map.has_key?(left, elem(entry, 0)) end))
+  end
+#: merge/2 needs zip/3
+# Maps with integers or strings for keys, the second not much smaller than
+# the first: their entries, which both give in the order of their keys,
+# are gone through side by side once and the map is made of what comes of
+# it, instead of putting the second's entries into the first one by one.
+  def merge(left: map[integer, v], right: map[integer, v]): map[integer, v] do
+    if map_size(right) * 8 < map_size(left) do Enum.reduce(Map.to_list(right), left, fn entry, acc -> Map.put(acc, elem(entry, 0), elem(entry, 1)) end) else
+      Map.new(Enum.o_turn(Map.zip(Map.to_list(left), Map.to_list(right), [])))
+    end
+  end
+#: zip/3
+  def zip(a: list[tuple[integer, v]], b: list[tuple[integer, v]], done: list[tuple[integer, v]]): list[tuple[integer, v]] do
+    case a do
+      [] -> Enum.reduce(b, done, fn x, acc -> [x | acc] end)
+      [x | ra] ->
+        case b do
+          [] -> Enum.reduce(a, done, fn e, acc -> [e | acc] end)
+          [y | rb] -> if elem(x, 0) < elem(y, 0) do Map.zip(ra, b, [x | done]) else
+            if elem(y, 0) < elem(x, 0) do Map.zip(a, rb, [y | done]) else Map.zip(ra, rb, [y | done]) end
+          end
+        end
+    end
+  end
+#: merge/2 form 2 needs zip/3
+  def merge(left: map[string, v], right: map[string, v]): map[string, v] do
+    if map_size(right) * 8 < map_size(left) do Enum.reduce(Map.to_list(right), left, fn entry, acc -> Map.put(acc, elem(entry, 0), elem(entry, 1)) end) else
+      Map.new(Enum.o_turn(Map.zip(Map.to_list(left), Map.to_list(right), [])))
+    end
+  end
+#: zip/3 form 2
+  def zip(a: list[tuple[string, v]], b: list[tuple[string, v]], done: list[tuple[string, v]]): list[tuple[string, v]] do
+    case a do
+      [] -> Enum.reduce(b, done, fn x, acc -> [x | acc] end)
+      [x | ra] ->
+        case b do
+          [] -> Enum.reduce(a, done, fn e, acc -> [e | acc] end)
+          [y | rb] -> if elem(x, 0) < elem(y, 0) do Map.zip(ra, b, [x | done]) else
+            if elem(y, 0) < elem(x, 0) do Map.zip(a, rb, [y | done]) else Map.zip(ra, rb, [y | done]) end
+          end
+        end
+    end
+  end
+#: merge/2 form 3
+  def merge(left: map[k, v], right: map[k, v]): map[k, v] do
+    Enum.reduce(Map.to_list(right), left, fn entry, acc -> Map.put(acc, elem(entry, 0), elem(entry, 1)) end)
+  end
+#: merge/3
+  def merge(left: map[k, v], right: map[k, v], f: fn[k, v, v, v]): map[k, v] do
+    Enum.reduce(Map.to_list(right), left, fn entry, acc ->
+      case Map.get(acc, elem(entry, 0)) do
+        some(old) -> Map.put(acc, elem(entry, 0), f(elem(entry, 0), old, elem(entry, 1)))
+        none -> Map.put(acc, elem(entry, 0), elem(entry, 1))
+      end
+    end)
+  end
+#: new/2
+  def new(items: list[a], f: fn[a, tuple[k, v]]): map[k, v] do
+    Map.new(Enum.map(items, f))
+  end
+#: pop/2
+  def pop(m0: map[k, v], key: k): tuple[option[v], map[k, v]] do
+    {Map.get(m0, key), Map.delete(m0, key)}
+  end
+#: pop/3
+  def pop(m0: map[k, v], key: k, default: v): tuple[v, map[k, v]] do
+    {Map.get(m0, key, default), Map.delete(m0, key)}
+  end
+#: pop_lazy/3
+  def pop_lazy(m0: map[k, v], key: k, f: fn[v]): tuple[v, map[k, v]] do
+    case Map.get(m0, key) do
+      some(value) -> {value, Map.delete(m0, key)}
+      none -> {f(), m0}
+    end
+  end
+#: put_new/3
+  def put_new(m0: map[k, v], key: k, value: v): map[k, v] do
+    if Map.has_key?(m0, key) do m0 else Map.o_keep(m0, key, value) end
+  end
+#: put_new_lazy/3
+  def put_new_lazy(m0: map[k, v], key: k, f: fn[v]): map[k, v] do
+    if Map.has_key?(m0, key) do m0 else Map.put(m0, key, f()) end
+  end
+#: replace/3
+  def replace(m0: map[k, v], key: k, value: v): map[k, v] do
+    if Map.has_key?(m0, key) do Map.put(m0, key, value) else m0 end
+  end
+#: replace_lazy/3
+  def replace_lazy(m0: map[k, v], key: k, f: fn[v, v]): map[k, v] do
+    case Map.get(m0, key) do
+      some(value) -> Map.put(m0, key, f(value))
+      none -> m0
+    end
+  end
+#: update/4
+  def update(m0: map[k, v], key: k, default: v, f: fn[v, v]): map[k, v] do
+    if Map.has_key?(m0, key) do Map.o_keep(m0, key, f(Map.get(m0, key, default))) else Map.o_keep(m0, key, default) end
+  end
+#: to_list/1
+  def to_list(pairs: list[tuple[k, v]]): list[tuple[k, v]] do
+    pairs
+  end
+#: replace!/3
+  def replace!(m0: map[k, v], key: k, value: v): map[k, v] do
+    if not Map.has_key?(m0, key) do raise("map key not found") end
+    Map.put(m0, key, value)
+  end
+#: update!/3
+  def update!(m0: map[k, v], key: k, f: fn[v, v]): map[k, v] do
+    case Map.get(m0, key) do
+      some(old) -> Map.put(m0, key, f(old))
+      none -> raise("map key not found")
+    end
+  end
+# For a set, a stream or a range of entries: a list has the compiler's code.
+#: new/1
+  def new(items: list[tuple[k, v]]): map[k, v] do
+    Map.new(items)
+  end

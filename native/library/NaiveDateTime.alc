@@ -1,0 +1,95 @@
+# NaiveDateTime: a date and time without a time zone, after the pinned
+# runtime. The struct and the functions named with two letters are in
+# library/Date.alc, which says how these files are written.
+#: new/2 needs Date.cm/2
+  def new(d: Date, t: Time): result[NaiveDateTime, string] do
+    if Date.cb([d.year, d.month, d.day], [t.hour, t.minute, t.second, t.microsecond]) do error("invalid date or time") else
+      ok(%NaiveDateTime{year: d.year, month: d.month, day: d.day, hour: t.hour, minute: t.minute, second: t.second, microsecond: t.microsecond})
+    end
+  end
+#: new/6 needs new/2
+  def new(y: integer, m: integer, d: integer, h: integer, i: integer, s: integer): result[NaiveDateTime, string] do
+    NaiveDateTime.new(%Date{year: y, month: m, day: d}, %Time{hour: h, minute: i, second: s, microsecond: 0})
+  end
+#: new!/2 needs new/2
+  def new!(d: Date, t: Time): NaiveDateTime do
+    case NaiveDateTime.new(d, t) do
+      ok(a) -> a
+      error(e) -> raise(e)
+    end
+  end
+#: new!/6 needs new/6
+  def new!(y: integer, m: integer, d: integer, h: integer, i: integer, s: integer): NaiveDateTime do
+    case NaiveDateTime.new(y, m, d, h, i, s) do
+      ok(a) -> a
+      error(e) -> raise(e)
+    end
+  end
+#: from_iso8601/1 needs Date.cr/2
+  def from_iso8601(s: string): result[NaiveDateTime, string] do
+    f = Date.cr(s, 2)
+    if f == [] do error("invalid date and time: "<>inspect(s)) else ok(Date.ca(f, 0)) end
+  end
+#: from_iso8601!/1 needs from_iso8601/1
+  def from_iso8601!(s: string): NaiveDateTime do
+    case NaiveDateTime.from_iso8601(s) do
+      ok(a) -> a
+      error(e) -> raise(e)
+    end
+  end
+#: to_date/1
+  def to_date(n: NaiveDateTime): Date do
+    %Date{year: n.year, month: n.month, day: n.day}
+  end
+#: to_time/1
+  def to_time(n: NaiveDateTime): Time do
+    %Time{hour: n.hour, minute: n.minute, second: n.second, microsecond: n.microsecond}
+  end
+#: to_iso8601/1 needs Date.cm/2
+  def to_iso8601(n: NaiveDateTime): string do
+    Date.cx(n, "T")
+  end
+#: to_string/1 needs Date.cm/2
+  def to_string(n: NaiveDateTime): string do
+    Date.cx(n, " ")
+  end
+#: compare/2 needs Date.cm/2
+  def compare(a: NaiveDateTime, b: NaiveDateTime): atom do
+    Date.co(Date.cq(a, b), 0)
+  end
+#: before?/2 needs Date.cm/2
+  def before?(a: NaiveDateTime, b: NaiveDateTime): boolean do
+    Date.cq(a, b)<0
+  end
+#: after?/2 needs Date.cm/2
+  def after?(a: NaiveDateTime, b: NaiveDateTime): boolean do
+    Date.cq(a, b)>0
+  end
+#: diff/2 needs Date.cm/2
+  def diff(a: NaiveDateTime, b: NaiveDateTime): integer do
+    Date.cq(a, b)/1000000
+  end
+#: diff/3 needs Date.cm/2
+  def diff(a: NaiveDateTime, b: NaiveDateTime, u: atom): integer do
+    Date.cp(Date.cq(a, b), u)
+  end
+#: add/2 needs Date.cm/2
+  def add(n: NaiveDateTime, s: integer): NaiveDateTime do
+    Date.cu(n, Date.ce(s, 1000000000))
+  end
+#: add/3 needs Date.cm/2
+  def add(n: NaiveDateTime, a: integer, u: atom): NaiveDateTime do
+    Date.cu(n, Date.cs(a, u))
+  end
+#: truncate/2 needs Date.cm/2
+  def truncate(n: NaiveDateTime, p: atom): NaiveDateTime do
+    %NaiveDateTime{n | microsecond: Date.cc(n.microsecond, p)}
+  end
+#: shift/2 needs Duration.cf/1 Date.cm/2
+  def shift(n: NaiveDateTime, b: Duration): NaiveDateTime do
+    Date.ca(Date.ch(Date.cw(n, 0), Duration.cf(b)), 0)
+  end
+#: utc_now/0 needs Date.cm/2
+  def utc_now(): NaiveDateTime do
+    Date.ca([1970, 1, 1, 0, 0, 0, 0], System.system_time()/1000)
+  end

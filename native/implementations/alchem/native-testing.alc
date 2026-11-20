@@ -1,0 +1,1483 @@
+defmodule NativeTesting do
+  # Test files (spec/alchem-testing-gen.md). A module with test declarations
+  # has no main: the pinned compiler makes one that hands its tests to the
+  # runner. Here the program's text is rewritten before it is compiled
+  # (nc_rewritten), as macros are, and with their pieces (native-macros.alc):
+  # every test and setup block becomes a function of one word, the context,
+  # and a module of the library's kind is added whose main calls the runner
+  # (library/Testing.alc) with the tests of the first module.
+  #
+  # The walk. A cursor is 48 bytes: the position, where the tags waiting for
+  # the next test start (0 for none), a status (0 in a module, 1 at the end
+  # of the text, 2 for text that is no program, 3 between modules), the
+  # describe block being read (its record's number plus one), how deep it
+  # stands, 1 after def or @, the module's number, the number of records,
+  # and the describe blocks around the position. A record is 26 bytes: its
+  # kind (1 test, 2 setup, 3 setup_all, 4 describe, 5 @moduletag, 6 doctest,
+  # 7 the end of a describe, 8 tags nothing follows), where it starts, its
+  # describe block and depth, its name, its tags, its parameter, its do, the
+  # end of its body, and its module.
+  def tm_cursor(pos: integer, pending: integer, status: integer, rest: bytes): bytes do
+    nc_join(nc_u24(pos),Enum.concat(nc_u24(pending),b[status]),rest)
+  end
+  def tm_rest(cur: bytes): bytes do nc_slice(cur,7,48) end
+  def tm_group(cur: bytes): integer do nc_read(cur,7) end
+  def tm_depth(cur: bytes): integer do Enum.at(cur,9,0) end
+  def tm_count(cur: bytes): integer do nc_read(cur,12) end
+  # The rest of a cursor with its guard set, or one record more.
+  def tm_guarded(cur: bytes, guard: integer): bytes do
+    nc_join(nc_slice(cur,7,10),b[guard],nc_slice(cur,11,48))
+  end
+  def tm_counted(cur: bytes): bytes do
+    nc_join(nc_slice(cur,7,10),b[0,Enum.at(cur,11,0)],Enum.concat(nc_u16(tm_count(cur)+1),nc_slice(cur,14,48)))
+  end
+  def tm_record(kind: integer, at: integer, cur: bytes, name: integer, fields: bytes): bytes do
+    nc_join(Enum.concat(b[kind],nc_u24(at)),Enum.concat(nc_slice(cur,7,10),nc_u24(name)),nc_join(nc_slice(cur,3,6),fields,b[0,0,Enum.at(cur,11,0),0]))
+  end
+  def tm_kind(recs: bytes, i: integer): integer do Enum.at(recs,i*26,0) end
+  def tm_at(recs: bytes, i: integer): integer do nc_cursor(recs,i*26+1) end
+  def tm_of(recs: bytes, i: integer): integer do nc_read(recs,i*26+4) end
+  def tm_deep(recs: bytes, i: integer): integer do if tm_kind(recs,i) == 3 do 0-1 else Enum.at(recs,i*26+6,0) end end
+  def tm_name(recs: bytes, i: integer): integer do nc_cursor(recs,i*26+7) end
+  def tm_tags(recs: bytes, i: integer): integer do nc_cursor(recs,i*26+10) end
+  def tm_param(recs: bytes, i: integer): integer do nc_cursor(recs,i*26+13) end
+  def tm_do(recs: bytes, i: integer): integer do nc_cursor(recs,i*26+16) end
+  def tm_stop(recs: bytes, i: integer): integer do nc_cursor(recs,i*26+19) end
+  def tm_module(recs: bytes, i: integer): integer do Enum.at(recs,i*26+24,0) end
+  # Where the do that opens a block stands, from pos; -1 when none does
+  # within 256 tokens.
+  def tm_opening(source: bytes, pos: integer, left: integer): integer do
+    start = nc_start(source,pos)
+    if start < 0 do 0-1 else if left == 0 do 0-1 else if start >= Enum.count(source) do 0-1 else
+      if nc_opens(source,start) == 1 do start else tm_opening(source,nc_end(source,start),left-1) end
+    end end end
+  end
+  def tm_fail(cur: bytes): bytes do tm_cursor(0,0,2,tm_rest(cur)) end
+  # A test, a setup block or a setup_all: its record, and the cursor after it.
+  def tm_declared(source: bytes, cur: bytes, start: integer, kind: integer): bytes do
+    name = nc_start(source,nc_end(source,start))
+    after = if kind == 1 do nc_end(source,name) else nc_end(source,start) end
+    next = nc_start(source,after)
+    param = if kind == 1 do if nc_word(source,next,b[44]) == 1 do nc_start(source,nc_end(source,next)) else 0 end else if kind == 3 do 0 else if nc_opens(source,next) == 1 do 0 else next end end end
+    opening = if param == 0 do if nc_opens(source,next) == 1 do next else 0-1 end else tm_opening(source,param,256) end
+    stop = if opening < 0 do 0-1 else nc_body_end(source,nc_end(source,opening),16777216) end
+    bad = if kind == 3 do tm_depth(cur) else 0 end
+    empty = if kind != 1 do 0 else if nc_end(source,name)-name <= 2 do 1 else 0 end end
+    if stop < 0 do tm_fail(cur) else if bad+empty > 0 do tm_fail(cur) else
+      Enum.concat(tm_cursor(nc_end(source,stop),0,0,tm_counted(cur)),tm_record(kind,start,cur,name,nc_join(nc_u24(param),nc_u24(opening),nc_u24(stop))))
+    end end
+  end
+  # describe "name" do: its record, and the cursor inside it.
+  def tm_described(source: bytes, cur: bytes, start: integer): bytes do
+    name = nc_start(source,nc_end(source,start))
+    opening = nc_start(source,nc_end(source,name))
+    depth = tm_depth(cur)
+    inside = nc_join(Enum.concat(nc_u16(tm_count(cur)+1),b[depth+1,0,Enum.at(cur,11,0)]),Enum.concat(nc_u16(tm_count(cur)+1),nc_slice(cur,14,16+depth*2)),Enum.concat(nc_u16(tm_count(cur)+1),nc_slice(cur,18+depth*2,48)))
+    if nc_opens(source,opening) == 0 do tm_fail(cur) else if depth >= 16 do tm_fail(cur) else if nc_end(source,name)-name <= 2 do tm_fail(cur) else
+      Enum.concat(tm_cursor(nc_end(source,opening),0,0,inside),tm_record(4,start,cur,name,nc_join(b[0,0,0],nc_u24(opening),b[0,0,0])))
+    end end end
+  end
+  # end: of a describe block, or of the module.
+  def tm_ended(source: bytes, cur: bytes, start: integer): bytes do
+    depth = tm_depth(cur)
+    pending = nc_cursor(cur,3)
+    outer = nc_join(Enum.concat(nc_slice(cur,12+depth*2,14+depth*2),b[if depth == 0 do 0 else depth-1 end,0,Enum.at(cur,11,0)]),nc_u16(tm_count(cur)+1),nc_slice(cur,14,48))
+    left = nc_join(b[0,0,0,0,Enum.at(cur,11,0)+1],nc_u16(tm_count(cur)+if pending == 0 do 0 else 1 end),nc_zeros(34))
+    if depth > 0 do Enum.concat(tm_cursor(nc_end(source,start),0,0,outer),tm_record(7,start,cur,0,nc_zeros(9))) else
+      Enum.concat(tm_cursor(nc_end(source,start),0,3,left),if pending == 0 do b[] else tm_record(8,start,cur,0,nc_zeros(9)) end)
+    end
+  end
+  # @: a tag waits for the test or describe that follows; @moduletag is the
+  # module's; any other is a constant or a document.
+  def tm_attribute(source: bytes, cur: bytes, start: integer): bytes do
+    word = nc_start(source,nc_end(source,start))
+    pending = nc_cursor(cur,3)
+    value = nc_start(source,nc_end(source,word))
+    tagged = nc_word(source,word,b[116,97,103])+nc_word(source,word,b[100,101,115,99,114,105,98,101,116,97,103])+nc_word(source,word,b[109,111,100,117,108,101,116,97,103])
+    # A tag is a name without spaces or commas.
+    wrong = if tagged == 0 do 0 else if byte_at(source,value) != 34 do 0 else if nc_end(source,value)-value <= 2 do 1 else mx_raw(source,value,nc_end(source,value),b[32])+mx_raw(source,value,nc_end(source,value),b[44]) end end end
+    if wrong > 0 do tm_fail(cur) else tm_tagged(source,cur,start,word) end
+  end
+  def tm_tagged(source: bytes, cur: bytes, start: integer, word: integer): bytes do
+    pending = nc_cursor(cur,3)
+    if nc_word(source,word,b[116,97,103])+nc_word(source,word,b[100,101,115,99,114,105,98,101,116,97,103]) > 0 do tm_cursor(tm_tag_end(source,start),if pending == 0 do start else pending end,0,tm_rest(cur)) else
+      if nc_word(source,word,b[109,111,100,117,108,101,116,97,103]) == 1 do Enum.concat(tm_cursor(tm_tag_end(source,start),pending,0,tm_counted(cur)),tm_record(5,start,cur,0,nc_zeros(9))) else
+        tm_cursor(nc_end(source,start),pending,0,tm_guarded(cur,1))
+      end
+    end
+  end
+  # Whatever else stands in a module: a block is passed whole.
+  def tm_passed(source: bytes, cur: bytes, start: integer, guard: integer): bytes do
+    stop = if nc_opens(source,start)+nf_untyped(source,start) == 0 do start else nc_body_end(source,nc_end(source,start),16777216) end
+    if stop < 0 do tm_fail(cur) else tm_cursor(nc_end(source,stop),nc_cursor(cur,3),0,tm_guarded(cur,guard)) end
+  end
+  # Between modules: the next defmodule, or the end of the text.
+  def tm_between(source: bytes, cur: bytes, start: integer): bytes do
+    opening = tm_opening(source,start,64)
+    if start < 0 do tm_cursor(0,0,1,tm_rest(cur)) else if start >= Enum.count(source) do tm_cursor(0,0,1,tm_rest(cur)) else
+      if nc_word(source,start,b[100,101,102,109,111,100,117,108,101]) == 0 do tm_fail(cur) else if opening < 0 do tm_fail(cur) else tm_cursor(nc_end(source,opening),0,0,tm_rest(cur)) end end
+    end end
+  end
+  def tm_step(source: bytes, cur: bytes): bytes do
+    start = nc_start(source,nc_cursor(cur,0))
+    next = nc_start(source,nc_end(source,start))
+    guard = Enum.at(cur,10,0)
+    if Enum.at(cur,6,0) == 3 do tm_between(source,cur,start) else
+      if start < 0 do tm_fail(cur) else if start >= Enum.count(source) do tm_fail(cur) else
+        if guard >= 1 do tm_signed(source,cur,start,guard) else
+          if nc_word(source,start,b[101,110,100]) == 1 do tm_ended(source,cur,start) else
+            if byte_at(source,start) == 64 do tm_attribute(source,cur,start) else tm_worded(source,cur,start,next) end
+          end
+        end
+      end end
+    end
+  end
+  def tm_worded(source: bytes, cur: bytes, start: integer, next: integer): bytes do
+    text = if byte_at(source,next) == 34 do 1 else 0 end
+    defs = nc_word(source,start,b[100,101,102])+nc_word(source,start,b[100,101,102,112])+nc_word(source,start,b[100,101,102,109,97,99,114,111])+nc_word(source,start,b[100,101,102,109,97,99,114,111,112])
+    if nc_word(source,start,b[116,101,115,116])*text == 1 do tm_declared(source,cur,start,1) else
+      if nc_word(source,start,b[100,101,115,99,114,105,98,101])*text == 1 do tm_described(source,cur,start) else
+        if nc_word(source,start,b[115,101,116,117,112]) == 1 do tm_declared(source,cur,start,2) else
+          if nc_word(source,start,b[115,101,116,117,112,95,97,108,108]) == 1 do tm_declared(source,cur,start,3) else
+            if tm_depth(cur) > 0 do tm_fail(cur) else if nc_word(source,start,b[100,111,99,116,101,115,116])*tm_capital(source,next) == 1 do Enum.concat(tm_cursor(nc_end(source,next),nc_cursor(cur,3),0,tm_counted(cur)),tm_record(6,start,cur,next,nc_zeros(9))) else
+              tm_passed(source,cur,start,if nc_word(source,start,b[100,101,102])+nc_word(source,start,b[100,101,102,112]) > 0 do 2 else if defs > 0 do 1 else if nc_word(source,start,b[100,101,102,105,109,112,108]) == 1 do 3 else 0 end end end)
+            end end
+          end
+        end
+      end
+    end
+  end
+  # After def or defp (guard 2) the name is passed, then the signature token
+  # by token (guard 3) up to the do of the body, which gets a record of
+  # kind 9: the assertions in it are rewritten as a test's are. A function
+  # without a body (in a protocol) ends at the next def or end, and one
+  # written with do: on its line stays as it is. After defmacro (guard 1)
+  # only the name is passed. A defimpl block is such a body as a whole
+  # (guard 3 from its first word): the functions in it are.
+  def tm_signed(source: bytes, cur: bytes, start: integer, guard: integer): bytes do
+    opens = nc_opens(source,start)
+    stop = if opens == 0 do 0-1 else nc_body_end(source,nc_end(source,start),16777216) end
+    over = nc_word(source,start,b[101,110,100])+nc_word(source,start,b[100,101,102])+nc_word(source,start,b[100,101,102,112])+nc_word(source,start,b[100,101,102,109,97,99,114,111])+nc_word(source,start,b[100,101,102,109,97,99,114,111,112])+nc_word(source,start,b[100,111])*(1-opens)
+    if guard == 1 do tm_passed(source,cur,start,0) else if guard == 2 do tm_passed(source,cur,start,3) else
+      if over > 0 do tm_step(source,tm_cursor(nc_cursor(cur,0),nc_cursor(cur,3),0,tm_guarded(cur,0))) else
+        if opens == 0 do tm_passed(source,cur,start,3) else
+          if stop < 0 do tm_fail(cur) else if nc_cursor(cur,3) != 0 do tm_cursor(nc_end(source,stop),nc_cursor(cur,3),0,tm_guarded(cur,0)) else
+            Enum.concat(tm_cursor(nc_end(source,stop),0,0,tm_counted(cur)),tm_record(9,start,cur,0,nc_join(b[0,0,0],nc_u24(start),nc_u24(stop))))
+          end end
+        end
+      end
+    end end
+  end
+  def tm_capital(source: bytes, pos: integer): integer do
+    if (byte_at(source,pos)-65)*(90-byte_at(source,pos)) >= 0 do 1 else 0 end
+  end
+  def tm_chunk(source: bytes, cur: bytes, count: integer): bytes do
+    if count == 0 do cur else if (Enum.at(cur,6,0)-1)*(Enum.at(cur,6,0)-2) == 0 do cur else tm_chunked(source,tm_step(source,cur),count) end end
+  end
+  def tm_chunked(source: bytes, made: bytes, count: integer): bytes do
+    next = tm_chunk(source,nc_slice(made,0,48),count-1)
+    nc_join(nc_slice(next,0,48),nc_slice(made,48,Enum.count(made)),nc_slice(next,48,Enum.count(next)))
+  end
+  def tm_walk(source: bytes, cur: bytes): bytes do
+    part = tm_chunk(source,cur,64)
+    rest = if (Enum.at(part,6,0)-1)*(Enum.at(part,6,0)-2) == 0 do b[] else tm_walk(source,nc_slice(part,0,48)) end
+    if Enum.count(rest) == 0 do part else nc_join(nc_slice(rest,0,48),nc_slice(part,48,Enum.count(part)),nc_slice(rest,48,Enum.count(rest))) end
+  end
+  # 1 when some record from first up to stop is a test.
+  def tm_any(recs: bytes, first: integer, stop: integer, kind: integer): integer do
+    if first >= stop do 0 else if tm_kind(recs,first) == kind do 1 else tm_any(recs,first+1,stop,kind) end end
+  end
+
+  # Describe blocks of one name in one block are one group (the pinned
+  # compiler names a group by its names): two bytes per record, for a
+  # describe the number plus one of the first record of its group.
+  def tm_canon(canon: bytes, group: integer): integer do
+    if group == 0 do 0 else nc_read(canon,group*2-2) end
+  end
+  def tm_alike(source: bytes, a: integer, b: integer): integer do
+    size = nc_end(source,a)-a
+    if nc_end(source,b)-b != size do 0 else nc_equal(source,a,b,size) end
+  end
+  def tm_first(source: bytes, recs: bytes, canon: bytes, i: integer, j: integer): integer do
+    if j >= i do i+1 else
+      if tm_kind(recs,j) != 4 do tm_first(source,recs,canon,i,j+1) else if tm_module(recs,j) != tm_module(recs,i) do tm_first(source,recs,canon,i,j+1) else
+        if tm_canon(canon,tm_of(recs,j)) != tm_canon(canon,tm_of(recs,i)) do tm_first(source,recs,canon,i,j+1) else
+          if tm_alike(source,tm_name(recs,j),tm_name(recs,i)) == 1 do nc_read(canon,j*2) else tm_first(source,recs,canon,i,j+1) end
+        end
+      end end
+    end
+  end
+  def tm_canons(source: bytes, recs: bytes, i: integer, canon: bytes): bytes do
+    if i*26 >= Enum.count(recs) do canon else
+      tm_canons(source,recs,i+1,Enum.concat(canon,nc_u16(if tm_kind(recs,i) != 4 do 0 else tm_first(source,recs,canon,i,0) end)))
+    end
+  end
+  # The describe block around group, levels blocks out.
+  def tm_up(recs: bytes, group: integer, levels: integer): integer do
+    if levels <= 0 do group else if group == 0 do 0 else tm_up(recs,tm_of(recs,group-1),levels-1) end end
+  end
+
+  # Text of the compiler's own, standing for the place t.
+  def tm_lit(text: bytes, t: integer): bytes do
+    size = Enum.count(text)
+    cut = nc_half(nc_units(size+4,5))*5
+    if size == 0 do b[] else if size <= 5 do mx_text5(text,t,mx_none()) else
+      Enum.concat(tm_lit(nc_slice(text,0,cut),t),tm_lit(nc_slice(text,cut,size),t))
+    end end
+  end
+  def tm_src(first: integer, stop: integer): bytes do
+    if stop <= first do b[] else mx_piece(0,first,stop,0,mx_none()) end
+  end
+  # The setup blocks that give function i its context, as the pinned
+  # compiler orders them: setup_all, then the blocks of every describe around
+  # it from the outermost in, each in the order written. Before a setup
+  # block stand only those written above it.
+  def tm_applies(recs: bytes, canon: bytes, i: integer, j: integer, d: integer): integer do
+    kind = tm_kind(recs,j)
+    mine = tm_up(recs,tm_of(recs,i),Enum.at(recs,i*26+6,0)-d)
+    earlier = if (tm_kind(recs,i)-1)*(tm_kind(recs,i)-6) == 0 do 1 else if tm_deep(recs,j) < tm_deep(recs,i) do 1 else if tm_deep(recs,j) != tm_deep(recs,i) do 0 else if j < i do 1 else 0 end end end end
+    if (kind-2)*(kind-3) != 0 do 0 else if tm_deep(recs,j) != d do 0 else if tm_module(recs,j) != tm_module(recs,i) do 0 else if j == i do 0 else
+      if earlier == 0 do 0 else if kind == 3 do 1 else if tm_canon(canon,tm_of(recs,j)) == tm_canon(canon,mine) do 1 else 0 end end end
+    end end end end
+  end
+  # The context after the setup blocks before function i, as an expression
+  # that is typed and never run: T.__next(T.__next({}, fn _ -> first block
+  # end), fn context -> second block end). A block that takes the context is
+  # under T.__with. key is i*32+d+1.
+  def tm_close(source: bytes, recs: bytes, canon: bytes, j: integer, t: integer): bytes do
+    taken = if tm_param(recs,j) == 0 do tm_lit(b[44,32,102,110,32,95,32,45,62,10],t) else nc_join(tm_lit(b[44,32,102,110,32],t),tm_src(tm_param(recs,j),tm_do(recs,j)),tm_lit(b[45,62,10],t)) end
+    nc_join(taken,tm_body(source,recs,canon,j),tm_lit(b[10,101,110,100,41],t))
+  end
+  def tm_closes(source: bytes, recs: bytes, canon: bytes, key: integer, first: integer, stop: integer): bytes do
+    i = nc_units(key,32)
+    if stop-first <= 0 do b[] else
+      if stop-first == 1 do if tm_applies(recs,canon,i,tm_setup(recs,canon,first),key-i*32-1) == 0 do b[] else tm_close(source,recs,canon,tm_setup(recs,canon,first),tm_at(recs,i)) end else
+        middle = first+nc_half(stop-first)
+        Enum.concat(tm_closes(source,recs,canon,key,first,middle),tm_closes(source,recs,canon,key,middle,stop))
+      end
+    end
+  end
+  def tm_opens(recs: bytes, canon: bytes, key: integer, first: integer, stop: integer): bytes do
+    i = nc_units(key,32)
+    if stop-first <= 0 do b[] else
+      if stop-first == 1 do if tm_applies(recs,canon,i,tm_setup(recs,canon,first),key-i*32-1) == 0 do b[] else if tm_param(recs,tm_setup(recs,canon,first)) == 0 do b[84,127,46,95,95,110,101,120,116,40] else b[84,127,46,95,95,119,105,116,104,40] end end else
+        middle = first+nc_half(stop-first)
+        Enum.concat(tm_opens(recs,canon,key,middle,stop),tm_opens(recs,canon,key,first,middle))
+      end
+    end
+  end
+  def tm_chain_opens(recs: bytes, canon: bytes, i: integer, d: integer): bytes do
+    if d > Enum.at(recs,i*26+6,0) do b[] else
+      Enum.concat(tm_chain_opens(recs,canon,i,d+1),tm_opens(recs,canon,i*32+d+1,0,tm_setups(recs,canon)))
+    end
+  end
+  def tm_chain(source: bytes, recs: bytes, canon: bytes, i: integer, d: integer): bytes do
+    if d > Enum.at(recs,i*26+6,0) do b[] else
+      Enum.concat(tm_closes(source,recs,canon,i*32+d+1,0,tm_setups(recs,canon)),tm_chain(source,recs,canon,i,d+1))
+    end
+  end
+  def tm_digits(value: integer): bytes do
+    if value < 10 do b[48+value] else Enum.concat(tm_digits(nt_div(value,10)),b[48+nt_mod(value,10)]) end
+  end
+  def tm_body(source: bytes, recs: bytes, canon: bytes, i: integer): bytes do
+    tm_rewrite(source,Enum.concat(nc_u24(nc_end(source,tm_do(recs,i))),b[Enum.at(canon,nc_units(Enum.count(recs),26)*2,0)]),nc_end(source,tm_do(recs,i)),tm_stop(recs,i))
+  end
+  # After the groups of the records, canon holds what the whole program
+  # tells: 1 when it has a macro, and the numbers of its setup blocks.
+  def tm_setups(recs: bytes, canon: bytes): integer do
+    nc_read(canon,nc_units(Enum.count(recs),26)*2+1)
+  end
+  def tm_setup(recs: bytes, canon: bytes, k: integer): integer do
+    nc_read(canon,nc_units(Enum.count(recs),26)*2+3+k*2)
+  end
+  def tm_setup_list(recs: bytes, i: integer): bytes do
+    if i*26 >= Enum.count(recs) do b[] else if (tm_kind(recs,i)-2)*(tm_kind(recs,i)-3) == 0 do Enum.concat(nc_u16(i),tm_setup_list(recs,i+1)) else tm_setup_list(recs,i+1) end end
+  end
+  def tm_facts(given: bytes, recs: bytes): bytes do
+    list = tm_setup_list(recs,0)
+    nc_join(b[mx_raw(given,0,Enum.count(given),b[100,101,102,109,97,99,114,111,32])],nc_u16(nc_units(Enum.count(list),2)),list)
+  end
+  # A test or setup block as a function of the context's word. A block
+  # that takes the context binds its pattern to the word, typed as the
+  # blocks before it leave the context: they are written again in a
+  # function that is never called.
+  def tm_function(source: bytes, recs: bytes, canon: bytes, i: integer): bytes do
+    t = tm_at(recs,i)
+    kind = tm_kind(recs,i)
+    shown = if kind != 1 do b[] else tm_hex(tm_plain(source,tm_name(recs,i)+1,nc_end(source,tm_name(recs,i))-1),0) end
+    head = nc_join(if kind == 1 do b[100,101,102,32,116,101,115,116,127] else b[100,101,102,32,115,101,116,117,112,127] end,tm_digits(i),nc_join(b[40,99,127,58,32,105,110,116,101,103,101,114,41,58,32,105,110,116,101,103,101,114,32,100,111,32,35],shown,b[10]))
+    taken = if tm_param(recs,i) == 0 do b[] else
+      nc_join(Enum.concat(tm_src(tm_param(recs,i),tm_do(recs,i)),tm_lit(nc_join(b[32,61,32,84,127,46,95,95,108,105,107,101,40,99,127,44,32],tm_chain_opens(recs,canon,i,0-1),b[123,125]),t)),tm_chain(source,recs,canon,i,0-1),tm_lit(b[41,10],t))
+    end
+    nc_join(tm_lit(head,t),taken,tm_body(source,recs,canon,i))
+  end
+  def tm_nibble(value: integer): integer do if value < 10 do 48+value else 87+value end end
+  def tm_hex(text: bytes, at: integer): bytes do
+    value = Enum.at(text,at,0)
+    if at >= Enum.count(text) do b[] else if at >= 240 do b[] else Enum.concat(b[tm_nibble(nc_units(value,16)),tm_nibble(value-nc_units(value,16)*16)],tm_hex(text,at+1)) end end
+  end
+  def tm_unhex(source: bytes, pos: integer): bytes do
+    high = tm_digit(byte_at(source,pos))
+    low = tm_digit(byte_at(source,pos+1))
+    if high < 0 do b[] else if low < 0 do b[] else Enum.concat(b[high*16+low],tm_unhex(source,pos+2)) end end
+  end
+  def tm_digit(value: integer): integer do
+    if (value-48)*(57-value) >= 0 do value-48 else if (value-97)*(102-value) >= 0 do value-87 else if (value-65)*(70-value) >= 0 do value-55 else 0-1 end end end
+  end
+  def tm_number(source: bytes, pos: integer, count: integer, value: integer): integer do
+    if count == 0 do value else if tm_digit(byte_at(source,pos)) < 0 do 0-1 else tm_number(source,pos+1,count-1,value*16+tm_digit(byte_at(source,pos))) end end
+  end
+  def tm_utf8(value: integer): bytes do
+    if value < 0 do b[] else if value < 128 do b[value] else if value < 2048 do b[192+nc_units(value,64),128+value-nc_units(value,64)*64] else
+      if value < 65536 do b[224+nc_units(value,4096),128+nc_units(value,64)-nc_units(value,4096)*64,128+value-nc_units(value,64)*64] else
+        b[240+nc_units(value,262144),128+nc_units(value,4096)-nc_units(value,262144)*64,128+nc_units(value,64)-nc_units(value,4096)*64,128+value-nc_units(value,64)*64]
+      end
+    end end end
+  end
+  # The text a string literal's inside stands for, from pos up to stop.
+  def tm_plain(source: bytes, pos: integer, stop: integer): bytes do
+    value = byte_at(source,pos)
+    next = byte_at(source,pos+1)
+    simple = if next < 97 do 0 else Enum.at(b[7,8,0,0,0,12,0,0,0,0,0,0,0,10,0,0,0,13,0,9,0,11],next-97,0) end
+    if pos >= stop do b[] else
+      if value != 92 do Enum.concat(b[value],tm_plain(source,pos+1,stop)) else
+        if next == 120 do Enum.concat(tm_utf8(tm_number(source,pos+2,2,0)),tm_plain(source,pos+4,stop)) else
+          if next == 117 do Enum.concat(tm_utf8(tm_number(source,pos+2,4,0)),tm_plain(source,pos+6,stop)) else
+            if next == 85 do Enum.concat(tm_utf8(tm_number(source,pos+2,8,0)),tm_plain(source,pos+10,stop)) else
+              Enum.concat(b[if simple == 0 do next else simple end],tm_plain(source,pos+2,stop))
+            end
+          end
+        end
+      end
+    end
+  end
+
+  # What takes the place of record i, and the text up to the next record.
+  def tm_edit_start(recs: bytes, i: integer): integer do
+    if i*26 >= Enum.count(recs) do 16777215 else
+      if tm_tags(recs,i) == 0 do tm_at(recs,i) else tm_tags(recs,i) end
+    end
+  end
+  def tm_edit_stop(source: bytes, recs: bytes, i: integer): integer do
+    kind = tm_kind(recs,i)
+    if kind <= 3 do tm_stop(recs,i) else if kind == 9 do tm_stop(recs,i) else if kind == 4 do nc_end(source,tm_do(recs,i)) else
+      if kind == 5 do tm_tag_end(source,tm_at(recs,i)) else if kind == 6 do nc_end(source,tm_name(recs,i)) else if kind == 7 do nc_end(source,tm_at(recs,i)) else tm_at(recs,i) end end end
+    end end end
+  end
+  def tm_edit(source: bytes, recs: bytes, canon: bytes, i: integer): bytes do
+    kind = tm_kind(recs,i)
+    next = tm_edit_start(recs,i+1)
+    made = if kind <= 3 do tm_function(source,recs,canon,i) else if kind == 6 do tm_doctest(source,recs,i) else if kind == 9 do Enum.concat(tm_src(tm_at(recs,i),nc_end(source,tm_at(recs,i))),tm_body(source,recs,canon,i)) else b[] end end end
+    Enum.concat(made,tm_src(tm_edit_stop(source,recs,i),if next > Enum.count(source) do Enum.count(source) else next end))
+  end
+  def tm_edits(source: bytes, recs: bytes, canon: bytes, first: integer, stop: integer): bytes do
+    if stop-first <= 0 do b[] else
+      if stop-first == 1 do tm_edit(source,recs,canon,first) else
+        middle = first+nc_half(stop-first)
+        Enum.concat(tm_edits(source,recs,canon,first,middle),tm_edits(source,recs,canon,middle,stop))
+      end
+    end
+  end
+
+  # Tags. @tag "name", @tag :name, or @tag name: value, other: value; each
+  # tag is written as a string of the list the runner is given, after a comma.
+  def tm_tag_value(source: bytes, pos: integer): bytes do
+    start = nc_start(source,pos)
+    if byte_at(source,start) == 34 do Enum.concat(nc_u24(nc_end(source,start)),nc_slice(source,start+1,nc_end(source,start)-1)) else
+      if byte_at(source,start) == 58 do Enum.concat(nc_u24(nc_end(source,start+1)),nc_slice(source,start+1,nc_end(source,start+1))) else
+        Enum.concat(nc_u24(nc_end(source,start)),nc_slice(source,start,nc_end(source,start)))
+      end
+    end
+  end
+  def tm_tag_pairs(source: bytes, pos: integer, left: integer): bytes do
+    name = nc_start(source,pos)
+    colon = nc_start(source,nc_end(source,name))
+    value = tm_tag_value(source,nc_end(source,colon))
+    after = nc_start(source,nc_cursor(value,0))
+    one = nc_join(nc_join(b[44,32,34],nc_slice(source,name,nc_end(source,name)),b[58]),nc_slice(value,3,Enum.count(value)),b[34])
+    more = if left == 0 do b[] else if nc_word(source,after,b[44]) == 0 do b[] else tm_tag_pairs(source,nc_end(source,after),left-1) end end
+    if Enum.count(more) == 0 do Enum.concat(nc_u24(nc_cursor(value,0)),one) else nc_join(nc_slice(more,0,3),one,nc_slice(more,3,Enum.count(more))) end
+  end
+  # One @tag from pos (its @): where it ends, then its strings.
+  def tm_tag(source: bytes, pos: integer): bytes do
+    word = nc_start(source,nc_end(source,pos))
+    first = nc_start(source,nc_end(source,word))
+    value = tm_tag_value(source,nc_end(source,word))
+    if (byte_at(source,first)-34)*(byte_at(source,first)-58) == 0 do nc_join(nc_slice(value,0,3),b[44,32,34],Enum.concat(nc_slice(value,3,Enum.count(value)),b[34])) else tm_tag_pairs(source,first,32) end
+  end
+  def tm_tag_end(source: bytes, pos: integer): integer do nc_cursor(tm_tag(source,pos),0) end
+  # The tags written from pos up to stop.
+  def tm_tag_run(source: bytes, pos: integer, stop: integer): bytes do
+    start = if pos == 0 do 0-1 else nc_start(source,pos) end
+    if start < 0 do b[] else if start >= stop do b[] else if byte_at(source,start) != 64 do b[] else
+      Enum.concat(tm_tag_text(source,start),tm_tag_run(source,tm_tag_end(source,start),stop))
+    end end end
+  end
+  def tm_module_tags(source: bytes, recs: bytes, i: integer): bytes do
+    if i*26 >= Enum.count(recs) do b[] else
+      if tm_kind(recs,i) != 5 do tm_module_tags(source,recs,i+1) else if tm_module(recs,i) != 0 do tm_module_tags(source,recs,i+1) else
+        Enum.concat(tm_tag_text(source,tm_at(recs,i)),tm_module_tags(source,recs,i+1))
+      end end
+    end
+  end
+  def tm_tag_text(source: bytes, pos: integer): bytes do
+    one = tm_tag(source,pos)
+    nc_slice(one,3,Enum.count(one))
+  end
+  # The tags of a group: those of the last describe of the group that has any.
+  def tm_group_last(recs: bytes, canon: bytes, group: integer, j: integer): integer do
+    if j < 0 do 0-1 else
+      if tm_kind(recs,j) != 4 do tm_group_last(recs,canon,group,j-1) else if nc_read(canon,j*2) != group do tm_group_last(recs,canon,group,j-1) else
+        if tm_tags(recs,j) == 0 do tm_group_last(recs,canon,group,j-1) else j end
+      end end
+    end
+  end
+  def tm_group_tags(source: bytes, recs: bytes, canon: bytes, group: integer): bytes do
+    if group == 0 do b[] else Enum.concat(tm_group_tags(source,recs,canon,tm_of(recs,group-1)),tm_group_own(source,recs,tm_group_last(recs,canon,tm_canon(canon,group),nc_units(Enum.count(recs),26)-1))) end
+  end
+  def tm_group_own(source: bytes, recs: bytes, last: integer): bytes do
+    if last < 0 do b[] else tm_tag_run(source,tm_tags(recs,last),tm_at(recs,last)) end
+  end
+  # The inside of a string literal, as the inside of one of the compiler's.
+  def tm_inner(source: bytes, pos: integer, stop: integer): bytes do
+    if pos >= stop do b[] else
+      if byte_at(source,pos) == 92 do Enum.concat(b[92,byte_at(source,pos+1)],tm_inner(source,pos+2,stop)) else
+        if byte_at(source,pos)*256+byte_at(source,pos+1) == 9083 do Enum.concat(b[92,35],tm_inner(source,pos+1,stop)) else Enum.concat(b[byte_at(source,pos)],tm_inner(source,pos+1,stop)) end
+      end
+    end
+  end
+  def tm_path(source: bytes, recs: bytes, group: integer): bytes do
+    if group == 0 do b[] else nc_join(tm_path(source,recs,tm_of(recs,group-1)),tm_inner(source,tm_name(recs,group-1)+1,nc_end(source,tm_name(recs,group-1))-1),b[32]) end
+  end
+  # How many of the marks stand before pos.
+  def tm_rank(marks: bytes, pos: integer, first: integer, stop: integer): integer do
+    middle = first+nc_half(stop-first)
+    if stop-first <= 0 do first else if nc_long(marks,middle*4) < pos do tm_rank(marks,pos,middle+1,stop) else tm_rank(marks,pos,first,middle) end end
+  end
+  # file:line of pos. files holds for each file where it starts, the
+  # length of its path and the path.
+  def tm_file(files: bytes, pos: integer, at: integer): integer do
+    next = at+6+nc_read(files,at+4)
+    if next >= Enum.count(files) do at else if nc_long(files,next) > pos do at else tm_file(files,pos,next) end end
+  end
+  def tm_where(source: bytes, marks: bytes, pos: integer): bytes do
+    files = nz_files(source)
+    at = tm_file(files,pos,0)
+    count = nc_units(Enum.count(marks),4)
+    line = 1+tm_rank(marks,pos,0,count)-tm_rank(marks,nc_long(files,at),0,count)
+    nc_join(ac_quoted(files,at+6,at+6+nc_read(files,at+4)),b[58],tm_digits(line))
+  end
+  # The setup blocks run before test i, as references, each before a comma.
+  def tm_refs_in(source: bytes, recs: bytes, canon: bytes, key: integer, first: integer, stop: integer): bytes do
+    i = nc_units(key,32)
+    if stop-first <= 0 do b[] else
+      if stop-first == 1 do if tm_applies(recs,canon,i,tm_setup(recs,canon,first),key-i*32-1) == 0 do b[] else nc_join(nc_join(b[38],tm_module_name(source),b[46,115,101,116,117,112,127]),tm_digits(tm_setup(recs,canon,first)),b[47,49,44,32]) end else
+        middle = first+nc_half(stop-first)
+        Enum.concat(tm_refs_in(source,recs,canon,key,first,middle),tm_refs_in(source,recs,canon,key,middle,stop))
+      end
+    end
+  end
+  def tm_refs(source: bytes, recs: bytes, canon: bytes, i: integer, d: integer): bytes do
+    if d > Enum.at(recs,i*26+6,0) do b[] else
+      Enum.concat(tm_refs_in(source,recs,canon,i*32+d+1,0,tm_setups(recs,canon)),tm_refs(source,recs,canon,i,d+1))
+    end
+  end
+  def tm_module_name(source: bytes): bytes do
+    start = nc_start(source,0)
+    name = nc_start(source,nc_end(source,start))
+    ac_text(source,name,tm_opening(source,name,64))
+  end
+  # A test of the first module as the runner takes it: its name with those
+  # of the describe blocks around it, where it stands, its tags, and the
+  # functions to call.
+  def tm_case(source: bytes, recs: bytes, canon: bytes, marks: bytes, i: integer): bytes do
+    name = tm_name(recs,i)
+    tags = nc_join(tm_module_tags(source,recs,0),tm_group_tags(source,recs,canon,tm_of(recs,i)),tm_tag_run(source,tm_tags(recs,i),tm_at(recs,i)))
+    first = nc_join(nc_join(b[123,34],tm_path(source,recs,tm_of(recs,i)),tm_inner(source,name+1,nc_end(source,name)-1)),b[34,44,32,34],tm_where(source,marks,tm_at(recs,i)))
+    second = nc_join(nc_join(nc_join(b[34,44,32,91,34,34],tags,b[93,44,32,91]),tm_refs(source,recs,canon,i,0),nc_join(b[38],tm_module_name(source),b[46,116,101,115,116,127])),tm_digits(i),b[47,49,93,125,44,10])
+    if tm_kind(recs,i) != 1 do b[] else if tm_module(recs,i) != 0 do b[] else Enum.concat(first,second) end end
+  end
+  def tm_cases(source: bytes, recs: bytes, canon: bytes, marks: bytes, first: integer, stop: integer): bytes do
+    if stop-first <= 0 do b[] else
+      if stop-first == 1 do tm_case(source,recs,canon,marks,first) else
+        middle = first+nc_half(stop-first)
+        Enum.concat(tm_cases(source,recs,canon,marks,first,middle),tm_cases(source,recs,canon,marks,middle,stop))
+      end
+    end
+  end
+  def tm_alls(source: bytes, recs: bytes, i: integer): bytes do
+    if i*26 >= Enum.count(recs) do b[] else
+      if tm_kind(recs,i) != 3 do tm_alls(source,recs,i+1) else if tm_module(recs,i) != 0 do tm_alls(source,recs,i+1) else
+        Enum.concat(nc_join(nc_join(b[38],tm_module_name(source),b[46,115,101,116,117,112,127]),tm_digits(i),b[47,49,44,32]),tm_alls(source,recs,i+1))
+      end end
+    end
+  end
+  # The module whose main runs the tests: a module of the library's kind, so
+  # that a trace shows nothing of it.
+  def tm_main(source: bytes, recs: bytes, canon: bytes): bytes do
+    count = nc_units(Enum.count(recs),26)
+    marks = nz_marks(source,0,Enum.count(source),10,10)
+    cases = Enum.concat(tm_cases(source,recs,canon,marks,0,count),tm_doc_cases(source,recs,canon,0))
+    nc_join(nc_join(b[10,100,101,102,109,111,100,117,108,101,32,65,108,99,104,101,109,127,84,80,114,111,99,101,115,115,32,100,111,32,105,109,112,111,114,116,32,34,109,111,100,117,108,101,58],tm_module_name(source),b[34,10,100,101,102,32,109,97,105,110,40,41,32,100,111,10,108,127,32,61,32,91,10]),cases,nc_join(nc_join(b[123,34,34,44,32,34,34,44,32,91,34,34,93,44,32,91,102,110,40,99,127,58,32,105,110,116,101,103,101,114,41,58,32,105,110,116,101,103,101,114,32,100,111,32,99,127,32,101,110,100,93,125,93,10,97,127,32,61,32,91],tm_alls(source,recs,0),b[102,110,40,99,127,58,32,105,110,116,101,103,101,114,41,58,32,105,110,116,101,103,101,114,32,100,111,32,99,127,32,101,110,100,93,10,84,101,115,116,105,110,103,46,95,114,117,110,40,34]),tm_module_name(source),b[34,44,32,108,127,44,32,97,127,41,10,101,110,100,10,101,110,100,10]))
+  end
+  # The program as it is compiled: b[0] as it is (it has no test), b[] for
+  # one that cannot be compiled, or 1, the length of the rewritten text, the
+  # text and its tail (mx_made).
+  def tm_prepare(given: bytes): bytes do
+    size = Enum.count(given)
+    if mx_raw(given,0,size,b[116,101,115,116]) == 0 do b[0] else
+      if ny_has(given,0,size,b[110,97,116,105,118,101,95,99,111,109,112,105,108,101]) == 1 do b[0] else tm_found(given,tm_walk(given,tm_cursor(0,0,3,nc_zeros(41)))) end
+    end
+  end
+  def tm_found(given: bytes, walked: bytes): bytes do
+    recs = nc_slice(walked,48,Enum.count(walked))
+    count = nc_units(Enum.count(recs),26)
+    tainted = if mx_raw(given,0,Enum.count(given),b[127]) == 0 do 0 else mx_tainted(given,0) end
+    if Enum.at(walked,6,0) != 1 do b[0] else if tm_any(recs,0,count,1)+tm_any(recs,0,count,6) == 0 do b[0] else
+      if tainted+tm_mained(given,nc_start(given,0),0) > 0 do b[] else if count > 60000 do b[] else tm_made(given,recs,Enum.concat(tm_canons(given,recs,0,b[]),tm_facts(given,recs))) end end
+    end end
+  end
+  # 1 when a function of the program is named main: a module with tests
+  # cannot define it.
+  def tm_mained(given: bytes, pos: integer, from: integer): integer do
+    hit = ac_seek(given,from,Enum.count(given),b[100,101,102,32,109,97,105,110,40])
+    if hit < 0 do 0 else if ac_leading(given,hit) == 1 do 1 else tm_mained(given,pos,hit+1) end end
+  end
+  def tm_made(given: bytes, recs: bytes, canon: bytes): bytes do
+    count = nc_units(Enum.count(recs),26)
+    first = tm_edit_start(recs,0)
+    pieces = nc_join(tm_src(0,first),tm_edits(given,recs,canon,0,count),tm_lit(tm_main(given,recs,canon),tm_at(recs,0)))
+    mx_made(given,pieces)
+  end
+
+  # The rewritten text is rewritten as any program is, and compiled.
+  def tm_then(tested: bytes): bytes do
+    size = nc_cursor(tested,1)
+    code = nc_slice(tested,4,4+size)
+    tm_after(code,nc_slice(tested,4+size,Enum.count(tested)),mx_prepare(code))
+  end
+  def tm_after(code: bytes, tail: bytes, made: bytes): bytes do
+    after = nc_slice(made,4,4+nc_cursor(made,1))
+    if Enum.count(made) == 0 do b[] else
+      if Enum.count(made) == 1 do nc_compile_with(code,ny_prelude(code),tail) else nc_compile_with(after,ny_prelude(after),tm_composed(nc_slice(made,4+nc_cursor(made,1),Enum.count(made)),tail,Enum.count(after))) end
+    end
+  end
+  # The tail of a text rewritten twice: the tables of the program as
+  # written, which the first tail holds, and moved records that turn a
+  # place of the second text back through the first to the program. A
+  # run of the second text that stood where it stood in the first is cut
+  # where the first's runs end.
+  def tm_composed(second: bytes, first: bytes, size: integer): bytes do
+    a = Enum.count(first)
+    b = Enum.count(second)
+    m1 = nc_slice(first,2,2+nc_long(first,a-20))
+    m2 = nc_slice(second,2,2+nc_long(second,b-20))
+    moved = tm_joined(m2,m1,size,0,nc_units(Enum.count(m2),16))
+    nc_join(nc_join(b[10,0],moved,nc_slice(first,2+Enum.count(m1),a-20)),nc_u32(Enum.count(moved)),nc_slice(first,a-16,a))
+  end
+  # The last record of moved that starts at or before pos.
+  def tm_seat(moved: bytes, pos: integer, first: integer, stop: integer): integer do
+    middle = first+nc_half(stop-first)
+    if stop-first <= 1 do first else if nc_long(moved,middle*16) <= pos do tm_seat(moved,pos,middle,stop) else tm_seat(moved,pos,first,middle) end end
+  end
+  # Where the place q of the first text stands in the program.
+  def tm_point(m1: bytes, q: integer): integer do
+    k = tm_seat(m1,q,0,nc_units(Enum.count(m1),16))
+    if Enum.at(m1,k*16+7,0) == 0 do nc_cursor(m1,k*16+4)+q-nc_long(m1,k*16) else nc_cursor(m1,k*16+4) end
+  end
+  def tm_moved(start: integer, place: integer, flag: integer, rest: bytes): bytes do
+    nc_join(nc_u32(start),Enum.concat(nc_u24(place),b[flag]),rest)
+  end
+  # A run of left bytes of the second text from s that stood from p on in
+  # the first, whose record k holds p.
+  def tm_span(m1: bytes, s: integer, p: integer, left: integer, k: integer): bytes do
+    flag = Enum.at(m1,k*16+7,0)
+    place = if flag == 0 do nc_cursor(m1,k*16+4)+p-nc_long(m1,k*16) else nc_cursor(m1,k*16+4) end
+    room = if (k+1)*16 >= Enum.count(m1) do left else nc_long(m1,k*16+16)-p end
+    one = tm_moved(s,place,flag,nc_slice(m1,k*16+8,k*16+16))
+    if left <= room do one else Enum.concat(one,tm_span(m1,s+room,p+room,left-room,k+1)) end
+  end
+  def tm_joined(m2: bytes, m1: bytes, size: integer, first: integer, stop: integer): bytes do
+    s = nc_long(m2,first*16)
+    place = nc_cursor(m2,first*16+4)
+    flag = Enum.at(m2,first*16+7,0)
+    e = if (first+1)*16 >= Enum.count(m2) do size else nc_long(m2,first*16+16) end
+    named = nc_long(m2,first*16+8)
+    file = if flag >= 64 do if flag < 128 do nc_slice(m2,first*16+8,first*16+12) else if flag >= 192 do nc_slice(m2,first*16+8,first*16+12) else if nc_read(m2,first*16+8)+nc_read(m2,first*16+10) == 131070 do b[255,255,255,255] else nc_u32(tm_point(m1,named)) end end end else b[255,255,255,255] end
+    if stop-first <= 0 do b[] else
+      if stop-first == 1 do
+        if flag == 0 do tm_span(m1,s,place,e-s,tm_seat(m1,place,0,nc_units(Enum.count(m1),16))) else tm_moved(s,tm_point(m1,place),flag,Enum.concat(file,nc_slice(m2,first*16+12,first*16+16))) end
+      else
+        middle = first+nc_half(stop-first)
+        Enum.concat(tm_joined(m2,m1,size,first,middle),tm_joined(m2,m1,size,middle,stop))
+      end
+    end
+  end
+  # What the rewritten text asks of the compiler, as T.name(a, b) with a
+  # byte 127 after the T, which no program can write:
+  #   T.__like(word, value)  the word as a value of the value's type, which
+  #                          is a context (anything but nothing and {})
+  #   T.__next(value, f)     the value, with the type f gives when f gives a
+  #                          context; f takes the value
+  #   T.__with(value, f)     the same, for a value that is a context
+  #   T.__as(a, b)           b, with the type both have
+  # Only the first argument's code is kept (the second's for __as).
+  def tm_gives(kind: bytes): bytes do
+    if nt_tag(kind) != 10 do b[] else nt_child(kind,nt_count(kind)) end
+  end
+  def tm_provides(kind: bytes): integer do
+    if Enum.count(kind) == 0 do 0 else if nt_tag(kind) == 12 do 0 else if nt_tag(kind) == 5 do if nt_count(kind) == 0 do 0 else 1 end else 1 end end end
+  end
+  def tm_intrinsic(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    name = nc_start(source,nc_expect(source,nc_end(source,pos),b[46]))
+    paren = nc_expect(source,nc_end(source,name),b[40])
+    first = if paren < 0 do b[] else nc_expression(source,paren,env,table,depth) end
+    comma = if nc_pos(first) < 0 do 0-1 else nc_expect(source,nc_pos(first),b[44]) end
+    tm_second(source,Enum.concat(nc_u24(name),first),if comma < 0 do b[] else if nc_word(source,comma,b[102,110]) == 1 do nf_inferred(source,nc_start(source,comma),env,table,depth,Enum.concat(nt_cell(nc_kind(first)),b[1,9])) else nc_expression(source,comma,env,table,depth) end end)
+  end
+  def tm_second(source: bytes, held: bytes, second: bytes): bytes do
+    name = nc_cursor(held,0)
+    first = nc_slice(held,3,Enum.count(held))
+    close = if nc_pos(second) < 0 do 0-1 else nc_expect(source,nc_pos(second),b[41]) end
+    given = tm_gives(nc_kind(second))
+    kept = if tm_provides(given) == 0 do nc_kind(first) else given end
+    if close < 0 do b[] else
+      if nc_word(source,name,b[95,95,108,105,107,101]) == 1 do if tm_provides(nc_kind(second)) == 0 do b[] else nc_value(close,nc_code(first),nc_kind(second)) end else
+        if nc_word(source,name,b[95,95,110,101,120,116]) == 1 do nc_value(close,nc_code(first),kept) else
+          if nc_word(source,name,b[95,95,119,105,116,104]) == 1 do if tm_provides(nc_kind(first)) == 0 do b[] else nc_value(close,nc_code(first),kept) end else
+            if nc_word(source,name,b[95,95,97,115]) == 1 do nc_value(close,nc_code(second),nt_merge(nc_kind(first),nc_kind(second))) else b[] end
+          end
+        end
+      end
+    end
+  end
+  # 1 for a function the rewriting made of a test (1) or a setup block (2).
+  def tm_ours(source: bytes, name: integer): integer do
+    if nc_word_at(source,name,b[116,101,115,116,127],0) == 1 do 1 else if nc_word_at(source,name,b[115,101,116,117,112,127],0) == 1 do 2 else 0 end end
+  end
+  # Such a function gives the word of what its body ends in, or the word it
+  # was given when the body ends in nothing or in {}.
+  def tm_tail(body: bytes): bytes do
+    if tm_provides(nc_kind(body)) == 1 do b[] else nc_slot(b[72,139,69],0) end
+  end
+  # The name a trace shows: test and the test's name, or setup.
+  def tm_shown(source: bytes, name: integer, stop: integer): bytes do
+    if tm_ours(source,name) == 2 do b[115,101,116,117,112] else Enum.concat(b[116,101,115,116,32],tm_unhex(source,stop+27)) end
+  end
+  # The source of an assertion, as the pinned compiler writes it into the
+  # message of one that fails in a test (its formatExpr over what it
+  # analysed): operators spaced, the parentheses precedence needs and no
+  # others, a function of the module under the module's name, a constant as
+  # its value, strings as Go quotes them. The text is the inside of a
+  # string literal of this language: a float is written by the program as
+  # it runs (#{inspect(1.50)}), which is what the pinned compiler prints.
+  # b[255] stands for an expression it prints nothing for: one that holds a
+  # fn, an if, case or for, an option or result, a long list, a heredoc.
+  def tm_no(): bytes do b[255] end
+  def tm_bad(text: bytes): integer do if Enum.at(text,0,0) == 255 do 1 else 0 end end
+  def tm_cat(a: bytes, b: bytes, c: bytes): bytes do
+    if tm_bad(a)+tm_bad(b)+tm_bad(c) > 0 do b[255] else nc_join(a,b,c) end
+  end
+  # Text of the program as the inside of a string literal.
+  def tm_esc(text: bytes, first: integer, stop: integer): bytes do
+    value = Enum.at(text,first,0)
+    if stop-first > 1 do
+      middle = first+nc_half(stop-first)
+      Enum.concat(tm_esc(text,first,middle),tm_esc(text,middle,stop))
+    else if stop <= first do b[] else if (value-34)*(value-92)*(value-35) == 0 do b[92,value] else b[value] end end end
+  end
+  def tm_raw(source: bytes, first: integer, stop: integer): bytes do
+    tm_esc(nc_slice(source,first,stop),0,stop-first)
+  end
+  # How long the operator or punctuation at pos is.
+  def tm_plen(source: bytes, pos: integer): integer do
+    a = byte_at(source,pos)
+    b = byte_at(source,pos+1)
+    c = byte_at(source,pos+2)
+    three = if a != b do 0 else if b != c do 0 else if (a-124)*(a-38)*(a-94)*(a-60)*(a-62)*(a-126) == 0 do 1 else 0 end end end
+    same = if a != b do 0 else if nc_and((a-61)*(a-43)*(a-45)*(a-46),(a-42)*(a-47)*(a-58)*(a-92)) == 0 do 1 else 0 end end
+    pair = a*256+b
+    two = if nc_and(nc_and((pair-8509)*(pair-15421)*(pair-15933),(pair-15742)*(pair-31806)*(pair-15422)),(pair-15678)*(pair-11582)*(pair-15405)) == 0 do 1 else 0 end
+    if three == 1 do 3 else if same+two > 0 do 2 else 1 end end
+  end
+  # Where the token at start ends.
+  def tm_next(source: bytes, start: integer): integer do
+    value = byte_at(source,start)
+    kind = classify_ascii(value)
+    if (value-40)*(value-41)*(value-91)*(value-93)*(value-123)*(value-125) == 0 do start+1 else
+      if (kind-2)*(kind-3) == 0 do nc_end(source,start) else if value == 34 do nc_end(source,start) else if value == 126 do if tm_plen(source,start) == 3 do start+3 else nc_end(source,start) end else start+tm_plen(source,start) end end end
+    end
+  end
+  # How deep the token at start leaves what follows it.
+  def tm_deeper(source: bytes, start: integer, depth: integer): integer do
+    value = byte_at(source,start)
+    if (value-40)*(value-91)*(value-123) == 0 do depth+1 else if (value-41)*(value-93)*(value-125) == 0 do depth-1 else
+      if nc_opens(source,start)+nc_word(source,start,b[102,110]) > 0 do depth+1 else if nc_word(source,start,b[101,110,100]) == 1 do depth-1 else depth end end
+    end end
+  end
+  # The position after what closes the bracket at open; -1 for none before stop.
+  def tm_match(source: bytes, open: integer, stop: integer): integer do
+    tm_closing(source,open+1,stop,1)
+  end
+  def tm_closing(source: bytes, pos: integer, stop: integer, depth: integer): integer do
+    start = nc_start(source,pos)
+    next = tm_deeper(source,start,depth)
+    if start < 0 do 0-1 else if start >= stop do 0-1 else
+      if next == 0 do start+1 else tm_closing(source,tm_next(source,start),stop,next) end
+    end end
+  end
+  # The first place from pos up to stop, outside every bracket and block,
+  # of a comma (what 1), a bar (2), => (3), // (4), / (5), the do of a
+  # block (6) or <- (7); stop for none.
+  def tm_find(source: bytes, pos: integer, stop: integer, what: integer, depth: integer): integer do
+    start = nc_start(source,pos)
+    value = byte_at(source,start)
+    size = tm_plen(source,start)
+    pair = value*256+byte_at(source,start+1)
+    single = if size == 1 do value else 0 end
+    hit = if what == 1 do if value == 44 do 1 else 0 end else if what == 2 do if single == 124 do 1 else 0 end else if what == 3 do if pair == 15678 do 1 else 0 end else if what == 4 do if pair == 12079 do 1 else 0 end else if what == 5 do if single == 47 do 1 else 0 end else if what == 6 do nc_opens(source,start) else if pair == 15405 do 1 else 0 end end end end end end end
+    if start < 0 do stop else if start >= stop do stop else
+      if depth == 0 do if hit == 1 do start else tm_find(source,tm_next(source,start),stop,what,tm_deeper(source,start,depth)) end else tm_find(source,tm_next(source,start),stop,what,tm_deeper(source,start,depth)) end
+    end end
+  end
+  # The precedence of the binary operator at start, 0 for none.
+  def tm_prec(source: bytes, start: integer): integer do
+    a = byte_at(source,start)
+    size = tm_plen(source,start)
+    pair = a*256+byte_at(source,start+1)
+    if classify_ascii(a) == 2 do
+      if nc_word(source,start,b[111,114]) == 1 do 1 else if nc_word(source,start,b[97,110,100]) == 1 do 2 else if nc_word(source,start,b[105,110]) == 1 do 3 else 0 end end end
+    else
+      if size == 3 do if (a-124)*(a-94) == 0 do 1 else if a == 38 do 2 else 4 end end else
+        if size == 2 do
+          if nc_and(nc_and((pair-15677)*(pair-8509),(pair-15421)*(pair-15933)),pair-15742) == 0 do 3 else if pair == 31806 do 4 else if nc_and((pair-15422)*(pair-11051),(pair-11565)*(pair-11822)) == 0 do 5 else if pair == 10794 do 8 else 0 end end end end
+        else
+          if (a-60)*(a-62) == 0 do 3 else if (a-43)*(a-45) == 0 do 6 else if (a-42)*(a-47)*(a-37) == 0 do 7 else 0 end end end
+        end
+      end
+    end
+  end
+  # The operator an expression is split at: the loosest outside brackets,
+  # the last of several alike (the first for **). A state is how deep the
+  # scan is, 1 after an operand, the precedence found (0 none, 99 a form
+  # that is not printed), where the operator starts and ends.
+  def tm_scan(source: bytes, pos: integer, stop: integer, st: bytes): bytes do
+    start = nc_start(source,pos)
+    # &name/2 is one operand.
+    refer = if byte_at(source,start) != 38 do 0 else if Enum.at(st,0,0)+Enum.at(st,1,0) > 0 do 0 else if tm_plen(source,start) != 1 do 0 else if classify_ascii(byte_at(source,nc_start(source,start+1))) == 2 do 1 else 0 end end end end
+    slash = if refer == 0 do 0 else tm_find(source,start+1,stop,5,0) end
+    if start < 0 do st else if start >= stop do st else
+      if refer == 0 do tm_scan(source,tm_next(source,start),stop,tm_seen(source,start,st)) else
+        if slash >= stop do st else tm_scan(source,nc_end(source,slash+1),stop,Enum.concat(b[0,1],nc_slice(st,2,9))) end
+      end
+    end end
+  end
+  def tm_seen(source: bytes, start: integer, st: bytes): bytes do
+    depth = Enum.at(st,0,0)
+    value = byte_at(source,start)
+    kind = classify_ascii(value)
+    next = tm_deeper(source,start,depth)
+    prec = if Enum.at(st,1,0) == 0 do 0 else tm_prec(source,start) end
+    best = Enum.at(st,2,0)
+    better = if prec == 0 do 0 else if best == 99 do 0 else if best == 0 do 1 else if prec < best do 1 else if prec > best do 0 else if prec == 8 do 0 else 1 end end end end end end
+    block = nc_word(source,start,b[105,102])+nc_word(source,start,b[99,97,115,101])+nc_word(source,start,b[99,111,110,100])+nc_word(source,start,b[116,114,121])+nc_word(source,start,b[102,111,114])+nc_word(source,start,b[119,105,116,104])+nc_word(source,start,b[117,110,108,101,115,115])+nc_word(source,start,b[114,101,99,101,105,118,101])+nc_word(source,start,b[102,110])+nc_word(source,start,b[113,117,111,116,101])
+    operand = if prec > 0 do 0 else if (kind-2)*(kind-3) == 0 do if nc_word(source,start,b[110,111,116]) == 1 do 0 else 1 end else if value == 126 do if tm_plen(source,start) == 3 do 0 else 1 end else if (value-34)*(value-41)*(value-93)*(value-125) == 0 do 1 else 0 end end end end
+    if depth > 0 do Enum.concat(b[next,if next == 0 do 1 else 0 end],nc_slice(st,2,9)) else
+      if block > 0 do Enum.concat(b[next,0,99],nc_slice(st,3,9)) else
+        if better == 1 do nc_join(b[next,0,prec],nc_u24(start),nc_u24(tm_next(source,start))) else Enum.concat(b[next,operand],nc_slice(st,2,9)) end
+      end
+    end
+  end
+  def tm_blank(): bytes do b[0,0,0,0,0,0,0,0,0] end
+  # An expression from a up to b, in parentheses when it binds looser than least.
+  def tm_fmt(source: bytes, a: integer, b: integer, least: integer): bytes do
+    s = nc_start(source,a)
+    e = nz_before(source,b-1)+1
+    if s < 0 do tm_no() else if s >= e do tm_no() else
+      if byte_at(source,s) == 40 do
+        if tm_match(source,s,e) == e do tm_fmt(source,s+1,e-1,least) else tm_shaped(source,Enum.concat(nc_u24(s),nc_u24(e)),least,tm_scan(source,s,e,tm_blank())) end
+      else tm_shaped(source,Enum.concat(nc_u24(s),nc_u24(e)),least,tm_scan(source,s,e,tm_blank())) end
+    end end
+  end
+  def tm_shaped(source: bytes, span: bytes, least: integer, st: bytes): bytes do
+    s = nc_cursor(span,0)
+    e = nc_cursor(span,3)
+    prec = Enum.at(st,2,0)
+    if prec == 99 do tm_no() else if prec == 0 do tm_unary(source,s,e,least) else
+      text = tm_binary(source,span,st)
+      if tm_bad(text) == 1 do text else if tm_called(source,nc_cursor(st,3)) == 1 do text else if prec < least do nc_join(b[40],text,b[41]) else text end end end
+    end end
+  end
+  # 1 for an operator that is written as a call: the bitwise ones and =~.
+  def tm_called(source: bytes, p: integer): integer do
+    a = byte_at(source,p)
+    if tm_plen(source,p) == 3 do 1 else if a*256+byte_at(source,p+1) == 15742 do 1 else 0 end end
+  end
+  # 1 when the expression is an or, 2 when it is an and, under its parentheses.
+  def tm_root(source: bytes, a: integer, b: integer): integer do
+    s = nc_start(source,a)
+    e = nz_before(source,b-1)+1
+    st = if s < 0 do tm_blank() else if s >= e do tm_blank() else tm_scan(source,s,e,tm_blank()) end end
+    p = nc_cursor(st,3)
+    whole = if byte_at(source,s) != 40 do 0 else if tm_match(source,s,e) == e do 1 else 0 end end
+    if whole == 1 do tm_root(source,s+1,e-1) else
+      if Enum.at(st,2,0) > 2 do 0 else if nc_word(source,p,b[111,114]) == 1 do 1 else if nc_word(source,p,b[97,110,100]) == 1 do 2 else 0 end end end
+    end
+  end
+  def tm_binary(source: bytes, span: bytes, st: bytes): bytes do
+    s = nc_cursor(span,0)
+    e = nc_cursor(span,3)
+    p = nc_cursor(st,3)
+    q = nc_cursor(st,6)
+    prec = Enum.at(st,2,0)
+    a = byte_at(source,p)
+    pair = a*256+byte_at(source,p+1)
+    if tm_plen(source,p) == 3 do
+      tm_cat(nc_join(b[66,105,116,119,105,115,101,46],if a == 124 do b[98,111,114] else if a == 38 do b[98,97,110,100] else if a == 94 do b[98,120,111,114] else if a == 60 do b[98,115,108] else b[98,115,114] end end end end,b[40]),tm_cat(tm_fmt(source,s,p,0),b[44,32],tm_fmt(source,q,e,0)),b[41])
+    else
+      if pair == 15742 do tm_cat(b[83,116,114,105,110,103,46,109,97,116,99,104,63,40],tm_cat(tm_fmt(source,s,p,0),b[44,32],tm_fmt(source,q,e,0)),b[41]) else
+        if pair == 11822 do tm_cat(tm_fmt(source,s,p,5),b[46,46],tm_range(source,q,e)) else tm_sided(source,span,st,tm_root(source,s,p)*4+tm_root(source,q,e)) end
+      end
+    end
+  end
+  def tm_range(source: bytes, q: integer, e: integer): bytes do
+    slash = tm_find(source,q,e,4,0)
+    if slash >= e do tm_fmt(source,q,e,6) else tm_cat(tm_fmt(source,q,slash,6),b[47,47],tm_fmt(source,slash+2,e,6)) end
+  end
+  # roots: what the two sides are (tm_root), the left times four.
+  def tm_sided(source: bytes, span: bytes, st: bytes, roots: integer): bytes do
+    p = nc_cursor(st,3)
+    q = nc_cursor(st,6)
+    prec = Enum.at(st,2,0)
+    mine = if prec > 2 do 0 else if classify_ascii(byte_at(source,p)) != 2 do 0 else prec end end
+    left = nc_units(roots,4)
+    right = roots-left*4
+    low = if mine == 0 do if prec == 3 do 4 else if prec == 8 do 9 else prec end end else if left == 0 do prec else if left == mine do prec else 100 end end end
+    high = if mine == 0 do if prec == 3 do 4 else if prec == 8 do 8 else prec+1 end end else if right == 0 do prec+1 else if right == mine do prec+1 else 100 end end end
+    tm_cat(tm_fmt(source,nc_cursor(span,0),p,low),nc_join(b[32],tm_raw(source,p,q),b[32]),tm_fmt(source,q,nc_cursor(span,3),high))
+  end
+  def tm_floaty(source: bytes, s: integer, te: integer): integer do
+    if byte_at(source,s)*256+byte_at(source,s+1) == 12408 do 0 else mx_raw(source,s,te,b[46])+mx_raw(source,s,te,b[101])+mx_raw(source,s,te,b[69]) end
+  end
+  # A float is written by the program as it runs, but one from 0.00001 up
+  # to 0.0001, which inspect writes with an exponent and the pinned
+  # compiler's source text without: its digits after 0.0000.
+  def tm_figures(source: bytes, pos: integer, stop: integer, seen: integer): bytes do
+    value = byte_at(source,pos)
+    if pos >= stop do b[] else if (value-101)*(value-69) == 0 do b[] else
+      if is_digit(value) == 0 do tm_figures(source,pos+1,stop,seen) else if seen+value == 48 do tm_figures(source,pos+1,stop,0) else Enum.concat(b[value],tm_figures(source,pos+1,stop,1)) end end
+    end end
+  end
+  def tm_trimmed(text: bytes): bytes do
+    size = Enum.count(text)
+    if size == 0 do text else if Enum.at(text,size-1,0) == 48 do tm_trimmed(nc_slice(text,0,size-1)) else text end end
+  end
+  # The power of ten of the first figure, plus one: 123.4 is 3, 0.001 is -2.
+  def tm_expo(source: bytes, pos: integer, stop: integer): integer do
+    if pos >= stop do stop else if (byte_at(source,pos)-101)*(byte_at(source,pos)-69) == 0 do pos else tm_expo(source,pos+1,stop) end end
+  end
+  def tm_ints(source: bytes, pos: integer, stop: integer, count: integer): integer do
+    value = byte_at(source,pos)
+    if pos >= stop do count else if value == 46 do count else
+      if is_digit(value) == 0 do tm_ints(source,pos+1,stop,count) else if count+value == 48 do tm_ints(source,pos+1,stop,0) else tm_ints(source,pos+1,stop,count+1) end end
+    end end
+  end
+  def tm_zeros(source: bytes, pos: integer, stop: integer, count: integer): integer do
+    value = byte_at(source,pos)
+    if pos >= stop do 9999 else if value == 48 do tm_zeros(source,pos+1,stop,count+1) else if is_digit(value) == 0 do tm_zeros(source,pos+1,stop,count) else count end end end
+  end
+  def tm_scale(source: bytes, s: integer, te: integer): integer do
+    x = tm_expo(source,s,te)
+    ints = tm_ints(source,s,x,0)
+    dot = ac_seek(source,s,x,b[46])
+    zeros = if dot < 0 do 9999 else tm_zeros(source,dot+1,x,0) end
+    sign = byte_at(source,x+1)
+    power = if x >= te do 0 else if sign == 45 do 0-tm_value(source,x+2,te,10,0) else tm_value(source,x+1,te,10,0) end end
+    if ints > 0 do ints+power else if zeros >= 9999 do 9999 else power-zeros end end
+  end
+  def tm_float(source: bytes, s: integer, te: integer): bytes do
+    if tm_scale(source,s,te) == 0-4 do Enum.concat(b[48,46,48,48,48,48],tm_trimmed(tm_figures(source,s,te,0))) else nc_join(b[35,123,105,110,115,112,101,99,116,40],nc_slice(source,s,te),b[41,125]) end
+  end
+  # An integer literal as a decimal number.
+  def tm_value(source: bytes, pos: integer, stop: integer, base: integer, value: integer): integer do
+    digit = tm_digit(byte_at(source,pos))
+    if pos >= stop do value else if digit < 0 do tm_value(source,pos+1,stop,base,value) else tm_value(source,pos+1,stop,base,value*base+digit) end end
+  end
+  def tm_decimal(source: bytes, s: integer, te: integer): bytes do
+    pair = byte_at(source,s)*256+byte_at(source,s+1)
+    if pair == 12408 do tm_digits(tm_value(source,s+2,te,16,0)) else if pair == 12386 do tm_digits(tm_value(source,s+2,te,2,0)) else if pair == 12399 do tm_digits(tm_value(source,s+2,te,8,0)) else tm_digits(tm_value(source,s,te,10,0)) end end end
+  end
+  def tm_unary(source: bytes, s: integer, e: integer, least: integer): bytes do
+    value = byte_at(source,s)
+    after = nc_start(source,s+1)
+    whole = if is_digit(byte_at(source,after)) == 0 do 0 else if nc_end(source,after) == e do 1 else 0 end end
+    core = tm_core(source,s+1,e)
+    inner = nc_cursor(core,0)
+    single = if is_digit(byte_at(source,inner)) == 0 do 0 else if nc_end(source,inner) == nc_cursor(core,3) do 1 else 0 end end
+    if nc_word(source,s,b[110,111,116]) == 1 do tm_cat(b[110,111,116,32],tm_fmt(source,nc_end(source,s),e,100),b[]) else
+      if value == 45 do
+        if single == 0 do tm_cat(b[45],tm_fmt(source,s+1,e,100),b[]) else
+          if tm_floaty(source,inner,nc_cursor(core,3)) == 0 do Enum.concat(b[45],tm_decimal(source,inner,nc_cursor(core,3))) else
+            if whole == 1 do nc_join(b[35,123,105,110,115,112,101,99,116,40,45],nc_slice(source,inner,e),b[41,125]) else nc_join(b[45,40,35,123,105,110,115,112,101,99,116,40],nc_slice(source,inner,nc_cursor(core,3)),b[41,125,41]) end
+          end
+        end
+      else
+        if value == 126 do if tm_plen(source,s) == 1 do tm_valued(source,s,e,least) else tm_cat(b[66,105,116,119,105,115,101,46,98,110,111,116,40],tm_fmt(source,s+3,e,0),b[41]) end else
+          if value == 38 do tm_refer(source,after,e) else tm_valued(source,s,e,least) end
+        end
+      end
+    end
+  end
+  # The expression under its parentheses: where it starts and ends.
+  def tm_core(source: bytes, a: integer, b: integer): bytes do
+    s = nc_start(source,a)
+    e = nz_before(source,b-1)+1
+    if s < 0 do Enum.concat(nc_u24(a),nc_u24(a)) else if s >= e do Enum.concat(nc_u24(a),nc_u24(a)) else
+      if byte_at(source,s) != 40 do Enum.concat(nc_u24(s),nc_u24(e)) else if tm_match(source,s,e) == e do tm_core(source,s+1,e-1) else Enum.concat(nc_u24(s),nc_u24(e)) end end
+    end end
+  end
+  # &name/2 and &Module.name/2.
+  def tm_refer(source: bytes, name: integer, e: integer): bytes do
+    slash = tm_find(source,name,e,5,0)
+    stop = nz_before(source,slash-1)+1
+    dotted = mx_raw(source,name,stop,b[46])
+    if classify_ascii(byte_at(source,name)) != 2 do tm_no() else if slash >= e do tm_no() else
+      nc_join(nc_join(b[38],if dotted == 0 do tm_owned(source,name,stop) else b[] end,tm_raw(source,name,stop)),b[47],tm_raw(source,nc_start(source,slash+1),e))
+    end end
+  end
+  # Where the defmodule of the module that pos stands in is. The text of
+  # a macro's call, which is put after the program (tm_coded), follows a
+  # line that says where the module of its assertion starts: byte 127, the
+  # position in digits and byte 127.
+  def tm_home(source: bytes, pos: integer): integer do
+    noted = tm_home_last(source,pos,b[10,127],0,0-1)
+    if noted < 0 do tm_home_last(source,pos,b[100,101,102,109,111,100,117,108,101,32],0,0) else tm_home_number(source,noted+2,0) end
+  end
+  # The last place before pos where word stands (a defmodule only at the
+  # start of its line), from from on; least when it stands nowhere.
+  def tm_home_last(source: bytes, pos: integer, word: bytes, from: integer, least: integer): integer do
+    hit = ac_seek(source,from,pos,word)
+    if hit < 0 do least else tm_home_last(source,pos,word,hit+1,if Enum.at(word,0,0) == 10 do hit else if ac_leading(source,hit) == 1 do hit else least end end) end
+  end
+  def tm_home_number(source: bytes, pos: integer, value: integer): integer do
+    if is_digit(byte_at(source,pos)) == 0 do value else tm_home_number(source,pos+1,value*10+byte_at(source,pos)-48) end
+  end
+  # Where the module whose defmodule is at home ends: the next defmodule
+  # at the start of a line, a note of tm_coded, or the end of the text.
+  def tm_home_end(source: bytes, home: integer, from: integer): integer do
+    size = Enum.count(source)
+    noted = ac_seek(source,home,size,b[10,127])
+    hit = ac_seek(source,from,size,b[100,101,102,109,111,100,117,108,101,32])
+    if hit < 0 do if noted < 0 do size else noted end else if noted >= 0 do if noted < hit do noted else if ac_leading(source,hit) == 1 do hit else tm_home_end(source,home,hit+1) end end else if ac_leading(source,hit) == 1 do hit else tm_home_end(source,home,hit+1) end end end
+  end
+  # The name of the module whose defmodule is at home.
+  def tm_home_name(source: bytes, home: integer): bytes do
+    name = nc_start(source,nc_end(source,nc_start(source,home)))
+    ac_text(source,name,tm_opening(source,name,64))
+  end
+  # Module and a dot before the name of a function the module the name
+  # stands in defines.
+  def tm_owned(source: bytes, name: integer, stop: integer): bytes do
+    text = nc_slice(source,name,stop)
+    home = tm_home(source,name)
+    last = tm_home_end(source,home,home+1)
+    if mx_raw(source,home,last,nc_join(b[100,101,102,32],text,b[40]))+mx_raw(source,home,last,nc_join(b[100,101,102,112,32],text,b[40])) == 0 do b[] else Enum.concat(tm_home_name(source,home),b[46]) end
+  end
+  # A value and what is asked of it: .name, (arguments), [index].
+  def tm_valued(source: bytes, s: integer, e: integer, least: integer): bytes do
+    made = tm_primary(source,s,e)
+    constant = if byte_at(source,s) != 64 do 0 else if nc_end(source,s+1) >= e do 1 else 0 end end
+    if constant == 1 do tm_constant(source,s+1,e,least) else
+      if Enum.at(made,3,0) == 255 do tm_no() else tm_post(source,nc_cursor(made,0),e,nc_slice(made,3,Enum.count(made))) end
+    end
+  end
+  def tm_post(source: bytes, pos: integer, e: integer, text: bytes): bytes do
+    p = nc_start(source,pos)
+    value = byte_at(source,p)
+    close = if (value-40)*(value-91) == 0 do tm_match(source,p,e) else 0-1 end
+    name = nc_start(source,p+1)
+    if p < 0 do text else if p >= e do text else
+      if value == 46 do tm_post(source,nc_end(source,name),e,nc_join(text,b[46],tm_raw(source,name,nc_end(source,name)))) else
+        if close < 0 do tm_no() else
+          if value == 40 do tm_post(source,close,e,tm_cat(text,b[40],Enum.concat(tm_list(source,p+1,close-1),b[41]))) else tm_post(source,close,e,tm_cat(text,b[91],Enum.concat(tm_fmt(source,p+1,close-1,0),b[93]))) end
+        end
+      end
+    end end
+  end
+  # The items between brackets, after commas; name: value stays as written.
+  def tm_list(source: bytes, a: integer, b: integer): bytes do
+    s = nc_start(source,a)
+    comma = tm_find(source,a,b,1,0)
+    one = tm_item(source,a,comma)
+    if s < 0 do b[] else if s >= b do b[] else
+      if comma >= b do one else tm_cat(one,b[44,32],tm_list(source,comma+1,b)) end
+    end end
+  end
+  def tm_item(source: bytes, a: integer, b: integer): bytes do
+    s = nc_start(source,a)
+    stop = nc_end(source,s)
+    keyed = if classify_ascii(byte_at(source,s)) != 2 do 0 else if byte_at(source,stop) != 58 do 0 else if byte_at(source,stop+1) == 58 do 0 else 1 end end end
+    arrow = tm_find(source,a,b,3,0)
+    if keyed == 1 do tm_cat(tm_raw(source,s,stop),b[58,32],tm_fmt(source,stop+1,b,0)) else
+      if arrow < b do tm_cat(tm_fmt(source,a,arrow,0),b[32,61,62,32],tm_fmt(source,arrow+2,b,0)) else tm_fmt(source,a,b,0) end
+    end
+  end
+  def tm_items(source: bytes, a: integer, b: integer): integer do
+    comma = tm_find(source,a,b,1,0)
+    if nc_start(source,a) >= b do 0 else if comma >= b do 1 else 1+tm_items(source,comma+1,b) end end
+  end
+  # A value: where it ends, then its text (255 for none).
+  def tm_primary(source: bytes, s: integer, e: integer): bytes do
+    value = byte_at(source,s)
+    kind = classify_ascii(value)
+    close = if (value-40)*(value-91)*(value-123) == 0 do tm_match(source,s,e) else 0-1 end
+    te = if (kind-2)*(kind-3) == 0 do nc_end(source,s) else if (value-34)*(value-126) == 0 do nc_end(source,s) else s+1 end end
+    if (value-40)*(value-91)*(value-123) == 0 do
+      if close < 0 do b[0,0,0,255] else Enum.concat(nc_u24(close),tm_bracket(source,s,close)) end
+    else
+      if kind == 3 do Enum.concat(nc_u24(te),if tm_floaty(source,s,te) == 0 do tm_raw(source,s,te) else tm_float(source,s,te) end) else
+        if value == 34 do Enum.concat(nc_u24(te),tm_cat(b[92,34],if byte_at(source,s+1)*256+byte_at(source,s+2) == 8738 do tm_heredoc(source,nz_line_end(source,s)+1,te-3,tm_indent(source,te-4,0)) else tm_string(source,s+1,te-1) end,b[92,34])) else
+          if value == 126 do Enum.concat(nc_u24(te),tm_sigil(source,s,te)) else tm_named(source,s,e) end
+        end
+      end
+    end
+  end
+  def tm_bracket(source: bytes, s: integer, close: integer): bytes do
+    value = byte_at(source,s)
+    bar = tm_find(source,s+1,close-1,2,0)
+    items = tm_list(source,s+1,bar)
+    whole = if bar >= close-1 do items else tm_cat(items,b[32,124,32],tm_fmt(source,bar+1,close-1,0)) end
+    if value == 40 do tm_fmt(source,s+1,close-1,100) else
+      if value == 123 do tm_cat(b[123],items,b[125]) else
+        if tm_bad(whole) == 1 do whole else if tm_items(source,s+1,close-1) < 2 do nc_join(b[91],whole,b[93]) else if zf_shown(whole,0,Enum.count(whole)) > 96 do tm_no() else nc_join(b[91],whole,b[93]) end end end
+      end
+    end
+  end
+  def tm_named(source: bytes, s: integer, e: integer): bytes do
+    value = byte_at(source,s)
+    te = nc_end(source,s)
+    atom = if value != 58 do 0 else if byte_at(source,s+1) == 34 do nc_end(source,s+1) else nc_end(source,s+1) end end
+    call = if byte_at(source,te) == 40 do 1 else 0 end
+    wrapped = nc_word(source,s,b[115,111,109,101])+nc_word(source,s,b[110,111,110,101])+nc_word(source,s,b[111,107])+nc_word(source,s,b[101,114,114,111,114])
+    if value == 58 do Enum.concat(nc_u24(atom),tm_raw(source,s,atom)) else
+      if value == 64 do Enum.concat(nc_u24(nc_end(source,s+1)),tm_constant(source,s+1,nc_end(source,s+1),100)) else
+        if value == 37 do tm_struct(source,s,e) else
+          if classify_ascii(value) != 2 do b[0,0,0,255] else if wrapped > 0 do b[0,0,0,255] else
+            Enum.concat(nc_u24(te),Enum.concat(if call == 0 do b[] else if (value-65)*(90-value) >= 0 do b[] else tm_owned(source,s,te) end end,tm_raw(source,s,te)))
+          end end
+        end
+      end
+    end
+  end
+  # %{key => value} and %Name{field: value}, the name under its module.
+  def tm_struct(source: bytes, s: integer, e: integer): bytes do
+    brace = tm_brace(source,s+1,e)
+    close = if brace < 0 do 0-1 else tm_match(source,brace,e) end
+    bar = tm_find(source,brace+1,close-1,2,0)
+    name = nc_slice(source,s+1,brace)
+    home = tm_home(source,s)
+    last = tm_home_end(source,home,home+1)
+    # A struct the module declares, with type parameters or without.
+    owned = if mx_raw(source,s+1,brace,b[46]) == 1 do b[] else if mx_raw(source,home,last,nc_join(b[115,116,114,117,99,116,32],name,b[32,100,111]))+mx_raw(source,home,last,nc_join(b[115,116,114,117,99,116,32],name,b[91])) == 0 do b[] else Enum.concat(tm_home_name(source,home),b[46]) end end
+    fields = tm_list(source,if bar >= close-1 do brace+1 else bar+1 end,close-1)
+    base = if bar >= close-1 do b[] else tm_cat(tm_fmt(source,brace+1,bar,0),b[32,124,32],b[]) end
+    if close < 0 do b[0,0,0,255] else Enum.concat(nc_u24(close),tm_cat(nc_join(b[37],owned,name),tm_cat(b[123],base,fields),b[125])) end
+  end
+  def tm_brace(source: bytes, pos: integer, e: integer): integer do
+    if pos >= e do 0-1 else if byte_at(source,pos) == 123 do pos else if (byte_at(source,pos)-32)*(byte_at(source,pos)-10) == 0 do 0-1 else tm_brace(source,pos+1,e) end end end
+  end
+  # A constant stands for its value: what follows its name on the line
+  # that defines it.
+  def tm_defined(source: bytes, word: bytes, from: integer): integer do
+    hit = ac_seek(source,from,Enum.count(source),word)
+    if hit < 0 do 0-1 else if ac_leading(source,hit) == 1 do hit else tm_defined(source,word,hit+1) end end
+  end
+  def tm_constant(source: bytes, name: integer, stop: integer, least: integer): bytes do
+    hit = tm_defined(source,nc_join(b[64],nc_slice(source,name,stop),b[32]),0)
+    if hit < 0 do tm_no() else tm_fmt(source,hit+2+stop-name,nz_line_end(source,hit),least) end
+  end
+  # ~w(a b) is a list of strings and ~s(a b) a string; another sigil is
+  # written as it was.
+  def tm_sigil(source: bytes, s: integer, te: integer): bytes do
+    letter = byte_at(source,s+1)
+    if letter == 119 do nc_join(b[91],tm_words(source,s+3,te-1,0),b[93]) else if letter == 104 do zf_markup(source,s) else
+      if letter == 115 do nc_join(b[92,34],tm_string(source,s+3,te-1),b[92,34]) else tm_raw(source,s,te) end
+    end end
+  end
+  def tm_words(source: bytes, pos: integer, stop: integer, count: integer): bytes do
+    blank = if (byte_at(source,pos)-32)*(byte_at(source,pos)-9)*(byte_at(source,pos)-10) == 0 do 1 else 0 end
+    last = tm_word_end(source,pos,stop)
+    if pos >= stop do b[] else if blank == 1 do tm_words(source,pos+1,stop,count) else
+      nc_join(if count == 0 do b[] else b[44,32] end,nc_join(b[92,34],tm_string(source,pos,last),b[92,34]),tm_words(source,last,stop,count+1))
+    end end
+  end
+  def tm_word_end(source: bytes, pos: integer, stop: integer): integer do
+    if pos >= stop do stop else if (byte_at(source,pos)-32)*(byte_at(source,pos)-9)*(byte_at(source,pos)-10) == 0 do pos else tm_word_end(source,pos+1,stop) end end
+  end
+  # The inside of a string as Go quotes its value, with what it
+  # interpolates written out, all as the inside of a string of this language.
+  def tm_quoted(value: integer): bytes do
+    named = if value < 7 do 0 else if value > 13 do 0 else Enum.at(b[97,98,116,110,118,102,114],value-7,0) end end
+    if value == 34 do b[92,92,92,34] else if value == 92 do b[92,92,92,92] else if value == 35 do b[92,35] else
+      if named > 0 do b[92,92,named] else if (value-127)*(31-value) <= 0 do if value > 127 do b[value] else nc_join(b[92,92,120],b[tm_nibble(nc_units(value,16))],b[tm_nibble(value-nc_units(value,16)*16)]) end else b[value] end end
+    end end end
+  end
+  def tm_quoted_all(text: bytes, at: integer): bytes do
+    if at >= Enum.count(text) do b[] else Enum.concat(tm_quoted(Enum.at(text,at,0)),tm_quoted_all(text,at+1)) end
+  end
+  def tm_string(source: bytes, pos: integer, stop: integer): bytes do
+    value = byte_at(source,pos)
+    next = byte_at(source,pos+1)
+    close = if value*256+next == 9083 do tm_closing(source,pos+2,stop,1) else 0-1 end
+    if pos >= stop do b[] else
+      if value == 92 do tm_escape(source,pos,stop) else
+        if value*256+next == 9083 do
+          if close < 0 do tm_no() else tm_cat(b[92,35,123],tm_fmt(source,pos+2,close-1,0),Enum.concat(b[125],tm_string(source,close,stop))) end
+        else tm_cat(tm_quoted(value),tm_string(source,pos+1,stop),b[]) end
+      end
+    end
+  end
+  # A heredoc's value: its lines without the blanks its closing quotes
+  # stand behind.
+  def tm_indent(source: bytes, pos: integer, count: integer): integer do
+    if (byte_at(source,pos)-32)*(byte_at(source,pos)-9) == 0 do tm_indent(source,pos-1,count+1) else count end
+  end
+  def tm_dedent(source: bytes, pos: integer, left: integer): integer do
+    if left == 0 do pos else if (byte_at(source,pos)-32)*(byte_at(source,pos)-9) == 0 do tm_dedent(source,pos+1,left-1) else pos end end
+  end
+  def tm_heredoc(source: bytes, line: integer, close: integer, indent: integer): bytes do
+    stop = nz_line_end(source,line)+1
+    if line >= close-indent do b[] else tm_cat(tm_string(source,tm_dedent(source,line,indent),stop),tm_heredoc(source,stop,close,indent),b[]) end
+  end
+  # An escape in a string: \#{ stays an escape, the others are their value.
+  def tm_escape(source: bytes, pos: integer, stop: integer): bytes do
+    next = byte_at(source,pos+1)
+    brace = if byte_at(source,pos+2) == 123 do tm_closing(source,pos+3,stop,1) else 0-1 end
+    width = if next == 120 do 4 else if next == 117 do if byte_at(source,pos+2) == 123 do if brace < 0 do 2 else brace-pos end else 6 end else if next == 85 do 10 else 2 end end end
+    code = if next == 120 do b[tm_byte(tm_number(source,pos+2,2,0))] else if next == 117 do if byte_at(source,pos+2) == 123 do tm_utf8(tm_value(source,pos+3,brace-1,16,0)) else tm_utf8(tm_number(source,pos+2,4,0)) end else if next == 85 do tm_utf8(tm_number(source,pos+2,8,0)) else
+      b[if next == 110 do 10 else if next == 116 do 9 else if next == 114 do 13 else if next == 101 do 27 else if next == 115 do 32 else next end end end end end]
+    end end end
+    if next*256+byte_at(source,pos+2) == 9083 do tm_cat(b[92,92,92,35,123],tm_string(source,pos+3,stop),b[]) else tm_cat(tm_quoted_all(code,0),tm_string(source,pos+width,stop),b[]) end
+  end
+  def tm_byte(value: integer): integer do if value < 0 do 63 else if value > 255 do 63 else value end end end
+  # A macro's call is printed as what it stands for: the template of its
+  # quote, each unquote(name) the argument, in parentheses. The text from
+  # pos up to stop with the calls of the program's macros so replaced.
+  def tm_macro(source: bytes, name: integer, stop: integer): integer do
+    word = nc_join(b[100,101,102,109,97,99,114,111,32],nc_slice(source,name,stop),b[40])
+    hit = ac_seek(source,0,Enum.count(source),word)
+    if hit < 0 do 0-1 else hit+Enum.count(word)-1 end
+  end
+  # The last name of Module.Other.name from start.
+  def tm_last(source: bytes, start: integer): integer do
+    te = tm_next(source,start)
+    if byte_at(source,te) != 46 do start else if classify_ascii(byte_at(source,te+1)) != 2 do start else tm_last(source,te+1) end end
+  end
+  def tm_expand(source: bytes, pos: integer, stop: integer): bytes do
+    start = nc_start(source,pos)
+    named = if classify_ascii(byte_at(source,start)) != 2 do start else tm_last(source,start) end
+    te = if named == start do tm_next(source,start) else if byte_at(source,tm_next(source,named)) != 40 do tm_next(source,start) else if tm_macro(source,named,tm_next(source,named)) < 0 do tm_next(source,start) else tm_next(source,named) end end end
+    macro = if classify_ascii(byte_at(source,start)) != 2 do 0-1 else if byte_at(source,te) != 40 do 0-1 else tm_macro(source,if te == tm_next(source,start) do start else named end,te) end end
+    close = if macro < 0 do 0-1 else tm_match(source,te,stop) end
+    made = if close < 0 do b[] else tm_template(source,macro,Enum.concat(nc_u24(te+1),nc_u24(close-1))) end
+    if start < 0 do nc_slice(source,pos,stop) else if start >= stop do nc_slice(source,pos,stop) else
+      if Enum.count(made) == 0 do Enum.concat(nc_slice(source,pos,te),tm_expand(source,te,stop)) else
+        nc_join(nc_slice(source,pos,start),nc_join(b[40],made,b[41]),tm_expand(source,close,stop))
+      end
+    end end
+  end
+  # The template of the macro whose parameters open at open, for the
+  # arguments in span; b[] when it is not one expression in a quote.
+  def tm_template(source: bytes, open: integer, span: bytes): bytes do
+    close = tm_match(source,open,Enum.count(source))
+    first = nc_start(source,close)
+    quoted = nc_start(source,nc_end(source,first))
+    second = nc_start(source,nc_end(source,quoted))
+    inside = nc_end(source,second)
+    last = if close < 0 do 0-1 else if nc_opens(source,first)*nc_word(source,quoted,b[113,117,111,116,101])*nc_opens(source,second) == 0 do 0-1 else nc_body_end(source,inside,16777216) end end
+    if last < 0 do b[] else tm_subst(source,inside,last,nc_join(nc_u24(open),span,b[])) end
+  end
+  # Which of the names between a and b the name at name is; -1 for none.
+  def tm_param_at(source: bytes, a: integer, b: integer, name: integer, index: integer): integer do
+    start = nc_start(source,a)
+    comma = tm_find(source,a,b,1,0)
+    if start < 0 do 0-1 else if start >= b do 0-1 else
+      if tm_alike(source,start,name) == 1 do index else if comma >= b do 0-1 else tm_param_at(source,comma+1,b,name,index+1) end end
+    end end
+  end
+  def tm_argument(source: bytes, a: integer, b: integer, index: integer): bytes do
+    comma = tm_find(source,a,b,1,0)
+    if index == 0 do tm_expand(source,a,comma) else if comma >= b do b[] else tm_argument(source,comma+1,b,index-1) end end
+  end
+  def tm_subst(source: bytes, pos: integer, stop: integer, plan: bytes): bytes do
+    start = nc_start(source,pos)
+    te = tm_next(source,start)
+    name = nc_start(source,te+1)
+    open = nc_cursor(plan,0)
+    index = if nc_word(source,start,b[117,110,113,117,111,116,101]) == 0 do 0-1 else if byte_at(source,te) != 40 do 0-1 else tm_param_at(source,open+1,tm_match(source,open,Enum.count(source))-1,name,0) end end
+    if start < 0 do b[] else if start >= stop do b[] else
+      if index < 0 do Enum.concat(nc_slice(source,pos,te),tm_subst(source,te,stop,plan)) else
+        nc_join(nc_slice(source,pos,start),nc_join(b[40],tm_argument(source,nc_cursor(plan,3),nc_cursor(plan,6),index),b[41]),tm_subst(source,tm_match(source,te,stop),stop,plan))
+      end
+    end end
+  end
+  # The text of an expression after its macros; a template may call more.
+  def tm_coded(source: bytes, a: integer, b: integer, left: integer): bytes do
+    wide = tm_expand(source,a,b)
+    work = nc_join(source,nc_join(b[10,127],tm_digits(tm_home(source,a)),b[127,10]),wide)
+    if Enum.count(wide) == b-a do tm_code(source,a,b) else if left == 0 do tm_no() else tm_coded(work,Enum.count(work)-Enum.count(wide),Enum.count(work),left-1) end end
+  end
+  # The text of an assertion's expression; b[255] for none.
+  def tm_code(source: bytes, a: integer, b: integer): bytes do
+    text = tm_fmt(source,a,b,0)
+    size = Enum.count(text)
+    if tm_bad(text) == 1 do text else if Enum.at(text,0,0) != 40 do text else if Enum.at(text,size-1,0) != 41 do text else nc_slice(text,1,size-1) end end end
+  end
+  # The body of a test or setup block, from pos up to stop: its assertions
+  # and its properties rewritten, the rest as it stands.
+  def tm_hit(source: bytes, pos: integer, stop: integer, count: integer): bytes do
+    start = nc_start(source,pos)
+    after = nc_end(source,start)
+    if start < 0 do Enum.concat(nc_u24(stop),b[3]) else if start >= stop do Enum.concat(nc_u24(stop),b[3]) else
+      if count == 0 do Enum.concat(nc_u24(start),b[0]) else
+        if nc_word(source,start,b[97,115,115,101,114,116])*nc_word(source,after,b[40]) == 1 do Enum.concat(nc_u24(start),b[if byte_at(source,start-1) == 46 do 0 else 1 end]) else
+          if nc_word(source,start,b[99,104,101,99,107])*nc_word(source,after,b[97,108,108]) == 1 do Enum.concat(nc_u24(start),b[2]) else tm_hit(source,after,stop,count-1) end
+        end
+      end
+    end end
+  end
+  # held: where the text not yet written starts, and 1 when the program has a macro.
+  def tm_rewrite(source: bytes, held: bytes, pos: integer, stop: integer): bytes do
+    from = nc_cursor(held,0)
+    hit = tm_hit(source,pos,stop,64)
+    kind = Enum.at(hit,3,0)
+    at = nc_cursor(hit,0)
+    if kind == 3 do tm_src(from,stop) else if kind == 0 do tm_rewrite(source,held,if at == pos do nc_end(source,at) else at end,stop) else
+      tm_rewritten(source,nc_join(nc_u24(from),nc_u24(at),nc_slice(held,3,4)),stop,if kind == 1 do tm_assert(source,at,stop,Enum.at(held,3,0)) else tm_check(source,at,stop,Enum.at(held,3,0)) end)
+    end end
+  end
+  def tm_rewritten(source: bytes, span: bytes, stop: integer, made: bytes): bytes do
+    at = nc_cursor(span,3)
+    next = nc_cursor(made,0)
+    if Enum.count(made) == 0 do tm_rewrite(source,Enum.concat(nc_slice(span,0,3),nc_slice(span,6,7)),nc_end(source,at),stop) else
+      nc_join(tm_src(nc_cursor(span,0),at),nc_slice(made,3,Enum.count(made)),tm_rewrite(source,Enum.concat(nc_u24(next),nc_slice(span,6,7)),next,stop))
+    end
+  end
+  # assert(left == right) in a test tells what both sides were:
+  #   case left do l -> case T.__as(l, right) do r ->
+  #     if not (l == r) do flunk("assertion failed ... left: ... right: ...") end end end
+  # and any other assert(condition) fails with its source. Where the
+  # statement ends, then its pieces; b[] for one that stays as it is.
+  def tm_assert(source: bytes, at: integer, stop: integer, macros: integer): bytes do
+    open = nc_end(source,at)
+    close = tm_match(source,open,stop)
+    one = if close < 0 do 0 else if tm_find(source,open+1,close-1,1,0) < close-1 do 0 else 1 end end
+    core = if one == 0 do b[0,0,0,0,0,0] else tm_core(source,open+1,close-1) end
+    st = if one == 0 do tm_blank() else tm_scan(source,nc_cursor(core,0),nc_cursor(core,3),tm_blank()) end
+    p = nc_cursor(st,3)
+    q = nc_cursor(st,6)
+    pair = byte_at(source,p)*256+byte_at(source,p+1)
+    compares = if Enum.at(st,2,0) != 3 do 0 else if classify_ascii(byte_at(source,p)) == 2 do 0 else if pair == 15742 do 0 else 1 end end end
+    code = if one == 0 do tm_no() else if macros == 0 do tm_code(source,open+1,close-1) else tm_coded(source,open+1,close-1,8) end end
+    line = if tm_bad(code) == 1 do b[] else Enum.concat(b[92,110,32,32,32,32,32,99,111,100,101,58,32,32],code) end
+    if one == 0 do b[] else
+      if compares == 1 do
+        Enum.concat(nc_u24(close),nc_join(nc_join(tm_lit(b[99,97,115,101,32],at),tm_src(nc_cursor(core,0),p),tm_lit(b[32,100,111,32,108,127,32,45,62,10,99,97,115,101,32,84,127,46,95,95,97,115,40,108,127,44,32],at)),tm_src(q,nc_cursor(core,3)),tm_lit(nc_join(nc_join(b[41,32,100,111,32,114,127,32,45,62,10,105,102,32,110,111,116,32,40,108,127,32],nc_slice(source,p,q),b[32,114,127,41,32,100,111,32,102,108,117,110,107,40,34,97,115,115,101,114,116,105,111,110,32,102,97,105,108,101,100]),line,b[92,110,32,32,32,32,32,108,101,102,116,58,32,32,34,32,60,62,32,105,110,115,112,101,99,116,40,108,127,41,32,60,62,32,34,92,110,32,32,32,32,32,114,105,103,104,116,58,32,34,32,60,62,32,105,110,115,112,101,99,116,40,114,127,41,41,32,101,110,100,10,101,110,100,10,101,110,100]),at)))
+      else
+        Enum.concat(nc_u24(close),nc_join(tm_lit(b[105,102,32,110,111,116,32,40],at),tm_src(open+1,close-1),tm_lit(nc_join(b[41,32,100,111,32,102,108,117,110,107,40,34,97,115,115,101,114,116,105,111,110,32,102,97,105,108,101,100],line,b[34,41,32,101,110,100]),at)))
+      end
+    end
+  end
+  # check all pattern <- generator, ..., filter, max_runs: n do body end is
+  # the call the pinned compiler makes of it (its desugarChecks):
+  #   Gen.check(Gen.filter(Gen.bind(ga, fn v0 -> case v0 do a ->
+  #     Gen.map(gb, fn v1 -> case v1 do b -> {v0, v1} end end) end end),
+  #     fn {a, b} -> filter end), fn {a, b} -> body end, n)
+  # A clause is a generator (1), a filter (2) or the option (3).
+  def tm_clause_kind(source: bytes, a: integer, c: integer): integer do
+    name = nc_start(source,a)
+    stop = nc_end(source,name)
+    chosen = if classify_ascii(byte_at(source,name)) != 2 do 0 else if byte_at(source,stop) != 58 do 0 else if byte_at(source,stop+1) == 58 do 0 else 1 end end end
+    if chosen == 1 do 3 else if tm_find(source,a,c,7,0) < c do 1 else 2 end end
+  end
+  # The clause of that kind and number from pos: where it starts and ends.
+  def tm_clause(source: bytes, pos: integer, opening: integer, kind: integer, index: integer): bytes do
+    comma = tm_find(source,pos,opening,1,0)
+    mine = if tm_clause_kind(source,pos,comma) == kind do 1 else 0 end
+    if nc_start(source,pos) >= opening do b[] else
+      if mine*(1-index)*(1+index) == 1 do Enum.concat(nc_u24(pos),nc_u24(comma)) else if comma >= opening do b[] else tm_clause(source,comma+1,opening,kind,index-mine) end end
+    end
+  end
+  def tm_clauses(source: bytes, pos: integer, opening: integer, kind: integer): integer do
+    comma = tm_find(source,pos,opening,1,0)
+    mine = if tm_clause_kind(source,pos,comma) == kind do 1 else 0 end
+    if nc_start(source,pos) >= opening do 0 else if comma >= opening do mine else mine+tm_clauses(source,comma+1,opening,kind) end end
+  end
+  def tm_drawn(at: integer, j: integer): bytes do
+    nc_join(b[118,127],tm_digits(at),Enum.concat(b[127],tm_digits(j)))
+  end
+  def tm_drawn_all(at: integer, j: integer, n: integer): bytes do
+    if j >= n do b[] else nc_join(if j == 0 do b[] else b[44,32] end,tm_drawn(at,j),tm_drawn_all(at,j+1,n)) end
+  end
+  # plan: where the check stands, where its clauses start, the do, and how
+  # many generators it has.
+  def tm_generators(source: bytes, plan: bytes, j: integer): bytes do
+    at = nc_cursor(plan,0)
+    n = Enum.at(plan,9,0)
+    span = tm_clause(source,nc_cursor(plan,3),nc_cursor(plan,6),1,j)
+    arrow = tm_find(source,nc_cursor(span,0),nc_cursor(span,3),7,0)
+    name = tm_drawn(at,j)
+    inner = if j+1 < n do tm_generators(source,plan,j+1) else tm_lit(if n == 1 do name else nc_join(b[123],tm_drawn_all(at,0,n),b[125]) end,at) end
+    nc_join(nc_join(tm_lit(if j+1 < n do b[71,101,110,46,98,105,110,100,40] else b[71,101,110,46,109,97,112,40] end,at),tm_src(arrow+2,nc_cursor(span,3)),tm_lit(nc_join(nc_join(b[44,32,102,110,32],name,b[32,45,62,10,99,97,115,101,32]),name,b[32,100,111,32]),at)),nc_join(tm_src(nc_cursor(span,0),arrow),tm_lit(b[32,45,62,10],at),inner),tm_lit(b[10,101,110,100,10,101,110,100,41],at))
+  end
+  def tm_patterns(source: bytes, plan: bytes, j: integer): bytes do
+    at = nc_cursor(plan,0)
+    span = tm_clause(source,nc_cursor(plan,3),nc_cursor(plan,6),1,j)
+    arrow = tm_find(source,nc_cursor(span,0),nc_cursor(span,3),7,0)
+    if j >= Enum.at(plan,9,0) do b[] else nc_join(if j == 0 do b[] else tm_lit(b[44,32],at) end,tm_src(nc_cursor(span,0),arrow),tm_patterns(source,plan,j+1)) end
+  end
+  def tm_whole(source: bytes, plan: bytes): bytes do
+    at = nc_cursor(plan,0)
+    if Enum.at(plan,9,0) == 1 do tm_patterns(source,plan,0) else nc_join(tm_lit(b[123],at),tm_patterns(source,plan,0),tm_lit(b[125],at)) end
+  end
+  def tm_filters(source: bytes, plan: bytes, k: integer): bytes do
+    at = nc_cursor(plan,0)
+    span = tm_clause(source,nc_cursor(plan,3),nc_cursor(plan,6),2,k)
+    if Enum.count(span) == 0 do b[] else nc_join(tm_lit(if k == 0 do b[40] else b[41,32,97,110,100,32,40] end,at),tm_src(nc_cursor(span,0),nc_cursor(span,3)),tm_filters(source,plan,k+1)) end
+  end
+  def tm_check(source: bytes, at: integer, stop: integer, macros: integer): bytes do
+    first = nc_end(source,nc_start(source,nc_end(source,at)))
+    opening = tm_find(source,first,stop,6,0)
+    inside = nc_end(source,opening)
+    last = if opening >= stop do 0-1 else nc_body_end(source,inside,16777216) end
+    n = if last < 0 do 0 else tm_clauses(source,first,opening,1) end
+    plan = nc_join(nc_u24(at),nc_u24(first),Enum.concat(nc_u24(opening),b[if n > 250 do 0 else n end]))
+    filtered = if n == 0 do 0 else tm_clauses(source,first,opening,2) end
+    chosen = if n == 0 do b[] else tm_clause(source,first,opening,3,0) end
+    runs = if Enum.count(chosen) == 0 do b[] else Enum.concat(tm_lit(b[44,32],at),tm_src(nc_end(source,nc_start(source,nc_cursor(chosen,0)))+1,nc_cursor(chosen,3))) end
+    sifted = if filtered == 0 do b[] else nc_join(nc_join(tm_lit(b[44,32,102,110,32],at),tm_whole(source,plan),tm_lit(b[32,45,62,10],at)),tm_filters(source,plan,0),tm_lit(b[41,10,101,110,100,41],at)) end
+    # It starts with a generator, and takes one option, max_runs.
+    led = if n == 0 do 0 else if tm_clause_kind(source,first,tm_find(source,first,opening,1,0)) != 1 do 0 else if tm_clauses(source,first,opening,3) > 1 do 0 else if Enum.count(chosen) == 0 do 1 else nc_word(source,nc_start(source,nc_cursor(chosen,0)),b[109,97,120,95,114,117,110,115]) end end end end
+    if led == 0 do b[] else if last >= stop do b[] else
+      Enum.concat(nc_u24(nc_end(source,last)),nc_join(nc_join(tm_lit(if filtered == 0 do b[71,101,110,46,99,104,101,99,107,40] else b[71,101,110,46,99,104,101,99,107,40,71,101,110,46,102,105,108,116,101,114,40] end,at),tm_generators(source,plan,0),sifted),nc_join(tm_lit(b[44,32,102,110,32],at),tm_whole(source,plan),tm_lit(b[32,45,62,10],at)),nc_join(tm_rewrite(source,Enum.concat(nc_u24(inside),b[macros]),inside,last),tm_lit(b[10,101,110,100],at),Enum.concat(runs,tm_lit(b[41],at)))))
+    end end
+  end
+  # doctest Module: one test for each function of that module whose @doc
+  # holds examples, as the pinned compiler makes them (its documented): a
+  # line alx> source, lines ...> that go on with it, and the lines up to a
+  # blank one, which are what it gives. The test is named doctest
+  # Module.function/arity and everything in it stands where the function's
+  # name does.
+  # The documented functions of the module whose declarations start at pos:
+  # nine bytes each, where the string of the @doc starts and ends and
+  # where the function's name stands.
+  def tm_docs(source: bytes, pos: integer, held: integer): bytes do
+    start = nc_start(source,pos)
+    next = nc_start(source,nc_end(source,start))
+    text = nc_start(source,nc_end(source,next))
+    defs = nc_word(source,start,b[100,101,102])+nc_word(source,start,b[100,101,102,112])
+    stop = if nc_opens(source,start)+nf_untyped(source,start) == 0 do start else nc_body_end(source,nc_end(source,start),16777216) end
+    if start < 0 do b[] else if start >= Enum.count(source) do b[] else if stop < 0 do b[] else if nc_word(source,start,b[101,110,100]) == 1 do b[] else
+      if byte_at(source,start) == 64 do
+        # The text may be a ~S or ~s sigil: its string starts after the two signs.
+        if nc_word(source,next,b[100,111,99])*(if byte_at(source,text) == 34 do 1 else 0 end) == 1 do tm_docs(source,nc_end(source,text),text) else
+          if nc_word(source,next,b[100,111,99])*(if byte_at(source,text) != 126 do 0 else if (byte_at(source,text+1)-115)*(byte_at(source,text+1)-83) != 0 do 0 else if byte_at(source,text+2) == 34 do 1 else 0 end end end) == 1 do tm_docs(source,nc_end(source,text),text+2) else tm_docs(source,nc_end(source,next),held) end
+        end
+      else
+        if defs == 0 do tm_docs(source,nc_end(source,stop),held) else
+          Enum.concat(if held == 0 do b[] else nc_join(nc_u24(held),nc_u24(nc_end(source,held)),nc_u24(next)) end,tm_docs(source,nc_end(source,next),0))
+        end
+      end
+    end end end end
+  end
+  # The text between first and stop without the blanks around it.
+  def tm_trim(text: bytes, first: integer, stop: integer): bytes do
+    a = Enum.at(text,first,0)
+    b = Enum.at(text,stop-1,0)
+    if stop <= first do b[] else if (a-32)*(a-9)*(a-13) == 0 do tm_trim(text,first+1,stop) else if (b-32)*(b-9)*(b-13) == 0 do tm_trim(text,first,stop-1) else nc_slice(text,first,stop) end end end
+  end
+  def tm_line_end(text: bytes, pos: integer): integer do
+    if pos >= Enum.count(text) do pos else if Enum.at(text,pos,0) == 10 do pos else tm_line_end(text,pos+1) end end
+  end
+  def tm_example(src: bytes, wanted: bytes, some: integer): bytes do
+    if some == 0 do b[] else if Enum.count(wanted) == 0 do Enum.concat(src,b[10]) else nc_join(nc_join(b[97,115,115,101,114,116,40,40],src,b[41,32,61,61,32,40]),wanted,b[41,41,10]) end end
+  end
+  # The statements of the examples in a document's text. state: 2 once an
+  # example was seen, plus 1 while the last one is still read.
+  def tm_examples(text: bytes, pos: integer, src: bytes, wanted: bytes, state: integer): bytes do
+    stop = tm_line_end(text,pos)
+    line = tm_trim(text,pos,stop)
+    some = nc_units(state,2)
+    open = state-some*2
+    if pos >= Enum.count(text) do tm_example(src,wanted,some) else
+      if nc_word_at(line,0,b[97,108,120,62],0) == 1 do Enum.concat(tm_example(src,wanted,some),tm_examples(text,stop+1,tm_trim(line,4,Enum.count(line)),b[],3)) else
+        if nc_word_at(line,0,b[46,46,46,62],0)*open == 1 do tm_examples(text,stop+1,nc_join(src,b[10],tm_trim(line,4,Enum.count(line))),wanted,state) else
+          if Enum.count(line) == 0 do tm_examples(text,stop+1,src,wanted,some*2) else
+            if open == 0 do tm_examples(text,stop+1,src,wanted,state) else tm_examples(text,stop+1,src,if Enum.count(wanted) == 0 do line else nc_join(wanted,b[10],line) end,state) end
+          end
+        end
+      end
+    end
+  end
+  # Where the string that starts at pos keeps its text.
+  def tm_inside(source: bytes, pos: integer, stop: integer): bytes do
+    tall = if byte_at(source,pos+1)*256+byte_at(source,pos+2) == 8738 do 3 else 1 end
+    # ~S keeps its text as it is written.
+    if byte_at(source,pos-2)*256+byte_at(source,pos-1) == 32339 do nc_slice(source,pos+tall,stop-tall) else tm_plain(source,pos+tall,stop-tall) end
+  end
+  # Where the declarations of the module named at name start; -1 for none.
+  def tm_module_at(source: bytes, name: integer): integer do
+    word = nc_join(b[100,101,102,109,111,100,117,108,101,32],nc_slice(source,name,nc_end(source,name)),b[32,100,111])
+    hit = ac_seek(source,0,Enum.count(source),word)
+    if hit < 0 do 0-1 else hit+Enum.count(word) end
+  end
+  def tm_arity(source: bytes, name: integer): integer do
+    open = nc_end(source,name)
+    close = if byte_at(source,open) != 40 do 0-1 else tm_match(source,open,Enum.count(source)) end
+    if close < 0 do 0 else tm_items(source,open+1,close-1) end
+  end
+  # doctest Module.function/arity, for the function named at name.
+  def tm_doc_name(source: bytes, module: integer, name: integer): bytes do
+    nc_join(nc_join(b[100,111,99,116,101,115,116,32],nc_slice(source,module,nc_end(source,module)),b[46]),nc_slice(source,name,nc_end(source,name)),Enum.concat(b[47],tm_digits(tm_arity(source,name))))
+  end
+  # The test of the documented function number n of record i; b[] when its
+  # document holds no example.
+  def tm_doc_test(source: bytes, recs: bytes, i: integer, docs: bytes, n: integer): bytes do
+    name = nc_cursor(docs,n*9+6)
+    body = tm_examples(tm_inside(source,nc_cursor(docs,n*9),nc_cursor(docs,n*9+3)),0,b[],b[],0)
+    pieces = tm_rewrite(body,b[0,0,0,0],0,Enum.count(body))
+    head = nc_join(nc_join(b[100,101,102,32,116,101,115,116,127],tm_digits(i),b[127]),tm_digits(n),nc_join(b[40,99,127,58,32,105,110,116,101,103,101,114,41,58,32,105,110,116,101,103,101,114,32,100,111,32,35],tm_hex(tm_doc_name(source,tm_name(recs,i),name),0),b[10]))
+    if Enum.count(body) == 0 do b[] else tm_lit(nc_join(head,mx_text(body,pieces,0,nc_units(Enum.count(pieces),13)),b[10,101,110,100,10]),name) end
+  end
+  def tm_doc_tests(source: bytes, recs: bytes, i: integer, docs: bytes, n: integer): bytes do
+    if n*9 >= Enum.count(docs) do b[] else Enum.concat(tm_doc_test(source,recs,i,docs,n),tm_doc_tests(source,recs,i,docs,n+1)) end
+  end
+  # What takes the place of doctest Module: the tests, or the words as
+  # they stand when no module of the program has that name.
+  def tm_doctest(source: bytes, recs: bytes, i: integer): bytes do
+    inside = tm_module_at(source,tm_name(recs,i))
+    if inside < 0 do tm_src(tm_at(recs,i),nc_end(source,tm_name(recs,i))) else tm_doc_tests(source,recs,i,tm_docs(source,inside,0),0) end
+  end
+  # The documented functions of record i as the runner takes them.
+  def tm_doc_case(source: bytes, held: bytes, docs: bytes, n: integer): bytes do
+    i = nc_cursor(held,0)
+    recs = nc_slice(held,6+nc_cursor(held,3),Enum.count(held))
+    canon = nc_slice(held,6,6+nc_cursor(held,3))
+    name = nc_cursor(docs,n*9+6)
+    body = tm_examples(tm_inside(source,nc_cursor(docs,n*9),nc_cursor(docs,n*9+3)),0,b[],b[],0)
+    first = nc_join(nc_join(b[123,34],ac_quoted(tm_doc_name(source,tm_name(recs,i),name),0,Enum.count(tm_doc_name(source,tm_name(recs,i),name))),b[34,44,32,34]),tm_where(source,nz_marks(source,0,Enum.count(source),10,10),name),nc_join(b[34,44,32,91,34,34],tm_module_tags(source,recs,0),b[93,44,32,91]))
+    second = nc_join(tm_refs(source,recs,canon,i,0),nc_join(nc_join(b[38],tm_module_name(source),b[46,116,101,115,116,127]),tm_digits(i),b[127]),Enum.concat(tm_digits(n),b[47,49,93,125,44,10]))
+    if n*9 >= Enum.count(docs) do b[] else Enum.concat(if Enum.count(body) == 0 do b[] else Enum.concat(first,second) end,tm_doc_case(source,held,docs,n+1)) end
+  end
+  def tm_doc_cases(source: bytes, recs: bytes, canon: bytes, i: integer): bytes do
+    inside = if i*26 >= Enum.count(recs) do 0-1 else tm_module_at(source,tm_name(recs,i)) end
+    held = nc_join(nc_u24(i),nc_u24(Enum.count(canon)),Enum.concat(canon,recs))
+    if i*26 >= Enum.count(recs) do b[] else
+      if tm_kind(recs,i) != 6 do tm_doc_cases(source,recs,canon,i+1) else if tm_module(recs,i) != 0 do tm_doc_cases(source,recs,canon,i+1) else
+        Enum.concat(if inside < 0 do b[] else tm_doc_case(source,held,tm_docs(source,inside,0),0) end,tm_doc_cases(source,recs,canon,i+1))
+      end end
+    end
+  end
+  # Native smoke test; assembled with the compiler.
+  def main() do System.halt(0) end
+end

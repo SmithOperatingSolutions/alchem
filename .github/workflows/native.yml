@@ -1,0 +1,97 @@
+name: Native compiler
+# The compiler written in Alchem (native/): it builds itself to a fixpoint
+# (A1 = A2) and every gate compares its programs with those of the Go
+# compiler this native/ is pinned to. On x86-64 the ARM64 programs run under
+# QEMU; the ARM64 job runs them on an ARM64 machine, and the x86-64 seed and
+# compiler stages under QEMU instead. The complete suite
+# (scripts/verify-local.sh --with-source) runs nightly and on request.
+on:
+  pull_request:
+    paths:
+      - 'native/**'
+      - '.github/workflows/native.yml'
+  schedule:
+    - cron: '41 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86-64
+            runner: ubuntu-24.04
+            gates: ''
+          - name: ARM64
+            runner: ubuntu-24.04-arm
+            # Matches arm64, x86_to_arm64 and arm64_floats.
+            gates: arm64
+    defaults:
+      run:
+        shell: bash
+        working-directory: native
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          working_directory: native
+          cache: false
+      - name: Tools
+        # strace for the fault-injection gates; QEMU and an ARM64 assembler
+        # unpacked into build/arm64-tools for the ARM64 gates. On ARM64,
+        # qemu-user-static also registers x86-64 with binfmt_misc, so the
+        # x86-64 seed and compiler stages run as they are.
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q strace
+          if [[ "$(uname -m)" == aarch64 ]]; then
+            sudo apt-get install -y -q qemu-user-static binfmt-support binutils-x86-64-linux-gnu
+            test -e /proc/sys/fs/binfmt_misc/qemu-x86_64
+          fi
+          bash scripts/fetch-arm64-tools.sh
+      - name: Memory limits
+        # scripts/limited caps memory with a systemd user scope. Without a
+        # user manager it falls back to capping address space, which the
+        # programs of the processes, network and speed gates exceed (each
+        # reserves a 16 GiB arena and a stack per process), so start one.
+        run: |
+          sudo loginctl enable-linger "$USER"
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          for _ in $(seq 30); do
+            systemd-run --user --scope --quiet -p MemoryMax=1G true && exit 0
+            sleep 1
+          done
+          echo 'no systemd user manager' >&2
+          exit 1
+      - name: Dependencies
+        run: mise run fetch
+      - name: Go compiler reference
+        # build/dev/alchem-upstream, the Go compiler native/ is pinned to:
+        # the tls gate also compares with the programs it builds.
+        if: matrix.gates == ''
+        run: |
+          python3 -c "import importlib.util as u; s = u.spec_from_file_location('upstream', 'scripts/upstream-examples.py'); m = u.module_from_spec(s); s.loader.exec_module(m); m.build_upstream()"
+          test -x build/dev/alchem-upstream.bin
+      - name: Fixpoint and gates
+        if: github.event_name == 'pull_request' || matrix.gates != ''
+        env:
+          ALCHEM_VERIFY_MEMORY: 14G
+          GATES: ${{ matrix.gates }}
+        run: python3 scripts/verify-quick.py --jobs 4 $GATES
+      - name: Complete suite
+        if: github.event_name != 'pull_request' && matrix.gates == ''
+        env:
+          ALCHEM_VERIFY_MEMORY: 14G
+        run: bash scripts/verify-local.sh --with-source

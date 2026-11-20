@@ -1,0 +1,687 @@
+defmodule NativePatterns do
+  # Patterns in case arms, bindings and parameters. A pattern is parsed against
+  # the type it matches into a tree:
+  #   0                          _ : matches anything
+  #   1, slot                    a name: matches anything and binds it
+  #   2, n, total, layout, idlen, id..., children...
+  #                              a constructor with n sub-patterns; total is
+  #                              the number of constructors its type has (0
+  #                              when there is no end to them, as for integers)
+  # layout says how a value is tested and its parts found: 0 a tuple or struct,
+  # 1 some, 2 none, 3 ok or error, 4 a boolean, 5 a sum variant, 6 an empty
+  # list, 7 a list's head and tail, 8 a literal, 9 a pinned binding.
+  #
+  # A parse result is a packet: the position after the pattern, with the tree's
+  # length (2 bytes), the tree and the environment with its names as code.
+  def np_pack(pos: integer, tree: bytes, env: bytes): bytes do
+    nc_value(pos,nc_join(nc_u32(Enum.count(tree)),tree,env),b[0])
+  end
+  def np_tree(parsed: bytes): bytes do
+    nc_slice(nc_code(parsed),4,4+nc_long(nc_code(parsed),0))
+  end
+  def np_env(parsed: bytes): bytes do
+    nc_slice(nc_code(parsed),4+nc_long(nc_code(parsed),0),Enum.count(nc_code(parsed)))
+  end
+  def np_node(count: integer, total: integer, layout: integer, id: bytes): bytes do
+    nc_join(Enum.concat(b[2],nc_u24(count)),Enum.concat(nc_u24(total),b[layout]),Enum.concat(nc_u24(Enum.count(id)),id))
+  end
+  # The offset after the tree at offset, and after count trees.
+  def np_size(tree: bytes, offset: integer): integer do
+    tag = Enum.at(tree,offset,0)
+    if tag == 0 do offset+1 else if tag == 1 do offset+4 else
+      np_sizes(tree,np_below(tree,offset),np_count(tree,offset))
+    end end
+  end
+  def np_sizes(tree: bytes, offset: integer, count: integer): integer do
+    if count == 0 do offset else np_sizes(tree,np_size(tree,offset),count-1) end
+  end
+  # A constructor's fields: the number of its sub-patterns, the total of its
+  # type, its layout, its id, the first three bytes of the id as a number (a
+  # variant's index; one byte for the others) and where its sub-patterns start.
+  def np_count(tree: bytes, offset: integer): integer do nc_cursor(tree,offset+1) end
+  def np_all(tree: bytes, offset: integer): integer do nc_cursor(tree,offset+4) end
+  def np_layout(tree: bytes, offset: integer): integer do Enum.at(tree,offset+7,0) end
+  def np_below(tree: bytes, offset: integer): integer do offset+11+nc_cursor(tree,offset+8) end
+  def np_id(tree: bytes, offset: integer): bytes do nc_slice(tree,offset+11,np_below(tree,offset)) end
+  def np_first(tree: bytes, offset: integer): integer do
+    if nc_cursor(tree,offset+8) >= 3 do nc_cursor(tree,offset+11) else Enum.at(tree,offset+11,0) end
+  end
+  def np_parse(source: bytes, pos: integer, env: bytes, table: bytes, kind: bytes): bytes do
+    start = nc_start(source,pos)
+    value = byte_at(source,start)
+    tag = nt_tag(kind)
+    if tag < 0 do b[] else if tag == 9 do b[] else
+      if nc_word(source,start,b[95]) == 1 do np_pack(nc_end(source,start),b[0],env) else
+        if value == 94 do np_pin(source,nc_end(source,start),env,table,kind) else
+          if value == 123 do np_tuple(source,start,env,table,kind) else
+            if value == 91 do np_list(source,nc_end(source,start),env,table,kind) else
+              if value == 37 do
+                if byte_at(source,nc_start(source,nc_end(source,start))) == 123 do np_map(source,nc_end(source,nc_end(source,start)),env,table,kind) else np_struct(source,start,env,table,kind) end
+              else np_word(source,start,env,table,kind) end
+            end
+          end
+        end
+      end
+    end end
+  end
+  def np_word(source: bytes, start: integer, env: bytes, table: bytes, kind: bytes): bytes do
+    value = byte_at(source,start)
+    open = nc_word(source,nc_end(source,start),b[40])
+    tag = nt_tag(kind)
+    if (value-34)*(value-45)*(value-58) == 0 do np_literal(source,start,env,kind) else if is_digit(value) == 1 do np_literal(source,start,env,kind) else
+      if nc_word(source,start,b[116,114,117,101])+nc_word(source,start,b[102,97,108,115,101]) == 1 do
+        if tag != 3 do b[] else np_pack(nc_end(source,start),np_node(0,2,4,b[nc_word(source,start,b[116,114,117,101])]),env) end
+      else
+        # none is the constructor for an option and a name for any other type.
+        if nc_word(source,start,b[110,111,110,101]) == 1 do if tag != 4 do np_name(source,start,env,kind) else np_pack(nc_end(source,start),np_node(0,2,2,b[0]),env) end else
+          if nc_word(source,start,b[115,111,109,101])*open == 1 do np_wrapped(source,start,env,table,kind) else
+            if (nc_word(source,start,b[111,107])+nc_word(source,start,b[101,114,114,111,114]))*open == 1 do np_wrapped(source,start,env,table,kind) else
+              if (value-65)*(90-value) >= 0 do np_variant(source,start,env,table,kind) else np_name(source,start,env,kind) end
+            end
+          end
+        end
+      end
+    end end
+  end
+  def np_name(source: bytes, start: integer, env: bytes, kind: bytes): bytes do
+    bound = if nc_identifier(source,start) == 0 do b[] else nc_bind(source,start,env,kind) end
+    if Enum.count(bound) == 0 do b[] else np_pack(nc_end(source,start),Enum.concat(b[1],nc_u24(nc_env_count(env,2))),bound) end
+  end
+  # An integer, float, string or atom literal: its id is where it stands and its type.
+  def np_literal(source: bytes, start: integer, env: bytes, kind: bytes): bytes do
+    negative = if byte_at(source,start) == 45 do 1 else 0 end
+    token = if negative == 1 do nc_start(source,nc_end(source,start)) else start end
+    atom = if byte_at(source,token) == 58 do 1 else 0 end
+    stop = if atom == 1 do nc_end(source,token+1) else nc_end(source,token) end
+    text = if byte_at(source,token) == 34 do 2 else if atom == 1 do 2 else 0 end end
+    # A string with a value in it is no pattern.
+    plain = if byte_at(source,token) != 34 do 1 else if ns_tripled(source,token) == 1 do 1 else if nc_pos(ns_decode(source,token+1,0)) < 0 do 0 else 1 end end end
+    valid = if plain == 0 do 0 else if text == 2 do 1-negative else is_digit(byte_at(source,token)) end end
+    float = if text == 2 do 0 else if valid == 0 do 0 else ne_is(source,token,stop) end end
+    if valid == 0 do b[] else if nt_tag(kind) != text+atom*20+float*24 do b[] else if stop < 0 do b[] else
+      np_pack(stop,np_node(0,0,8,nc_join(nc_u24(start),nc_u24(stop),b[text+float*3])),env)
+    end end end
+  end
+  # ^name matches the value of an existing binding.
+  def np_pin(source: bytes, pos: integer, env: bytes, table: bytes, kind: bytes): bytes do
+    name = nc_start(source,pos)
+    slot = if nc_identifier(source,name) == 0 do -1 else nc_lookup(source,name,env,2) end
+    held = if slot < 0 do b[] else nt_read(env,nc_env_offset(env,slot)+7) end
+    if no_compatible(kind,held) == 0 do b[] else if nq_comparable(source,table,held,b[]) == 0 do b[] else
+      np_pack(nc_end(source,name),np_node(0,0,9,Enum.concat(nc_u24(slot),held)),env)
+    end end
+  end
+  # some(p), ok(p) and error(p).
+  def np_wrapped(source: bytes, start: integer, env: bytes, table: bytes, kind: bytes): bytes do
+    some = nc_word(source,start,b[115,111,109,101])
+    good = nc_word(source,start,b[111,107])
+    tag = nt_tag(kind)
+    inner = if some == 1 do nt_child(kind,0) else nt_child(kind,1-good) end
+    fits = if some == 1 do if tag == 4 do 1 else 0 end else if tag == 6 do 1 else 0 end end
+    child = if fits == 0 do b[] else np_parse(source,nc_end(source,nc_end(source,start)),env,table,inner) end
+    stop = nc_expect(source,nc_pos(child),b[41])
+    node = if some == 1 do np_node(1,2,1,b[1]) else np_node(1,2,3,b[good]) end
+    if stop < 0 do b[] else np_pack(stop,Enum.concat(node,np_tree(child)),np_env(child)) end
+  end
+  # Patterns for the types in cells, separated by commas and closed by the
+  # byte closer; plan holds 0, the count and the closer. Each is parsed in
+  # the environment the first one has, behind one record for the slots of
+  # the names bound before it (nc_env_left), and the parts are joined in
+  # runs of doubling length: the names of ten thousand parts were bound one
+  # into the environment of the last, each with a copy of it. That no name
+  # is bound twice is seen at the end, by sorting them (ev_pick).
+  #
+  # A run: where the next part starts, its index, the offset of its type in
+  # cells, the slots bound so far, 1 after the last part, the length of the
+  # trees; then the trees and the records bound.
+  def np_children(source: bytes, pos: integer, env: bytes, table: bytes, cells: bytes, plan: bytes): bytes do
+    all = np_parts_grow(source,env,table,cells,nc_join(nc_slice(plan,0,7),b[0],b[]),np_part(source,env,table,cells,plan,nc_join(nc_u24(pos),nc_zeros(15),b[])))
+    size = nc_long(all,14)
+    bound = nc_slice(all,18+size,Enum.count(all))
+    entries = ev_scan(bound,nc_zeros(8),ev_count(bound,0,0),0)
+    count = nc_units(Enum.count(entries)-8,13)
+    if Enum.count(all) == 0 do b[] else if nc_cursor(plan,3) == 0 do b[] else
+      if Enum.count(ev_pick(source,entries,8,count,1))+Enum.count(ev_pick(source,entries,8,count,0)) != count*13 do b[] else np_pack(nc_cursor(all,0),nc_slice(all,18,18+size),Enum.concat(env,bound)) end
+    end end
+  end
+  def np_part(source: bytes, env: bytes, table: bytes, cells: bytes, plan: bytes, state: bytes): bytes do
+    index = nc_cursor(state,3)
+    cell = nc_long(state,6)
+    scope = Enum.concat(env,nc_env_left(nc_cursor(state,10)))
+    child = np_parse(source,nc_cursor(state,0),scope,table,nt_read(cells,cell))
+    last = if index+1 == nc_cursor(plan,3) do 1 else 0 end
+    after = if last == 1 do nc_expect(source,nc_pos(child),b[Enum.at(plan,6,0)]) else nc_expect(source,nc_pos(child),b[44]) end
+    bound = nc_slice(np_env(child),Enum.count(scope),Enum.count(np_env(child)))
+    if after < 0 do b[] else
+      nc_join(nc_join(nc_u24(after),nc_u24(index+1),nc_u32(nt_after(cells,cell))),nc_join(nc_u24(nc_cursor(state,10)+nc_env_counted(bound,0,0)),b[last],nc_u32(Enum.count(np_tree(child)))),Enum.concat(np_tree(child),bound))
+    end
+  end
+  def np_parts_joined(first: bytes, second: bytes): bytes do
+    size = nc_long(first,14)
+    more = nc_long(second,14)
+    if Enum.count(first) == 0 do b[] else if Enum.count(second) == 0 do b[] else
+      nc_join(Enum.concat(nc_slice(second,0,14),nc_u32(size+more)),Enum.concat(nc_slice(first,18,18+size),nc_slice(second,18,18+more)),Enum.concat(nc_slice(first,18+size,Enum.count(first)),nc_slice(second,18+more,Enum.count(second))))
+    end end
+  end
+  # plan: as np_children has it, then the level.
+  def np_parts_more(source: bytes, env: bytes, table: bytes, cells: bytes, plan: bytes, before: bytes): bytes do
+    level = Enum.at(plan,7,0)
+    first = if level == 0 do b[] else np_parts_more(source,env,table,cells,nc_join(nc_slice(plan,0,7),b[level-1],b[]),before) end
+    if level == 0 do np_part(source,env,table,cells,plan,before) else
+      if Enum.count(first) == 0 do b[] else if Enum.at(first,13,0) == 1 do first else np_parts_joined(first,np_parts_more(source,env,table,cells,nc_join(nc_slice(plan,0,7),b[level-1],b[]),first)) end end
+    end
+  end
+  def np_parts_grow(source: bytes, env: bytes, table: bytes, cells: bytes, plan: bytes, done: bytes): bytes do
+    if Enum.count(done) == 0 do b[] else if Enum.at(done,13,0) == 1 do done else
+      np_parts_grow(source,env,table,cells,nc_join(nc_slice(plan,0,7),b[Enum.at(plan,7,0)+1],b[]),np_parts_joined(done,np_parts_more(source,env,table,cells,plan,done)))
+    end end
+  end
+  # The types of count parts of kind from offset on as cells, behind the
+  # offset after them: by halves, where each part was looked for from the
+  # first (nq_tuple_cells).
+  def np_cells(kind: bytes, offset: integer, count: integer): bytes do
+    half = nc_half(count)
+    left = if count < 2 do b[] else np_cells(kind,offset,half) end
+    right = if count < 2 do b[] else np_cells(kind,nc_long(left,0),count-half) end
+    stop = nt_end(kind,offset)
+    if count == 0 do nc_u32(offset) else if count == 1 do Enum.concat(nc_u32(stop),nt_cell(nc_slice(kind,offset,stop))) else
+      nc_join(nc_slice(right,0,4),nc_slice(left,4,Enum.count(left)),nc_slice(right,4,Enum.count(right)))
+    end end
+  end
+  def np_tuple(source: bytes, start: integer, env: bytes, table: bytes, kind: bytes): bytes do
+    count = nt_count(kind)
+    open = nc_end(source,start)
+    if nt_tag(kind) != 5 do b[] else
+      if count == 0 do if nc_word(source,open,b[125]) != 1 do b[] else np_pack(nc_end(source,open),np_node(0,1,0,b[0]),env) end else
+        parts = np_children(source,open,env,table,nc_slice(np_cells(kind,nt_first(kind),count),4,4194304*64),nc_join(nc_u24(0),nc_u24(count),b[125]))
+        if nc_pos(parts) < 0 do b[] else np_pack(nc_pos(parts),Enum.concat(np_node(count,1,0,b[0]),np_tree(parts)),np_env(parts)) end
+      end
+    end
+  end
+  # Name.variant or Name.variant(p, ...) of the sum type kind.
+  def np_variant(source: bytes, start: integer, env: bytes, table: bytes, kind: bytes): bytes do
+    typed = nv_typed(source,start,table,nc_owner(table,nc_read(env,0)))
+    id = nd_id(table,kind)
+    name = nc_pos(typed)
+    index = if nc_pos(typed) < 0 do -1 else if nc_read(nc_code(typed),0) != id do -1 else nv_search(source,table,id,name,0) end end
+    variant = nc_code(nv_at(source,table,id,index))
+    count = nv_fields_of(variant)
+    node = np_node(count,if id < 0 do 0 else nv_many(source,nc_meta(table,id,9),0) end,5,nc_u24(if index < 0 do 0 else index end))
+    open = nc_end(source,name)
+    if (nt_tag(kind)-14)*(nt_tag(kind)-19) != 0 do b[] else if index < 0 do b[] else
+      if count == 0 do np_pack(open,node,env) else
+        parts = if nc_word(source,open,b[40]) != 1 do b[] else np_children(source,nc_end(source,open),env,table,nu_apply_cells(nq_variant_cells(source,table,id,index),nd_subst(source,table,kind),0),nc_join(nc_u24(0),nc_u24(count),b[41])) end
+        if nc_pos(parts) < 0 do b[] else np_pack(nc_pos(parts),Enum.concat(node,np_tree(parts)),np_env(parts)) end
+      end
+    end end
+  end
+  # %Name{field: p, ...}: fields not listed match anything. given holds, per
+  # listed field, its index, its tree's length (2 bytes) and its tree.
+  def np_struct(source: bytes, start: integer, env: bytes, table: bytes, kind: bytes): bytes do
+    name = nc_start(source,nc_end(source,start))
+    id = nd_id(table,kind)
+    named = nd_named(source,name,table,nc_owner(table,nc_read(env,0)))
+    open = nc_expect(source,nd_name_end(source,name),b[123])
+    count = if id < 0 do -1 else nd_fields(source,table,id,0) end
+    if (nt_tag(kind)-13)*(nt_tag(kind)-18) != 0 do b[] else if named != id do b[] else if open < 0 do b[] else if count < 0 do b[] else
+      listed = np_listed(source,open,env,table,nc_join(nc_u16(id),nt_cell(kind),b[]))
+      if nc_pos(listed) < 0 do b[] else
+        np_pack(nc_pos(listed),Enum.concat(np_node(count,1,11,b[0]),np_ordered(np_tree(listed),0,count)),np_env(listed))
+      end
+    end end end end
+  end
+  def np_listed(source: bytes, pos: integer, env: bytes, table: bytes, spec: bytes): bytes do
+    id = nc_read(spec,0)
+    name = nc_start(source,pos)
+    index = nd_search(source,table,id,name,0)
+    # spec: the struct's id, the matched type as a cell, then the entries
+    # listed so far: for each its field's index (3 bytes), its tree's length
+    # (4 bytes) and its tree.
+    listed = nc_slice(spec,nt_after(spec,2),Enum.count(spec))
+    if nc_word(source,pos,b[125]) == 1 do np_pack(nc_end(source,pos),b[],env) else
+      colon = nc_expect(source,nc_end(source,name),b[58])
+      child = if index < 0 do b[] else if colon < 0 do b[] else if np_given(listed,index,0) >= 0 do b[] else np_parse(source,colon,env,table,nd_field_kind(source,table,nt_read(spec,2),index)) end end end
+      next = nc_pos(child)
+      after = if nc_word(source,next,b[44]) == 1 do nc_end(source,next) else next end
+      entry = nc_join(nc_u24(if index < 0 do 0 else index end),nc_u32(Enum.count(np_tree(child))),np_tree(child))
+      if next < 0 do b[] else if nc_word(source,next,b[44])+nc_word(source,next,b[125]) == 0 do b[] else
+        rest = np_listed(source,after,np_env(child),table,Enum.concat(spec,entry))
+        if nc_pos(rest) < 0 do b[] else np_pack(nc_pos(rest),Enum.concat(entry,np_tree(rest)),np_env(rest)) end
+      end end
+    end
+  end
+  # The offset in given of the entry for field index, -1 if it is not listed.
+  def np_given(given: bytes, index: integer, offset: integer): integer do
+    if offset >= Enum.count(given) do -1 else
+      if nc_cursor(given,offset) == index do offset else np_given(given,index,offset+7+nc_long(given,offset+3)) end
+    end
+  end
+  def np_ordered(given: bytes, index: integer, count: integer): bytes do
+    offset = np_given(given,index,0)
+    if index == count do b[] else
+      Enum.concat(if offset < 0 do b[0] else nc_slice(given,offset+7,offset+7+nc_long(given,offset+3)) end,np_ordered(given,index+1,count))
+    end
+  end
+  # %{key => p, ...} matches a map that holds every key with a value matching
+  # its pattern; %{} matches any map. pos follows the "{". The node's id is the
+  # key type's tag, then where each key expression starts and ends.
+  def np_map(source: bytes, pos: integer, env: bytes, table: bytes, kind: bytes): bytes do
+    if nt_tag(kind) != 8 do b[] else
+      if nc_word(source,pos,b[125]) == 1 do np_pack(nc_end(source,pos),b[0],env) else
+        entries = np_entries(source,pos,env,table,kind)
+        count = nc_units(Enum.count(nc_kind(entries))-1,6)
+        if nc_pos(entries) < 0 do b[] else np_pack(nc_pos(entries),Enum.concat(np_node(count,0,10,nc_kind(entries)),np_tree(entries)),np_env(entries)) end
+      end
+    end
+  end
+  # The entries from pos on: a packet whose type field is the node id so far.
+  def np_entries(source: bytes, pos: integer, env: bytes, table: bytes, kind: bytes): bytes do
+    key = nc_expression(source,pos,env,table,0)
+    arrow = nc_expect(source,nc_pos(key),b[61,62])
+    child = if arrow < 0 do b[] else if no_compatible(nt_child(kind,0),nc_kind(key)) == 0 do b[] else np_parse(source,arrow,env,table,nt_child(kind,1)) end end
+    next = nc_pos(child)
+    span = Enum.concat(nc_u24(nc_start(source,pos)),nc_u24(nc_pos(key)))
+    if next < 0 do b[] else
+      if nc_word(source,next,b[125]) == 1 do nc_value(nc_end(source,next),nc_code(np_pack(0,np_tree(child),np_env(child))),Enum.concat(b[nt_tag(nt_child(kind,0))],span)) else
+        rest = if nc_word(source,next,b[44]) != 1 do b[] else np_entries(source,nc_end(source,next),np_env(child),table,kind) end
+        if nc_pos(rest) < 0 do b[] else
+          nc_value(nc_pos(rest),nc_code(np_pack(0,Enum.concat(np_tree(child),np_tree(rest)),np_env(rest))),nc_join(b[nt_tag(nt_child(kind,0))],span,nc_slice(nc_kind(rest),1,Enum.count(nc_kind(rest)))))
+        end
+      end
+    end
+  end
+  # The value in RAX is the map: find each key and match its value. plan: the
+  # entry index and count, then the offset of its sub-pattern (2 bytes).
+  def np_emit_map(source: bytes, env: bytes, table: bytes, tree: bytes, offset: integer): bytes do
+    inner = np_emit_entries(source,env,table,tree,nc_join(nc_u32(offset),Enum.concat(nc_u24(0),nc_u24(np_count(tree,offset))),nc_u32(np_below(tree,offset))))
+    # A map of many entries is a tree (spec/alchem-memory.md, "Maps"): the
+    # keys are looked for in its one leaf, which the collector's routine at
+    # 0x400450 gives (the map itself when it has up to 32 entries).
+    if Enum.count(inner) == 0 do b[] else nc_join(b[87,72,137,199,255,20,37,80,4,64,0,95,80],inner,b[89]) end
+  end
+  def np_emit_entries(source: bytes, env: bytes, table: bytes, tree: bytes, plan: bytes): bytes do
+    node = nc_long(plan,0)
+    index = nc_cursor(plan,4)
+    count = nc_cursor(plan,7)
+    at = nc_long(plan,10)
+    key = nc_expression(source,nc_cursor(tree,node+12+index*6),env,table,0)
+    same = if (Enum.at(tree,node+11,0)-2)*(Enum.at(tree,node+11,0)-22) == 0 do nq_code(source,table,b[2],b[]) else b[72,57,247,15,148,192] end
+    child = np_emit(source,env,table,tree,at)
+    size = Enum.count(same)+Enum.count(child)
+    search = nc_join(nc_join(b[72,133,210,15,132],nc_u32(size+47),b[82,65,80,73,139,56,72,139,116,36,16]),same,nc_join(b[65,88,90,132,192,15,133,12,0,0,0,73,131,192,16,72,255,202,233],nq_rel(0-Enum.count(same)-43),b[]))
+    found = nc_join(b[73,139,64,8,72,131,196,8],child,b[233,6,0,0,0,72,131,196,8,49,192])
+    entry = nc_join(nc_join(nc_code(key),b[80,72,139,68,36,8,72,139,16,76,141,64,8],search),found,b[])
+    rest = if index+1 == count do b[] else np_emit_entries(source,env,table,tree,nc_join(nc_u32(node),Enum.concat(nc_u24(index+1),nc_u24(count)),nc_u32(np_size(tree,at)))) end
+    if nc_pos(key) < 0 do b[] else if Enum.count(child) == 0 do b[] else if index+1 == count do entry else
+      if Enum.count(rest) == 0 do b[] else nc_join(entry,Enum.concat(b[132,192,15,132],nc_u32(Enum.count(rest))),rest) end
+    end end end
+  end
+  # [], [p, q], [head | tail] and [p, q | tail]; pos follows the "[".
+  def np_list(source: bytes, pos: integer, env: bytes, table: bytes, kind: bytes): bytes do
+    if nt_tag(kind) != 7 do b[] else
+      if nc_word(source,pos,b[93]) == 1 do np_pack(nc_end(source,pos),np_node(0,2,6,b[0]),env) else np_items(source,pos,env,table,kind) end
+    end
+  end
+  def np_items(source: bytes, pos: integer, env: bytes, table: bytes, kind: bytes): bytes do
+    head = np_parse(source,pos,env,table,nt_child(kind,0))
+    next = nc_pos(head)
+    comma = nc_word(source,next,b[44])
+    bar = nc_word(source,next,b[124])
+    tail = if next < 0 do b[] else
+      if comma == 1 do np_items(source,nc_end(source,next),np_env(head),table,kind) else
+        if bar == 1 do np_parse(source,nc_end(source,next),np_env(head),table,kind) else
+          if nc_word(source,next,b[93]) == 1 do np_pack(next,np_node(0,2,6,b[0]),np_env(head)) else b[] end
+        end
+      end
+    end
+    # After an explicit tail or the last element comes the closing bracket.
+    stop = if comma == 1 do nc_pos(tail) else nc_expect(source,nc_pos(tail),b[93]) end
+    if stop < 0 do b[] else np_pack(stop,nc_join(np_node(2,2,7,b[1]),np_tree(head),np_tree(tail)),np_env(tail)) end
+  end
+  # The code that matches the tree at offset against the value in RAX: 1 or 0
+  # in AL, with the names bound when it is 1.
+  def np_emit(source: bytes, env: bytes, table: bytes, tree: bytes, offset: integer): bytes do
+    tag = Enum.at(tree,offset,0)
+    layout = np_layout(tree,offset)
+    if tag == 0 do b[176,1] else if tag == 1 do Enum.concat(nc_slot(b[72,137,69],nc_cursor(tree,offset+1)),b[176,1]) else
+      if layout == 8 do np_emit_literal(source,env,table,np_id(tree,offset)) else
+        if layout == 9 do np_emit_pin(nc_slot(b[72,139,117],nc_cursor(tree,offset+11)),nq_code(source,table,nc_slice(tree,offset+14,np_below(tree,offset)),nu_vars(env,2))) else
+          if layout == 10 do np_emit_map(source,env,table,tree,offset) else np_emit_node(source,env,table,tree,offset) end
+        end
+      end
+    end end
+  end
+  # A pinned binding: load it and compare; b[] when its type has no comparison in reach.
+  def np_emit_pin(load: bytes, compare: bytes): bytes do
+    if Enum.count(compare) == 0 do b[] else nc_join(load,b[72,137,199],compare) end
+  end
+  def np_emit_literal(source: bytes, env: bytes, table: bytes, id: bytes): bytes do
+    value = nc_unary(source,nc_cursor(id,0),env,table,0)
+    compare = if Enum.at(id,6,0) == 2 do nq_code(source,table,b[2],b[]) else if Enum.at(id,6,0) == 3 do ne_equal() else b[72,57,247,15,148,192] end end
+    if nc_pos(value) != nc_cursor(id,3) do b[] else nc_join(Enum.concat(b[80],nc_code(value)),b[72,137,198,95],compare) end
+  end
+  # The test of a constructor, then its sub-patterns over the value's parts.
+  def np_emit_node(source: bytes, env: bytes, table: bytes, tree: bytes, offset: integer): bytes do
+    count = np_count(tree,offset)
+    layout = np_layout(tree,offset)
+    first = np_first(tree,offset)
+    inner = if count == 0 do b[] else np_emit_parts(source,env,table,tree,nc_join(b[layout],Enum.concat(nc_u24(0),nc_u24(count)),nc_u32(np_below(tree,offset)))) end
+    parts = if count == 0 do b[176,1] else if Enum.count(inner) == 0 do b[] else nc_join(b[80],inner,b[89]) end end
+    test = if layout == 1 do b[72,61,0,0,64,0,15,134] else if layout == 2 do zf_none(source,table,env) else
+      if layout == 3 do if first < 128 do b[72,131,56,first,15,133] else nc_join(b[72,129,56],nc_u32(first),b[15,133]) end else if layout == 4 do if first < 128 do b[72,131,248,first,15,133] else nc_join(b[72,129,248],nc_u32(first),b[15,133]) end else
+        if layout == 5 do if first < 128 do b[72,131,120,8,first,15,133] else nc_join(b[72,129,120,8],nc_u32(first),b[15,133]) end else if layout == 6 do b[72,131,56,0,15,133] else if layout == 7 do b[72,131,56,0,15,132] else b[] end end end
+      end end
+    end end
+    if Enum.count(parts) == 0 do b[] else if (layout-0)*(layout-11) == 0 do parts else
+      nc_join(Enum.concat(test,nc_u32(Enum.count(parts)+5)),parts,b[233,2,0,0,0,49,192])
+    end end
+  end
+  # plan: layout, index, count, then the offset of sub-pattern index (2 bytes,
+  # high first). The value is on the stack.
+  def np_emit_parts(source: bytes, env: bytes, table: bytes, tree: bytes, plan: bytes): bytes do
+    layout = Enum.at(plan,0,0)
+    index = nc_cursor(plan,1)
+    count = nc_cursor(plan,4)
+    offset = nc_long(plan,7)
+    after = np_size(tree,offset)
+    child = np_emit(source,env,table,tree,offset)
+    place = if layout == 5 do 16+index*8 else if (layout-0)*(layout-11) == 0 do 8+index*8 else 8 end end
+    load = if layout*index == 7 do np_tail() else Enum.concat(b[72,139,128],nc_u32(place)) end
+    part = if Enum.at(tree,offset,0) == 0 do b[176,1] else nc_join(b[72,139,4,36],load,child) end
+    rest = if index+1 == count do b[] else np_emit_parts(source,env,table,tree,nc_join(b[layout],Enum.concat(nc_u24(index+1),nc_u24(count)),nc_u32(after))) end
+    if Enum.count(child) == 0 do b[] else if index+1 == count do part else
+      if Enum.count(rest) == 0 do b[] else nc_join(part,Enum.concat(b[132,192,15,132],nc_u32(Enum.count(rest))),rest) end
+    end end
+  end
+  # The list in RAX without its first element: the pair after the first
+  # (alchem-lists.md); nothing is copied.
+  def np_tail(): bytes do
+    b[72,131,192,16]
+  end
+  # Usefulness: whether a row of patterns can match a value that no row of the
+  # matrix matches. Rows hold count trees each; the matrix gives every row
+  # after its length (2 bytes).
+  def np_wild(tree: bytes, offset: integer): integer do
+    if Enum.at(tree,offset,0) < 2 do 1 else 0 end
+  end
+  def np_wilds(count: integer): bytes do
+    if count == 0 do b[] else Enum.concat(b[0],np_wilds(count-1)) end
+  end
+  # 1 when the constructor trees at a in left and b in right are the same.
+  def np_same(source: bytes, left: bytes, a: integer, right: bytes, b: integer): integer do
+    literal = if np_layout(left,a) == 8 do if np_layout(right,b) == 8 do 1 else 0 end else 0 end
+    if literal == 1 do np_same_text(source,np_id(left,a),np_id(right,b)) else
+      nt_same(nc_slice(left,a+7,np_below(left,a)),nc_slice(right,b+7,np_below(right,b)))
+    end
+  end
+  def np_same_text(source: bytes, left: bytes, right: bytes): integer do
+    size = nc_cursor(left,3)-nc_cursor(left,0)
+    if Enum.at(left,6,0) != Enum.at(right,6,0) do 0 else
+      if nc_cursor(right,3)-nc_cursor(right,0) != size do 0 else nc_equal(source,nc_cursor(left,0),nc_cursor(right,0),size) end
+    end
+  end
+  # The rows that can match a value built by the constructor at at in row,
+  # each with that constructor's sub-patterns in place of its first tree.
+  def np_special(source: bytes, matrix: bytes, offset: integer, row: bytes, at: integer): bytes do
+    size = nc_long(matrix,offset)
+    start = offset+4
+    stop = np_size(matrix,start)
+    count = np_count(row,at)
+    kept = if np_wild(matrix,start) == 1 do Enum.concat(np_wilds(count),nc_slice(matrix,stop,start+size)) else
+      if np_same(source,matrix,start,row,at) == 0 do b[] else nc_slice(matrix,np_below(matrix,start),start+size) end
+    end
+    keep = if np_wild(matrix,start) == 1 do 1 else np_same(source,matrix,start,row,at) end
+    if offset >= Enum.count(matrix) do b[] else
+      Enum.concat(if keep == 1 do Enum.concat(nc_u32(Enum.count(kept)),kept) else b[] end,np_special(source,matrix,start+size,row,at))
+    end
+  end
+  # The rows whose first tree matches anything, without it.
+  def np_default(matrix: bytes, offset: integer): bytes do
+    size = nc_long(matrix,offset)
+    start = offset+4
+    stop = np_size(matrix,start)
+    if offset >= Enum.count(matrix) do b[] else
+      Enum.concat(if np_wild(matrix,start) == 0 do b[] else Enum.concat(nc_u32(start+size-stop),nc_slice(matrix,stop,start+size)) end,np_default(matrix,start+size))
+    end
+  end
+  # The distinct constructors heading the matrix's rows, as their id bytes for
+  # types with a known number of constructors; b[255] once any has no such number.
+  def np_heads(matrix: bytes, offset: integer, seen: bytes): bytes do
+    start = offset+4
+    id = np_first(matrix,start)
+    if offset >= Enum.count(matrix) do seen else
+      if np_wild(matrix,start) == 1 do np_heads(matrix,start+nc_long(matrix,offset),seen) else
+        if np_all(matrix,start) == 0 do b[255] else
+          np_heads(matrix,start+nc_long(matrix,offset),if np_member(seen,id,0) == 1 do seen else Enum.concat(seen,nc_u24(id)) end)
+        end
+      end
+    end
+  end
+  def np_member(seen: bytes, id: integer, index: integer): integer do
+    if index >= Enum.count(seen) do 0 else if nc_cursor(seen,index) == id do 1 else np_member(seen,id,index+3) end end
+  end
+  # The total of the first constructor heading a row, 0 if none does.
+  def np_total(matrix: bytes, offset: integer): integer do
+    start = offset+4
+    if offset >= Enum.count(matrix) do 0 else
+      if np_wild(matrix,start) == 1 do np_total(matrix,start+nc_long(matrix,offset)) else np_all(matrix,start) end
+    end
+  end
+  def np_useful(source: bytes, matrix: bytes, row: bytes, count: integer): integer do
+    heads = np_heads(matrix,0,b[])
+    total = np_total(matrix,0)
+    if count == 0 do if Enum.count(matrix) == 0 do 1 else 0 end else
+      if np_wild(row,0) == 0 do
+        np_useful(source,np_special(source,matrix,0,row,0),nc_slice(row,np_below(row,0),Enum.count(row)),count-1+np_count(row,0))
+      else
+        complete = if total == 0 do 0 else if Enum.count(heads) != total*3 do 0 else 1 end end
+        if complete == 1 do np_useful_any(source,matrix,row,count,0) else
+          np_useful(source,np_default(matrix,0),nc_slice(row,np_size(row,0),Enum.count(row)),count-1)
+        end
+      end
+    end
+  end
+  # The row's first tree matches anything and the matrix heads cover every
+  # constructor: useful when it is for one of them.
+  def np_useful_any(source: bytes, matrix: bytes, row: bytes, count: integer, offset: integer): integer do
+    start = offset+4
+    parts = np_count(matrix,start)
+    rest = nc_slice(row,np_size(row,0),Enum.count(row))
+    if offset >= Enum.count(matrix) do 0 else
+      if np_wild(matrix,start) == 1 do np_useful_any(source,matrix,row,count,start+nc_long(matrix,offset)) else
+        if np_useful(source,np_special(source,matrix,0,matrix,start),Enum.concat(np_wilds(parts),rest),count-1+parts) == 1 do 1 else
+          np_useful_any(source,matrix,row,count,start+nc_long(matrix,offset))
+        end
+      end
+    end
+  end
+  # case value do pattern -> body ... end for any type. The value waits in a
+  # slot under a record with no name. state: that slot, then the matrix of the
+  # arms so far that have no guard.
+  # at: where the case stands; the record of the slot its value waits in keeps it (zf_unmatched).
+  def np_case(source: bytes, value: bytes, env: bytes, table: bytes, depth: integer, at: integer): bytes do
+    slot = nc_env_count(env,2)
+    begin = nc_expect(source,nc_pos(value),b[100,111])
+    held = Enum.concat(env,nc_env_record(at,at,nc_kind(value)))
+    arms = if begin < 0 do b[] else pa_arms(source,held,table,nc_join(b[depth],nc_u24(slot),nc_u24(begin))) end
+    if nc_pos(arms) < 0 do b[] else if nj_ended(arms) == 1 do b[] else
+      nw_keep(nc_value(nc_pos(arms),nc_join(nc_code(value),nc_slot(b[72,137,69],slot),nc_code(arms)),nc_kind(arms)),arms,b[])
+    end end
+  end
+  def np_arms(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
+    slot = nc_cursor(state,0)
+    matrix = nc_slice(state,3,Enum.count(state))
+    start = nc_start(source,pos)
+    if nc_word(source,start,b[101,110,100]) == 1 do
+      # Every value must be matched by some arm.
+      if np_useful(source,matrix,b[0],1) == 1 do b[] else nc_value(nc_end(source,start),zf_unmatched(table,env,slot),b[9,2]) end
+    else
+      parsed = np_parse(source,start,env,table,nt_read(env,nc_env_offset(env,slot)+7))
+      if nc_pos(parsed) < 0 do b[] else
+        # An arm that no value can reach is an error.
+        if np_useful(source,matrix,np_tree(parsed),1) == 0 do b[] else np_arm(source,parsed,env,table,depth,state) end
+      end
+    end
+  end
+  def np_arm(source: bytes, parsed: bytes, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
+    scope = np_env(parsed)
+    guarded = nc_word(source,nc_pos(parsed),b[119,104,101,110])
+    guard = if guarded == 0 do nc_value(nc_pos(parsed),b[],b[3]) else nc_condition(source,nc_end(source,nc_pos(parsed)),sg_conditional(scope),table,depth+1) end
+    arrow = nc_expect(source,nc_pos(guard),b[45,62])
+    row = if guarded == 1 do b[] else Enum.concat(nc_u32(Enum.count(np_tree(parsed))),np_tree(parsed)) end
+    first = if arrow < 0 do b[] else nc_branch(source,arrow,scope,table,depth+1) end
+    # An arm that waits for the type of the arms after it (nf_hinting).
+    hinting = if arrow < 0 do b[] else if nc_pos(first) >= 0 do b[] else nf_trial(source,arrow,scope,table) end end
+    trial = if Enum.count(hinting) == 0 do b[] else nc_branch(source,arrow,hinting,table,depth+1) end
+    later = if nc_pos(trial) < 0 do b[] else np_arms(source,nc_pos(trial),env,table,depth,Enum.concat(state,row)) end
+    settled = nf_settling(scope,later)
+    body = if nc_pos(first) >= 0 do first else if Enum.count(settled) == 0 do b[] else nc_branch(source,arrow,settled,table,depth+1) end end
+    plain = if nc_pos(body) < 0 do b[] else if nc_pos(later) >= 0 do later else np_arms(source,nc_pos(body),env,table,depth,Enum.concat(state,row)) end end
+    # Later arms are expected to give the type of the first.
+    led = if nc_pos(plain) >= 0 do b[] else nf_led(source,env,table,body) end
+    rest = if Enum.count(led) == 0 do plain else np_arms(source,nc_pos(body),led,table,depth,Enum.concat(state,row)) end
+    match = np_emit(source,scope,table,np_tree(parsed),0)
+    check = if guarded == 0 do b[] else Enum.concat(nc_code(guard),b[72,133,192,15,132]) end
+    if Enum.count(match) == 0 do b[] else if nf_both_open(env,body,rest) == 1 do b[] else np_join(nc_join(nc_slot(b[72,139,69],nc_cursor(state,0)),match,b[132,192,15,132]),check,body,rest) end end
+  end
+  # match; jz past the arm; guard; jz past the arm; body; jmp past the rest; rest.
+  def np_join(match: bytes, check: bytes, body: bytes, rest: bytes): bytes do
+    kind = nx_join(body,rest)
+    taken = Enum.concat(nc_code(body),Enum.concat(b[233],nc_u32(Enum.count(nc_code(rest)))))
+    guarded = if Enum.count(check) == 0 do b[] else Enum.concat(check,nc_u32(Enum.count(taken))) end
+    if nc_pos(rest) < 0 do b[] else if nt_tag(kind) < 0 do b[] else
+      nw_keep(nc_value(nc_pos(rest),nc_join(nc_join(match,nc_u32(Enum.count(guarded)+Enum.count(taken)),guarded),taken,nc_code(rest)),kind),body,rest)
+    end end
+  end
+  # The position after the pattern at pos, by its brackets alone; -1 if there
+  # is none within 200 tokens.
+  def np_skip(source: bytes, pos: integer): integer do
+    start = nc_start(source,pos)
+    value = byte_at(source,start)
+    after = nc_start(source,nc_end(source,start))
+    if start < 0 do -1 else
+      if value == 37 do if byte_at(source,after) == 123 do np_close(source,after,0,16777216) else np_close(source,nc_start(source,nd_name_end(source,after)),0,16777216) end else
+        if (value-123)*(value-91) == 0 do np_close(source,start,0,16777216) else
+          if (value-94)*(value-45) == 0 do nc_end(source,after) else if value == 58 do nc_end(source,start+1) else
+            if classify_ascii(value) == 2 do np_skip_name(source,start,64) else nc_end(source,start) end
+          end end
+        end
+      end
+    end
+  end
+  def np_skip_name(source: bytes, start: integer, budget: integer): integer do
+    next = nc_end(source,start)
+    if nc_word(source,next,b[46])*budget > 0 do np_skip_name(source,nc_start(source,nc_end(source,next)),budget-1) else
+      if byte_at(source,nc_start(source,next)) == 40 do np_close(source,nc_start(source,next),0,16777216) else next end
+    end
+  end
+  # The position after the bracket that closes the one at pos (depth 0), or
+  # the one pos is already inside (depth 1), within budget tokens; -1 when
+  # there is none. The tokens are walked by halves, so that a call of ten
+  # thousand tokens costs no depth of calls.
+  def np_close(source: bytes, pos: integer, depth: integer, budget: integer): integer do
+    state = np_close_run(source,nk_state(pos,depth,2),budget)
+    if Enum.at(state,5,0) == 1 do nc_cursor(state,0) else -1 end
+  end
+  def np_close_run(source: bytes, state: bytes, size: integer): bytes do
+    half = nc_half(size)
+    if Enum.at(state,5,0) != 2 do state else if size <= 0 do nk_state(0,0,0) else
+      if size == 1 do np_close_step(source,nc_cursor(state,0),nc_read(state,3)) else
+        np_close_run(source,np_close_run(source,state,half),size-half)
+      end
+    end end
+  end
+  def np_close_step(source: bytes, pos: integer, depth: integer): bytes do
+    start = nc_start(source,pos)
+    value = byte_at(source,start)
+    if start < 0 do nk_state(0,0,0) else if start >= Enum.count(source) do nk_state(0,0,0) else if nc_end(source,start) < 0 do nk_state(0,0,0) else
+      if (value-40)*(value-91)*(value-123) == 0 do nk_state(nc_end(source,start),depth+1,2) else
+        if (value-41)*(value-93)*(value-125) != 0 do nk_state(nc_end(source,start),depth,2) else
+          if depth <= 1 do nk_state(nc_end(source,start),0,1) else nk_state(nc_end(source,start),depth-1,2) end
+        end
+      end
+    end end end
+  end
+  # 1 when a statement starts with a pattern that is bound: pattern = value.
+  # A plain name = value is an ordinary binding.
+  def np_binds(source: bytes, start: integer): integer do
+    value = byte_at(source,start)
+    next = byte_at(source,nc_start(source,nc_end(source,start)))
+    shaped = if (value-123)*(value-91)*(value-37) == 0 do 1 else if classify_ascii(value) != 2 do 0 else if (next-40)*(next-46) == 0 do 1 else 0 end end end
+    # A literal or a pinned binding is a pattern too: 1 = x, :ok = f(), true = g(), ^x = y.
+    literal = if (value-58)*(value-34)*(value-45)*(value-94) == 0 do 1 else if is_digit(value) == 1 do 1 else nc_word(source,start,b[116,114,117,101])+nc_word(source,start,b[102,97,108,115,101]) end end
+    if shaped+literal == 0 do 0 else nc_word(source,np_skip(source,start),b[61]) end
+  end
+  # pattern = value: the position after the value, with the code that evaluates
+  # it and binds the pattern's names, and the environment with them.
+  def np_statement(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
+    equals = np_skip(source,start)
+    value = nc_expression(source,nc_end(source,equals),env,table,depth)
+    parsed = if nc_pos(value) < 0 do b[] else if nc_tag(value) == 12 do b[] else np_parse(source,start,env,table,nc_kind(value)) end end
+    match = if nc_pos(parsed) < 0 do b[] else if nc_start(source,nc_pos(parsed)) != nc_start(source,equals) do b[] else np_emit(source,np_env(parsed),table,np_tree(parsed),0) end end
+    if Enum.count(match) == 0 do b[] else np_pack(nc_pos(value),nc_join(nc_code(value),match,nz_must(table,start)),np_env(parsed)) end
+  end
+  # 1 when the pattern matches every value of its type, as a parameter of a
+  # named function must; a pattern of fn p -> ... may fail when it is called.
+  def np_total_match(source: bytes, tree: bytes): integer do
+    1-np_useful(source,Enum.concat(nc_u32(Enum.count(tree)),tree),b[0],1)
+  end
+  # 1 when the parameter at pos is a plain name: type.
+  def np_plain(source: bytes, pos: integer): integer do
+    nc_identifier(source,pos)*nc_word(source,nc_end(source,pos),b[58])*(1-nc_word(source,pos,b[95]))
+  end
+  # A parameter that is a pattern takes its slot under a record with no name.
+  def np_hidden(env: bytes, pos: integer, kind: bytes): bytes do
+    if Enum.count(kind) == 0 do b[] else Enum.concat(env,nc_env_record(pos,pos,kind)) end
+  end
+  # The parameters of a function that are patterns, matched at its entry:
+  # plan holds the parameter index and how many are left. The result has the
+  # code and the environment with the patterns' names.
+  def np_params(source: bytes, pos: integer, env: bytes, table: bytes, plan: bytes): bytes do
+    index = nc_cursor(plan,0)
+    start = nc_start(source,pos)
+    annotation = nc_parameter_type(source,pos)
+    next = nj_after(source,nc_pos(annotation))
+    if nc_cursor(plan,3) == 0 do np_pack(pos,b[],env) else
+      if np_plain(source,start) == 1 do np_params(source,next,env,table,Enum.concat(nc_u24(index+1),nc_u24(nc_cursor(plan,3)-1))) else
+        parsed = np_parse(source,start,env,table,nt_read(env,nc_env_offset(env,index)+7))
+        match = if nc_pos(parsed) < 0 do b[] else if np_total_match(source,np_tree(parsed)) == 0 do b[] else np_emit(source,np_env(parsed),table,np_tree(parsed),0) end end
+        rest = if Enum.count(match) == 0 do b[] else np_params(source,next,np_env(parsed),table,Enum.concat(nc_u24(index+1),nc_u24(nc_cursor(plan,3)-1))) end
+        if nc_pos(rest) < 0 do b[] else np_pack(pos,nc_join(nc_join(nc_slot(b[72,139,69],index),match,nz_must(table,start)),np_tree(rest),b[]),np_env(rest)) end
+      end
+    end
+  end
+  # 1 when the tree at offset holds a struct (layout 11) or sum variant (5) pattern.
+  def np_named(tree: bytes, offset: integer): integer do
+    layout = np_layout(tree,offset)
+    if Enum.at(tree,offset,0) < 2 do 0 else
+      if (layout-5)*(layout-11) == 0 do 1 else np_named_parts(tree,np_below(tree,offset),np_count(tree,offset)) end
+    end
+  end
+  def np_named_parts(tree: bytes, offset: integer, count: integer): integer do
+    if count == 0 do 0 else if np_named(tree,offset) == 1 do 1 else np_named_parts(tree,np_size(tree,offset),count-1) end end
+  end
+  # 1 when the lambda parameter at start is a plain name: one followed by a
+  # comma or the arrow.
+  def np_plain_name(source: bytes, start: integer): integer do
+    next = nc_end(source,start)
+    nc_identifier(source,start)*(nc_word(source,next,b[44])+nc_word(source,next,b[45,62]))
+  end
+  # The same for fn p, q -> ...: pos is at a parameter or at the arrow.
+  def np_lambda(source: bytes, pos: integer, env: bytes, table: bytes, index: integer): bytes do
+    start = nc_start(source,pos)
+    stop = if np_plain_name(source,start) == 1 do nc_end(source,start) else np_skip(source,start) end
+    next = if nc_word(source,stop,b[44]) == 1 do nc_end(source,stop) else stop end
+    if nc_word(source,start,b[45,62]) == 1 do np_pack(pos,b[],env) else if stop < 0 do b[] else
+      if np_plain_name(source,start) == 1 do np_lambda(source,next,env,table,index+1) else
+        parsed = np_parse(source,start,env,table,nt_read(env,nc_env_offset(env,index)+7))
+        # A struct or sum variant is not a pattern for a lambda's parameter, as in the pinned language.
+        match = if nc_pos(parsed) < 0 do b[] else if np_named(np_tree(parsed),0) == 1 do b[] else np_emit(source,np_env(parsed),table,np_tree(parsed),0) end end
+        rest = if Enum.count(match) == 0 do b[] else np_lambda(source,next,np_env(parsed),table,index+1) end
+        if nc_pos(rest) < 0 do b[] else np_pack(pos,nc_join(nc_join(nc_slot(b[72,139,69],index),match,nz_must(table,start)),np_tree(rest),b[]),np_env(rest)) end
+      end
+    end end
+  end
+  # Native smoke test; patterns.
+  def main() do System.halt(0) end
+end

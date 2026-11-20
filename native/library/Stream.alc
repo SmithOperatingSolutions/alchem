@@ -1,0 +1,632 @@
+# Stream: the functions written in Alchem (spec/alchem-sets-streams.md). A
+# stream is a function from a context to an iterator (Stream.__make,
+# Stream.__start); an iterator gives some(element) or none each time it is
+# called, is not called again after none, and the some it gave may be
+# written over (Stream.__put) until it is called again. State is a some that
+# is written over. A context is some(function): what to do when the stream
+# is read no further.
+#: __of/1
+  def __of(s: stream[a]): stream[a] do
+    s
+  end
+#: map/2
+  def map(s: stream[a], f: fn[a, b]): stream[b] do
+    Stream.__make(fn c -> mapped(Stream.__start(s, c), f) end)
+  end
+  defp mapped(it: fn[option[a]], f: fn[a, b]): fn[option[b]] do
+    fn ->
+      got = it()
+      case got do
+        some(x) -> Stream.__put(got, f(x))
+        none -> none
+      end
+    end
+  end
+#: filter/2
+  def filter(s: stream[a], f: fn[a, boolean]): stream[a] do
+    Stream.__make(fn c -> kept(Stream.__start(s, c), f) end)
+  end
+  defp kept(it: fn[option[a]], f: fn[a, boolean]): fn[option[a]] do
+    fn -> Stream.__until(it, f) end
+  end
+#: reject/2
+  def reject(s: stream[a], f: fn[a, boolean]): stream[a] do
+    Stream.__make(fn c -> rejected(Stream.__start(s, c), f) end)
+  end
+  defp rejected(it: fn[option[a]], f: fn[a, boolean]): fn[option[a]] do
+    g: fn[a, boolean] = fn x -> not f(x) end
+    pull: fn[option[a]] = fn -> Stream.__until(it, g) end
+    pull
+  end
+#: each/2
+  def each(s: stream[a], f: fn[a, b]): stream[a] do
+    Stream.__make(fn c -> visited(Stream.__start(s, c), f) end)
+  end
+  defp visited(it: fn[option[a]], f: fn[a, b]): fn[option[a]] do
+    g: fn[a, boolean] = fn x -> Stream.__then(f(x), true) end
+    pull: fn[option[a]] = fn -> Stream.__until(it, g) end
+    pull
+  end
+# A negative count takes the last elements, known once the stream ends.
+#: take/2
+  def take(s: stream[a], count: integer): stream[a] do
+    Stream.__make(fn c -> if count < 0 do ended(Stream.__start(s, c), count, true, some(none)) else taken(Stream.__start(s, c), some(count)) end end)
+  end
+  defp taken(it: fn[option[a]], left: option[integer]): fn[option[a]] do
+    fn -> take_step(it, left, Stream.__get(left)) end
+  end
+  defp take_step(it: fn[option[a]], left: option[integer], n: integer): option[a] do
+    if n <= 0 do none else Stream.__then(Stream.__put(left, n - 1), it()) end
+  end
+  defp ended(it: fn[option[a]], count: integer, last: boolean, from: option[option[fn[option[a]]]]): fn[option[a]] do
+    fn -> end_step(it, count, last, from, Stream.__get(from)) end
+  end
+  defp end_step(it: fn[option[a]], count: integer, last: boolean, from: option[option[fn[option[a]]]], now: option[fn[option[a]]]): option[a] do
+    case now do
+      some(rest) -> rest()
+      none -> end_all(Stream.__all(it), count, last, from)
+    end
+  end
+  defp end_all(all: list[a], count: integer, last: boolean, from: option[option[fn[option[a]]]]): option[a] do
+    rest = Stream.__iter(if last do Enum.take(all, count) else Enum.drop(all, count) end)
+    Stream.__then(Stream.__put(from, some(rest)), rest())
+  end
+#: drop/2 needs take/2
+  def drop(s: stream[a], count: integer): stream[a] do
+    Stream.__make(fn c -> if count < 0 do ended(Stream.__start(s, c), count, false, some(none)) else dropped(Stream.__start(s, c), some(count)) end end)
+  end
+  defp dropped(it: fn[option[a]], left: option[integer]): fn[option[a]] do
+    g: fn[a, boolean] = fn x -> passed(left, Stream.__get(left)) end
+    pull: fn[option[a]] = fn -> Stream.__until(it, g) end
+    pull
+  end
+  defp passed(left: option[integer], n: integer): boolean do
+    w = if n > 0 do Stream.__put(left, n - 1) else left end
+    n <= 0
+  end
+#: take_while/2
+  def take_while(s: stream[a], f: fn[a, boolean]): stream[a] do
+    Stream.__make(fn c -> held(Stream.__start(s, c), f, some(true)) end)
+  end
+  defp held(it: fn[option[a]], f: fn[a, boolean], live: option[boolean]): fn[option[a]] do
+    fn -> if Stream.__get(live) do hold_step(it(), f, live) else none end end
+  end
+  defp hold_step(got: option[a], f: fn[a, boolean], live: option[boolean]): option[a] do
+    case got do
+      some(x) -> if f(x) do got else Stream.__then(Stream.__put(live, false), none) end
+      none -> none
+    end
+  end
+#: drop_while/2
+  def drop_while(s: stream[a], f: fn[a, boolean]): stream[a] do
+    Stream.__make(fn c -> skipped(Stream.__start(s, c), f, some(true)) end)
+  end
+  defp skipped(it: fn[option[a]], f: fn[a, boolean], dropping: option[boolean]): fn[option[a]] do
+    g: fn[a, boolean] = fn x -> past(dropping, f, x) end
+    pull: fn[option[a]] = fn -> Stream.__until(it, g) end
+    pull
+  end
+  defp past(dropping: option[boolean], f: fn[a, boolean], x: a): boolean do
+    if Stream.__get(dropping) do
+      if f(x) do false else Stream.__then(Stream.__put(dropping, false), true) end
+    else true end
+  end
+# keep: true takes every nth element, false drops it.
+#: take_every/2
+  def take_every(s: stream[a], nth: integer): stream[a] do
+    if nth < 0 do raise("nth must be a nonnegative integer") end
+    Stream.__make(fn c -> every(Stream.__start(s, c), some(0), nth, true) end)
+  end
+  defp every(it: fn[option[a]], at: option[integer], nth: integer, keep: boolean): fn[option[a]] do
+    g: fn[a, boolean] = fn x -> turn(at, Stream.__get(at), nth) == keep end
+    pull: fn[option[a]] = fn -> if nth == 0 do
+      if keep do none else it() end
+    else Stream.__until(it, g) end end
+    pull
+  end
+  defp turn(at: option[integer], index: integer, nth: integer): boolean do
+    w = Stream.__put(at, index + 1)
+    rem(index, nth) == 0
+  end
+#: drop_every/2 needs take_every/2
+  def drop_every(s: stream[a], nth: integer): stream[a] do
+    if nth < 0 do raise("nth must be a nonnegative integer") end
+    Stream.__make(fn c -> every(Stream.__start(s, c), some(0), nth, false) end)
+  end
+#: map_every/3
+  def map_every(s: stream[a], nth: integer, f: fn[a, a]): stream[a] do
+    if nth < 0 do raise("nth must be a nonnegative integer") end
+    Stream.__make(fn c -> nth_mapped(Stream.__start(s, c), some(0), nth, f) end)
+  end
+  defp nth_mapped(it: fn[option[a]], at: option[integer], nth: integer, f: fn[a, a]): fn[option[a]] do
+    fn ->
+      got = it()
+      case got do
+        some(x) -> if nth != 0 and nth_turn(at, Stream.__get(at), nth) do Stream.__put(got, f(x)) else got end
+        none -> none
+      end
+    end
+  end
+  defp nth_turn(at: option[integer], index: integer, nth: integer): boolean do
+    w = Stream.__put(at, index + 1)
+    rem(index, nth) == 0
+  end
+#: with_index/2
+  def with_index(s: stream[a], offset: integer): stream[tuple[a, integer]] do
+    Stream.__make(fn c -> indexed(Stream.__start(s, c), some(offset)) end)
+  end
+  defp indexed(it: fn[option[a]], at: option[integer]): fn[option[tuple[a, integer]]] do
+    fn ->
+      got = it()
+      case got do
+        some(x) -> Stream.__put(got, {x, index_step(at, Stream.__get(at))})
+        none -> none
+      end
+    end
+  end
+  defp index_step(at: option[integer], index: integer): integer do
+    w = Stream.__put(at, index + 1)
+    index
+  end
+#: with_index/1 needs with_index/2
+  def with_index(s: stream[a]): stream[tuple[a, integer]] do
+    Stream.with_index(s, 0)
+  end
+#: scan/3
+  def scan(s: stream[a], acc: b, f: fn[a, b, b]): stream[b] do
+    Stream.__make(fn c -> folded(Stream.__start(s, c), some(acc), f) end)
+  end
+  defp folded(it: fn[option[a]], state: option[b], f: fn[a, b, b]): fn[option[b]] do
+    fn ->
+      got = it()
+      case got do
+        some(x) -> Stream.__put(got, Stream.__get(Stream.__put(state, f(x, Stream.__get(state)))))
+        none -> none
+      end
+    end
+  end
+#: scan/2
+  def scan(s: stream[a], f: fn[a, a, a]): stream[a] do
+    Stream.__make(fn c -> summed(Stream.__start(s, c), some(none), f) end)
+  end
+  defp summed(it: fn[option[a]], state: option[option[a]], f: fn[a, a, a]): fn[option[a]] do
+    fn -> sum_step(it(), state, Stream.__get(state), f) end
+  end
+  defp sum_step(got: option[a], state: option[option[a]], held: option[a], f: fn[a, a, a]): option[a] do
+    case got do
+      some(x) -> sum_next(got, x, state, held, f)
+      none -> none
+    end
+  end
+  defp sum_next(got: option[a], x: a, state: option[option[a]], held: option[a], f: fn[a, a, a]): option[a] do
+    case held do
+      some(acc) -> Stream.__put(got, Stream.__get(Stream.__put(held, f(x, acc))))
+      none -> Stream.__then(Stream.__put(state, some(x)), got)
+    end
+  end
+#: dedup_by/2
+  def dedup_by(s: stream[a], f: fn[a, b]): stream[a] do
+    Stream.__make(fn c -> changed(Stream.__start(s, c), f, some(none)) end)
+  end
+  defp changed(it: fn[option[a]], f: fn[a, b], last: option[option[b]]): fn[option[a]] do
+    g: fn[a, boolean] = fn x -> change(last, Stream.__get(last), f(x)) end
+    pull: fn[option[a]] = fn -> Stream.__until(it, g) end
+    pull
+  end
+  defp change(last: option[option[b]], held: option[b], key: b): boolean do
+    case held do
+      some(k) -> if k == key do false else Stream.__then(Stream.__put(held, key), true) end
+      none -> Stream.__then(Stream.__put(last, some(key)), true)
+    end
+  end
+#: dedup/1 needs dedup_by/2
+  def dedup(s: stream[a]): stream[a] do
+    Stream.dedup_by(s, fn x -> x end)
+  end
+#: uniq_by/2
+  def uniq_by(s: stream[a], f: fn[a, b]): stream[a] do
+    Stream.__make(fn c -> novel(Stream.__start(s, c), f, some([])) end)
+  end
+  defp novel(it: fn[option[a]], f: fn[a, b], seen: option[list[b]]): fn[option[a]] do
+    g: fn[a, boolean] = fn x -> unseen(seen, Stream.__get(seen), f(x)) end
+    pull: fn[option[a]] = fn -> Stream.__until(it, g) end
+    pull
+  end
+  defp unseen(seen: option[list[b]], keys: list[b], key: b): boolean do
+    known = key in keys
+    w = if known do seen else Stream.__put(seen, [key | keys]) end
+    not known
+  end
+#: uniq/1 needs uniq_by/2
+  def uniq(s: stream[a]): stream[a] do
+    Stream.uniq_by(s, fn x -> x end)
+  end
+#: iterate/2
+  def iterate(start: a, f: fn[a, a]): stream[a] do
+    Stream.__make(fn c -> iterated(some(start), some(true), f) end)
+  end
+  defp iterated(at: option[a], fresh: option[boolean], f: fn[a, a]): fn[option[a]] do
+    # Each element is a cell of its own: what reads the stream may write into the one it is given.
+    fn -> if Stream.__get(fresh) do Stream.__then(Stream.__put(fresh, false), some(Stream.__get(at))) else some(Stream.__get(Stream.__put(at, f(Stream.__get(at))))) end end
+  end
+#: repeatedly/1
+  def repeatedly(f: fn[a]): stream[a] do
+    Stream.__make(fn c -> again(f, some(0)) end)
+  end
+  defp again(f: fn[a], box: option[integer]): fn[option[a]] do
+    fn -> Stream.__put(box, f()) end
+  end
+#: unfold/2
+  def unfold(acc: s, f: fn[s, option[tuple[a, s]]]): stream[a] do
+    Stream.__make(fn c -> unfolded(some(acc), f, some(0)) end)
+  end
+  defp unfolded(state: option[s], f: fn[s, option[tuple[a, s]]], box: option[integer]): fn[option[a]] do
+    fn -> case f(Stream.__get(state)) do
+      some(step) -> Stream.__then(Stream.__put(state, elem(step, 1)), Stream.__put(box, elem(step, 0)))
+      none -> none
+    end end
+  end
+#: from_index/1 needs __of/1
+  def from_index(start: integer): stream[integer] do
+    Stream.__of(start..9223372036854775807//1)
+  end
+#: from_index/0 needs __of/1
+  def from_index(): stream[integer] do
+    Stream.__of(0..9223372036854775807)
+  end
+#: duplicate/2 needs map/2
+  def duplicate(value: a, count: integer): stream[a] do
+    Stream.map(1..count//1, fn i -> value end)
+  end
+#: run/1
+  def run(s: stream[a]): tuple[] do
+    w = Stream.__run(s, fn it -> Stream.__until(it, fn x -> false end) end)
+    {}
+  end
+#: zip_with/3
+  def zip_with(left: stream[a], right: stream[b], f: fn[a, b, c]): stream[c] do
+    Stream.__make(fn c -> zipped(Stream.__start(left, c), Stream.__start(right, c), f) end)
+  end
+  defp zipped(one: fn[option[a]], two: fn[option[b]], f: fn[a, b, c]): fn[option[c]] do
+    fn ->
+      got = one()
+      case got do
+        some(x) -> zip_step(got, x, two(), f)
+        none -> none
+      end
+    end
+  end
+  defp zip_step(got: option[a], x: a, other: option[b], f: fn[a, b, c]): option[c] do
+    case other do
+      some(y) -> Stream.__put(got, f(x, y))
+      none -> none
+    end
+  end
+#: zip/2 needs zip_with/3
+  def zip(left: stream[a], right: stream[b]): stream[tuple[a, b]] do
+    Stream.zip_with(left, right, fn x, y -> {x, y} end)
+  end
+#: cycle/1
+  def cycle(s: stream[a]): stream[a] do
+    place = Stream.__where()
+    Stream.__make(fn c -> cycled(s, c, some(Stream.__start(s, c)), some(false), place) end)
+  end
+  defp cycled(s: stream[a], c: option[fn[integer]], now: option[fn[option[a]]], any: option[boolean], place: integer): fn[option[a]] do
+    fn -> cycle_step(s, c, now, any, place, Stream.__pull(now)) end
+  end
+  defp cycle_step(s: stream[a], c: option[fn[integer]], now: option[fn[option[a]]], any: option[boolean], place: integer, got: option[a]): option[a] do
+    case got do
+      some(_) -> Stream.__then(Stream.__put(any, true), got)
+      none -> cycle_again(any, Stream.__get(any), place, Stream.__put(now, Stream.__start(s, c)))
+    end
+  end
+  defp cycle_again(any: option[boolean], seen: boolean, place: integer, now: option[fn[option[a]]]): option[a] do
+    got = if seen do Stream.__pull(Stream.__then(Stream.__put(any, false), now)) else none end
+    case got do
+      some(_) -> Stream.__then(Stream.__put(any, true), got)
+      none -> Stream.__fail(place, "cannot cycle over an empty enumerable")
+    end
+  end
+# A list is walked round and round where it stands.
+#: cycle/1 form 2
+  def cycle(items: list[a]): stream[a] do
+    place = Stream.__where()
+    Stream.__make(fn c -> rounds(items, some(0), some(0), place) end)
+  end
+  defp rounds(items: list[a], at: option[integer], box: option[integer], place: integer): fn[option[a]] do
+    fn -> round_step(items, at, box, place) end
+  end
+  defp round_step(items: list[a], at: option[integer], box: option[integer], place: integer): option[a] do
+    i = Stream.__get(at)
+    if length(items) == 0 do Stream.__fail(place, "cannot cycle over an empty enumerable") else
+      Stream.__then(Stream.__put(at, rem(i + 1, length(items))), Stream.__put(box, items[i]))
+    end
+  end
+#: concat/2
+  def concat(left: stream[a], right: stream[a]): stream[a] do
+    Stream.__make(fn c -> joined(some(Stream.__start(left, c)), some(true), right, c) end)
+  end
+  defp joined(now: option[fn[option[a]]], first: option[boolean], right: stream[a], c: option[fn[integer]]): fn[option[a]] do
+    fn -> join_step(Stream.__pull(now), now, first, right, c) end
+  end
+  defp join_step(got: option[a], now: option[fn[option[a]]], first: option[boolean], right: stream[a], c: option[fn[integer]]): option[a] do
+    case got do
+      some(_) -> got
+      none -> if Stream.__get(first) do Stream.__pull(Stream.__then(Stream.__put(first, false), Stream.__put(now, Stream.__start(right, c)))) else none end
+    end
+  end
+#: flat_map/2
+  def flat_map(s: stream[a], f: fn[a, list[b]]): stream[b] do
+    Stream.__make(fn c -> flattened(Stream.__start(s, c), f, some(Stream.__iter([]))) end)
+  end
+  defp flattened(it: fn[option[a]], f: fn[a, list[b]], now: option[fn[option[b]]]): fn[option[b]] do
+    g: fn[a, boolean] = fn x -> flat_open(now, f(x)) end
+    pull: fn[option[b]] = fn -> flat_step(it, g, now, Stream.__pull(now)) end
+    pull
+  end
+  defp flat_step(it: fn[option[a]], g: fn[a, boolean], now: option[fn[option[b]]], got: option[b]): option[b] do
+    case got do
+      some(_) -> got
+      none -> flat_more(Stream.__until(it, g), now)
+    end
+  end
+  defp flat_open(now: option[fn[option[b]]], items: list[b]): boolean do
+    Stream.__then(Stream.__put(now, Stream.__iter(items)), length(items) > 0)
+  end
+  defp flat_more(outer: option[a], now: option[fn[option[b]]]): option[b] do
+    case outer do
+      some(_) -> Stream.__pull(now)
+      none -> none
+    end
+  end
+#: concat/1 needs flat_map/2
+  def concat(lists: stream[list[a]]): stream[a] do
+    Stream.flat_map(lists, fn items -> items end)
+  end
+#: transform/3
+  def transform(s: stream[a], acc: t, f: fn[a, t, option[tuple[list[b], t]]]): stream[b] do
+    Stream.__make(fn c -> turned(Stream.__start(s, c), f, {some(acc), some(true)}, some(Stream.__iter([]))) end)
+  end
+  defp turned(it: fn[option[a]], f: fn[a, t, option[tuple[list[b], t]]], state: tuple[option[t], option[boolean]], now: option[fn[option[b]]]): fn[option[b]] do
+    g: fn[a, boolean] = fn x -> turn_open(f(x, Stream.__get(elem(state, 0))), state, now) end
+    pull: fn[option[b]] = fn -> turn_step(it, g, elem(state, 1), now, Stream.__pull(now)) end
+    pull
+  end
+  defp turn_step(it: fn[option[a]], g: fn[a, boolean], live: option[boolean], now: option[fn[option[b]]], got: option[b]): option[b] do
+    case got do
+      some(_) -> got
+      none -> if Stream.__get(live) do turn_more(Stream.__until(it, g), live, now) else none end
+    end
+  end
+  defp turn_open(step: option[tuple[list[b], t]], state: tuple[option[t], option[boolean]], now: option[fn[option[b]]]): boolean do
+    case step do
+      some(pair) -> Stream.__then(Stream.__put(elem(state, 0), elem(pair, 1)), Stream.__then(Stream.__put(now, Stream.__iter(elem(pair, 0))), length(elem(pair, 0)) > 0))
+      none -> Stream.__then(Stream.__put(elem(state, 1), false), true)
+    end
+  end
+  defp turn_more(outer: option[a], live: option[boolean], now: option[fn[option[b]]]): option[b] do
+    case outer do
+      some(_) -> if Stream.__get(live) do Stream.__pull(now) else none end
+      none -> none
+    end
+  end
+#: intersperse/2
+  def intersperse(s: stream[a], separator: a): stream[a] do
+    Stream.__make(fn c -> spaced(Stream.__start(s, c), separator, some(true), some(none)) end)
+  end
+  defp spaced(it: fn[option[a]], separator: a, first: option[boolean], held: option[option[a]]): fn[option[a]] do
+    fn -> space_step(it, separator, first, held, Stream.__get(held)) end
+  end
+  defp space_step(it: fn[option[a]], separator: a, first: option[boolean], held: option[option[a]], kept: option[a]): option[a] do
+    case kept do
+      some(_) -> Stream.__then(Stream.__put(held, none), kept)
+      none -> space_next(it(), separator, first, held)
+    end
+  end
+  defp space_next(got: option[a], separator: a, first: option[boolean], held: option[option[a]]): option[a] do
+    case got do
+      some(_) -> if Stream.__get(first) do Stream.__then(Stream.__put(first, false), got) else Stream.__then(Stream.__put(held, got), some(separator)) end
+      none -> none
+    end
+  end
+# cells: the elements of the chunk being filled, how many elements to pass
+# over before the next one, the chunk that is full, and whether the stream
+# still gives.
+#: chunk_every/3
+  def chunk_every(s: stream[a], count: integer, step: integer): stream[list[a]] do
+    if count <= 0 or step <= 0 do raise("chunk_every needs a positive count and step") end
+    start: list[a] = []
+    Stream.__make(fn c -> chunked(Stream.__start(s, c), {count, step}, {some(start), some(start)}, {some(0), some(true)}) end)
+  end
+  defp chunked(it: fn[option[a]], sizes: tuple[integer, integer], lists: tuple[option[list[a]], option[list[a]]], cells: tuple[option[integer], option[boolean]]): fn[option[list[a]]] do
+    g: fn[a, boolean] = fn x -> chunk_add(x, sizes, lists, elem(cells, 0)) end
+    pull: fn[option[list[a]]] = fn -> if Stream.__get(elem(cells, 1)) do chunk_step(Stream.__until(it, g), sizes, lists, elem(cells, 1)) else none end end
+    pull
+  end
+  defp chunk_add(x: a, sizes: tuple[integer, integer], lists: tuple[option[list[a]], option[list[a]]], skip: option[integer]): boolean do
+    n = Stream.__get(skip)
+    full = if n > 0 do Stream.__get(elem(lists, 0)) else [x | Stream.__get(elem(lists, 0))] end
+    if n > 0 do Stream.__then(Stream.__put(skip, n - 1), false) else
+      if length(full) < elem(sizes, 0) do Stream.__then(Stream.__put(elem(lists, 0), full), false) else
+        w = Stream.__put(elem(lists, 1), Enum.reverse(full))
+        v = Stream.__put(skip, max(elem(sizes, 1) - elem(sizes, 0), 0))
+        Stream.__then(Stream.__put(elem(lists, 0), Enum.take(full, max(elem(sizes, 0) - elem(sizes, 1), 0))), true)
+      end
+    end
+  end
+  defp chunk_step(got: option[a], sizes: tuple[integer, integer], lists: tuple[option[list[a]], option[list[a]]], live: option[boolean]): option[list[a]] do
+    left = Stream.__get(elem(lists, 0))
+    case got do
+      some(_) -> some(Stream.__get(elem(lists, 1)))
+      none -> Stream.__then(Stream.__put(live, false), if length(left) > 0 and (elem(sizes, 1) >= elem(sizes, 0) or length(left) > elem(sizes, 0) - elem(sizes, 1)) do some(Enum.reverse(left)) else none end)
+    end
+  end
+#: chunk_every/2 needs chunk_every/3
+  def chunk_every(s: stream[a], count: integer): stream[list[a]] do
+    Stream.chunk_every(s, count, count)
+  end
+#: chunk_by/2
+  def chunk_by(s: stream[a], f: fn[a, b]): stream[list[a]] do
+    start: list[a] = []
+    Stream.__make(fn c -> grouped(Stream.__start(s, c), f, {some(start), some(start)}, {some(none), some(true)}) end)
+  end
+  defp grouped(it: fn[option[a]], f: fn[a, b], lists: tuple[option[list[a]], option[list[a]]], cells: tuple[option[option[b]], option[boolean]]): fn[option[list[a]]] do
+    g: fn[a, boolean] = fn x -> group_add(x, f(x), lists, elem(cells, 0)) end
+    pull: fn[option[list[a]]] = fn -> if Stream.__get(elem(cells, 1)) do group_step(Stream.__until(it, g), lists, elem(cells, 1)) else none end end
+    pull
+  end
+  defp group_add(x: a, next: b, lists: tuple[option[list[a]], option[list[a]]], key: option[option[b]]): boolean do
+    held = Stream.__get(elem(lists, 0))
+    split = case Stream.__get(key) do
+      some(k) -> length(held) > 0 and k != next
+      none -> false
+    end
+    w = Stream.__put(key, some(next))
+    if split do Stream.__then(Stream.__put(elem(lists, 1), Enum.reverse(held)), Stream.__then(Stream.__put(elem(lists, 0), [x]), true)) else Stream.__then(Stream.__put(elem(lists, 0), [x | held]), false) end
+  end
+  defp group_step(got: option[a], lists: tuple[option[list[a]], option[list[a]]], live: option[boolean]): option[list[a]] do
+    left = Stream.__get(elem(lists, 0))
+    case got do
+      some(_) -> some(Stream.__get(elem(lists, 1)))
+      none -> Stream.__then(Stream.__put(live, false), if length(left) > 0 do some(Enum.reverse(left)) else none end)
+    end
+  end
+#: chunk_while/4
+  def chunk_while(s: stream[a], acc: t, step: fn[a, t, tuple[option[c], t]], last: fn[t, option[c]]): stream[c] do
+    Stream.__make(fn ctx -> whiled(Stream.__start(s, ctx), step, last, {some(acc), some(none), some(true)}) end)
+  end
+  defp whiled(it: fn[option[a]], step: fn[a, t, tuple[option[c], t]], last: fn[t, option[c]], cells: tuple[option[t], option[option[c]], option[boolean]]): fn[option[c]] do
+    g: fn[a, boolean] = fn x -> while_add(step(x, Stream.__get(elem(cells, 0))), cells) end
+    pull: fn[option[c]] = fn -> if Stream.__get(elem(cells, 2)) do while_step(Stream.__until(it, g), last, cells) else none end end
+    pull
+  end
+  defp while_add(r: tuple[option[c], t], cells: tuple[option[t], option[option[c]], option[boolean]]): boolean do
+    w = Stream.__put(elem(cells, 0), elem(r, 1))
+    case elem(r, 0) do
+      some(chunk) -> Stream.__then(Stream.__put(elem(cells, 1), some(chunk)), true)
+      none -> false
+    end
+  end
+  defp while_step(got: option[a], last: fn[t, option[c]], cells: tuple[option[t], option[option[c]], option[boolean]]): option[c] do
+    case got do
+      some(_) -> Stream.__get(elem(cells, 1))
+      none -> Stream.__then(Stream.__put(elem(cells, 2), false), while_last(last(Stream.__get(elem(cells, 0)))))
+    end
+  end
+  defp while_last(final: option[c]): option[c] do
+    case final do
+      some(chunk) -> some(chunk)
+      none -> none
+    end
+  end
+# The start function runs when the first element is asked for. The context
+# gets the after function, which also runs when next gives none. cells: the
+# state once started, whether after has run, and the iterator over the
+# elements next gave last.
+#: resource/3
+  def resource(start: fn[t], next: fn[t, option[tuple[list[a], t]]], after: fn[t, b]): stream[a] do
+    Stream.__make(fn ctx -> opened(ctx, start, next, after, {some(none), some(false), some(Stream.__iter([]))}) end)
+  end
+  defp opened(ctx: option[fn[integer]], start: fn[t], next: fn[t, option[tuple[list[a], t]]], after: fn[t, b], cells: tuple[option[option[t]], option[boolean], option[fn[option[a]]]]): fn[option[a]] do
+    fn -> open_step(ctx, start, next, after, cells) end
+  end
+  defp open_step(ctx: option[fn[integer]], start: fn[t], next: fn[t, option[tuple[list[a], t]]], after: fn[t, b], cells: tuple[option[option[t]], option[boolean], option[fn[option[a]]]]): option[a] do
+    case Stream.__get(elem(cells, 0)) do
+      some(_) -> open_pull(next, after, cells, Stream.__pull(elem(cells, 2)))
+      none -> open_first(ctx, next, after, cells, Stream.__put(elem(cells, 0), some(start())), Stream.__get(ctx))
+    end
+  end
+  defp open_first(ctx: option[fn[integer]], next: fn[t, option[tuple[list[a], t]]], after: fn[t, b], cells: tuple[option[option[t]], option[boolean], option[fn[option[a]]]], w: option[option[t]], old: fn[integer]): option[a] do
+    close: fn[integer] = fn -> open_close(old(), after, cells) end
+    v = Stream.__put(ctx, close)
+    open_pull(next, after, cells, Stream.__pull(elem(cells, 2)))
+  end
+  defp open_close(w: integer, after: fn[t, b], cells: tuple[option[option[t]], option[boolean], option[fn[option[a]]]]): integer do
+    if Stream.__get(elem(cells, 1)) do 0 else
+      v = Stream.__put(elem(cells, 1), true)
+      case Stream.__get(elem(cells, 0)) do
+        some(state) -> Stream.__then(after(state), 0)
+        none -> 0
+      end
+    end
+  end
+  defp open_pull(next: fn[t, option[tuple[list[a], t]]], after: fn[t, b], cells: tuple[option[option[t]], option[boolean], option[fn[option[a]]]], got: option[a]): option[a] do
+    case got do
+      some(_) -> got
+      none -> open_more(next, after, cells, Stream.__get(elem(cells, 0)))
+    end
+  end
+  defp open_more(next: fn[t, option[tuple[list[a], t]]], after: fn[t, b], cells: tuple[option[option[t]], option[boolean], option[fn[option[a]]]], held: option[t]): option[a] do
+    step = case held do
+      some(state) -> next(state)
+      none -> none
+    end
+    case step do
+      some(pair) -> open_pull(next, after, cells, Stream.__pull(Stream.__then(Stream.__put(elem(cells, 0), some(elem(pair, 1))), Stream.__put(elem(cells, 2), Stream.__iter(elem(pair, 0))))))
+      none -> Stream.__then(open_close(0, after, cells), none)
+    end
+  end
+#: zip/1
+  def zip(lists: stream[list[a]]): stream[list[a]] do
+    Stream.__make(fn c -> rowed(Stream.__start(lists, c), some(none), some(0)) end)
+  end
+  defp rowed(it: fn[option[list[a]]], all: option[option[list[list[a]]]], at: option[integer]): fn[option[list[a]]] do
+    fn -> row_step(it, all, at, Stream.__get(all)) end
+  end
+  defp row_step(it: fn[option[list[a]]], all: option[option[list[list[a]]]], at: option[integer], held: option[list[list[a]]]): option[list[a]] do
+    case held do
+      some(rows) -> row_at(rows, Stream.__get(at), at)
+      none -> row_first(Stream.__all(it), all, at)
+    end
+  end
+  defp row_first(rows: list[list[a]], all: option[option[list[list[a]]]], at: option[integer]): option[list[a]] do
+    Stream.__then(Stream.__put(all, some(rows)), row_at(rows, 0, at))
+  end
+  defp row_at(rows: list[list[a]], i: integer, at: option[integer]): option[list[a]] do
+    w = Stream.__put(at, i + 1)
+    if length(rows) > 0 and Enum.reduce(rows, true, fn l, ok -> ok and length(l) > i end) do some(Enum.map(rows, fn l -> l[i] end)) else none end
+  end
+#: interval/1 needs map/2
+  def interval(milliseconds: integer): stream[integer] do
+    place = Stream.__where()
+    Stream.map(0..9223372036854775807, fn i -> nap(milliseconds, i, place) end)
+  end
+  defp nap(milliseconds: integer, i: integer, place: integer): integer do
+    if milliseconds < 0 do Stream.__fail(place, "sleep duration must be nonnegative") else Stream.__then(Stream.__sleep(milliseconds), i) end
+  end
+#: timer/1 needs map/2 interval/1
+  def timer(milliseconds: integer): stream[integer] do
+    place = Stream.__where()
+    Stream.map(0..0, fn i -> nap(milliseconds, i, place) end)
+  end
+# Each element is written to the file as it passes; a write that fails ends
+# the program, naming where the stream was made.
+#: into/2 needs each/2 IO.write/2
+  def into(s: stream[string], f: file): stream[string] do
+    place = Stream.__where()
+    Stream.each(s, fn text -> filed(IO.write(f, text), place) end)
+  end
+  defp filed(done: result[tuple[], string], place: integer): integer do
+    case done do
+      ok(_) -> 0
+      error(why) -> Stream.__fail(place, "Stream.into: " <> why)
+    end
+  end
+#: into/3 needs each/2 IO.write/2
+  def into(s: stream[a], f: file, g: fn[a, string]): stream[a] do
+    place = Stream.__where()
+    Stream.each(s, fn x -> written(IO.write(f, g(x)), place) end)
+  end
+  defp written(done: result[tuple[], string], place: integer): integer do
+    case done do
+      ok(_) -> 0
+      error(why) -> Stream.__fail(place, "Stream.into: " <> why)
+    end
+  end
+
+# Stream.publish(:name, fn -> stream end) offers a stream to other nodes
+# (library/Node.alc).
+#: publish/2 needs Atom.to_string/1 Node._form/1 Node._publish/3
+  def publish(name: atom, build: fn[stream[a]]): boolean do
+    Node._publish(Atom.to_string(name), Process.__word(build), Node._form(0))
+  end

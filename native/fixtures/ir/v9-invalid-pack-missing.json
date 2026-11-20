@@ -1,0 +1,30 @@
+{
+  "version": 9,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "bytes.pack",
+              "dest": "b"
+            },
+            {
+              "op": "bytes.len",
+              "dest": "r",
+              "value": "b"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    }
+  ]
+}

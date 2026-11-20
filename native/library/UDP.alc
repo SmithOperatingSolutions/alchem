@@ -1,0 +1,175 @@
+# UDP: datagram sockets (compiler/library.go.txt, "---- UDP ----"). A UDP
+# socket is a socket of library/TCP.alc of kind 3.
+#: struct UDP.Event
+  type UDP.Event do
+    datagram(from: string, text: string)
+    error(reason: string)
+  end
+#: _kind/0 needs Process.whereis/1
+  def _kind(): integer do
+    r: option[pid[UDP.Event]] = Process.whereis(:udp_event)
+    Sys.peek(Sys.stack() - 48)
+  end
+# The next datagram, awaited until the time d: where it came from and its
+# text, or the reason at b + 120.
+#: _read/3 needs Process._check/1 Process._fdwait/4 Process._now/1 TCP._fail/3 TCP._s/0 TCP._show/1 TCP._why/2
+  def _read(g: integer, b: integer, d: integer): tuple[string, string] do
+    Process._check(g)
+    fd = Sys.peek(b)
+    if Sys.peek(b + 16) == 1 do {"", TCP._why(b, "closed")} else
+      if d != 0 and Process._now(g) >= d or Sys.peek(b + 56) == 0 and Sys.peek(b + 64) != 0 do {"", TCP._why(b, "timeout")} else
+        s = TCP._s()
+        Sys.poke(s + 128, 28)
+        n = Sys.call(45, fd, s + 4096, 65535, 0, s, s + 128)
+        if n >= 0 do
+          text = Sys.text(s + 4096, n)
+          {TCP._show(Sys.text(s, rem(Sys.peek(s + 128), 4294967296))), text}
+        else
+          if n == -11 or n == -4 do
+            if n == -11 do Process._fdwait(g, fd, 1, d) end
+            UDP._read(g, b, d)
+          else {"", TCP._why(b, TCP._fail(b, "read", n))} end
+        end
+      end
+    end
+  end
+# What the process of an active UDP socket does.
+#: _pump/2 needs Process._g/0 TCP._lock/2 TCP._tell/3 TCP._unlock/2 _read/3
+  def _pump(b: integer, r: integer): integer do
+    g = Process._g()
+    if Sys.peek(b + 16) == 1 or Sys.peek(b + 56) == 0 do Sys.poke(b + 64, 0) else
+      TCP._lock(g, b)
+      Sys.poke(b + 120, 0)
+      {from, text} = UDP._read(g, b, 0)
+      TCP._unlock(g, b)
+      why: string = if Sys.peek(b + 120) == 0 do "" else Process.__any(Sys.peek(b + 120)) end
+      if Sys.peek(b + 16) == 1 do Sys.poke(b + 64, 0) else
+        if why == "timeout" do UDP._pump(b, r) else
+          if why != "" do
+            Sys.poke(b + 56, 0)
+            Sys.poke(b + 64, 0)
+            TCP._tell(g, r, Process.__word(UDP.Event.error(why)))
+          else
+            if Sys.peek(b + 56) > 0 do Sys.poke(b + 56, Sys.peek(b + 56) - 1) end
+            TCP._tell(g, r, Process.__word(UDP.Event.datagram(from, text)))
+            UDP._pump(b, r)
+          end
+        end
+      end
+    end
+  end
+#: _activate/2 needs Process._g/0 Process._go/2 Process._ready/2 TCP._receiver/2 _kind/0 _pump/2
+  def _activate(b: integer, count: integer): string do
+    g = Process._g()
+    if Sys.peek(b + 8) != 3 do "not a UDP socket" else
+      if Sys.peek(b + 16) == 1 do "closed" else
+        Sys.poke(b + 56, count)
+        if Sys.peek(b + 64) != 0 do
+          if count == 0 do Process._ready(g, Sys.peek(b + 64)) end
+          ""
+        else
+          if count == 0 do "" else
+            r = TCP._receiver(b, UDP._kind())
+            if r == 0 do
+              Sys.poke(b + 56, 0)
+              "the controlling process does not take UDP.Event messages"
+            else
+              f: fn[integer] = fn(): integer do UDP._pump(b, r) end
+              Sys.poke(b + 64, Process._go(g, Process.__word(f)))
+              ""
+            end
+          end
+        end
+      end
+    end
+  end
+#: open/1 needs Process._check/1 Process._g/0 TCP._bind/3
+  def open(a: string): result[socket, string] do
+    Process._check(Process._g())
+    TCP._bind("udp", a, 3)
+  end
+#: close/1 needs Process._g/0 TCP._close/2
+  def close(s: socket): boolean do
+    TCP._close(Process._g(), s.at) == 1
+  end
+#: address/1
+  def address(s: socket): string do
+    Process.__any(Sys.peek(s.at + 104))
+  end
+#: controlling_process/2 needs Process._g/0 TCP._own/3
+  def controlling_process(s: socket, p: pid[a]): boolean do
+    TCP._own(Process._g(), s.at, p.at)
+    Sys.poke(s.at + 32, p.at)
+    true
+  end
+# The datagram goes to one address: "" or why not.
+#: _sendto/4 needs Process._check/1 Process._fdwait/4
+  def _sendto(g: integer, fd: integer, text: string, to: string): integer do
+    r = Sys.call(44, fd, Sys.addr(text), byte_size(text), 0x4000, Sys.addr(to), byte_size(to))
+    if r == -11 or r == -4 do
+      if r == -11 do Process._fdwait(g, fd, 4, 0) end
+      Process._check(g)
+      UDP._sendto(g, fd, text, to)
+    else r end
+  end
+#: send/3 needs Enum.filter/2 Process._check/1 Process._g/0 TCP._addrs/2 TCP._first4/1 TCP._host/1 TCP._named/2 TCP._sa6/3 TCP._saport/1 _sendto/4
+  def send(s: socket, a: string, text: string): result[tuple[], string] do
+    g = Process._g()
+    Process._check(g)
+    b = s.at
+    if Sys.peek(b + 8) != 3 do error("not a UDP socket") else
+      {found, why} = TCP._addrs("udp", a)
+      if why != "" do error(why) else
+        six = Enum.filter(found, fn x -> byte_size(x) == 28 end)
+        x = if byte_size(a) > 0 and Sys.byte(Sys.addr(a)) == 91 and six != [] do hd(six) else TCP._first4(found) end
+        here: string = Process.__any(Sys.peek(b + 104))
+        mine: string = Process.__any(Sys.peek(b + 136))
+        wide = Sys.byte(Sys.addr(mine)) == 10
+        if Sys.peek(b + 16) == 1 do error("closed") else
+          if not wide and byte_size(x) == 28 do error("write udp " <> here <> "->" <> TCP._named(a, x) <> ": address " <> TCP._host(x) <> ": non-IPv4 address") else
+            p = Sys.addr(x)
+            to = if wide and byte_size(x) == 16 do TCP._sa6([0, 0, 0, 0, 0, if Sys.peek(p + 4) == 0 do 0 else 65535 end, Sys.byte(p + 4) * 256 + Sys.byte(p + 5), Sys.byte(p + 6) * 256 + Sys.byte(p + 7)], 0, TCP._saport(x)) else x end
+            r = UDP._sendto(g, Sys.peek(b), text, to)
+            if r < 0 do error("write udp " <> here <> "->" <> TCP._named(a, x) <> ": sendto: " <> Sys.errno(0 - r)) else ok({}) end
+          end
+        end
+      end
+    end
+  end
+#: recv/2 needs Process._due/2 Process._g/0 TCP._lock/2 TCP._unlock/2 _read/3
+  def recv(s: socket, ms: integer): result[tuple[string, string], string] do
+    g = Process._g()
+    b = s.at
+    if Sys.peek(b + 8) != 3 do error("not a UDP socket") else
+      if Sys.peek(b + 56) != 0 or Sys.peek(b + 64) != 0 do error("the socket is active") else
+        TCP._lock(g, b)
+        try do
+          Sys.poke(b + 120, 0)
+          got = UDP._read(g, b, Process._due(g, ms))
+          if Sys.peek(b + 120) != 0 do error(Process.__any(Sys.peek(b + 120))) else ok(got) end
+        after
+          TCP._unlock(g, b)
+        end
+      end
+    end
+  end
+#: setopts/2 needs _activate/2
+  def setopts(s: socket, o: list[tuple[atom, atom]]): result[tuple[], string] do
+    case o do
+      [] -> ok({})
+      [{k, v} | rest] ->
+        if k != :active or v != :true and v != :once and v != :false do raise("UDP.setopts takes active: true, :once or false") end
+        why = UDP._activate(s.at, if v == :true do -1 else if v == :once do 1 else 0 end end)
+        if why != "" do error(why) else UDP.setopts(s, rest) end
+    end
+  end
+#: setopts/2 form 2 needs _activate/2
+  def setopts(s: socket, o: list[tuple[atom, integer]]): result[tuple[], string] do
+    case o do
+      [] -> ok({})
+      [{k, v} | rest] ->
+        if k != :active or v < 0 do raise("UDP.setopts takes active: and a number of datagrams") end
+        why = UDP._activate(s.at, v)
+        if why != "" do error(why) else UDP.setopts(s, rest) end
+    end
+  end

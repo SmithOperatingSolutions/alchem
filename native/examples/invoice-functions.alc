@@ -1,0 +1,11 @@
+defmodule Invoice do
+  def total(price: integer, quantity: integer, discount: integer): integer do
+    subtotal = price * quantity
+    subtotal - discount
+  end
+
+  def main() do
+    amount = total(12, 5, 18)
+    System.halt(amount)
+  end
+end

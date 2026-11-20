@@ -1,0 +1,673 @@
+defmodule NativeFloats do
+  # The float type (tag 24): 64-bit IEEE values kept as their bits in the word
+  # every value occupies. Literals are converted and constant sums, differences
+  # and products folded while compiling, with integers only (the compiler has
+  # no floats): a literal is a ratio of two integers of any size, divided bit
+  # by bit and rounded once. Text, parsing, rounding at decimal places and
+  # powers are the float runtime (spec/float-x86_64.s), table slot functions+5.
+  def ne_slot(table: bytes): integer do nc_records(Enum.count(table))+5 end
+  def ne_run(table: bytes, op: integer): bytes do Enum.concat(b[184,op,0,0,0],nc_call(ne_slot(table))) end
+  # ---- integers of any size: bytes, least significant first ----
+  def ne_trim(x: bytes, size: integer): bytes do
+    if size == 0 do b[] else if Enum.at(x,size-1,0) != 0 do nc_slice(x,0,size) else ne_trim(x,size-1) end end
+  end
+  # x*m+carry, for m up to 256 and carry up to 255.
+  def ne_scale(x: bytes, m: integer, carry: integer, index: integer): bytes do
+    v = Enum.at(x,index,0)*m+carry
+    if index >= Enum.count(x) do if carry == 0 do b[] else b[carry] end else
+      Enum.concat(b[v-nc_hi(v)*256],ne_scale(x,m,nc_hi(v),index+1))
+    end
+  end
+  def ne_tens(x: bytes, count: integer): bytes do
+    if count <= 0 do x else if count == 1 do ne_scale(x,10,0,0) else ne_tens(ne_scale(x,100,0,0),count-2) end end
+  end
+  # -1, 0 or 1 as x is below, equal to or above y; neither has high zeros.
+  def ne_order(x: bytes, y: bytes): integer do
+    if Enum.count(x) != Enum.count(y) do if Enum.count(x) < Enum.count(y) do -1 else 1 end else ne_order_at(x,y,Enum.count(x)-1) end
+  end
+  def ne_order_at(x: bytes, y: bytes, index: integer): integer do
+    if index < 0 do 0 else
+      if Enum.at(x,index,0) == Enum.at(y,index,0) do ne_order_at(x,y,index-1) else if Enum.at(x,index,0) < Enum.at(y,index,0) do -1 else 1 end end
+    end
+  end
+  def ne_less(x: bytes, y: bytes, index: integer, borrow: integer): bytes do
+    v = Enum.at(x,index,0)-Enum.at(y,index,0)-borrow
+    if index >= Enum.count(x) do b[] else
+      if v < 0 do Enum.concat(b[v+256],ne_less(x,y,index+1,1)) else Enum.concat(b[v],ne_less(x,y,index+1,0)) end
+    end
+  end
+  # x-y for x >= y.
+  def ne_minus(x: bytes, y: bytes): bytes do
+    ne_trim(ne_less(x,y,0,0),Enum.count(x))
+  end
+  def ne_plus(x: bytes, y: bytes, index: integer, carry: integer): bytes do
+    v = Enum.at(x,index,0)+Enum.at(y,index,0)+carry
+    done = if index >= Enum.count(x) do if index >= Enum.count(y) do 1 else 0 end else 0 end
+    if done == 1 do if carry == 0 do b[] else b[1] end else
+      if v >= 256 do Enum.concat(b[v-256],ne_plus(x,y,index+1,1)) else Enum.concat(b[v],ne_plus(x,y,index+1,0)) end
+    end
+  end
+  def ne_times(x: bytes, y: bytes, index: integer): bytes do
+    if index >= Enum.count(y) do b[] else ne_plus(ne_scale(x,Enum.at(y,index,0),0,0),Enum.concat(b[0],ne_times(x,y,index+1)),0,0) end
+  end
+  # x * 2**bits.
+  def ne_shift(x: bytes, bits: integer): bytes do
+    whole = nt_div(bits,8)
+    moved = Enum.concat(nc_zeros(whole),ne_scale(x,nt_power(bits-whole*8),0,0))
+    ne_trim(moved,Enum.count(moved))
+  end
+  # ---- from a ratio of integers to the nearest float ----
+  # The 8 bytes of a float from its bits without the sign; b[] when it is too
+  # large to be one. flags: 1 for a ratio that stands for a little more, 2 for
+  # a minus sign.
+  def ne_word(bits: integer, flags: integer): bytes do
+    word = nt_word(bits)
+    if bits >= 9218868437227405312 do b[] else if flags < 2 do word else Enum.concat(nc_slice(word,0,7),b[Enum.at(word,7,0)+128]) end end
+  end
+  # The float nearest u/v * 2**shift; u and v have no high zeros and are not zero.
+  def ne_ratio(u: bytes, v: bytes, shift: integer, flags: integer): bytes do
+    gap = Enum.count(u)-Enum.count(v)
+    if gap < 0 do ne_align(Enum.concat(nc_zeros(0-gap),u),v,shift+gap*8,flags) else ne_align(u,Enum.concat(nc_zeros(gap),v),shift+gap*8,flags) end
+  end
+  # Doubling one of the two until v <= u < 2v: the value is then 1.x * 2**exponent.
+  def ne_align(u: bytes, v: bytes, exponent: integer, flags: integer): bytes do
+    if ne_order(u,v) < 0 do ne_align(ne_scale(u,2,0,0),v,exponent-1,flags) else
+      if ne_order(u,ne_scale(v,2,0,0)) >= 0 do ne_align(u,ne_scale(v,2,0,0),exponent+1,flags) else ne_round(u,v,exponent,flags) end
+    end
+  end
+  # count bits of u/v, most significant first, behind value: its 8 bytes, then
+  # what is left of u, doubled.
+  def ne_quotient(u: bytes, v: bytes, count: integer, value: integer): bytes do
+    if count == 0 do Enum.concat(nt_word(value),u) else
+      if ne_order(u,v) >= 0 do ne_quotient(ne_scale(ne_minus(u,v),2,0,0),v,count-1,value*2+1) else ne_quotient(ne_scale(u,2,0,0),v,count-1,value*2) end
+    end
+  end
+  # 53 bits, fewer for a subnormal, then one more decides the rounding with
+  # what is left: a half goes to the even neighbour.
+  def ne_round(u: bytes, v: bytes, exponent: integer, flags: integer): bytes do
+    keep = if exponent >= -1022 do 53 else 53+exponent+1022 end
+    state = if keep < 0 do b[] else ne_quotient(u,v,keep,0) end
+    kept = nt_read_word(state,0)
+    rest = nc_slice(state,8,Enum.count(state))
+    up = if ne_order(rest,v) >= 0 do 1 else 0 end
+    left = if up == 1 do ne_minus(rest,v) else rest end
+    more = if Enum.count(left) > 0 do 1 else flags-nt_div(flags,2)*2 end
+    odd = kept-nt_div(kept,2)*2
+    bump = if up == 0 do 0 else if more+odd > 0 do 1 else 0 end end
+    base = if exponent >= -1022 do exponent+1022 else 0 end
+    if exponent > 1023 do b[] else if keep < 0 do ne_word(0,flags) else ne_word(base*4503599627370496+kept+bump,flags) end end
+  end
+  # ---- literals ----
+  # Where the digits from pos end: an underscore between digits separates them.
+  def ne_digits(source: bytes, pos: integer, count: integer): integer do
+    value = byte_at(source,pos)
+    more = if is_digit(value) == 1 do 1 else if value == 95 do is_digit(byte_at(source,pos+1)) else 0 end end
+    if more == 0 do pos else if count == 0 do -1 else ne_digits(source,pos+1,count-1) end end
+  end
+  # Where the number that starts at start ends. A float has digits on both
+  # sides of its point and may have an exponent: e, a sign and digits.
+  def ne_end(source: bytes, start: integer): integer do
+    whole = ne_digits(source,start,16777216)
+    part = if whole < 0 do -1 else if byte_at(source,whole) != 46 do whole else if is_digit(byte_at(source,whole+1)) == 0 do whole else nc_scan(source,whole+1,3,16777216) end end end
+    if part <= whole do part else ne_exponent_end(source,part) end
+  end
+  def ne_exponent_end(source: bytes, pos: integer): integer do
+    sign = byte_at(source,pos+1)
+    first = if (sign-43)*(sign-45) == 0 do pos+2 else pos+1 end
+    if byte_at(source,pos) != 101 do pos else if is_digit(byte_at(source,first)) == 0 do pos else nc_scan(source,first,3,16777216) end end
+  end
+  # 1 when underscores separate the digits from pos to stop.
+  def ne_separated(source: bytes, pos: integer, stop: integer): integer do
+    if pos >= stop do 0 else if byte_at(source,pos) == 95 do 1 else ne_separated(source,pos+1,stop) end end
+  end
+  def ne_cleaned(source: bytes, pos: integer, stop: integer): bytes do
+    if pos >= stop do b[] else if byte_at(source,pos) == 95 do ne_cleaned(source,pos+1,stop) else Enum.concat(b[byte_at(source,pos)],ne_cleaned(source,pos+1,stop)) end end
+  end
+  # An integer written with underscores is the integer of its digits.
+  def ne_integer(source: bytes, pos: integer, stop: integer, negative: integer): bytes do
+    inner = nc_number(ne_cleaned(source,pos,stop),0,negative)
+    if nc_pos(inner) < 0 do b[] else nc_result(stop,nc_code(inner)) end
+  end
+  # 1 when the number from pos to stop is a float.
+  def ne_is(source: bytes, pos: integer, stop: integer): integer do
+    point = ne_digits(source,pos,16777216)
+    if point < 0 do 0 else if point >= stop do 0 else if byte_at(source,point) == 46 do 1 else 0 end end end
+  end
+  # The digits of a literal as an integer, without leading zeros and at most
+  # 800 of them, as Go keeps: the count kept, the count dropped (16 bits
+  # each), 1 when a dropped digit was not zero, then the integer.
+  def ne_collect(source: bytes, pos: integer, stop: integer, state: bytes): bytes do
+    digit = byte_at(source,pos)-48
+    kept = nc_read(state,0)
+    if pos >= stop do state else
+      if digit < 0 do ne_collect(source,pos+1,stop,state) else if digit > 9 do ne_collect(source,pos+1,stop,state) else
+        if kept+digit == 0 do ne_collect(source,pos+1,stop,state) else
+          if kept < 800 do ne_collect(source,pos+1,stop,nc_join(nc_u16(kept+1),nc_slice(state,2,5),ne_scale(nc_slice(state,5,Enum.count(state)),10,digit,0))) else
+            ne_collect(source,pos+1,stop,Enum.concat(nc_join(nc_slice(state,0,2),nc_u16(nc_read(state,2)+1),b[if digit == 0 do Enum.at(state,4,0) else 1 end]),nc_slice(state,5,Enum.count(state))))
+          end
+        end
+      end end
+    end
+  end
+  def ne_count(source: bytes, pos: integer, stop: integer, value: integer): integer do
+    if pos >= stop do value else ne_count(source,pos+1,stop,if value >= 10000 do value else value*10+byte_at(source,pos)-48 end) end
+  end
+  # The exponent written from pos (an e) to stop; 0 when there is none.
+  def ne_power(source: bytes, pos: integer, stop: integer): integer do
+    sign = byte_at(source,pos+1)
+    if pos >= stop do 0 else if sign == 45 do 0-ne_count(source,pos+2,stop,0) else ne_count(source,if sign == 43 do pos+2 else pos+1 end,stop,0) end end
+  end
+  # The 8 bytes of the float literal from pos to stop; b[] when it is too large.
+  def ne_bits(source: bytes, pos: integer, stop: integer, negative: integer): bytes do
+    point = ne_digits(source,pos,16777216)
+    part = nc_scan(source,point+1,3,16777216)
+    state = ne_collect(source,pos,part,b[0,0,0,0,0])
+    kept = nc_read(state,0)
+    power = ne_power(source,part,stop)-(part-point-1)+nc_read(state,2)
+    digits = nc_slice(state,5,Enum.count(state))
+    flags = Enum.at(state,4,0)+negative*2
+    if kept == 0 do ne_word(0,flags) else if kept+power > 310 do b[] else if kept+power < -330 do ne_word(0,flags) else
+      if power >= 0 do ne_ratio(ne_tens(digits,power),b[1],0,flags) else ne_ratio(digits,ne_tens(b[1],0-power),0,flags) end
+    end end end
+  end
+  # A literal is "mov rax, bits". The pinned compiler makes -0.0 by negating
+  # at run time, so it is no constant: a nop marks it.
+  def ne_literal(source: bytes, pos: integer, stop: integer, negative: integer): bytes do
+    word = ne_bits(source,pos,stop,negative)
+    zero = if nt_read_word(nc_slice(word,0,7),0) == 0 do if Enum.at(word,7,0) == 128 do 1 else 0 end else 0 end
+    if Enum.count(word) == 0 do b[] else nc_value(stop,nc_join(b[72,184],word,if zero == 1 do b[144] else b[] end),b[24]) end
+  end
+  # ---- constants ----
+  # The pinned compiler writes a literal and a sum, difference or product of
+  # constants as Go constants, which Go folds exactly, rounds once, and for
+  # which it has no negative zero and no infinity: -0.0 becomes 0.0 and a
+  # result too large is a compile error. A module constant is its expression
+  # where it is used, so it stays one. 1 for such a value: its code is
+  # "mov rax, bits" alone.
+  def ne_constant(value: bytes): integer do
+    code = nc_code(value)
+    if nc_tag(value) != 24 do 0 else if Enum.count(code) != 10 do 0 else if Enum.at(code,0,0) != 72 do 0 else if Enum.at(code,1,0) == 184 do 1 else 0 end end end end
+  end
+  def ne_sign(word: bytes): integer do if Enum.at(word,7,0) >= 128 do 1 else 0 end end
+  def ne_field(word: bytes): integer do (Enum.at(word,7,0)-ne_sign(word)*128)*16+nt_div(Enum.at(word,6,0),16) end
+  # A float is mantissa * 2**exponent.
+  def ne_mantissa(word: bytes): bytes do
+    high = Enum.at(word,6,0)-nt_div(Enum.at(word,6,0),16)*16+if ne_field(word) == 0 do 0 else 16 end
+    ne_trim(Enum.concat(nc_slice(word,0,6),b[high]),7)
+  end
+  def ne_exponent(word: bytes): integer do if ne_field(word) == 0 do -1074 else ne_field(word)-1075 end end
+  # Zero is positive.
+  def ne_plain(word: bytes): bytes do
+    if Enum.count(word) == 0 do word else if nt_read_word(nc_slice(word,0,7),0) != 0 do word else if Enum.at(word,7,0) == 128 do nt_word(0) else word end end end
+  end
+  def ne_made(m: bytes, exponent: integer, sign: integer): bytes do
+    trimmed = ne_trim(m,Enum.count(m))
+    if Enum.count(trimmed) == 0 do nt_word(0) else ne_plain(ne_ratio(trimmed,b[1],exponent,sign*2)) end
+  end
+  def ne_sum(x: bytes, y: bytes, flip: integer): bytes do
+    low = if ne_exponent(x) < ne_exponent(y) do ne_exponent(x) else ne_exponent(y) end
+    left = ne_shift(ne_mantissa(x),ne_exponent(x)-low)
+    right = ne_shift(ne_mantissa(y),ne_exponent(y)-low)
+    other = if flip == 0 do ne_sign(y) else 1-ne_sign(y) end
+    order = ne_order(left,right)
+    if ne_sign(x) == other do ne_made(ne_plus(left,right,0,0),low,other) else
+      if order == 0 do nt_word(0) else if order > 0 do ne_made(ne_minus(left,right),low,ne_sign(x)) else ne_made(ne_minus(right,left),low,other) end end
+    end
+  end
+  # kind: 1 for +, 2 for -, 3 for *.
+  def ne_fold(x: bytes, y: bytes, kind: integer): bytes do
+    if kind == 3 do ne_made(ne_times(ne_mantissa(x),ne_mantissa(y),0),ne_exponent(x)+ne_exponent(y),if ne_sign(x) == ne_sign(y) do 0 else 1 end) else ne_sum(x,y,kind-1) end
+  end
+  # ---- operators ----
+  # RCX holds the left operand and RAX the right one.
+  def ne_operator(table: bytes, op: integer, kind: integer): bytes do
+    enter = b[102,72,15,110,193,102,72,15,110,200]
+    leave = b[102,72,15,126,192]
+    if kind == 1 do nc_join(enter,b[242,15,88,193],leave) else if kind == 2 do nc_join(enter,b[242,15,92,193],leave) else
+      if kind == 3 do nc_join(enter,b[242,15,89,193],leave) else
+        if kind == 4 do nc_join(nc_join(b[72,141,20,0,72,133,210,117,19],nz_fail(table,op,4),enter),b[242,15,94,193],leave) else Enum.concat(b[72,137,207,72,137,198],ne_run(table,7)) end
+      end
+    end end
+  end
+  # left op right for two floats; op is where the operator stands.
+  def ne_arith(source: bytes, table: bytes, left: bytes, right: bytes, op: integer): bytes do
+    value = byte_at(source,op)
+    single = if nc_end(source,op)-op == 1 do 1 else 0 end
+    kind = if nc_word(source,op,b[42,42]) == 1 do 5 else if single == 0 do 0 else if value == 43 do 1 else if value == 45 do 2 else if value == 42 do 3 else if value == 47 do 4 else 0 end end end end end end
+    both = if kind > 3 do 0 else ne_constant(left)*ne_constant(right) end
+    folded = if both == 0 do b[] else ne_fold(nc_slice(nc_code(left),2,10),nc_slice(nc_code(right),2,10),kind) end
+    if nc_tag(left) != 24 do b[] else if nc_tag(right) != 24 do b[] else if kind == 0 do b[] else if nw_marked(left) > 0 do b[] else
+      if both == 1 do if Enum.count(folded) == 0 do b[] else nc_value(nc_pos(right),Enum.concat(b[72,184],folded),b[24]) end else
+        fused = if nc_arm() == 1 do (if kind < 3 do ne_fused(left,right,kind) else b[] end) else b[] end
+        made = nc_value(nc_pos(right),nc_join(Enum.concat(nc_code(left),b[80]),nc_code(right),Enum.concat(b[89],ne_operator(table,op,kind))),b[24])
+        # Go's compiler folds an operation on two constants (as its SSA has
+        # them: through names too), which then is no product to fuse.
+        folded_by_go = if nc_arm() == 1 do ne_go_constant(left)*ne_go_constant(right)*(if kind < 5 do 1 else 0 end) else 0 end
+        if Enum.count(fused) > 0 do fused else if folded_by_go == 1 do ne_flag(made,8) else if nc_arm()*(if kind == 3 do 1 else 0 end) == 1 do ne_product(made) else made end end end
+      end
+    end end end end
+  end
+  # ---- fused multiply-add (ARM64) ----
+  # The pinned compiler's ARM64 programs are Go's, whose compiler makes an
+  # addition or subtraction of floats with a product (or a negated product)
+  # as an operand one fused operation (ARM64.rules: FMADDD a x y for a + x*y,
+  # FMSUBD a - x*y, FNMSUBD x*y - a, FNMADDD -(x*y) - a). The ARM64 compiler
+  # does the same: a product's value has bit 32 of its flags and ends in the
+  # multiplication (ne_product), a negated one bit 16 and the sign's flip
+  # after it, and a sum or difference takes that off, keeping the factors.
+  # A difference takes the rules in their order (a product on the right
+  # first); a sum of two products is fused on its left, which is what Go's
+  # compiler did in every case observed: which one it takes depends on how
+  # its CSE numbers every value of the function (spec/arm64.md).
+  def ne_product(value: bytes): bytes do ne_flag(value,32) end
+  # The value of -operand: a negated product when operand is a product, a
+  # constant when it is one.
+  def ne_negated(operand: bytes, value: bytes): bytes do
+    if nc_arm() == 0 do value else if ne_is_product(operand) == 1 do ne_flag(value,16) else if ne_go_constant(operand) == 1 do ne_flag(value,8) else value end end end
+  end
+  # 1 for a float Go's compiler knows at compile time: a literal, or a value
+  # with bit 8 of its flags (a name bound to one, an operation on two).
+  def ne_go_constant(value: bytes): integer do
+    if ne_constant(value) == 1 do 1 else if Enum.count(value) < 4 do 0 else if Enum.at(value,3,0)-16*a_div(Enum.at(value,3,0),16) >= 8 do 1 else 0 end end end
+  end
+  # A call of function id on ARM64 whose body Go's compiler inlines and
+  # whose value is a product is a product where it is called: the factors
+  # are still in RCX and XMM1 when it returns (ne_multiply_tail, then dec
+  # r15, leave, ret), from which they are taken and multiplied again.
+  def ne_called(source: bytes, table: bytes, id: integer, value: bytes): bytes do
+    if nc_arm() == 0 do value else if nc_tag(value) != 24 do value else if ne_inlined(source,table,id) == 0 do value else
+      ne_product(nc_value(nc_pos(value),nc_join(nc_code(value),b[81,102,72,15,126,200],ne_multiply_tail()),nc_kind(value)))
+    end end end
+  end
+  # 1 when Go's compiler inlines function id and it ends in a product: one
+  # clause whose body is assignments and a last expression of names,
+  # numbers, + - * / and parentheses (no call, no keyword, no comparison),
+  # whose operator at the top is *, not all of it constants.
+  def ne_inlined(source: bytes, table: bytes, id: integer): integer do
+    start = nc_meta(table,id,9)
+    stop = nc_meta(table,id,12)
+    if nj_clausal(table,id) == 1 do 0 else if stop-start > 2000 do 0 else if stop <= start do 0 else
+      if ne_plain_text(source,start,stop) == 0 do 0 else
+        last = ne_last_line(source,start,stop)
+        ne_top_product(source,ne_skip_space(source,last,stop),ne_trim_end(source,last,stop))
+      end
+    end end end
+  end
+  def ne_plain_text(source: bytes, first: integer, stop: integer): integer do
+    if stop-first > 32 do
+      middle = first+nc_half(stop-first)
+      ne_plain_text(source,first,middle)*ne_plain_text(source,middle,stop)
+    else ne_plain_run(source,first,stop) end
+  end
+  def ne_plain_run(source: bytes, p: integer, stop: integer): integer do
+    if p >= stop do 1 else if ne_plain_at(source,p) == 0 do 0 else ne_plain_run(source,p+1,stop) end end
+  end
+  def ne_ident(c: integer): integer do
+    if c == 95 do 1 else if c >= 97 do (if c <= 122 do 1 else 0 end) else if c >= 65 do (if c <= 90 do 1 else 0 end) else if c >= 48 do (if c <= 57 do 1 else 0 end) else 0 end end end end
+  end
+  # The byte at p is of a plain body: a name or number character, a space,
+  # an operator, a parenthesis that is no call's, = that is no comparison's;
+  # a word that starts at p is no keyword.
+  def ne_plain_at(source: bytes, p: integer): integer do
+    c = byte_at(source,p)
+    if ne_ident(c) == 1 do (if ne_ident(byte_at(source,p-1)) == 1 do 1 else ne_no_keyword(source,p) end) else
+      if nc_and((c-32)*(c-10)*(c-9)*(c-13),(c-43)*(c-45)*(c-42)*(c-47)*(c-41)*(c-46)) == 0 do 1 else
+        if c == 40 do 1-ne_ident(byte_at(source,ne_back_space(source,p-1))) else
+          if c == 61 do (if byte_at(source,p+1) == 61 do 0 else if nc_and((byte_at(source,p-1)-61)*(byte_at(source,p-1)-60),(byte_at(source,p-1)-62)*(byte_at(source,p-1)-33)) == 0 do 0 else 1 end end) else 0 end
+        end
+      end
+    end
+  end
+  def ne_back_space(source: bytes, p: integer): integer do if p < 0 do 0 else if byte_at(source,p) == 32 do ne_back_space(source,p-1) else p end end end
+  def ne_no_keyword(source: bytes, p: integer): integer do
+    words = nc_word(source,p,b[105,102])+nc_word(source,p,b[99,97,115,101])+nc_word(source,p,b[99,111,110,100])+nc_word(source,p,b[119,105,116,104])+nc_word(source,p,b[102,111,114])+nc_word(source,p,b[102,110])
+    more = nc_word(source,p,b[100,111])+nc_word(source,p,b[101,110,100])+nc_word(source,p,b[97,110,100])+nc_word(source,p,b[111,114])+nc_word(source,p,b[110,111,116])+nc_word(source,p,b[101,108,115,101])
+    if words+more > 0 do 0 else 1 end
+  end
+  # Where the last statement of first..stop starts.
+  def ne_last_line(source: bytes, first: integer, stop: integer): integer do
+    end_at = ne_trim_end(source,first,stop)
+    ne_line_start(source,first,end_at-1)
+  end
+  def ne_line_start(source: bytes, first: integer, p: integer): integer do
+    if p < first do first else if byte_at(source,p) == 10 do p+1 else ne_line_start(source,first,p-1) end end
+  end
+  def ne_trim_end(source: bytes, first: integer, stop: integer): integer do
+    if stop <= first do first else if nc_and((byte_at(source,stop-1)-32)*(byte_at(source,stop-1)-10),(byte_at(source,stop-1)-9)*(byte_at(source,stop-1)-13)) == 0 do ne_trim_end(source,first,stop-1) else stop end end
+  end
+  def ne_skip_space(source: bytes, p: integer, stop: integer): integer do
+    if p >= stop do p else if (byte_at(source,p)-32)*(byte_at(source,p)-9) == 0 do ne_skip_space(source,p+1,stop) else p end end
+  end
+  # 1 when the expression first..stop is a product at its top: in
+  # parentheses as a whole, what is inside; else no + or - between operands
+  # at depth 0, the last * or / there a *, and a name somewhere in it.
+  def ne_top_product(source: bytes, first: integer, stop: integer): integer do
+    if stop <= first do 0 else
+      if byte_at(source,first)*(if ne_closing(source,first+1,stop,1) == stop-1 do 1 else 0 end) == 40 do ne_top_product(source,first+1,stop-1) else
+        scan = ne_top_scan(source,first,stop,0,0)
+        if scan == 42 do ne_named(source,first,stop) else 0 end
+      end
+    end
+  end
+  # Where the parenthesis open at depth closes, from p.
+  def ne_closing(source: bytes, p: integer, stop: integer, depth: integer): integer do
+    if p >= stop do -1 else
+      c = byte_at(source,p)
+      if c == 40 do ne_closing(source,p+1,stop,depth+1) else if c == 41 do (if depth == 1 do p else ne_closing(source,p+1,stop,depth-1) end) else ne_closing(source,p+1,stop,depth) end end
+    end
+  end
+  # The operator at the top: 43 for a + or - between operands at depth 0,
+  # else the last * or / there (42, 47), else 0; ** (a power, which binds
+  # tighter) is part of an operand. state: the last such, plus
+  # 1000 after an operand (a - then is binary).
+  def ne_top_scan(source: bytes, p: integer, stop: integer, depth: integer, state: integer): integer do
+    if p >= stop do (if depth == 0 do state-1000*a_div(state,1000) else 0 end) else
+      c = byte_at(source,p)
+      last = state-1000*a_div(state,1000)
+      operand = a_div(state,1000)
+      if c == 40 do ne_top_scan(source,p+1,stop,depth+1,last) else if c == 41 do ne_top_scan(source,p+1,stop,depth-1,1000+last) else
+        if nc_and((c-32)*(c-9)*(c-10),c-13) == 0 do ne_top_scan(source,p+1,stop,depth,state) else
+          if (c-43)*(c-45) == 0 do (if ne_exponent_sign(source,p) == 1 do ne_top_scan(source,p+1,stop,depth,state) else if depth == 0 do (if operand == 1 do 43 else ne_top_scan(source,p+1,stop,depth,last) end) else ne_top_scan(source,p+1,stop,depth,last) end end) else
+            if c*byte_at(source,p+1) == 1764 do ne_top_scan(source,p+2,stop,depth,1000+last) else
+              if (c-42)*(c-47) == 0 do ne_top_scan(source,p+1,stop,depth,if depth == 0 do c else last end) else ne_top_scan(source,p+1,stop,depth,1000+last) end
+            end
+          end
+        end
+      end end
+    end
+  end
+  # 1 when the + or - at p is the sign of a number's exponent (1.5e-3).
+  def ne_exponent_sign(source: bytes, p: integer): integer do
+    e = byte_at(source,p-1)
+    before = byte_at(source,p-2)
+    if (e-101)*(e-69) != 0 do 0 else if nc_and(before-46,(if before >= 48 do (if before <= 57 do 0 else 1 end) else 1 end)) == 0 do (if ne_ident(byte_at(source,ne_number_start(source,p-2))) == 1 do 0 else 1 end) else 0 end end
+  end
+  # Where the digits and points that end at p start (a name before them
+  # makes them a name's).
+  def ne_number_start(source: bytes, p: integer): integer do
+    c = byte_at(source,p)
+    if c == 46 do ne_number_start(source,p-1) else if c >= 48 do (if c <= 57 do ne_number_start(source,p-1) else p end) else p end end
+  end
+  def ne_named(source: bytes, p: integer, stop: integer): integer do
+    if p >= stop do 0 else
+      c = byte_at(source,p)
+      if ne_ident(c)*(if c >= 65 do 1 else if c == 95 do 1 else 0 end end) == 1 do (if ne_ident(byte_at(source,p-1)) == 1 do ne_named(source,p+1,stop) else 1 end) else ne_named(source,p+1,stop) end
+    end
+  end
+  # A read of the name of slot local: on ARM64, when it was bound to a
+  # product (two hidden float records after it that start where its name
+  # does, nx_binding), the product of the factors kept beside it.
+  def ne_read(env: bytes, local: integer, value: bytes): bytes do
+    if nc_arm() == 0 do value else if nc_tag(value) != 24 do value else if ne_constant_slot(env,local) == 1 do ne_flag(value,8) else if ne_factor_slots(env,local) == 0 do value else
+      code = nc_join(Enum.concat(nc_slot(b[72,139,69],local+1),b[80]),nc_slot(b[72,139,69],local+2),ne_multiply_tail())
+      ne_product(nc_value(nc_pos(value),code,nc_kind(value)))
+    end end end end
+  end
+  # 1 when the name of slot local was bound to a constant: the hidden record
+  # after it is of kind 24, 197 (nx_binding).
+  def ne_constant_slot(env: bytes, local: integer): integer do
+    at = nc_env_offset(env,local)
+    first = nc_env_next(env,at)
+    if first >= Enum.count(env) do 0 else
+      start = nc_read(env,at)+65536*Enum.at(env,at+2,0)
+      one = nc_read(env,first)+65536*Enum.at(env,first+2,0)
+      ends = nc_read(env,first+3)+65536*Enum.at(env,first+5,0)
+      kind = nt_read(env,first+7)
+      if one != start do 0 else if ends != one do 0 else if Enum.count(kind) != 2 do 0 else if Enum.at(kind,1,0) == 197 do 1 else 0 end end end end
+    end
+  end
+  def ne_factor_slots(env: bytes, local: integer): integer do
+    at = nc_env_offset(env,local)
+    first = nc_env_next(env,at)
+    second = if first >= Enum.count(env) do Enum.count(env) else nc_env_next(env,first) end
+    if second >= Enum.count(env) do 0 else
+      start = nc_read(env,at)+65536*Enum.at(env,at+2,0)
+      one = nc_read(env,first)+65536*Enum.at(env,first+2,0)
+      two = nc_read(env,second)+65536*Enum.at(env,second+2,0)
+      ends = nc_read(env,first+3)+65536*Enum.at(env,first+5,0)
+      if one != start do 0 else if two != start do 0 else if ends != one do 0 else
+        if nt_tag(nt_read(env,first+7))*nt_tag(nt_read(env,second+7)) == 576 do 1 else 0 end
+      end end end
+    end
+  end
+  # What parentheses make of inside, keeping its being a product.
+  def ne_kept(inside: bytes, value: bytes): bytes do
+    kind = if nc_arm() == 0 do 0 else ne_is_product(inside) end
+    constant = if nc_arm() == 0 do 0 else ne_go_constant(inside) end
+    if kind == 0 do (if constant == 1 do ne_flag(value,8) else value end) else if Enum.count(nc_code(value)) != Enum.count(nc_code(inside)) do value else ne_flag(value,if kind == 1 do 32 else 16 end) end end
+  end
+  def ne_flag(value: bytes, bit: integer): bytes do Enum.concat(nc_slice(value,0,3),Enum.concat(b[Enum.at(value,3,0)+bit],nc_slice(value,4,Enum.count(value)))) end
+  def ne_multiply_tail(): bytes do b[89,102,72,15,110,193,102,72,15,110,200,242,15,89,193,102,72,15,126,192] end
+  # 1 for a product, 2 for a negated product, else 0.
+  def ne_is_product(value: bytes): integer do
+    if Enum.count(value) < 4 do 0 else
+      flags = Enum.at(value,3,0)-64*a_div(Enum.at(value,3,0),64)
+      code = nc_code(value)
+      if flags >= 32 do (if Enum.count(code) < 20 do 0 else zf_same(code,Enum.count(code)-20,ne_multiply_tail(),0) end) else
+        if flags >= 16 do (if Enum.count(code) < 25 do 0 else 2*zf_same(code,Enum.count(code)-25,Enum.concat(ne_multiply_tail(),b[72,15,186,248,63]),0) end) else 0 end
+      end
+    end
+  end
+  # The factors of a product: its code without the multiplication (and the
+  # flip of a negated one); RCX and RAX hold them.
+  def ne_factors(value: bytes): bytes do
+    code = nc_code(value)
+    nc_slice(code,0,Enum.count(code)-(if ne_is_product(value) == 2 do 24 else 19 end))
+  end
+  # The fused operation for a product on the left (side 0) or the right (1)
+  # of + (kind 1) or - (2), from its sign: fmadd (a + x*y), fmsub (a - x*y),
+  # fnmsub (x*y - a), fnmadd (-(x*y) - a).
+  def ne_fused_op(kind: integer, side: integer, negated: integer): integer do
+    if side == 0 do
+      if kind == 1 do (if negated == 1 do 525453840 else 525421072 end) else (if negated == 1 do 527518224 else 527550992 end) end
+    else
+      if kind == 1 do (if negated == 1 do 525453840 else 525421072 end) else (if negated == 1 do 525421072 else 525453840 end) end
+    end
+  end
+  # left + right (kind 1) or left - right (2) as one rounding when an
+  # operand is a product, else nothing.
+  def ne_fused(left: bytes, right: bytes, kind: integer): bytes do
+    l = ne_is_product(left)
+    r = ne_is_product(right)
+    side = if kind == 1 do (if l == 1 do 0 else if r == 1 do 1 else if l == 2 do 0 else if r == 2 do 1 else -1 end end end end) else
+      (if r == 1 do 1 else if l == 1 do 0 else if r == 2 do 1 else if l == 2 do 0 else -1 end end end end)
+    end
+    # x*y in X1, X2, the other in X0: the fused operation into D16, then RAX.
+    move = nc_join(a_fmov_dx(16,1),a_fmov_dx(17,2),a_fmov_dx(18,0))
+    if side < 0 do b[] else
+      op = ne_fused_op(kind,side,if side == 0 do l-1 else r-1 end)
+      fused = xa_raw(nc_join(move,a4(op),a_fmov_xd(0,16)))
+      code = if side == 1 do nc_join(Enum.concat(nc_code(left),b[80]),ne_factors(right),Enum.concat(b[72,137,194,88],fused)) else
+        nc_join(Enum.concat(ne_factors(left),b[81,80]),nc_code(right),Enum.concat(b[90,89],fused))
+      end
+      nc_value(nc_pos(right),code,b[24])
+    end
+  end
+  # == != < <= > >= as IEEE has them: nothing equals or orders a NaN.
+  def ne_compare(left: bytes, right: bytes, cc: integer): bytes do
+    enter = b[89,102,72,15,110,193,102,72,15,110,200]
+    test = if cc == 148 do b[102,15,46,193,15,148,192,15,155,193,32,200,15,182,192] else if cc == 149 do b[102,15,46,193,15,149,192,15,154,193,8,200,15,182,192] else
+      if cc == 156 do b[102,15,46,200,15,151,192,15,182,192] else if cc == 158 do b[102,15,46,200,15,147,192,15,182,192] else
+        if cc == 159 do b[102,15,46,193,15,151,192,15,182,192] else b[102,15,46,193,15,147,192,15,182,192] end
+      end end
+    end end
+    if nc_tag(left) != 24 do b[] else if nc_tag(right) != 24 do b[] else
+      nc_value(nc_pos(right),nc_join(Enum.concat(nc_code(left),b[80]),nc_code(right),Enum.concat(enter,test)),b[3])
+    end end
+  end
+  # Two floats in RDI and RSI are equal: AL.
+  def ne_equal(): bytes do b[102,72,15,110,199,102,72,15,110,206,102,15,46,193,15,148,192,15,155,193,32,200] end
+  # ---- failures ----
+  # The program ends with a message, naming pos.
+  def ne_fail(table: bytes, pos: integer, message: bytes): bytes do
+    if nz_on(table) == 0 do nc_exit_code(70) else nc_join(nc_literal_emit(message),Enum.concat(b[72,137,198,191],nc_u32(pos)),nc_call(nz_slot(table))) end
+  end
+  # After a runtime call: fail when the register tested is not zero. test is
+  # the three bytes of "test reg,reg".
+  def ne_checked(table: bytes, pos: integer, test: bytes, message: bytes): bytes do
+    fail = ne_fail(table,pos,message)
+    nc_join(test,Enum.concat(b[15,132],nc_u32(Enum.count(fail))),fail)
+  end
+  # ---- text ----
+  # The value of #{...} or to_string as a string.
+  def ne_shown(table: bytes, value: bytes): bytes do
+    if nc_tag(value) != 24 do ns_shown(value) else nc_join(nc_code(value),b[72,137,199],ne_run(table,0)) end
+  end
+  # ---- functions without a module name ----
+  def ne_op(source: bytes, pos: integer): integer do
+    if nc_word(source,pos,b[102,108,111,111,114]) == 1 do 33 else if nc_word(source,pos,b[99,101,105,108]) == 1 do 34 else
+      if nc_word(source,pos,b[116,114,117,110,99]) == 1 do 35 else if nc_word(source,pos,b[114,111,117,110,100]) == 1 do 36 else if nc_word(source,pos,b[97,115,115,101,114,116,95,105,110,95,100,101,108,116,97]) == 1 do 37 else 0 end end end
+    end end
+  end
+  def ne_range_message(): bytes do b[102,108,111,97,116,32,111,117,116,32,111,102,32,105,110,116,101,103,101,114,32,114,97,110,103,101] end
+  # round, trunc, ceil and floor of a float give an integer; abs, min, max
+  # and to_string take floats as well.
+  def ne_call(table: bytes, args: bytes, op: integer, pos: integer): bytes do
+    count = nc_arg_count(args)
+    first = nt_tag(nc_arg_kind(args,0))
+    stop = nc_pos(args)
+    code = nc_arg_code(args)
+    if op == 37 do ne_delta(table,args,pos) else if op > 32 do
+      if count != 1 do b[] else if first != 24 do b[] else
+        nc_value(stop,nc_join(code,b[95],vs_whole(op-20,Enum.concat(ne_run(table,op-20),ne_checked(table,pos,b[72,133,210],ne_range_message())))),b[0])
+      end end
+    else
+      if first != 24 do nk_call(table,args,op,pos) else
+        if op == 3 do if count != 1 do b[] else nc_value(stop,Enum.concat(code,b[88,102,72,15,110,192,102,15,87,201,102,15,46,200,118,5,72,15,186,248,63]),b[24]) end else
+          if (op-4)*(op-5) == 0 do
+            if count != 2 do b[] else if nt_tag(nc_arg_kind(args,1)) != 24 do b[] else
+              nc_value(stop,nc_join(code,b[94,95,102,72,15,110,199,102,72,15,110,206,102,15,46,if op == 4 do 193 else 200 end],b[72,137,248,72,15,71,198]),b[24])
+            end end
+          else
+            if op != 9 do nk_call(table,args,op,pos) else if count != 1 do b[] else nc_value(stop,nc_join(code,b[95],ne_run(table,0)),b[2]) end end
+          end
+        end
+      end
+    end end
+  end
+  # The text so far is on the stack: the literal after it, then the float
+  # offset bytes up the stack as text. RAX is the whole.
+  def ne_line(table: bytes, text: bytes, offset: integer): bytes do
+    nc_join(nc_join(nc_text_emit(text),b[80],ns_concat_emit()),nc_join(b[80,72,139,124,36,offset],ne_run(table,0),b[80]),ns_concat_emit())
+  end
+  def ne_delta_left(): bytes do b[97,115,115,101,114,116,105,111,110,32,102,97,105,108,101,100,10,32,32,32,32,32,108,101,102,116,58,32,32] end
+  def ne_delta_right(): bytes do b[10,32,32,32,32,32,114,105,103,104,116,58,32] end
+  def ne_delta_last(): bytes do b[10,32,32,32,32,32,100,101,108,116,97,58,32] end
+  # assert_in_delta(a, b, delta): the program ends, showing the three, when a
+  # and b are more than delta apart.
+  def ne_delta(table: bytes, args: bytes, pos: integer): bytes do
+    floats = if nc_arg_count(args) != 3 do 0 else if nt_tag(nc_arg_kind(args,0))+nt_tag(nc_arg_kind(args,1))+nt_tag(nc_arg_kind(args,2)) != 72 do 0 else if nt_tag(nc_arg_kind(args,0)) == 24 do if nt_tag(nc_arg_kind(args,1)) == 24 do 1 else 0 end else 0 end end end
+    text = nc_join(nc_join(nc_text_emit(b[]),b[80],ne_line(table,ne_delta_left(),16+8)),Enum.concat(b[80],ne_line(table,ne_delta_right(),8+8)),Enum.concat(b[80],ne_line(table,ne_delta_last(),8)))
+    fail = if nz_on(table) == 0 do nc_exit_code(70) else nc_join(text,Enum.concat(b[72,137,198,191],nc_u32(pos)),nc_call(nz_slot(table))) end
+    test = b[242,15,16,68,36,16,242,15,92,68,36,8,102,72,15,126,192,72,15,186,240,63,102,72,15,110,192,102,15,46,4,36,15,134]
+    if floats == 0 do b[] else nc_value(nc_pos(args),nc_join(nc_arg_code(args),nc_join(test,nc_u32(Enum.count(fail)),fail),b[72,141,100,36,24]),b[12]) end
+  end
+  # Enum.sum of floats starts from 0.0 and is not checked.
+  def ne_summed(table: bytes, args: bytes, op: integer, pos: integer): bytes do
+    floats = if op != 5 do 0 else if nc_arg_count(args) != 1 do 0 else nt_same(nc_arg_kind(args,0),b[7,24]) end end
+    if floats == 0 do nk_summed(table,nl_builtin(args,op),op,pos) else
+      nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),b[88,72,139,8,102,15,87,192,72,133,201,116,14,242,15,88,64,8,72,131,192,16,72,255,201,117,242,102,72,15,126,192]),b[24])
+    end
+  end
+  # ---- the Float module ----
+  def ne_unary(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
+    dot = if nc_word(source,start,b[70,108,111,97,116]) == 0 do -1 else nc_expect(source,nc_end(source,start),b[46]) end
+    if dot < 0 do nb_unary(source,start,env,table,depth) else ne_module(source,nc_start(source,dot),env,table,Enum.concat(nc_u24(depth),nc_u24(start))) end
+  end
+  def ne_name(source: bytes, name: integer): integer do
+    if nc_word(source,name,b[102,114,111,109,95,105,110,116,101,103,101,114]) == 1 do 1 else if nc_word(source,name,b[116,111,95,115,116,114,105,110,103]) == 1 do 2 else
+    if nc_word(source,name,b[112,97,114,115,101]) == 1 do 3 else if nc_word(source,name,b[114,111,117,110,100]) == 1 do 4 else
+    if nc_word(source,name,b[102,108,111,111,114]) == 1 do 5 else if nc_word(source,name,b[99,101,105,108]) == 1 do 6 else
+    if nc_word(source,name,b[112,111,119]) == 1 do 7 else if nc_word(source,name,b[114,97,116,105,111]) == 1 do 8 else
+    if nc_word(source,name,b[109,97,120,95,102,105,110,105,116,101]) == 1 do 9 else if nc_word(source,name,b[109,105,110,95,102,105,110,105,116,101]) == 1 do 10 else 0 end end
+    end end end end end end end end
+  end
+  # plan: the nesting depth and where the call starts, which a failure names.
+  def ne_module(source: bytes, name: integer, env: bytes, table: bytes, plan: bytes): bytes do
+    op = ne_name(source,name)
+    begin = nc_expect(source,nc_end(source,name),b[40])
+    args = if op == 0 do b[] else if begin < 0 do b[] else nc_arguments(source,begin,env,table,nc_cursor(plan,0)) end end
+    if nc_pos(args) < 0 do b[] else nw_library(ne_function(source,table,args,op+nc_arg_count(args)*16,nc_cursor(plan,3)),args,2) end
+  end
+  def ne_places_message(): bytes do b[112,114,101,99,105,115,105,111,110,32,109,117,115,116,32,98,101,32,98,101,116,119,101,101,110,32,48,32,97,110,100,32,49,53] end
+  # plan: the function and 16 times the number of arguments.
+  def ne_function(source: bytes, table: bytes, args: bytes, plan: integer, pos: integer): bytes do
+    first = nt_tag(nc_arg_kind(args,0))
+    second = nt_tag(nc_arg_kind(args,1))
+    stop = nc_pos(args)
+    code = nc_arg_code(args)
+    if plan == 9 do nc_value(stop,b[72,184,255,255,255,255,255,255,239,127,144],b[24]) else if plan == 10 do nc_value(stop,b[72,184,255,255,255,255,255,255,239,255,144],b[24]) else
+    if plan == 17 do if first != 0 do b[] else nc_value(stop,Enum.concat(code,b[88,242,72,15,42,192,102,72,15,126,192]),b[24]) end else
+    if plan == 18 do if first != 24 do b[] else nc_value(stop,nc_join(code,b[95],ne_run(table,0)),b[2]) end else
+    if plan == 19 do if first != 2 do b[] else ne_parse(source,table,args) end else
+    if (plan-20)*(plan-21)*(plan-22) == 0 do if first != 24 do b[] else nc_value(stop,nc_join(code,b[95],ne_run(table,if plan == 20 do 12 else plan-12 end)),b[24]) end else
+    if (plan-36)*(plan-37)*(plan-38) == 0 do if first != 24 do b[] else if second != 0 do b[] else
+      nc_value(stop,nc_join(code,Enum.concat(b[94,95],ne_run(table,plan-32)),ne_checked(table,pos,b[72,133,210],ne_places_message())),b[24])
+    end end else
+    if plan == 39 do if first != 24 do b[] else if second != 24 do b[] else nc_value(stop,nc_join(code,b[94,95],ne_run(table,7)),b[24]) end end else
+    if plan == 24 do if first != 24 do b[] else ne_ratio_of(table,args,pos) end else b[] end
+    end end end end end end end end
+  end
+  def ne_finite_message(): bytes do b[70,108,111,97,116,46,114,97,116,105,111,32,110,101,101,100,115,32,97,32,102,105,110,105,116,101,32,102,108,111,97,116] end
+  def ne_fit_message(): bytes do b[70,108,111,97,116,46,114,97,116,105,111,58,32,116,104,101,32,102,114,97,99,116,105,111,110,32,100,111,101,115,32,110,111,116,32,102,105,116,32,105,110,32,54,52,45,98,105,116,32,105,110,116,101,103,101,114,115] end
+  # Float.ratio: the fraction as {numerator, denominator}.
+  def ne_ratio_of(table: bytes, args: bytes, pos: integer): bytes do
+    finite = ne_fail(table,pos,ne_finite_message())
+    fit = ne_fail(table,pos,ne_fit_message())
+    checks = nc_join(Enum.concat(b[72,131,249,1,15,133],nc_u32(Enum.count(finite))),finite,nc_join(Enum.concat(b[72,133,201,15,132],nc_u32(Enum.count(fit))),fit,b[82,80]))
+    made = nc_join(nc_allocate_emit(16),b[72,199,2,2,0,0,0],Enum.concat(b[88,72,137,66,8,88,72,137,66,16],b[72,137,208]))
+    nc_value(nc_pos(args),nc_join(nc_arg_code(args),Enum.concat(b[95],ne_run(table,8)),Enum.concat(checks,made)),b[5,2,0,0])
+  end
+  def ne_suffix(): bytes do b[32,105,115,32,110,111,116,32,97,32,102,108,111,97,116] end
+  # The string in RDI quoted as Go quotes it, then " is not a float": RAX.
+  def ne_refused(source: bytes, table: bytes): bytes do
+    nc_join(nc_join(ni_code(source,table,b[2]),b[80],nc_text_emit(ne_suffix())),b[80],ns_concat_emit())
+  end
+  # Float.parse(text): ok(float) or error(reason).
+  def ne_parse(source: bytes, table: bytes, args: bytes): bytes do
+    wrap = nc_join(nc_allocate_emit(8),b[72,199,2,1,0,0,0],b[88,72,137,66,8,72,137,208])
+    fail = nc_join(Enum.concat(b[95],ne_refused(source,table)),Enum.concat(b[80],nc_allocate_emit(8)),b[72,199,2,0,0,0,0,88,72,137,66,8,72,137,208])
+    good = nc_join(b[72,137,4,36],wrap,Enum.concat(b[233],nc_u32(Enum.count(fail))))
+    call = nc_join(b[72,139,60,36],ne_run(table,2),Enum.concat(b[72,133,210,15,133],nc_u32(Enum.count(good))))
+    nc_value(nc_pos(args),nc_join(nc_arg_code(args),call,Enum.concat(good,fail)),b[6,24,2])
+  end
+  # String.to_float(text): the float, or the program ends naming the call.
+  def ne_to_float(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    dot = nc_expect(source,nc_end(source,pos),b[46])
+    begin = nc_expect(source,nc_end(source,dot),b[40])
+    args = if begin < 0 do b[] else nc_arguments(source,begin,env,table,depth) end
+    message = if nz_on(table) == 0 do nc_exit_code(70) else nc_join(Enum.concat(b[95],ne_refused(source,table)),Enum.concat(b[72,137,198,191],nc_u32(nc_start(source,pos))),nc_call(nz_slot(table))) end
+    call = nc_join(b[72,139,60,36],ne_run(table,2),Enum.concat(b[72,133,210,15,132],nc_u32(Enum.count(message))))
+    if nc_pos(args) < 0 do b[] else if nc_arg_count(args) != 1 do b[] else if nt_tag(nc_arg_kind(args,0)) != 2 do b[] else
+      nc_value(nc_pos(args),nc_join(nc_arg_code(args),call,Enum.concat(message,b[89])),b[24])
+    end end end
+  end
+  # ---- the runtime ----
+  # Whether the source may use floats: the letters "loat" or a point between
+  # digits. A false positive only adds the runtime.
+  def ne_mentions(source: bytes, first: integer, stop: integer): integer do
+    if stop-first > 64 do
+      middle = first+nc_half(stop-first)
+      if ne_mentions(source,first,middle) == 1 do 1 else ne_mentions(source,middle,stop) end
+    else ne_scan(source,first,stop) end
+  end
+  def ne_scan(source: bytes, pos: integer, stop: integer): integer do
+    value = byte_at(source,pos)
+    found = if value == 46 do is_digit(byte_at(source,pos-1))*is_digit(byte_at(source,pos+1)) else if value == 108 do nc_word_at(source,pos,b[108,111,97,116],0) else 0 end end
+    if pos >= stop do 0 else if found == 1 do 1 else ne_scan(source,pos+1,stop) end end
+  end
+  # The shared runtimes with the float runtime in the slot after the trace's.
+  def ne_shared(shared: bytes, source: bytes, functions: integer): bytes do
+    meta = nc_bundle_meta(shared)
+    blob = if functions+5 > nc_slot_limit() do b[] else if ne_mentions(source,0,Enum.count(source)) == 0 do b[] else xa_runtime(fl_blob(),fl_blob_arm()) end end
+    if Enum.count(blob) == 0 do shared else
+      nc_join(nc_u16(24),nc_join(meta,nc_zeros(20-Enum.count(meta)),nc_u32(Enum.count(blob))),Enum.concat(nc_bundle_code(shared),blob))
+    end
+  end
+  # Whether the source needs the quoting of the Integer.parse runtime.
+  def ne_quoting(source: bytes, size: integer): integer do
+    na_mentions(source,0,size,b[70,108,111,97,116],b[112,97,114,115,101])+na_mentions(source,0,size,na_text(),b[116,111,95,102,108,111,97,116])
+  end
+  # Native smoke test; assembled with the compiler.
+  def main() do System.halt(0) end
+end

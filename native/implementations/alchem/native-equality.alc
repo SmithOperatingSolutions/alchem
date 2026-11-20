@@ -1,0 +1,345 @@
+defmodule NativeEquality do
+  # == and != on lists, tuples, options, results, maps, structs and sum types
+  # compare structure. The code is made for the type: every piece takes the two
+  # values in RDI and RSI, leaves 1 or 0 in AL and may use RAX, RCX, RDX, R8 and
+  # R11. A struct or sum type is compared by a function in its table slot, so a
+  # type that refers to itself compares by recursion.
+  def nq_jz(distance: integer): bytes do Enum.concat(b[15,132],nq_rel(distance)) end
+  def nq_jnz(distance: integer): bytes do Enum.concat(b[15,133],nq_rel(distance)) end
+  def nq_jmp(distance: integer): bytes do Enum.concat(b[233],nq_rel(distance)) end
+  def nq_rel(distance: integer): bytes do
+    # A backward distance is the low four bytes of its two's complement.
+    if distance < 0 do nc_slice(nt_word(4294967296+distance),0,4) else nc_u32(distance) end
+  end
+  # 1 when values of the type can be compared: no function values inside.
+  # seen holds the table ids (2 bytes each) of named types being checked.
+  def nq_comparable(source: bytes, table: bytes, kind: bytes, seen: bytes): integer do
+    tag = nt_tag(kind)
+    if tag < 4 do 1 else if (tag-9)*(tag-22)*(tag-23)*(tag-24) == 0 do 1 else
+      if (tag-4)*(tag-7)*(tag-25) == 0 do nq_comparable(source,table,nt_child(kind,0),seen) else
+        if (tag-6)*(tag-8) == 0 do nq_comparable(source,table,nt_child(kind,0),seen)*nq_comparable(source,table,nt_child(kind,1),seen) else
+          if tag == 5 do nq_comparable_items(source,table,kind,seen,0) else
+            if (tag-13)*(tag-14) == 0 do nq_comparable_named(source,table,nd_id(table,kind),seen) else
+              if tag == 16 do 1 else if (tag-18)*(tag-19) != 0 do 0 else
+                nq_comparable_named(source,table,nd_id(table,kind),seen)*nq_comparable_items(source,table,kind,seen,0)
+              end end
+            end
+          end
+        end
+      end
+    end end
+  end
+  def nq_comparable_items(source: bytes, table: bytes, kind: bytes, seen: bytes, index: integer): integer do
+    if index == nt_count(kind) do 1 else
+      if nq_comparable(source,table,nt_child(kind,index),seen) == 0 do 0 else nq_comparable_items(source,table,kind,seen,index+1) end
+    end
+  end
+  def nq_seen(seen: bytes, id: integer, offset: integer): integer do
+    if offset >= Enum.count(seen) do 0 else if nc_read(seen,offset) == id do 1 else nq_seen(seen,id,offset+2) end end
+  end
+  def nq_comparable_named(source: bytes, table: bytes, id: integer, seen: bytes): integer do
+    if id < 0 do 0 else if nq_seen(seen,id,0) == 1 do 1 else
+      nq_comparable_cells(source,table,nq_cells(source,table,id),Enum.concat(seen,nc_u16(id)),0)
+    end end
+  end
+  def nq_comparable_cells(source: bytes, table: bytes, cells: bytes, seen: bytes, offset: integer): integer do
+    kind = nt_read(cells,offset)
+    if offset >= Enum.count(cells) do 1 else
+      if nq_comparable(source,table,kind,seen) == 0 do 0 else nq_comparable_cells(source,table,cells,seen,nt_after(cells,offset)) end
+    end
+  end
+  # Every field type of a named type, as a type list: a struct's fields, or the
+  # fields of all of a sum type's variants.
+  def nq_cells(source: bytes, table: bytes, id: integer): bytes do
+    if Enum.at(table,id*27+16,0) == 64 do nq_struct_cells(source,table,id,0) else nq_sum_cells(source,table,id,0) end
+  end
+  def nq_struct_cells(source: bytes, table: bytes, id: integer, index: integer): bytes do
+    nq_struct_from(source,table,id,nc_meta(table,id,9))
+  end
+  def nq_struct_from(source: bytes, table: bytes, id: integer, pos: integer): bytes do
+    field = nd_field_here(source,table,id,pos)
+    if nc_pos(field) < 0 do b[] else Enum.concat(nt_cell(nc_kind(field)),nq_struct_from(source,table,id,nc_pos(field))) end
+  end
+  # The field types of the variant whose packet's code is given.
+  def nq_cells_of(source: bytes, table: bytes, id: integer, variant: bytes): bytes do
+    nl_parameter_words(source,nc_cursor(variant,3),nv_fields_of(variant),table,nc_owner(table,id))
+  end
+  def nq_variant_cells(source: bytes, table: bytes, id: integer, index: integer): bytes do
+    variant = nc_code(nv_at(source,table,id,index))
+    nl_parameter_words(source,nc_cursor(variant,3),nv_fields_of(variant),table,nc_owner(table,id))
+  end
+  def nq_sum_cells(source: bytes, table: bytes, id: integer, index: integer): bytes do
+    nq_sum_from(source,table,id,nc_meta(table,id,9))
+  end
+  def nq_sum_from(source: bytes, table: bytes, id: integer, pos: integer): bytes do
+    variant = nv_here(source,pos)
+    if nc_pos(variant) < 0 do b[] else Enum.concat(nq_cells_of(source,table,id,nc_code(variant)),nq_sum_from(source,table,id,nc_pos(variant))) end
+  end
+  # The comparison for one type. b[] for a type that cannot be compared.
+  def nq_code(source: bytes, table: bytes, kind: bytes, vars: bytes): bytes do
+    tag = nt_tag(kind)
+    if tag == 24 do ne_equal() else if tag == 23 do b[72,139,15,72,1,201,72,141,124,207,8,72,139,14,72,1,201,72,141,116,206,8,72,139,7,72,59,6,117,18,72,139,71,8,72,59,70,8,117,8,72,139,71,16,72,59,70,16,15,148,192] else if (tag-0)*(tag-3)*(tag-9) == 0 do b[72,57,247,15,148,192] else
+      if (tag-1)*(tag-2)*(tag-22) == 0 do nc_join(b[72,139,15,72,59,14],b[15,133,10,0,0,0],b[72,141,127,8,72,141,118,8,243,166,15,148,192]) else
+        if tag == 4 do nq_option(nq_code(source,table,nt_child(kind,0),vars)) else
+          if tag == 6 do nq_result(nq_code(source,table,nt_child(kind,0),vars),nq_code(source,table,nt_child(kind,1),vars)) else
+            if tag == 7 do nq_list(nq_code(source,table,nt_child(kind,0),vars)) else
+              if tag == 8 do nq_map(nq_code(source,table,nt_child(kind,0),vars),nq_code(source,table,nt_child(kind,1),vars)) else nq_other(source,table,kind,vars) end
+            end
+          end
+        end
+      end
+    end end end
+  end
+  def nq_other(source: bytes, table: bytes, kind: bytes, vars: bytes): bytes do
+    tag = nt_tag(kind)
+    if tag == 25 do nq_map(nq_code(source,table,nt_child(kind,0),vars),b[72,57,247,15,148,192]) else if tag == 5 do nq_fields(source,table,nq_tuple_cells(kind,0),nc_join(nc_u24(0),nc_u24(nt_count(kind)),b[8]),vars) else
+      if tag == 16 do nq_variable(nc_slice(kind,2,Enum.count(kind)),vars) else
+        if (tag-18)*(tag-19) == 0 do nq_instance(source,table,kind,vars) else
+          if (tag-13)*(tag-14) != 0 do b[] else if nd_id(table,kind) < 0 do b[] else nc_call(nd_id(table,kind)) end end
+        end
+      end
+    end end
+  end
+  # A comparator stands for the equality of a type that is not known where the
+  # code is made: 0 compares words, 1 compares strings, 12 compares floats, an address in the image
+  # (below 4 GiB) is code to call, and anything else is a function value in the
+  # arena; each takes the two values in RDI and RSI, and 0 in RDX: the comparator
+  # of an ordered type variable also orders, when RDX is 1 (native-ordering.alc).
+  # vars lists the type
+  # variables in reach, each as its name's length, its name and the frame slot
+  # that holds its comparator.
+  def nq_slot(vars: bytes, name: bytes, offset: integer): integer do
+    size = Enum.at(vars,offset,0)
+    if offset >= Enum.count(vars) do -1 else
+      if nt_same(nc_slice(vars,offset+1,offset+1+size),name) == 1 do nc_cursor(vars,offset+2+size)+Enum.at(vars,offset+1+size,0)*16777216 else nq_slot(vars,name,offset+5+size) end
+    end
+  end
+  # Compare two values of a type variable through its comparator.
+  def nq_variable(name: bytes, vars: bytes): bytes do
+    slot = nq_slot(vars,name,0)
+    text = nq_code(b[],b[],b[2],b[])
+    # A slot from 16777216 on is an entry of the comparator array slot 0 points at.
+    load = if slot < 0 do b[] else if slot < 16777216 do nc_slot(b[76,139,85],slot) else Enum.concat(b[76,139,85,248,77,139,146],nc_u32((slot-16777216)*8)) end end
+    if slot < 0 do b[] else
+      nc_join(nc_join(Enum.concat(load,b[73,131,250,1,119,37,116,8]),b[72,57,247,15,148,192,235,76],text),b[235,49],nc_join(b[73,131,250,12,117,24],ne_equal(),b[235,19,49,210,77,137,211,73,193,235,32,117,5,65,255,210,235,3,65,255,18]))
+    end
+  end
+  # The code that leaves the comparator of a type in RAX. A list, tuple or
+  # other compound type gets a function value made where it is needed, holding
+  # the comparators of the type variables it mentions.
+  def nq_comparator(source: bytes, table: bytes, kind: bytes, vars: bytes): bytes do
+    tag = nt_tag(kind)
+    slot = if tag == 16 do nq_slot(vars,nc_slice(kind,2,Enum.count(kind)),0) else -1 end
+    if (tag-0)*(tag-3)*(tag-9) == 0 do b[49,192] else if tag == 24 do b[184,12,0,0,0] else if (tag-1)*(tag-2)*(tag-22) == 0 do b[184,1,0,0,0] else
+      if tag == 16 do if slot < 0 do b[] else if slot < 16777216 do nc_slot(b[72,139,69],slot) else Enum.concat(b[72,139,69,248,72,139,128],nc_u32((slot-16777216)*8)) end end else
+        if (tag-13)*(tag-14) == 0 do if nd_id(table,kind) < 0 do b[] else Enum.concat(b[72,139,4,37],nc_u32(4195456+nd_id(table,kind)*8)) end else
+          if nu_open(kind,0) == 0 do nq_static(source,table,kind) else nq_held_order(source,table,kind,vars) end
+        end
+      end
+    end end end
+  end
+  # The comparator of a type that mentions no type variable is code placed
+  # where it is needed, behind a jump: its address is the comparator, and
+  # nothing is allocated.
+  def nq_static(source: bytes, table: bytes, kind: bytes): bytes do
+    body = nq_code(source,table,kind,b[])
+    # A tuple that may be a map's key also orders, for the map routines.
+    if Enum.count(body) == 0 do b[] else if nt_tag(kind) == 5 do if nn_key(kind) == 1 do od_static(body,od_code(kind,b[])) else nq_plain(body) end else nq_plain(body) end end
+  end
+  def nq_plain(body: bytes): bytes do
+    size = Enum.count(body)+1
+    nc_join(Enum.concat(b[233],nc_u32(size)),Enum.concat(body,b[195]),Enum.concat(b[72,141,5],nq_rel(0-size-7)))
+  end
+  # A tuple that mentions type variables may be a key where the variables
+  # stand for key types: its function value orders as well, when every part
+  # can (od_closure).
+  def nq_held_order(source: bytes, table: bytes, kind: bytes, vars: bytes): bytes do
+    both = if nt_tag(kind) != 5 do b[] else if od_orderable(kind,2) == 0 do b[] else od_closure(source,table,kind,vars) end end
+    if Enum.count(both) > 0 do both else nq_closure(source,table,kind,vars) end
+  end
+  # A function value comparing two values of a type that mentions type
+  # variables: its two parameters take slots 0 and 1 and the comparators it
+  # holds the slots after them. It is a record from the arena.
+  def nq_closure(source: bytes, table: bytes, kind: bytes, vars: bytes): bytes do
+    # With a comparator array the function holds only its address, moved to slot 0.
+    array = if nq_array(vars) == 1 do 1 else 0 end
+    inner = if array == 1 do vars else nq_inner(vars,0,2) end
+    body = nq_code(source,table,kind,inner)
+    enter = if array == 1 do b[72,139,125,248,72,139,117,240,72,139,69,232,72,137,69,248] else b[72,139,125,248,72,139,117,240] end
+    if Enum.count(body) == 0 do b[] else
+      nf_code(2,if array == 1 do b[0,0,0] else nq_held(vars,0) end,nc_join(Enum.concat(b[73,255,199],enter),body,b[15,182,192]))
+    end
+  end
+  # 1 when vars name entries of a comparator array.
+  def nq_array(vars: bytes): integer do
+    if Enum.count(vars) == 0 do 0 else if Enum.at(vars,1+Enum.at(vars,0,0),0) == 1 do 1 else 0 end end
+  end
+  # vars as seen inside a comparator function: the same names, slots from first on.
+  def nq_inner(vars: bytes, offset: integer, first: integer): bytes do
+    size = Enum.at(vars,offset,0)
+    if offset >= Enum.count(vars) do b[] else
+      nc_join(nc_slice(vars,offset,offset+1+size),Enum.concat(b[0],nc_u24(first)),nq_inner(vars,offset+5+size,first+1))
+    end
+  end
+  # The slots vars names, in order: what a comparator function captures.
+  def nq_held(vars: bytes, offset: integer): bytes do
+    size = Enum.at(vars,offset,0)
+    if offset >= Enum.count(vars) do b[] else Enum.concat(nc_slice(vars,offset+2+size,offset+5+size),nq_held(vars,offset+5+size)) end
+  end
+  # Two values of a generic struct or sum type: its equality function takes
+  # the comparators of its type arguments in RDX, RCX, R8, R9, R10 and RAX, or
+  # for more than six the address of an array of them, the last first, in RDX.
+  def nq_instance(source: bytes, table: bytes, kind: bytes, vars: bytes): bytes do
+    count = nt_count(kind)
+    given = nq_given(source,table,kind,vars,0)
+    pops = nc_slice(b[88,65,90,65,89,65,88,89,90],if count == 6 do 0 else if count == 5 do 1 else if count == 4 do 3 else if count == 3 do 5 else if count == 2 do 7 else 8 end end end end end,9)
+    if nd_id(table,kind) < 0 do b[] else if Enum.count(given) == 0 do b[] else
+      if count > 6 do
+        values = nc_join(b[72,137,226,72,139,188,36],nc_u32(count*8+8),Enum.concat(b[72,139,180,36],nc_u32(count*8)))
+        nc_join(Enum.concat(b[87,86],given),Enum.concat(values,nc_call(nd_id(table,kind))),Enum.concat(b[72,141,164,36],nc_u32(count*8+16)))
+      else
+        nc_join(Enum.concat(b[87,86],given),Enum.concat(pops,b[94,95]),nc_call(nd_id(table,kind)))
+      end
+    end end
+  end
+  def nq_given(source: bytes, table: bytes, kind: bytes, vars: bytes, index: integer): bytes do
+    one = nq_comparator(source,table,nt_child(kind,index),vars)
+    rest = if index+1 >= nt_count(kind) do b[] else nq_given(source,table,kind,vars,index+1) end
+    if Enum.count(one) == 0 do b[] else if index+1 >= nt_count(kind) do Enum.concat(one,b[80]) else
+      if Enum.count(rest) == 0 do b[] else nc_join(one,b[80],rest) end
+    end end
+  end
+  def nq_tuple_cells(kind: bytes, index: integer): bytes do
+    if index == nt_count(kind) do b[] else Enum.concat(nt_cell(nt_child(kind,index)),nq_tuple_cells(kind,index+1)) end
+  end
+  # Fields index.. of count, each one word, the first at offset: plan holds
+  # index, count and offset. A field that differs skips the rest.
+  def nq_fields(source: bytes, table: bytes, cells: bytes, plan: bytes, vars: bytes): bytes do
+    index = nc_cursor(plan,0)
+    count = nc_cursor(plan,3)
+    place = nc_u32(Enum.at(plan,6,0)+index*8)
+    if index >= count do b[176,1] else
+      child = nq_code(source,table,nt_item(cells,index),vars)
+      field = nc_join(nc_join(b[87,86,72,139,191],place,b[72,139,182]),place,Enum.concat(child,b[94,95]))
+      rest = if index+1 == count do b[] else nq_fields(source,table,cells,Enum.concat(nc_u24(index+1),nc_slice(plan,3,7)),vars) end
+      if Enum.count(child) == 0 do b[] else if index+1 == count do field else
+        if Enum.count(rest) == 0 do b[] else nc_join(field,Enum.concat(b[132,192],nq_jz(Enum.count(rest))),rest) end
+      end end
+    end
+  end
+  # none is 0; some(x) points at a record holding x.
+  def nq_option(child: bytes): bytes do
+    size = Enum.count(child)
+    # A none or a nil (0x400000, zf_zero) on either side: equal when both are the same word.
+    tests = nc_join(nc_join(b[72,133,255],nq_jz(size+48),b[72,133,246]),nc_join(nq_jz(size+39),b[72,129,255,0,0,64,0],nq_jz(size+26)),Enum.concat(b[72,129,254,0,0,64,0],nq_jz(size+13)))
+    if size == 0 do b[] else
+      nc_join(tests,Enum.concat(b[72,139,127,8,72,139,118,8],child),Enum.concat(nq_jmp(6),b[72,57,247,15,148,192]))
+    end
+  end
+  # A discriminant (1 ok, 0 error, -1 the nil of zf_zero, which holds no value) and the value.
+  def nq_result(good: bytes, bad: bytes): bytes do
+    first = Enum.count(good)
+    second = Enum.count(bad)
+    head = nc_join(b[72,139,7,72,59,6],nq_jnz(first+second+37),nc_join(b[72,139,127,8,72,139,118,8,72,133,192],nq_jz(first+11),Enum.concat(b[15,136],nq_rel(first+second+10))))
+    if first*second == 0 do b[] else
+      nc_join(head,nc_join(good,nq_jmp(second+11),bad),Enum.concat(nq_jmp(6),b[176,1,235,2,49,192]))
+    end
+  end
+  # A list: its length, then the elements 16 bytes apart (alchem-lists.md).
+  def nq_list(child: bytes): bytes do
+    size = Enum.count(child)
+    body = nc_join(Enum.concat(b[81,87,86,72,139,127,8,72,139,118,8],child),nc_join(b[94,95,89,132,192],nq_jz(25),b[72,131,199,16,72,131,198,16,72,255,201]),nq_jmp(0-size-47))
+    if size == 0 do b[] else
+      nc_join(nc_join(b[72,139,15,72,59,14],nq_jnz(size+54),Enum.concat(b[72,133,201],nq_jz(size+38))),body,nc_join(b[176,1],nq_jmp(2),b[49,192]))
+    end
+  end
+  # Two maps are equal when they hold as many entries and, taken in the
+  # order of their keys, every key and every value of the first is equal to
+  # that of the second (a NaN among the keys equals nothing, so such maps
+  # differ). Each is first brought to one leaf (the collector's routine at
+  # 0x400450, native-memory.alc), which a map of up to 32 entries already is.
+  def nq_map(key: bytes, value: bytes): bytes do
+    keys = Enum.count(key)+22
+    values = Enum.count(value)+22
+    head = b[255,20,37,80,4,64,0,72,137,199,72,135,254,255,20,37,80,4,64,0,72,137,199,72,135,254,72,139,15,72,59,14]
+    first = nc_join(b[81,87,86,72,139,127,8,72,139,118,8],key,Enum.concat(b[94,95,89,132,192],nq_jz(values+21)))
+    second = nc_join(b[81,87,86,72,139,127,16,72,139,118,16],value,Enum.concat(b[94,95,89,132,192],nq_jz(21)))
+    again = Enum.concat(b[72,131,199,16,72,131,198,16,72,255,201],nq_jnz(0-keys-values-17))
+    if Enum.count(key)*Enum.count(value) == 0 do b[] else
+      nc_join(nc_join(head,nq_jnz(keys+values+30),Enum.concat(b[72,133,201],nq_jz(keys+values+17))),nc_join(first,second,again),b[176,1,235,2,49,192])
+    end
+  end
+  # The function in a named type's table slot: RDI and RSI to AL. It stops with
+  # status 70 when the stack is nearly used up, and the same record is equal.
+  def nq_function(source: bytes, table: bytes, id: integer): bytes do
+    generic = nc_argc(table,id)
+    vars = nq_parameters(source,table,id,0)
+    # A generic type's function first puts its comparators in a frame.
+    frame = if generic == 0 do b[] else if generic > 6 do b[85,72,137,229,72,129,236,128,0,0,0,72,137,85,248] else b[85,72,137,229,72,129,236,128,0,0,0,72,137,85,248,72,137,77,240,76,137,69,232,76,137,77,224,76,137,85,216,72,137,69,208] end end
+    guard = nc_join(b[73,59,102,248,15,131,12,0,0,0],nc_exit_code(70),nc_join(b[72,57,247],nq_jnz(2+Enum.count(nq_return(vars))),Enum.concat(b[176,1],nq_return(vars))))
+    body = if Enum.at(table,id*27+16,0) == 64 do nq_struct(source,table,id,vars) else nq_sum(source,table,id,vars) end
+    if Enum.count(body) == 0 do nc_join(frame,guard,Enum.concat(b[49,192],nq_return(vars))) else nc_join(frame,guard,body) end
+  end
+  # The type parameters of declaration id as vars: parameter i in slot i.
+  def nq_parameters(source: bytes, table: bytes, id: integer, index: integer): bytes do
+    name = nd_parameter(source,table,id,index)
+    if index >= nc_argc(table,id) do b[] else
+      total = nc_argc(table,id)
+      nc_join(Enum.concat(b[Enum.count(name)],name),if total > 6 do Enum.concat(b[1],nc_u24(total-1-index)) else Enum.concat(b[0],nc_u24(index)) end,nq_parameters(source,table,id,index+1))
+    end
+  end
+  # The type parameters of declaration id as names: length and name each.
+  def nq_parameter_names(source: bytes, table: bytes, id: integer, index: integer): bytes do
+    name = nd_parameter(source,table,id,index)
+    if index >= nc_argc(table,id) do b[] else nc_join(b[Enum.count(name)],name,nq_parameter_names(source,table,id,index+1)) end
+  end
+  # How an equality function returns: with its frame undone if it has one.
+  def nq_return(vars: bytes): bytes do
+    if Enum.count(vars) == 0 do b[195] else b[201,195] end
+  end
+  def nq_struct(source: bytes, table: bytes, id: integer, vars: bytes): bytes do
+    count = nd_fields(source,table,id,0)
+    if count < 0 do b[] else
+      body = nq_fields(source,table,nq_struct_cells(source,table,id,0),nc_join(nc_u24(0),nc_u24(ni_field_count(source,table,id,0)),b[8]),vars)
+      if Enum.count(body) == 0 do b[] else Enum.concat(body,nq_return(vars)) end
+    end
+  end
+  # Different variants differ; the same variant compares its fields.
+  def nq_sum(source: bytes, table: bytes, id: integer, vars: bytes): bytes do
+    # Variant -1 has no fields: the value a receive that ran out of time leaves (zf_zero).
+    given = nq_arms(source,table,id,0,vars)
+    arms = nc_join(b[72,61,255,255,255,255],nq_jnz(2+Enum.count(nq_return(vars))),nc_join(b[176,1],nq_return(vars),given))
+    if Enum.count(given) == 0 do b[] else
+      nc_join(Enum.concat(b[72,139,71,8,72,59,70,8],nq_jnz(Enum.count(arms))),arms,Enum.concat(b[49,192],nq_return(vars)))
+    end
+  end
+  def nq_arms(source: bytes, table: bytes, id: integer, index: integer, vars: bytes): bytes do
+    nq_arms_at(source,table,Enum.concat(nc_u16(id),nc_u24(nc_meta(table,id,9))),index,vars)
+  end
+  # at: the type's id (2 bytes) and where variant index is declared.
+  def nq_arms_at(source: bytes, table: bytes, at: bytes, index: integer, vars: bytes): bytes do
+    id = nc_read(at,0)
+    found = nv_here(source,nc_cursor(at,2))
+    variant = nc_code(found)
+    if nc_pos(found) < 0 do b[] else
+      body = nq_fields(source,table,nq_cells_of(source,table,id,variant),nc_join(nc_u24(0),nc_u24(nv_fields_of(variant)),b[16]),vars)
+      rest = nq_arms_at(source,table,Enum.concat(nc_slice(at,0,2),nc_u24(nc_pos(found))),index+1,vars)
+      if Enum.count(body) == 0 do b[] else
+        nc_join(nc_join(b[72,61],nc_u32(index),nq_jnz(Enum.count(body)+Enum.count(nq_return(vars)))),Enum.concat(body,nq_return(vars)),rest)
+      end
+    end
+  end
+  # left == right or left != right for a compound type: a boolean in RAX.
+  def nq_compare(source: bytes, table: bytes, left: bytes, right: bytes, plan: bytes): bytes do
+    # plan: the operator's condition code, then the type variables in reach.
+    cc = Enum.at(plan,0,0)
+    kind = nt_merge(nc_kind(left),nc_kind(right))
+    code = if nq_comparable(source,table,kind,b[]) == 0 do b[] else nq_code(source,table,kind,nc_slice(plan,1,Enum.count(plan))) end
+    negate = if cc == 149 do b[131,240,1] else b[] end
+    if Enum.count(code) == 0 do b[] else
+      nc_value(nc_pos(right),nc_join(nc_join(nc_code(left),b[80],nc_code(right)),nc_join(b[72,137,198,95],code,b[15,182,192]),negate),b[3])
+    end
+  end
+  # Native smoke test; structural equality.
+  def main() do System.halt(0) end
+end

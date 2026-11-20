@@ -1,0 +1,173 @@
+# Crypto: digests, HMAC and PBKDF2 are machine code (spec/crypto-x86_64.s),
+# reached through Sys.hash with a block of nine words; the functions here
+# check their arguments as the pinned runtime does and lay the block out.
+# Results are written straight into a fresh string, so a digest costs its
+# own bytes and the block's, whatever the size of the data.
+# Every byte is looked at whatever the others were, as
+# subtle.ConstantTimeCompare does: the squares of the differences are summed,
+# a thousand bytes to a level of calls.
+#: secure_compare/2 needs sames/4
+  def secure_compare(a: string, b: string): boolean do
+    byte_size(a) == byte_size(b) and Crypto.sames(Sys.addr(a), Sys.addr(b), byte_size(a), 0) == 0
+  end
+#: sames/4 needs same/4 sames/4
+  def sames(a: integer, b: integer, n: integer, v: integer): integer do
+    k = if n > 1000 do 1000 else n end
+    r = Crypto.same(a, b, k, v)
+    if n == k do r else Crypto.sames(a + k, b + k, n - k, r) end
+  end
+#: same/4 needs same/4
+  def same(a: integer, b: integer, n: integer, v: integer): integer do
+    if n == 0 do v else
+      d = Sys.byte(a) - Sys.byte(b)
+      Crypto.same(a + 1, b + 1, n - 1, v + d * d)
+    end
+  end
+# The number of an algorithm; f is the function that asks.
+#: alg/2
+  def alg(a: atom, f: string): integer do
+    if a == :md5 do 0 else if a == :sha1 do 1 else if a == :sha224 do 2 else if a == :sha256 do 3 else if a == :sha384 do 4 else if a == :sha512 do 5 else
+      raise("#{f}: the algorithms are :md5, :sha1, :sha224, :sha256, :sha384 and :sha512, not :#{a}")
+    end end end end end end
+  end
+# What w asks of the runtime (0 a digest, 1 an HMAC, 2 PBKDF2) with the
+# algorithm a, the key k, the data d, i iterations and n bytes wanted.
+#: run/6
+  def run(w: integer, a: integer, k: string, d: string, i: integer, n: integer): string do
+    o = String.duplicate("\x00", if w == 2 do n else if a == 0 do 16 else if a == 1 do 20 else if a == 2 do 28 else if a == 3 do 32 else if a == 4 do 48 else 64 end end end end end end)
+    s = Sys.addr(String.duplicate("\x00", 72))
+    Sys.poke(s, w)
+    Sys.poke(s + 8, a)
+    Sys.poke(s + 16, Sys.addr(o))
+    Sys.poke(s + 24, Sys.addr(k))
+    Sys.poke(s + 32, byte_size(k))
+    Sys.poke(s + 40, Sys.addr(d))
+    Sys.poke(s + 48, byte_size(d))
+    Sys.poke(s + 56, i)
+    Sys.poke(s + 64, n)
+    Sys.hash(s)
+    o
+  end
+#: hash/2 needs alg/2 run/6
+  def hash(a: atom, d: string): string do
+    Crypto.run(0, Crypto.alg(a, "Crypto.hash"), "", d, 0, 0)
+  end
+#: hmac/3 needs alg/2 run/6
+  def hmac(a: atom, k: string, d: string): string do
+    Crypto.run(1, Crypto.alg(a, "Crypto.hmac"), k, d, 0, 0)
+  end
+#: pbkdf2/5 needs alg/2 run/6
+  def pbkdf2(a: atom, p: string, s: string, i: integer, n: integer): string do
+    g = Crypto.alg(a, "Crypto.pbkdf2")
+    if i < 1 or i > 100000000 do raise("Crypto.pbkdf2 takes from 1 to 100000000 iterations") end
+    if n < 1 or n > 1024 do raise("Crypto.pbkdf2 gives a key of 1 to 1024 bytes") end
+    Crypto.run(2, g, p, s, i, n)
+  end
+# n bytes at a from the system's source (getrandom), which may give fewer
+# at a time.
+#: fill/2 needs fill/2
+  def fill(a: integer, n: integer): integer do
+    r = if n == 0 do 0 else Sys.call(318, a, n, 0) end
+    if r < 0 and r != -4 do System.halt(74) end
+    if n == 0 do 0 else Crypto.fill(a + (if r < 0 do 0 else r end), n - (if r < 0 do 0 else r end)) end
+  end
+#: strong_rand_bytes/1 needs fill/2
+  def strong_rand_bytes(n: integer): string do
+    if n < 0 or n > 1048576 do raise("Crypto.strong_rand_bytes takes a count from 0 to 1048576") end
+    o = String.duplicate("\x00", n)
+    Crypto.fill(Sys.addr(o), n)
+    o
+  end
+# Base 64 without padding, as Go's base64.RawStdEncoding writes it.
+#: b64/1 needs b64s/4
+  def b64(d: string): string do
+    n = div(byte_size(d) * 4 + 2, 3)
+    t = String.duplicate("\x00", n + 16)
+    Crypto.b64s(Sys.addr(d <> "\x00\x00"), byte_size(d), Sys.addr(t), Sys.addr("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"))
+    Sys.text(Sys.addr(t), n)
+  end
+#: b64s/4 needs b64s/4
+  def b64s(a: integer, n: integer, o: integer, c: integer): integer do
+    if n <= 0 do 0 else
+      v = Sys.byte(a) * 65536 + Sys.byte(a + 1) * 256 + Sys.byte(a + 2)
+      Sys.poke(o, Sys.byte(c + div(v, 262144)) + 256 * Sys.byte(c + rem(div(v, 4096), 64)) + 65536 * Sys.byte(c + rem(div(v, 64), 64)) + 16777216 * Sys.byte(c + rem(v, 64)))
+      Crypto.b64s(a + 3, n - 3, o + 4, c)
+    end
+  end
+# And as RawStdEncoding.DecodeString reads it: line breaks are passed over,
+# a last group of two or three characters gives one or two bytes whatever
+# its spare bits, and any other character, = among them, is refused.
+#: unb64/1 needs unbs/4
+  def unb64(t: string): tuple[boolean, string] do
+    o = String.duplicate("\x00", byte_size(t) + 16)
+    e = Crypto.unbs(Sys.addr(t), byte_size(t), Sys.addr(o), 0)
+    k = rem(div(e, 262144), 4)
+    v = rem(e, 262144)
+    w = div(e, 1048576)
+    if e < 0 or k == 1 do {false, ""} else
+      if k == 2 do Sys.poke(Sys.addr(o) + w, div(v, 16)) end
+      if k == 3 do Sys.poke(Sys.addr(o) + w, div(v, 1024) + 256 * rem(div(v, 4), 256)) end
+      {true, Sys.text(Sys.addr(o), w + (if k == 0 do 0 else k - 1 end))}
+    end
+  end
+# The state e: bytes written times 1048576, characters held times 262144,
+# their bits; -1 once a character was refused. 2000 characters to a level
+# of calls.
+#: unbs/4 needs unb/6 unbs/4
+  def unbs(a: integer, n: integer, o: integer, e: integer): integer do
+    k = if n > 2000 do 2000 else n end
+    r = if e < 0 do e else Crypto.unb(a, k, o, div(e, 1048576), rem(e, 262144), rem(div(e, 262144), 4)) end
+    if r < 0 or n == k do r else Crypto.unbs(a + k, n - k, o, r) end
+  end
+#: unb/6 needs unb/6
+  def unb(a: integer, n: integer, o: integer, w: integer, v: integer, k: integer): integer do
+    c = if n == 0 do 0 else Sys.byte(a) end
+    x = if c >= 65 and c <= 90 do c - 65 else if c >= 97 and c <= 122 do c - 71 else if c >= 48 and c <= 57 do c + 4 else if c == 43 do 62 else if c == 47 do 63 else -1 end end end end end
+    if n == 0 do (w * 4 + k) * 262144 + v else
+      if c == 10 or c == 13 do Crypto.unb(a + 1, n - 1, o, w, v, k) else
+        if x < 0 do -1 else
+          if k == 3 do
+            u = v * 64 + x
+            Sys.poke(o + w, div(u, 65536) + 256 * rem(div(u, 256), 256) + 65536 * rem(u, 256))
+            Crypto.unb(a + 1, n - 1, o, w + 3, 0, 0)
+          else Crypto.unb(a + 1, n - 1, o, w, v * 64 + x, k + 1) end
+        end
+      end
+    end
+  end
+# "$pbkdf2-sha256$i=ITERATIONS$SALT$KEY" under a fresh salt of 16 bytes.
+#: stored/2 needs b64/1 run/6 strong_rand_bytes/1
+  def stored(p: string, i: integer): string do
+    s = Crypto.strong_rand_bytes(16)
+    "$pbkdf2-sha256$i=" <> Integer.to_string(i) <> "$" <> Crypto.b64(s) <> "$" <> Crypto.b64(Crypto.run(2, 3, p, s, i, 32))
+  end
+#: hash_password/1 needs stored/2
+  def hash_password(p: string): string do
+    Crypto.stored(p, 600000)
+  end
+#: hash_password/2 needs stored/2
+  def hash_password(p: string, o: list[tuple[atom, integer]]): string do
+    i = Enum.reduce(o, 600000, fn x, _ ->
+      if elem(x, 0) != :iterations do raise("Crypto.hash_password takes iterations:, not #{elem(x, 0)}:") end
+      elem(x, 1)
+    end)
+    if i < 1 or i > 100000000 do raise("Crypto.hash_password takes from 1 to 100000000 iterations") end
+    Crypto.stored(p, i)
+  end
+#: verify_password/2 needs Enum.at/3 Enum.count/1 Kernel.binary_part/3 String.split/2 String.starts_with?/2 run/6 secure_compare/2 unb64/1
+  def verify_password(p: string, t: string): boolean do
+    q = String.split(t, "$")
+    i = Enum.at(q, 2, "")
+    c = if String.starts_with?(i, "i=") do Integer.parse(binary_part(i, 2, byte_size(i) - 2)) else error("") end
+    s = Crypto.unb64(Enum.at(q, 3, ""))
+    k = Crypto.unb64(Enum.at(q, 4, ""))
+    n = byte_size(elem(k, 1))
+    case c do
+      ok(r) ->
+        if Enum.count(q) != 5 or Enum.at(q, 0, "") != "" or Enum.at(q, 1, "") != "pbkdf2-sha256" or r < 1 or r > 100000000 or not elem(s, 0) or not elem(k, 0) or n == 0 or n > 1024 do false else
+          Crypto.secure_compare(Crypto.run(2, 3, p, elem(s, 1), r, n), elem(k, 1))
+        end
+      error(_) -> false
+    end
+  end
+

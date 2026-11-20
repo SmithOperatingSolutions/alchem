@@ -1,0 +1,103 @@
+{
+  "version": 2,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "const.i64",
+              "dest": "x",
+              "value": 40
+            },
+            {
+              "op": "call",
+              "dest": "r",
+              "callee": "twice",
+              "args": [
+                "x"
+              ]
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    },
+    {
+      "name": "twice",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "a",
+              "callee": "inc",
+              "args": [
+                "x"
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "b",
+              "callee": "inc",
+              "args": [
+                "a"
+              ]
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "b"
+          }
+        }
+      ]
+    },
+    {
+      "name": "inc",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "const.i64",
+              "dest": "one",
+              "value": 1
+            },
+            {
+              "op": "add.i64",
+              "dest": "r",
+              "lhs": "x",
+              "rhs": "one"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    }
+  ]
+}

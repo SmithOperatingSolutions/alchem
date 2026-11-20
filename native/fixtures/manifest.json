@@ -1,0 +1,1353 @@
+{
+  "schema_version": 1,
+  "target": "x86_64-unknown-linux-gnu",
+  "cases": [
+    {
+      "id": "return-42",
+      "source": "fixtures/ir/return-42.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "add-20-22",
+      "source": "fixtures/ir/add-20-22.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "invalid-unknown-op",
+      "source": "fixtures/ir/invalid-unknown-op.json",
+      "expect_compile_error": "E_UNKNOWN_OPCODE"
+    },
+    {
+      "id": "return-zero",
+      "source": "fixtures/ir/return-zero.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "return-negative",
+      "source": "fixtures/ir/return-negative.json",
+      "expect": {
+        "exit_code": 255,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "add-overflow",
+      "source": "fixtures/ir/add-overflow.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "add-wrap-to-42",
+      "source": "fixtures/ir/add-wrap-to-42.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "invalid-duplicate-ssa",
+      "source": "fixtures/ir/invalid-duplicate-ssa.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-undefined-lhs",
+      "source": "fixtures/ir/invalid-undefined-lhs.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-undefined-rhs",
+      "source": "fixtures/ir/invalid-undefined-rhs.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-missing-constant",
+      "source": "fixtures/ir/invalid-missing-constant.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-null-constant",
+      "source": "fixtures/ir/invalid-null-constant.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-wrong-operands",
+      "source": "fixtures/ir/invalid-wrong-operands.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-out-of-range",
+      "source": "fixtures/ir/invalid-out-of-range.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-undefined-return",
+      "source": "fixtures/ir/invalid-undefined-return.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-duplicate-root-key",
+      "source": "fixtures/ir/invalid-duplicate-root-key.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-duplicate-function-key",
+      "source": "fixtures/ir/invalid-duplicate-function-key.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-duplicate-block-key",
+      "source": "fixtures/ir/invalid-duplicate-block-key.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-duplicate-instruction-key",
+      "source": "fixtures/ir/invalid-duplicate-instruction-key.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-duplicate-terminator-key",
+      "source": "fixtures/ir/invalid-duplicate-terminator-key.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-duplicate-escaped-key",
+      "source": "fixtures/ir/invalid-duplicate-escaped-key.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-cased-root-key",
+      "source": "fixtures/ir/invalid-cased-root-key.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-cased-function-key",
+      "source": "fixtures/ir/invalid-cased-function-key.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-cased-block-key",
+      "source": "fixtures/ir/invalid-cased-block-key.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-cased-terminator-key",
+      "source": "fixtures/ir/invalid-cased-terminator-key.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "return-escaped-keys",
+      "source": "fixtures/ir/return-escaped-keys.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "sub-84-42",
+      "source": "fixtures/ir/sub-84-42.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "sub-reversed",
+      "source": "fixtures/ir/sub-reversed.json",
+      "expect": {
+        "exit_code": 214,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "sub-underflow",
+      "source": "fixtures/ir/sub-underflow.json",
+      "expect": {
+        "exit_code": 255,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "mul-6-7",
+      "source": "fixtures/ir/mul-6-7.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "mul-negative",
+      "source": "fixtures/ir/mul-negative.json",
+      "expect": {
+        "exit_code": 214,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "mul-zero",
+      "source": "fixtures/ir/mul-zero.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "mul-overflow",
+      "source": "fixtures/ir/mul-overflow.json",
+      "expect": {
+        "exit_code": 254,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "mul-min-negative-one",
+      "source": "fixtures/ir/mul-min-negative-one.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "invalid-sub-missing-rhs",
+      "source": "fixtures/ir/invalid-sub-missing-rhs.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-sub-undefined-lhs",
+      "source": "fixtures/ir/invalid-sub-undefined-lhs.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-sub-immediate",
+      "source": "fixtures/ir/invalid-sub-immediate.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-mul-missing-rhs",
+      "source": "fixtures/ir/invalid-mul-missing-rhs.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-mul-undefined-lhs",
+      "source": "fixtures/ir/invalid-mul-undefined-lhs.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "invalid-mul-immediate",
+      "source": "fixtures/ir/invalid-mul-immediate.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v2-call-identity",
+      "source": "fixtures/ir/v2-call-identity.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v2-call-forward-zero-args",
+      "source": "fixtures/ir/v2-call-forward-zero-args.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v2-call-six-args",
+      "source": "fixtures/ir/v2-call-six-args.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v2-call-preserves-values",
+      "source": "fixtures/ir/v2-call-preserves-values.json",
+      "expect": {
+        "exit_code": 81,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v2-call-nested",
+      "source": "fixtures/ir/v2-call-nested.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v2-call-argument-order",
+      "source": "fixtures/ir/v2-call-argument-order.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v2-invalid-undefined-callee",
+      "source": "fixtures/ir/v2-invalid-undefined-callee.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v2-invalid-wrong-arity",
+      "source": "fixtures/ir/v2-invalid-wrong-arity.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v2-invalid-undefined-call-argument",
+      "source": "fixtures/ir/v2-invalid-undefined-call-argument.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v2-invalid-duplicate-function",
+      "source": "fixtures/ir/v2-invalid-duplicate-function.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v2-invalid-duplicate-parameter",
+      "source": "fixtures/ir/v2-invalid-duplicate-parameter.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v2-invalid-parameter-redefinition",
+      "source": "fixtures/ir/v2-invalid-parameter-redefinition.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v2-invalid-recursive-call",
+      "source": "fixtures/ir/v2-invalid-recursive-call.json",
+      "expect_compile_error": "E_UNSUPPORTED"
+    },
+    {
+      "id": "v2-call-six-arg-order",
+      "source": "fixtures/ir/v2-call-six-arg-order.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v2-invalid-missing-args",
+      "source": "fixtures/ir/v2-invalid-missing-args.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v2-invalid-null-args",
+      "source": "fixtures/ir/v2-invalid-null-args.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v2-invalid-nonstring-argument",
+      "source": "fixtures/ir/v2-invalid-nonstring-argument.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v2-invalid-extra-call-field",
+      "source": "fixtures/ir/v2-invalid-extra-call-field.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v2-invalid-parameter-null-type",
+      "source": "fixtures/ir/v2-invalid-parameter-null-type.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v2-invalid-main-parameters",
+      "source": "fixtures/ir/v2-invalid-main-parameters.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v2-invalid-seven-parameters",
+      "source": "fixtures/ir/v2-invalid-seven-parameters.json",
+      "expect_compile_error": "E_UNSUPPORTED"
+    },
+    {
+      "id": "v2-invalid-missing-main",
+      "source": "fixtures/ir/v2-invalid-missing-main.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v2-invalid-mutual-recursion",
+      "source": "fixtures/ir/v2-invalid-mutual-recursion.json",
+      "expect_compile_error": "E_UNSUPPORTED"
+    },
+    {
+      "id": "v2-invalid-null-params",
+      "source": "fixtures/ir/v2-invalid-null-params.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v3-eq-42",
+      "source": "fixtures/ir/v3-eq-42.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v3-eq-7",
+      "source": "fixtures/ir/v3-eq-7.json",
+      "expect": {
+        "exit_code": 7,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v3-ne-42",
+      "source": "fixtures/ir/v3-ne-42.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v3-ne-7",
+      "source": "fixtures/ir/v3-ne-7.json",
+      "expect": {
+        "exit_code": 7,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v3-lt-42",
+      "source": "fixtures/ir/v3-lt-42.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v3-lt-7",
+      "source": "fixtures/ir/v3-lt-7.json",
+      "expect": {
+        "exit_code": 7,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v3-le-42",
+      "source": "fixtures/ir/v3-le-42.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v3-le-7",
+      "source": "fixtures/ir/v3-le-7.json",
+      "expect": {
+        "exit_code": 7,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v3-gt-42",
+      "source": "fixtures/ir/v3-gt-42.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v3-gt-7",
+      "source": "fixtures/ir/v3-gt-7.json",
+      "expect": {
+        "exit_code": 7,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v3-ge-42",
+      "source": "fixtures/ir/v3-ge-42.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v3-ge-7",
+      "source": "fixtures/ir/v3-ge-7.json",
+      "expect": {
+        "exit_code": 7,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v3-boolean-not",
+      "source": "fixtures/ir/v3-boolean-not.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v3-private-yields",
+      "source": "fixtures/ir/v3-private-yields.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v3-invalid-nonbool-condition",
+      "source": "fixtures/ir/v3-invalid-nonbool-condition.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v3-invalid-branch-type",
+      "source": "fixtures/ir/v3-invalid-branch-type.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v3-invalid-sibling-reference",
+      "source": "fixtures/ir/v3-invalid-sibling-reference.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v3-invalid-branch-leak",
+      "source": "fixtures/ir/v3-invalid-branch-leak.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v3-invalid-self-reference",
+      "source": "fixtures/ir/v3-invalid-self-reference.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v3-invalid-future-reference",
+      "source": "fixtures/ir/v3-invalid-future-reference.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v3-invalid-duplicate-branch-dest",
+      "source": "fixtures/ir/v3-invalid-duplicate-branch-dest.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v3-invalid-missing-else",
+      "source": "fixtures/ir/v3-invalid-missing-else.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v3-invalid-integer-bool-constant",
+      "source": "fixtures/ir/v3-invalid-integer-bool-constant.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v3-invalid-bool-return",
+      "source": "fixtures/ir/v3-invalid-bool-return.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v3-invalid-unknown-branch-field",
+      "source": "fixtures/ir/v3-invalid-unknown-branch-field.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v3-invalid-untaken-branch",
+      "source": "fixtures/ir/v3-invalid-untaken-branch.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v3-invalid-bool-arithmetic",
+      "source": "fixtures/ir/v3-invalid-bool-arithmetic.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v3-invalid-not-integer",
+      "source": "fixtures/ir/v3-invalid-not-integer.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v3-invalid-bool-call-argument",
+      "source": "fixtures/ir/v3-invalid-bool-call-argument.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v3-boolean-merge",
+      "source": "fixtures/ir/v3-boolean-merge.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v3-unselected-calls",
+      "source": "fixtures/ir/v3-unselected-calls.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v4-recursive-base",
+      "source": "fixtures/ir/v4-recursive-base.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v4-recursive-countdown",
+      "source": "fixtures/ir/v4-recursive-countdown.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v4-depth-256",
+      "source": "fixtures/ir/v4-depth-256.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v4-depth-257",
+      "source": "fixtures/ir/v4-depth-257.json",
+      "expect": {
+        "exit_code": 70,
+        "stdout": "",
+        "stderr": "E_RUNTIME_LIMIT: native call/stack budget exceeded\n"
+      }
+    },
+    {
+      "id": "v4-infinite",
+      "source": "fixtures/ir/v4-infinite.json",
+      "expect": {
+        "exit_code": 70,
+        "stdout": "",
+        "stderr": "E_RUNTIME_LIMIT: native call/stack budget exceeded\n"
+      }
+    },
+    {
+      "id": "v4-unused-recursion",
+      "source": "fixtures/ir/v4-unused-recursion.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v5-index",
+      "source": "fixtures/ir/v5-index.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v5-nul",
+      "source": "fixtures/ir/v5-nul.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v5-high-byte",
+      "source": "fixtures/ir/v5-high-byte.json",
+      "expect": {
+        "exit_code": 255,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v5-negative-first",
+      "source": "fixtures/ir/v5-negative-first.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v5-before-start",
+      "source": "fixtures/ir/v5-before-start.json",
+      "expect": {
+        "exit_code": 7,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v5-after-end",
+      "source": "fixtures/ir/v5-after-end.json",
+      "expect": {
+        "exit_code": 7,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v5-min-index",
+      "source": "fixtures/ir/v5-min-index.json",
+      "expect": {
+        "exit_code": 7,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v5-max-index",
+      "source": "fixtures/ir/v5-max-index.json",
+      "expect": {
+        "exit_code": 7,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v5-empty",
+      "source": "fixtures/ir/v5-empty.json",
+      "expect": {
+        "exit_code": 7,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v5-length",
+      "source": "fixtures/ir/v5-length.json",
+      "expect": {
+        "exit_code": 3,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v5-empty-length",
+      "source": "fixtures/ir/v5-empty-length.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v5-parameter",
+      "source": "fixtures/ir/v5-parameter.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v5-branch-true",
+      "source": "fixtures/ir/v5-branch-true.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v5-branch-false",
+      "source": "fixtures/ir/v5-branch-false.json",
+      "expect": {
+        "exit_code": 7,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v5-invalid-negative-byte",
+      "source": "fixtures/ir/v5-invalid-negative-byte.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v5-invalid-large-byte",
+      "source": "fixtures/ir/v5-invalid-large-byte.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v5-invalid-fraction",
+      "source": "fixtures/ir/v5-invalid-fraction.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v5-invalid-exponent",
+      "source": "fixtures/ir/v5-invalid-exponent.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v5-invalid-null-byte",
+      "source": "fixtures/ir/v5-invalid-null-byte.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v5-invalid-null-values",
+      "source": "fixtures/ir/v5-invalid-null-values.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v5-invalid-string-values",
+      "source": "fixtures/ir/v5-invalid-string-values.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v5-invalid-wrong-buffer",
+      "source": "fixtures/ir/v5-invalid-wrong-buffer.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v5-invalid-wrong-index",
+      "source": "fixtures/ir/v5-invalid-wrong-index.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v5-invalid-wrong-default",
+      "source": "fixtures/ir/v5-invalid-wrong-default.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v5-invalid-missing-value",
+      "source": "fixtures/ir/v5-invalid-missing-value.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v5-invalid-extra-field",
+      "source": "fixtures/ir/v5-invalid-extra-field.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v5-invalid-bytes-return",
+      "source": "fixtures/ir/v5-invalid-bytes-return.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v5-invalid-call-types",
+      "source": "fixtures/ir/v5-invalid-call-types.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v5-invalid-branch-type",
+      "source": "fixtures/ir/v5-invalid-branch-type.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v5-invalid-branch-leak",
+      "source": "fixtures/ir/v5-invalid-branch-leak.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v4-invalid-bytes-op",
+      "source": "fixtures/ir/v4-invalid-bytes-op.json",
+      "expect_compile_error": "E_UNKNOWN_OPCODE"
+    },
+    {
+      "id": "v4-invalid-bytes-param",
+      "source": "fixtures/ir/v4-invalid-bytes-param.json",
+      "expect_compile_error": "E_UNSUPPORTED"
+    },
+    {
+      "id": "v5-invalid-unused-byte",
+      "source": "fixtures/ir/v5-invalid-unused-byte.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v6-status-zero",
+      "source": "fixtures/ir/v6-status-zero.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v6-status-255",
+      "source": "fixtures/ir/v6-status-255.json",
+      "expect": {
+        "exit_code": 255,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v6-status-70",
+      "source": "fixtures/ir/v6-status-70.json",
+      "expect": {
+        "exit_code": 70,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v6-status-negative",
+      "source": "fixtures/ir/v6-status-negative.json",
+      "expect": {
+        "exit_code": 70,
+        "stdout": "",
+        "stderr": "E_HALT_STATUS: expected status 0..255\n"
+      }
+    },
+    {
+      "id": "v6-status-256",
+      "source": "fixtures/ir/v6-status-256.json",
+      "expect": {
+        "exit_code": 70,
+        "stdout": "",
+        "stderr": "E_HALT_STATUS: expected status 0..255\n"
+      }
+    },
+    {
+      "id": "v6-status-min",
+      "source": "fixtures/ir/v6-status-min.json",
+      "expect": {
+        "exit_code": 70,
+        "stdout": "",
+        "stderr": "E_HALT_STATUS: expected status 0..255\n"
+      }
+    },
+    {
+      "id": "v6-status-max",
+      "source": "fixtures/ir/v6-status-max.json",
+      "expect": {
+        "exit_code": 70,
+        "stdout": "",
+        "stderr": "E_HALT_STATUS: expected status 0..255\n"
+      }
+    },
+    {
+      "id": "v6-v4-depth-256",
+      "source": "fixtures/ir/v6-v4-depth-256.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v6-v4-infinite",
+      "source": "fixtures/ir/v6-v4-infinite.json",
+      "expect": {
+        "exit_code": 70,
+        "stdout": "",
+        "stderr": "E_RUNTIME_LIMIT: native call/stack budget exceeded\n"
+      }
+    },
+    {
+      "id": "v6-v5-parameter",
+      "source": "fixtures/ir/v6-v5-parameter.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v6-v3-private-yields",
+      "source": "fixtures/ir/v6-v3-private-yields.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v6-wide-helper",
+      "source": "fixtures/ir/v6-wide-helper.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v7-stdout",
+      "source": "fixtures/ir/v7-stdout.json",
+      "expect": {
+        "exit_code": 6,
+        "stdout": "hello\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v7-stderr",
+      "source": "fixtures/ir/v7-stderr.json",
+      "expect": {
+        "exit_code": 6,
+        "stdout": "",
+        "stderr": "hello\n"
+      }
+    },
+    {
+      "id": "v7-empty",
+      "source": "fixtures/ir/v7-empty.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v7-live-value",
+      "source": "fixtures/ir/v7-live-value.json",
+      "expect": {
+        "exit_code": 42,
+        "stdout": "hello\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v7-ordered",
+      "source": "fixtures/ir/v7-ordered.json",
+      "expect": {
+        "exit_code": 6,
+        "stdout": "hello\nworld\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v7-untaken",
+      "source": "fixtures/ir/v7-untaken.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v7-invalid-stream",
+      "source": "fixtures/ir/v7-invalid-stream.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v7-invalid-null-stream",
+      "source": "fixtures/ir/v7-invalid-null-stream.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v7-invalid-numeric-stream",
+      "source": "fixtures/ir/v7-invalid-numeric-stream.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v7-invalid-wrong-type",
+      "source": "fixtures/ir/v7-invalid-wrong-type.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v7-invalid-extra-field",
+      "source": "fixtures/ir/v7-invalid-extra-field.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v7-invalid-missing-stream",
+      "source": "fixtures/ir/v7-invalid-missing-stream.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v6-invalid-write",
+      "source": "fixtures/ir/v6-invalid-write.json",
+      "expect_compile_error": "E_UNKNOWN_OPCODE"
+    },
+    {
+      "id": "v8-ordered",
+      "source": "fixtures/ir/v8-ordered.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "abcd",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v8-empty-left",
+      "source": "fixtures/ir/v8-empty-left.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "cd",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v8-empty-right",
+      "source": "fixtures/ir/v8-empty-right.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "ab",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v8-both-empty",
+      "source": "fixtures/ir/v8-both-empty.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v8-inputs-unchanged",
+      "source": "fixtures/ir/v8-inputs-unchanged.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "abcdabcd",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v8-byte-return",
+      "source": "fixtures/ir/v8-byte-return.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "abcd",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v8-static-return",
+      "source": "fixtures/ir/v8-static-return.json",
+      "expect": {
+        "exit_code": 6,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v8-conditional-return",
+      "source": "fixtures/ir/v8-conditional-return.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "cdab",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v8-nested-alias",
+      "source": "fixtures/ir/v8-nested-alias.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "abcdabcd",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v8-invalid-missing-lhs",
+      "source": "fixtures/ir/v8-invalid-missing-lhs.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v8-invalid-wrong-lhs",
+      "source": "fixtures/ir/v8-invalid-wrong-lhs.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v8-invalid-wrong-rhs",
+      "source": "fixtures/ir/v8-invalid-wrong-rhs.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v8-invalid-extra-field",
+      "source": "fixtures/ir/v8-invalid-extra-field.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v8-invalid-main-bytes",
+      "source": "fixtures/ir/v8-invalid-main-bytes.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v8-invalid-return-type",
+      "source": "fixtures/ir/v8-invalid-return-type.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v8-invalid-call-result-type",
+      "source": "fixtures/ir/v8-invalid-call-result-type.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v8-invalid-integer-call-as-bytes",
+      "source": "fixtures/ir/v8-invalid-integer-call-as-bytes.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v7-invalid-concat",
+      "source": "fixtures/ir/v7-invalid-concat.json",
+      "expect_compile_error": "E_UNKNOWN_OPCODE"
+    },
+    {
+      "id": "v7-invalid-byte-return",
+      "source": "fixtures/ir/v7-invalid-byte-return.json",
+      "expect_compile_error": "E_UNSUPPORTED"
+    },
+    {
+      "id": "v9-pack-empty",
+      "source": "fixtures/ir/v9-pack-empty.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v9-pack-ordered",
+      "source": "fixtures/ir/v9-pack-ordered.json",
+      "expect": {
+        "exit_code": 3,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v9-pack-zero",
+      "source": "fixtures/ir/v9-pack-zero.json",
+      "expect": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v9-pack-255",
+      "source": "fixtures/ir/v9-pack-255.json",
+      "expect": {
+        "exit_code": 255,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "v9-pack-negative",
+      "source": "fixtures/ir/v9-pack-negative.json",
+      "expect": {
+        "exit_code": 72,
+        "stdout": "",
+        "stderr": "E_RUNTIME_BYTE: expected byte value 0..255\n"
+      }
+    },
+    {
+      "id": "v9-pack-256",
+      "source": "fixtures/ir/v9-pack-256.json",
+      "expect": {
+        "exit_code": 72,
+        "stdout": "",
+        "stderr": "E_RUNTIME_BYTE: expected byte value 0..255\n"
+      }
+    },
+    {
+      "id": "v9-pack-minimum",
+      "source": "fixtures/ir/v9-pack-minimum.json",
+      "expect": {
+        "exit_code": 72,
+        "stdout": "",
+        "stderr": "E_RUNTIME_BYTE: expected byte value 0..255\n"
+      }
+    },
+    {
+      "id": "v9-pack-maximum",
+      "source": "fixtures/ir/v9-pack-maximum.json",
+      "expect": {
+        "exit_code": 72,
+        "stdout": "",
+        "stderr": "E_RUNTIME_BYTE: expected byte value 0..255\n"
+      }
+    },
+    {
+      "id": "v9-invalid-pack-null",
+      "source": "fixtures/ir/v9-invalid-pack-null.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v9-invalid-pack-undefined",
+      "source": "fixtures/ir/v9-invalid-pack-undefined.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v9-invalid-pack-numeric",
+      "source": "fixtures/ir/v9-invalid-pack-numeric.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v9-invalid-pack-self",
+      "source": "fixtures/ir/v9-invalid-pack-self.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v9-invalid-pack-bool",
+      "source": "fixtures/ir/v9-invalid-pack-bool.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v9-invalid-pack-bytes",
+      "source": "fixtures/ir/v9-invalid-pack-bytes.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v9-invalid-pack-missing",
+      "source": "fixtures/ir/v9-invalid-pack-missing.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v9-invalid-pack-extra",
+      "source": "fixtures/ir/v9-invalid-pack-extra.json",
+      "expect_compile_error": "E_INVALID_IR"
+    },
+    {
+      "id": "v8-invalid-pack",
+      "source": "fixtures/ir/v8-invalid-pack.json",
+      "expect_compile_error": "E_UNKNOWN_OPCODE"
+    }
+  ]
+}

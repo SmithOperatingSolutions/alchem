@@ -1,0 +1,271 @@
+defmodule NativeNodes do
+  # Nodes (spec/alchem-nodes.md). What crosses to another node is encoded by
+  # the library (library/Node.alc), which has only the value's word to go
+  # by, so before a call that needs the form of a type on the wire the
+  # compiler writes that form into the code and stores its address at
+  # R14-72: a count byte and, per type, two bytes of length, the type's
+  # text as the pinned compiler writes it (two bytes of length first: nodes
+  # compare it) and a node. A node is its length in two bytes, a tag and what
+  # the tag needs: 0 integer, 2 string, 3 boolean, 22 atom, 24 float; 4
+  # option, 7 list, 25 set and 30 pid with one node; 6 result and 8 map
+  # with two; 5 tuple and 13 struct with a count byte and the nodes; 14 sum
+  # type with a count byte and per variant two bytes of length, a count
+  # byte and the nodes; 20 the node of a type that holds this one, two
+  # bytes from the first node.
+  def dn_node(tag: integer, payload: bytes): bytes do nc_join(nc_u16(Enum.count(payload)+3),b[tag],payload) end
+  # The node of a type, which starts base bytes after the first; b[] for a
+  # type that has no form on the wire.
+  def dn_describe(source: bytes, table: bytes, kind: bytes, base: integer, seen: bytes): bytes do
+    tag = nt_tag(kind)
+    if tag < 0 do b[] else if tag*(tag-2)*(tag-3)*(tag-22)*(tag-24) == 0 do dn_node(tag,b[]) else
+      if (tag-4)*(tag-7)*(tag-25) == 0 do dn_wrap(tag,dn_describe(source,table,nt_child(kind,0),base+3,seen),b[1]) else
+        if (tag-6)*(tag-8) == 0 do
+          first = dn_describe(source,table,nt_child(kind,0),base+3,seen)
+          dn_wrap(tag,first,if Enum.count(first) == 0 do b[] else Enum.concat(b[1],dn_describe(source,table,nt_child(kind,1),base+3+Enum.count(first),seen)) end)
+        else
+          if tag == 5 do dn_wrap(5,ni_small(nt_count(kind)),dn_items(source,table,nq_tuple_cells(kind,0),Enum.concat(nc_u24(0),nc_u24(base+4)),seen)) else dn_named(source,table,kind,base,seen) end
+        end
+      end
+    end end
+  end
+  def dn_wrap(tag: integer, head: bytes, rest: bytes): bytes do
+    if Enum.count(head) == 0 do b[] else if Enum.count(rest) == 0 do b[] else dn_node(tag,Enum.concat(head,nc_slice(rest,1,Enum.count(rest)))) end end
+  end
+  # The nodes of the types in cells, behind a 1. place: the offset in cells
+  # and where the next node starts, 24 bits each.
+  def dn_items(source: bytes, table: bytes, cells: bytes, place: bytes, seen: bytes): bytes do
+    offset = nc_cursor(place,0)
+    kind = nt_read(cells,offset)
+    node = if offset >= Enum.count(cells) do b[] else dn_describe(source,table,kind,nc_cursor(place,3),seen) end
+    rest = if Enum.count(node) == 0 do b[] else dn_items(source,table,cells,Enum.concat(nc_u24(nt_after(cells,offset)),nc_u24(nc_cursor(place,3)+Enum.count(node))),seen) end
+    if offset >= Enum.count(cells) do b[1] else if Enum.count(rest) == 0 do b[] else nc_join(b[1],node,nc_slice(rest,1,Enum.count(rest))) end end
+  end
+  def dn_name(source: bytes, table: bytes, id: integer): bytes do
+    if id < 0 do b[] else nc_slice(source,nc_meta(table,id,0),nc_meta(table,id,3)) end
+  end
+  # 1 for the handle of a process, the one library type that crosses.
+  def dn_pid(name: bytes): integer do nt_same(name,b[112,105,100]) end
+  def dn_named(source: bytes, table: bytes, kind: bytes, base: integer, seen: bytes): bytes do
+    id = nd_id(table,kind)
+    back = ni_seen(seen,kind,0)
+    name = dn_name(source,table,id)
+    inner = nc_join(seen,Enum.concat(b[Enum.count(kind)],kind),nc_u16(base))
+    if id < 0 do b[] else if dn_pid(name) == 1 do dn_wrap(30,dn_describe(source,table,nt_child(kind,0),base+3,seen),b[1]) else if Enum.count(ac_shown(name)) > 0 do b[] else if back >= 0 do dn_node(20,nc_u16(back)) else if base > 60000 do b[] else
+      if Enum.at(table,id*27+16,0) == 64 do
+        dn_wrap(13,ni_small(ni_field_count(source,table,id,0)),dn_fields(source,table,kind,nc_join(nc_u24(0),nc_u24(base+4),nc_u24(nc_meta(table,id,9))),inner))
+      else
+        dn_wrap(14,ni_small(ni_variant_count(source,table,id,0)),dn_variants(source,table,kind,nc_join(nc_u24(0),nc_u24(base+4),nc_u24(nc_meta(table,id,9))),inner))
+      end
+    end end end end end
+  end
+  # A node per field of a struct, behind a 1. place: the field's index and
+  # where its node starts.
+  def dn_fields(source: bytes, table: bytes, kind: bytes, place: bytes, seen: bytes): bytes do
+    index = nc_cursor(place,0)
+    base = nc_cursor(place,3)
+    field = nd_field_here(source,table,nd_id(table,kind),nc_cursor(place,6))
+    shown = ni_shown(source,field)
+    node = if shown == 0 do b[] else dn_describe(source,table,nu_apply(nc_kind(field),nd_subst(source,table,kind)),base,seen) end
+    rest = if Enum.count(node) == 0 do b[] else dn_fields(source,table,kind,nc_join(nc_u24(index+1),nc_u24(base+Enum.count(node)),nc_u24(nc_pos(field))),seen) end
+    if shown == 0 do b[1] else if Enum.count(rest) == 0 do b[] else nc_join(b[1],node,nc_slice(rest,1,Enum.count(rest))) end end
+  end
+  # Per variant of a sum type its length, the field count and a node per
+  # field, behind a 1.
+  def dn_variants(source: bytes, table: bytes, kind: bytes, place: bytes, seen: bytes): bytes do
+    index = nc_cursor(place,0)
+    base = nc_cursor(place,3)
+    id = nd_id(table,kind)
+    variant = nv_here(source,nc_cursor(place,6))
+    cells = if nc_pos(variant) < 0 do b[] else nu_apply_cells(nq_cells_of(source,table,id,nc_code(variant)),nd_subst(source,table,kind),0) end
+    items = if nc_pos(variant) < 0 do b[] else dn_items(source,table,cells,Enum.concat(nc_u24(0),nc_u24(base+3)),seen) end
+    record = Enum.concat(ni_small(nv_fields_of(nc_code(variant))),nc_slice(items,1,Enum.count(items)))
+    rest = if Enum.count(items) == 0 do b[] else if nv_fields_of(nc_code(variant)) > 250 do b[] else if Enum.count(record) > 65000 do b[] else dn_variants(source,table,kind,nc_join(nc_u24(index+1),nc_u24(base+2+Enum.count(record)),nc_u24(nc_pos(variant))),seen) end end end
+    if nc_pos(variant) < 0 do b[1] else if Enum.count(rest) == 0 do b[] else
+      nc_join(b[1],Enum.concat(nc_u16(Enum.count(record)+2),record),nc_slice(rest,1,Enum.count(rest)))
+    end end
+  end
+  # The type as the pinned compiler writes it: what two nodes compare to
+  # know that they mean the same by a name. b[] for a type without one.
+  def dn_text(source: bytes, table: bytes, kind: bytes): bytes do
+    tag = nt_tag(kind)
+    if tag == 0 do b[105,110,116,101,103,101,114] else if tag == 2 do b[115,116,114,105,110,103] else if tag == 3 do b[98,111,111,108,101,97,110] else if tag == 22 do b[97,116,111,109] else if tag == 24 do b[102,108,111,97,116] else
+      if tag == 4 do dn_args(b[111,112,116,105,111,110],dn_list(source,table,kind,0,1)) else if tag == 7 do dn_args(b[108,105,115,116],dn_list(source,table,kind,0,1)) else if tag == 25 do dn_args(b[115,101,116],dn_list(source,table,kind,0,1)) else
+        if tag == 6 do dn_args(b[114,101,115,117,108,116],dn_list(source,table,kind,0,2)) else if tag == 8 do dn_args(b[109,97,112],dn_list(source,table,kind,0,2)) else
+          if tag == 5 do if nt_count(kind) == 0 do b[116,117,112,108,101,91,93] else dn_args(b[116,117,112,108,101],dn_list(source,table,kind,0,nt_count(kind))) end else dn_named_text(source,table,kind) end
+        end end
+      end end end
+    end end end end end
+  end
+  def dn_args(name: bytes, inner: bytes): bytes do
+    if Enum.count(inner) == 0 do b[] else nc_join(Enum.concat(name,b[91]),inner,b[93]) end
+  end
+  # The texts of children index up to count, commas between them.
+  def dn_list(source: bytes, table: bytes, kind: bytes, index: integer, count: integer): bytes do
+    one = dn_text(source,table,nt_child(kind,index))
+    rest = if index+1 >= count do b[] else dn_list(source,table,kind,index+1,count) end
+    if Enum.count(one) == 0 do b[] else if index+1 >= count do one else if Enum.count(rest) == 0 do b[] else nc_join(one,b[44],rest) end end end
+  end
+  # A declared type carries its module's name; one of the library does not.
+  def dn_named_text(source: bytes, table: bytes, kind: bytes): bytes do
+    id = nd_id(table,kind)
+    name = dn_name(source,table,id)
+    owner = if id < 0 do -1 else nc_owner(table,id) end
+    home = dn_name(source,table,owner)
+    full = if nt_same(nc_slice(home,0,6),b[65,108,99,104,101,109]) == 1 do name else nc_join(home,b[46],name) end
+    generic = if (nt_tag(kind)-18)*(nt_tag(kind)-19) == 0 do nt_count(kind) else 0 end
+    if id < 0 do b[] else if generic == 0 do full else dn_args(full,dn_list(source,table,kind,0,generic)) end end
+  end
+  # The calls that need the wire form of a type: the module, the function,
+  # how many types and the way to each (as ac_hooks has it: 0 for the
+  # call's result or 1 and up for an argument, then which part), each
+  # behind its length; a zero ends the table.
+  def dn_hooks(): bytes do
+    Enum.concat(b[7,80,114,111,99,101,115,115,8,114,101,103,105,115,116,101,114,1,2,1,0,7,80,114,111,99,101,115,115,7,119,104,101,114,101,105,115,1,3,0,0,0,4,78,111,100,101,7,119,104,101,114,101,105,115,1,3,0,0,0,4,78,111,100,101,14,119,104,101,114,101,105,115,95,103,108,111,98,97,108,1,3,0,0,0,4,78,111,100,101,15,114,101,103,105,115,116,101,114,95,103,108,111,98,97,108,1,2,1,0,4,78,111,100,101,5,115,101,114,118],b[101,2,2,2,0,2,2,1,4,78,111,100,101,4,99,97,108,108,2,1,3,2,0,0,4,78,111,100,101,4,99,97,115,116,1,1,3,4,78,111,100,101,6,115,116,114,101,97,109,1,3,0,0,0,6,83,116,114,101,97,109,7,112,117,98,108,105,115,104,1,3,2,0,0,0])
+  end
+  def dn_paths(source: bytes, pos: integer, name: integer, table: bytes, at: integer): bytes do
+    size = Enum.at(table,at,0)
+    named = Enum.at(table,at+1+size,0)
+    stop = dn_skip(table,at+3+size+named,Enum.at(table,at+2+size+named,0))
+    if size == 0 do b[] else
+      if nc_word(source,pos,nc_slice(table,at+1,at+1+size))*nc_word(source,name,nc_slice(table,at+2+size,at+2+size+named)) == 1 do nc_slice(table,at+2+size+named,stop) else
+        dn_paths(source,pos,name,table,stop)
+      end
+    end
+  end
+  def dn_skip(table: bytes, at: integer, count: integer): integer do
+    if count == 0 do at else dn_skip(table,at+1+Enum.at(table,at,0),count-1) end
+  end
+  # The forms of the types the ways lead to, each behind its length, after
+  # a 1; b[] when one is not settled or cannot cross.
+  def dn_forms(source: bytes, table: bytes, args: bytes, made: bytes, paths: bytes, at: integer): bytes do
+    steps = Enum.at(paths,at,0)
+    first = Enum.at(paths,at+1,0)
+    whole = if first == 0 do nc_kind(made) else if first > nc_arg_count(args) do b[] else nc_arg_kind(args,first-1) end end
+    kind = ac_follow(whole,nc_slice(paths,at+1,at+1+steps),1)
+    text = if Enum.count(kind) == 0 do b[] else if nn_open(kind) == 1 do b[] else dn_text(source,table,kind) end end
+    node = if Enum.count(text) == 0 do b[] else dn_describe(source,table,kind,0,b[]) end
+    form = nc_join(nc_u16(Enum.count(text)),text,node)
+    rest = if Enum.count(node) == 0 do b[] else if at+1+steps >= Enum.count(paths) do b[1] else dn_forms(source,table,args,made,paths,at+1+steps) end end
+    if Enum.count(rest) == 0 do b[] else nc_join(Enum.concat(b[1],nc_u16(Enum.count(form))),form,nc_slice(rest,1,Enum.count(rest))) end
+  end
+  # The arguments with every function written without parameters, which
+  # the callee gave no type, compiled for the type it has by itself.
+  def dn_ready(source: bytes, env: bytes, table: bytes, args: bytes, index: integer): bytes do
+    done = if nt_tag(nc_arg_kind(args,index)) != 11 do args else nf_resolve(source,env,table,16,args,Enum.concat(nc_u24(index),b[1,9])) end
+    if index >= nc_arg_count(args) do args else dn_ready(source,env,table,if nc_pos(done) < 0 do args else done end,index+1) end
+  end
+  # Such a call with the store of the forms' address before it (before its
+  # last instruction when that is the call, so that no call among the
+  # arguments stores over it). Any other call as it is; b[] for a call
+  # whose type cannot cross or is not known where the call stands, which
+  # the pinned compiler refuses too.
+  def dn_typed(source: bytes, pos: integer, env: bytes, table: bytes, args: bytes, made: bytes): bytes do
+    paths = if nc_pos(made) < 0 do b[] else dn_paths(source,pos,nc_start(source,nc_expect(source,nc_end(source,pos),b[46])),dn_hooks(),0) end
+    all = if Enum.count(paths) == 0 do b[] else dn_forms(source,table,dn_ready(source,env,table,args,0),made,paths,1) end
+    found = nc_slice(all,1,Enum.count(all))
+    # The library's own calls of these functions give no form.
+    forms = if Enum.count(found) > 0 do found else if Enum.count(paths) == 0 do b[] else if nn_library(source,env,table) == 0 do b[] else b[0,0] end end end
+    size = Enum.count(forms)+1
+    code = nc_code(made)
+    split = Enum.count(code)-9
+    last = if split < 0 do 0 else if Enum.at(code,split,0)*65536+Enum.at(code,split+1,0)*256+Enum.at(code,split+8,0) == 4307731 do 1 else 0 end end
+    # The ARM64 compiler's translation finds data ahead of what names it:
+    # there the address is taken first (xa_mark).
+    ahead = nc_join(Enum.concat(xa_mark(size,b[72,141,5,5,0,0,0]),b[233]),Enum.concat(nc_u32(size),Enum.concat(b[Enum.at(paths,0,0)],forms)),b[73,137,70,184])
+    store = if Enum.count(found) == 0 do b[73,199,70,184,0,0,0,0] else if nc_arm() == 1 do ahead else nc_join(Enum.concat(b[233],nc_u32(size)),Enum.concat(b[Enum.at(paths,0,0)],forms),nc_join(b[72,141,5],nq_rel(0-size-7),b[73,137,70,184])) end end
+    if Enum.count(paths) == 0 do made else if Enum.count(forms) == 0 do b[] else
+      ty_recode(made,if last == 1 do nc_join(nc_slice(code,0,split),store,nc_slice(code,split,split+9)) else Enum.concat(store,code) end)
+    end end
+  end
+  # A type the program writes for a process's messages, a server's requests
+  # and replies, a supervisor's messages or a task's result must be one
+  # whose values may pass between processes, as the pinned compiler has it
+  # (ast.ValidType and the checker's wellFormed): no function, stream or
+  # type variable, for a task as far as the type is written out and for
+  # the others in the fields of declared types too. kind: Name[...] as an
+  # annotation of module owner writes it, made: the type it names; b[]
+  # when it is refused. The library's own modules write what they like.
+  # The declarations are read as they are written, not through nd_field,
+  # which would come back here for a type that holds its own handle.
+  def dn_checked(source: bytes, table: bytes, owner: integer, kind: bytes, made: bytes): bytes do
+    name = dn_name(source,table,nd_id(table,made))
+    deep = nt_same(name,b[112,105,100])+nt_same(name,b[115,117,112,101,114,118,105,115,111,114])+nt_same(name,b[115,101,114,118,101,114])
+    if Enum.count(made) == 0 do b[] else if deep+nt_same(name,b[116,97,115,107]) == 0 do made else if nt_same(nc_slice(dn_name(source,table,owner),0,6),b[65,108,99,104,101,109]) == 1 do made else
+      if dn_raws(source,table,nc_join(nc_u16(owner),nc_u24(0),nc_u24(nt_count(kind))),kind,b[deep,0]) == 0 do b[] else made end
+    end end end
+  end
+  # 1 when children index up to count of kind may all be sent. place: the
+  # module, the index and the count. mode: 1 to look into declared types, 1
+  # where a type variable stands for a type looked at elsewhere, then the
+  # declarations being looked into.
+  def dn_raws(source: bytes, table: bytes, place: bytes, kind: bytes, mode: bytes): integer do
+    index = nc_cursor(place,2)
+    if index >= nc_cursor(place,5) do 1 else
+      if dn_raw(source,table,nc_read(place,0),nt_child(kind,index),mode) == 0 do 0 else dn_raws(source,table,nc_join(nc_slice(place,0,2),nc_u24(index+1),nc_slice(place,5,8)),kind,mode) end
+    end
+  end
+  def dn_raw(source: bytes, table: bytes, owner: integer, kind: bytes, mode: bytes): integer do
+    tag = nt_tag(kind)
+    if (tag-10)*(tag-26) == 0 do 0 else if tag == 16 do Enum.at(mode,1,0) else
+      if (tag-4)*(tag-7)*(tag-25) == 0 do dn_raw(source,table,owner,nt_child(kind,0),mode) else
+        if (tag-6)*(tag-8) == 0 do dn_raws(source,table,nc_join(nc_u16(owner),nc_u24(0),nc_u24(2)),kind,mode) else
+          if tag == 5 do dn_raws(source,table,nc_join(nc_u16(owner),nc_u24(0),nc_u24(nt_count(kind))),kind,mode) else
+            if (tag-15)*(tag-20) != 0 do 1 else dn_raw_named(source,table,owner,kind,mode) end
+          end
+        end
+      end
+    end end
+  end
+  def dn_seen(mode: bytes, id: integer, offset: integer): integer do
+    if offset+2 > Enum.count(mode) do 0 else if nc_read(mode,offset) == id do 1 else dn_seen(mode,id,offset+2) end end
+  end
+  # A declared type: a handle of the library holds nothing that is sent;
+  # another is looked into, once, after its arguments.
+  def dn_raw_named(source: bytes, table: bytes, owner: integer, kind: bytes, mode: bytes): integer do
+    id = nd_named(source,nc_cursor(kind,1),table,owner)
+    inner = nc_join(b[1,1],nc_slice(mode,2,Enum.count(mode)),nc_u16(id))
+    start = if id < 0 do -1 else nc_meta(table,id,9) end
+    if id < 0 do 1 else if Enum.at(mode,0,0) == 0 do 1 else if Enum.count(ac_shown(dn_name(source,table,id))) > 0 do 1 else if dn_seen(mode,id,2) == 1 do 1 else
+      if (if nt_tag(kind) == 20 do dn_raws(source,table,nc_join(nc_u16(owner),nc_u24(0),nc_u24(nt_count(kind))),kind,mode) else 1 end) == 0 do 0 else
+        if Enum.at(table,id*27+16,0) == 64 do dn_raw_fields(source,table,nc_owner(table,id),start,inner) else dn_raw_variants(source,table,nc_owner(table,id),start,inner) end
+      end
+    end end end end
+  end
+  # The fields of a struct from pos on, as written.
+  def dn_raw_fields(source: bytes, table: bytes, owner: integer, pos: integer, mode: bytes): integer do
+    name = nc_start(source,pos)
+    declared = if pos < 0 do b[] else if nc_word(source,pos,b[101,110,100]) == 1 do b[] else nc_type(source,nc_expect(source,nc_end(source,name),b[58])) end end
+    after = nc_pos(declared)
+    next = if after < 0 do -1 else if nc_word(source,after,b[61]) == 0 do after else nc_start(source,nk_value_end(source,nc_start(source,nc_end(source,after)))) end end
+    if after < 0 do 1 else if dn_raw(source,table,owner,nc_kind(declared),mode) == 0 do 0 else if next <= pos do 1 else dn_raw_fields(source,table,owner,next,mode) end end end
+  end
+  # The variants of a sum type from pos on.
+  def dn_raw_variants(source: bytes, table: bytes, owner: integer, pos: integer, mode: bytes): integer do
+    variant = if pos < 0 do b[] else if nc_word(source,pos,b[101,110,100]) == 1 do b[] else nv_variant(source,pos) end end
+    params = if nc_pos(variant) < 0 do 0 else nc_cursor(nc_code(variant),3) end
+    bad = if params == 0 do 0 else 1-dn_raw_params(source,table,owner,params,mode) end
+    if nc_pos(variant) < 0 do 1 else if bad == 1 do 0 else if nc_pos(variant) <= pos do 1 else dn_raw_variants(source,table,owner,nc_pos(variant),mode) end end end
+  end
+  def dn_raw_params(source: bytes, table: bytes, owner: integer, pos: integer, mode: bytes): integer do
+    typed = nc_parameter_type(source,pos)
+    next = nc_pos(typed)
+    if next < 0 do 1 else if dn_raw(source,table,owner,nc_kind(typed),mode) == 0 do 0 else
+      if nc_word(source,next,b[44]) == 1 do dn_raw_params(source,table,owner,nc_end(source,next),mode) else 1 end
+    end end
+  end
+  # What library/Node.alc is written with beside the operations of
+  # ac_op: the bits of two words, as Process.__xor(a, b), __and, __or,
+  # __shl(a, count), __shr (zeros come in) and, without the check of + and
+  # *, __add and __mul. 7 to 13, 0 for another name.
+  def dn_op(source: bytes, name: integer): integer do
+    if nc_word(source,name,b[95,95,120,111,114]) == 1 do 7 else if nc_word(source,name,b[95,95,97,110,100]) == 1 do 8 else if nc_word(source,name,b[95,95,111,114]) == 1 do 9 else if nc_word(source,name,b[95,95,115,104,108]) == 1 do 10 else
+      if nc_word(source,name,b[95,95,115,104,114]) == 1 do 11 else if nc_word(source,name,b[95,95,97,100,100]) == 1 do 12 else if nc_word(source,name,b[95,95,109,117,108]) == 1 do 13 else 0 end end end
+    end end end end
+  end
+  # The two words are on the stack, the second on top; the result in RAX.
+  def dn_emit(op: integer): bytes do
+    Enum.concat(b[89,88],if op == 7 do b[72,49,200] else if op == 8 do b[72,33,200] else if op == 9 do b[72,9,200] else if op == 10 do b[72,211,224] else if op == 11 do b[72,211,232] else if op == 12 do b[72,1,200] else b[72,15,175,193] end end end end end end)
+  end
+  # Native smoke test; assembled with the compiler.
+  def main() do System.halt(0) end
+end

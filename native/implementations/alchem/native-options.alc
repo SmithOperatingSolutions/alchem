@@ -1,0 +1,51 @@
+defmodule NativeOptions do
+  def no_compatible(expected: bytes, actual: bytes): integer do
+    if Enum.count(expected) == 0 do 0 else if Enum.count(actual) == 0 do 0 else nt_same(expected,nt_merge(expected,actual)) end end
+  end
+  def no_merge(a: bytes, b: bytes): bytes do nt_merge(a,b) end
+  def no_some(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    begin = nc_expect(source,nc_end(source,pos),b[40])
+    args = if begin < 0 do b[] else nc_arguments(source,begin,env,table,depth) end
+    if nc_pos(args) < 0 do b[] else
+      kind = nc_arg_kind(args,0)
+      if nc_arg_count(args) != 1 do b[] else
+        if nt_tag(kind) < 0 do b[] else if nt_tag(nt_unary(4,kind)) < 0 do b[] else
+          nc_value(nc_pos(args),nc_join(nc_arg_code(args),b[88],no_box_emit()),nt_unary(4,kind))
+        end end
+      end
+    end
+  end
+  # Every case goes through the pattern matcher (np_case): an option or a
+  # result that is neither of its constructors (zf_zero) matches no arm.
+  def no_case(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    if depth > 251 do b[] else
+      value = nc_expression(source,nc_end(source,pos),env,table,depth+1)
+      if nc_pos(value) < 0 do b[] else np_case(source,value,env,table,depth,pos) end
+    end
+  end
+  def no_box_emit(): bytes do b[77,141,92,36,16,77,57,235,119,21,73,199,4,36,1,0,0,0,73,137,68,36,8,76,137,224,77,137,220,235,12,255,20,37,120,4,64,0,233,223,255,255,255] end
+  def no_at_emit(): bytes do b[94,95,72,139,15,72,133,246,121,3,72,1,206,72,57,206,115,50,15,182,68,55,8,77,141,92,36,16,77,57,235,119,21,73,199,4,36,1,0,0,0,73,137,68,36,8,76,137,224,77,137,220,235,12,255,20,37,120,4,64,0,233,223,255,255,255,235,2,49,192] end
+  def no_list(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    dot = nc_expect(source,nc_end(source,pos),b[46])
+    last = nc_word(source,dot,b[108,97,115,116])
+    first = nc_word(source,dot,b[102,105,114,115,116])
+    if last+first != 1 do b[] else
+      begin = nc_expect(source,nc_end(source,dot),b[40])
+      args = if begin < 0 do b[] else nc_arguments(source,begin,env,table,depth) end
+      if nc_pos(args) < 0 do b[] else nw_library(no_list_call(args,last),args,1) end
+    end
+  end
+  def no_list_call(args: bytes, last: integer): bytes do
+    if nt_tag(nc_arg_kind(args,0)) == 7 do nl_first_last(args,last) else
+    if nt_tag(nc_arg_kind(args,0)) != 1 do b[] else
+      index = if last == 1 do 255 else 0 end
+      count = nc_arg_count(args)
+      code = if count == 1 do Enum.concat(b[106,index],no_at_emit()) else
+        if count != 2 do b[] else if nt_tag(nc_arg_kind(args,1)) != 0 do b[] else Enum.concat(b[88,106,index,80],nc_at_emit()) end end
+      end
+      if Enum.count(code) == 0 do b[] else nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),code),if count == 1 do b[4,0] else b[0] end) end
+    end end
+  end
+  # Native smoke test; runtime boxing emitters follow.
+  def main() do System.halt(0) end
+end

@@ -1,0 +1,182 @@
+defmodule NativeTrace do
+  # Failure traces: what a program needs to end as the pinned runtime ends
+  # it, naming the place, the reason and every active call (the routine is
+  # spec/trace-x86_64.s). The compiler itself is not traced: nc_compile marks
+  # byte 15 of the first table record when the program is a compiler entry.
+  def nz_on(table: bytes): integer do if Enum.at(table,15,0) == 1 do 0 else 1 end end
+  def nz_off(table: bytes): bytes do nc_join(nc_slice(table,0,15),b[1],nc_slice(table,16,Enum.count(table))) end
+  # The routine's table slot, after the four shared runtimes.
+  def nz_slot(table: bytes): integer do nc_records(Enum.count(table))+4 end
+  # A statement begins: its position goes to the frame.
+  # The frame's word is 64 bits: the position in its low 22 bits and above
+  # them a count of lines past that position's own (see wf_at). One that
+  # does not fit a sign-extended 32-bit immediate is stored in two halves.
+  def nz_set(pos: integer): bytes do
+    high = nc_units(pos,4294967296)
+    if pos < 2147483648 do Enum.concat(b[72,199,133,120,255,255,255],nc_u32(pos)) else
+      nc_join(Enum.concat(b[199,133,120,255,255,255],nc_u32(pos-high*4294967296)),b[199,133,124,255,255,255],nc_u32(high))
+    end
+  end
+  def nz_at(table: bytes, pos: integer): bytes do
+    if nz_on(table) == 0 do b[] else nz_set(pos) end
+  end
+  # A function (closure 0) or lambda (1) is entered, its parameters stored: it
+  # has no closure records yet, runs its first statement, and is one more
+  # active call of at most 100001 (main and 100000 below it, as the pinned runtime counts). name is the position a call too deep names.
+  def nz_enter(table: bytes, closure: integer, name: integer, body: integer): bytes do
+    base = nc_join(b[72,199,133,112,255,255,255,closure,0,0,0],nz_set(body),b[73,255,199,73,129,255,161,134,1,0])
+    if nz_on(table) == 0 do nc_join(base,b[118,12],nc_exit_code(70)) else
+      nc_join(base,b[118,19],nc_join(Enum.concat(b[191],nc_u32(name)),b[190,1,0,0,0],nc_call(nz_slot(table))))
+    end
+  end
+  # The entry of a capture or reference, which nests no deeper than its text.
+  def nz_enter_plain(pos: integer): bytes do
+    nc_join(b[72,199,133,112,255,255,255,1,0,0,0],nz_set(pos),b[73,255,199])
+  end
+  # After a match left 1 or 0 in AL: a value that does not match its pattern
+  # ends the program, naming the pattern at pos.
+  def nz_must(table: bytes, pos: integer): bytes do
+    if nz_on(table) == 0 do nc_join(b[132,192,15,133,57,0,0,0,191,2,0,0,0,184,1,0,0,0,72,141,53,19,0,0,0,186,21,0,0,0,15,5],b[191,2,0,0,0,184,60,0,0,0,15,5],b[112,97,116,116,101,114,110,32,109,97,116,99,104,32,102,97,105,108,101,100,10]) else
+      nc_join(b[132,192,117,16],Enum.concat(b[191],nc_u32(pos)),Enum.concat(b[49,246],nc_call(nz_slot(table))))
+    end
+  end
+  # The program cannot go on: it ends naming pos and the reason, a number in
+  # the routine's table. Nineteen bytes, also for a compiler entry, which
+  # exits 70.
+  def nz_fail(table: bytes, pos: integer, reason: integer): bytes do
+    if nz_on(table) == 0 do Enum.concat(nc_exit_code(70),b[144,144,144,144,144,144,144]) else
+      # A default value fails at the call that left it out (nj_from).
+      nc_join(Enum.concat(b[191],nc_u32(if nc_cursor(table,21) == 0 do pos else nc_cursor(table,21) end)),Enum.concat(b[190],nc_u32(reason)),nc_call(nz_slot(table)))
+    end
+  end
+  # Leave the program with the status in RAX. One outside 0..255 ends it as
+  # a failure naming the System.halt at pos.
+  def nz_exit(table: bytes, pos: integer): bytes do
+    if nz_on(table) == 0 do nc_exit_status() else
+      nc_join(b[72,61,255,0,0,0,118,19],nc_join(Enum.concat(b[191],nc_u32(pos)),b[190,2,0,0,0],nc_call(nz_slot(table))),b[72,137,199,184,60,0,0,0,15,5])
+    end
+  end
+  # 1 when pos follows a "(" that groups: one that no name or call precedes.
+  def nz_grouped(source: bytes, pos: integer): integer do
+    open = nz_before(source,pos-1)
+    prior = byte_at(source,nz_before(source,open-1))
+    if byte_at(source,open) != 40 do 0 else if open == 0 do 1 else
+      if classify_ascii(prior) == 2 do 0 else if is_digit(prior) == 1 do 0 else if (prior-41)*(prior-93)*(prior-46)*(prior-63)*(prior-33) == 0 do 0 else 1 end end end
+    end end
+  end
+  # The last byte at or before pos that is no blank; -1 when there is none.
+  def nz_before(source: bytes, pos: integer): integer do
+    value = byte_at(source,pos)
+    if pos < 0 do -1 else if (value-32)*(value-9)*(value-10)*(value-13) == 0 do nz_before(source,pos-1) else pos end end
+  end
+  # An if or case used as a value is a closure in the pinned compiler, and a
+  # trace shows it: while it runs, a record on the stack keeps the statement
+  # around it and the frame points at the record.
+  # The statement around it is shown where the if or case itself stands, and
+  # so is the rest of that statement once the closure has run, as the pinned
+  # compiler's line numbers have it; a call the closure is an argument of,
+  # or is piped into, stays where the statement stands.
+  def nz_closure(source: bytes, table: bytes, value: bytes, pos: integer): bytes do
+    next = byte_at(source,nc_start(source,nc_pos(value)))
+    inside = if next*256+byte_at(source,nc_start(source,nc_pos(value))+1) == 31806 do 1 else if (next-41)*(next-44)*(next-93)*(next-125) != 0 do 0 else 1-nz_grouped(source,pos) end end
+    keep = if inside == 1 do b[72,139,133,120,255,255,255,80] else b[] end
+    enter = nc_join(keep,nz_at(table,pos),b[72,139,133,120,255,255,255,80,255,181,112,255,255,255,72,137,165,112,255,255,255])
+    leave = Enum.concat(b[143,133,112,255,255,255,89,72,137,141,120,255,255,255],if inside == 1 do b[89,72,137,141,120,255,255,255] else b[] end)
+    if nz_on(table) == 0 do value else if nc_pos(value) < 0 do value else
+      nw_keep(nc_value(nc_pos(value),nc_join(enter,nc_code(value),leave),nc_kind(value)),value,b[])
+    end end
+  end
+  # The position, 32 bits each, of every byte from first up to stop that is a
+  # newline (low 10 and high 10) or continues a character (128 and 191).
+  def nz_marks(source: bytes, first: integer, stop: integer, low: integer, high: integer): bytes do
+    value = byte_at(source,first)
+    if stop-first <= 0 do b[] else
+      if stop-first == 1 do if (value-low)*(high-value) >= 0 do nc_u32(first) else b[] end else
+        middle = first+nc_half(stop-first)
+        Enum.concat(nz_marks(source,first,middle,low,high),nz_marks(source,middle,stop,low,high))
+      end
+    end
+  end
+  # A bundle starts with "#alchem-bundle N" and N lines "# length path": the
+  # files that follow, by their length in the bundle.
+  def nz_bundled(source: bytes): integer do
+    nc_word_at(source,0,b[35,97,108,99,104,101,109,45,98,117,110,100,108,101,32],0)
+  end
+  def nz_digits(source: bytes, pos: integer, value: integer): integer do
+    if is_digit(byte_at(source,pos)) == 0 do value else nz_digits(source,pos+1,value*10+byte_at(source,pos)-48) end
+  end
+  def nz_digits_end(source: bytes, pos: integer): integer do
+    if is_digit(byte_at(source,pos)) == 0 do pos else nz_digits_end(source,pos+1) end
+  end
+  def nz_line_end(source: bytes, pos: integer): integer do
+    if pos >= Enum.count(source) do pos else if byte_at(source,pos) == 10 do pos else nz_line_end(source,pos+1) end end
+  end
+  # The manifest lines from pos: the position after the last one, then for
+  # each file its length (32 bits) and where its path starts and ends.
+  def nz_manifest(source: bytes, pos: integer, left: integer, found: bytes): bytes do
+    size = nz_digits_end(source,pos+2)
+    stop = nz_line_end(source,size)
+    if left == 0 do Enum.concat(nc_u24(pos),found) else
+      if byte_at(source,pos)*256+byte_at(source,pos+1) != 8992 do b[] else if byte_at(source,size) != 32 do b[] else if stop >= Enum.count(source) do b[] else
+        nz_manifest(source,stop+1,left-1,nc_join(found,nc_u32(nz_digits(source,pos+2,0)),Enum.concat(nc_u24(size+1),nc_u24(stop))))
+      end end end
+    end
+  end
+  # Where each file starts, the length of its path and the path.
+  def nz_file_records(source: bytes, found: bytes, offset: integer, start: integer): bytes do
+    first = nc_cursor(found,offset+4)
+    stop = nc_cursor(found,offset+7)
+    if offset >= Enum.count(found) do b[] else
+      nc_join(Enum.concat(nc_u32(start),nc_u16(stop-first)),nc_slice(source,first,stop),nz_file_records(source,found,offset+10,start+nc_read(found,offset)+nc_read(found,offset+2)*65536))
+    end
+  end
+  def nz_files(source: bytes): bytes do
+    count = nz_digits(source,15,0)
+    found = if nz_bundled(source) == 0 do b[] else nz_manifest(source,nz_line_end(source,15)+1,count,b[]) end
+    if Enum.count(found) < 3 do b[0,0,0,0,7,0,60,115,116,100,105,110,62] else nz_file_records(source,found,3,nc_cursor(found,0)) end
+  end
+  def nz_file_count(files: bytes, offset: integer): integer do
+    if offset >= Enum.count(files) do 0 else 1+nz_file_count(files,offset+6+nc_read(files,offset+4)) end
+  end
+  # One name per table record: Module.function, empty for what is no function.
+  # A name behind its length, one byte: the trace routine reads it so.
+  def nz_named(name: bytes): bytes do
+    if Enum.count(name) > 254 do b[0] else Enum.concat(b[Enum.count(name)],name) end
+  end
+  def nz_names(source: bytes, table: bytes, first: integer, stop: integer): bytes do
+    owner = nc_owner(table,first)
+    # A name the compiler completed (a function of a defimpl) is shown with $.
+    name = nc_join(nc_slice(source,nc_meta(table,owner,0),nc_meta(table,owner,3)),b[46],mp_shown(nc_slice(source,nc_meta(table,first,0),nc_meta(table,first,3)),0))
+    if stop-first <= 0 do b[] else
+      if stop-first == 1 do
+        if Enum.at(table,first*27+16,0) >= 32 do b[0] else if Enum.count(name) > 250 do b[0] else
+          # A test or a setup block is shown as the pinned runtime names it.
+          if tm_ours(source,nc_meta(table,first,0)) > 0 do nz_named(tm_shown(source,nc_meta(table,first,0),nc_meta(table,first,3))) else nz_named(Enum.concat(name,nj_form_suffix(source,table,first))) end
+        end end
+      else
+        middle = first+nc_half(stop-first)
+        Enum.concat(nz_names(source,table,first,middle),nz_names(source,table,middle,stop))
+      end
+    end
+  end
+  # The routine and its tables: an extra function-table entry.
+  def nz_blob(source: bytes, table: bytes): bytes do
+    # A rewritten program brings the tables of the program as written, and
+    # where each piece of its text stands in it (native-macros.alc).
+    stop = mx_stop(source)
+    whole = if stop == Enum.count(source) do 1 else 0 end
+    lines = if nz_on(table) == 0 do b[] else if whole == 1 do nz_marks(source,0,stop,10,10) else mx_part(source,1) end end
+    files = if whole == 1 do nz_files(source) else mx_part(source,2) end
+    names = nz_names(source,table,0,nc_records(Enum.count(table)))
+    inside = if nz_on(table) == 0 do b[] else if whole == 1 do nz_marks(source,0,stop,128,191) else mx_part(source,3) end end
+    moved = if whole == 1 do b[] else mx_part(source,0) end
+    after = 40+Enum.count(lines)+Enum.count(files)+Enum.count(names)
+    first = nc_join(nc_u32(40),nc_u32(nc_units(Enum.count(lines),4)),nc_u32(40+Enum.count(lines)))
+    second = nc_join(nc_u32(nz_file_count(files,0)),nc_u32(40+Enum.count(lines)+Enum.count(files)),nc_u32(nc_records(Enum.count(table))))
+    words = nc_join(nc_join(first,second,Enum.concat(nc_u32(after),nc_u32(nc_units(Enum.count(inside),4)))),nc_u32(after+Enum.count(inside)),nc_u32(nc_units(Enum.count(moved),16)))
+    tables = nc_join(words,nc_join(lines,files,names),Enum.concat(inside,moved))
+    if nz_on(table) == 0 do b[] else if nc_arm() == 1 do xa_raw(Enum.concat(tr_blob_arm(),tables)) else Enum.concat(tr_blob(),tables) end end
+  end
+  # Native smoke test; assembled with the compiler.
+  def main() do System.halt(0) end
+end

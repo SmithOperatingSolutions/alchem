@@ -1,0 +1,1522 @@
+# TCP: sockets as the pinned runtime has them (compiler/library.go.txt,
+# "---- TCP ----"), on Linux system calls (spec/alchem-network.md). A
+# descriptor never blocks: a call that has to wait gives way to the other
+# processes until poll finds the descriptor ready (Process._fdwait).
+#
+# A socket is a block: 0 the descriptor, 8 what it is (1 listens, 2 a
+# connection, 3 UDP), 16 closed, 24 the process whose end closes it, 32 the
+# process given by controlling_process (0: none), 40 how packets are cut
+# (0 as they come, 1, 2 or 4 bytes of length before each, 5 lines), 48 the
+# pieces of a packet read in part and 128 their bytes, 56 how many packets
+# are still to be sent as messages (-1: all), 64 the process that sends
+# them (0: none), 72 the options a listener hands on (0: none), 80 what
+# was read from the system and 168 how much of that was taken, 88 the
+# process that reads
+# and 96 those that wait to, 104 its address and 112 the other end's (0:
+# none), 120 why the last read gave nothing (0: it gave), 136 the address
+# as the system holds it, 144 set once anything was read, 152 set when an
+# HTTP answer read in pieces keeps the connection, 176 what TLS keeps for
+# it (0: none; library/TLS.alc) and 184, 192 and 200 the functions that
+# read, write and close through it.
+#
+# g + 304 is a mapping of working memory: 0 an address for the system, 128
+# small numbers, 4096 up 196608 bytes read or to be joined. The other
+# words of g these modules keep: 312 the requests an HTTP server is
+# answering, 320 the tables of gzip and deflate (library/HTTP.alc), 328 the
+# open stores (library/DiskStore.alc), 344 and 352 the second a Date header
+# was last made for and its text, 360 the texts of the status codes, 368
+# and 376 what bodies of some kinds begin with, 384 set when the last name
+# could not be asked for, 392 and 400 the proxy settings of the
+# environment and whether they were read.
+#: struct socket also TCP UDP HTTP WebSocket Node Stream.publish TLS
+  struct socket do
+    at: integer
+    k: option[fn[integer, integer]]
+  end
+  type TCP.Event do
+    data(text: string)
+    closed
+    error(reason: string)
+  end
+#: _s/0 needs Process._g/0
+  def _s(): integer do
+    g = Process._g()
+    s = Sys.peek(g + 304)
+    if s != 0 do s else
+      m = Sys.call(9, 0, 262144, 3, 34, -1, 0)
+      if m < 0 do System.halt(71) end
+      Sys.poke(g + 304, m)
+    end
+  end
+# The index of the last byte c of the n at p, or -1.
+#: _last/3
+  def _last(p: integer, n: integer, c: integer): integer do
+    if n == 0 do -1 else if Sys.byte(p + n - 1) == c do n - 1 else TCP._last(p, n - 1, c) end end
+  end
+# n bytes of a from index i.
+#: _sub/3
+  def _sub(a: string, i: integer, n: integer): string do
+    Sys.text(Sys.addr(a) + i, n)
+  end
+# The text in lower case (ASCII).
+#: _lower/1 needs _lower1/3 _s/0
+  def _lower(a: string): string do
+    n = byte_size(a)
+    if n > 196608 do a else
+      s = TCP._s() + 4096
+      TCP._lower1(Sys.addr(a), s, n)
+      Sys.text(s, n)
+    end
+  end
+#: _lower1/3
+  def _lower1(p: integer, q: integer, n: integer): integer do
+    if n == 0 do 0 else
+      c = Sys.byte(p)
+      Sys.poke(q, if c >= 65 and c <= 90 do c + 32 else c end)
+      TCP._lower1(p + 1, q + 1, n - 1)
+    end
+  end
+# net.SplitHostPort: the host, the port, and what is wrong with the address
+# ("" when nothing is).
+#: _split/1 needs _last/3 _split2/5
+  def _split(a: string): tuple[string, string, string] do
+    n = byte_size(a)
+    p = Sys.addr(a)
+    i = TCP._last(p, n, 58)
+    if i < 0 do {"", "", "missing port in address"} else
+      if Sys.byte(p) == 91 do
+        e = Sys.find(p, n, 93)
+        if e < 0 do {"", "", "missing ']' in address"} else
+          if e + 1 == n do {"", "", "missing port in address"} else
+            if e + 1 != i do {"", "", if Sys.byte(p + e + 1) == 58 do "too many colons in address" else "missing port in address" end} else TCP._split2(a, 1, e, i, e + 1) end
+          end
+        end
+      else
+        if Sys.find(p, i, 58) >= 0 do {"", "", "too many colons in address"} else TCP._split2(a, 0, i, i, 0) end
+      end
+    end
+  end
+#: _split2/5 needs _sub/3
+  def _split2(a: string, j: integer, e: integer, i: integer, k: integer): tuple[string, string, string] do
+    n = byte_size(a)
+    p = Sys.addr(a)
+    if Sys.find(p + j, n - j, 91) >= 0 do {"", "", "unexpected '[' in address"} else
+      if Sys.find(p + k, n - k, 93) >= 0 do {"", "", "unexpected ']' in address"} else {TCP._sub(a, j, e - j), TCP._sub(a, i + 1, n - i - 1), ""} end
+    end
+  end
+# Decimal digits as Go's parsePort reads them: -1 for anything else.
+#: _pnum/3
+  def _pnum(p: integer, n: integer, v: integer): integer do
+    if n == 0 or v >= 1073741824 do v else
+      c = Sys.byte(p) - 48
+      if c < 0 or c > 9 do -1 else TCP._pnum(p + 1, n - 1, v * 10 + c) end
+    end
+  end
+# The port a service names for a network: the number, or -1 and why.
+#: _port/2 needs _pnum/3 _service/2
+  def _port(net: string, t: string): tuple[integer, string] do
+    n = byte_size(t)
+    p = Sys.addr(t)
+    c = if n == 0 do 0 else Sys.byte(p) end
+    sign = if c == 43 or c == 45 do 1 else 0 end
+    v = TCP._pnum(p + sign, n - sign, 0)
+    if v == -1 do
+      f = TCP._service(net, t)
+      if f < 0 do {-1, "lookup " <> net <> "/" <> t <> ": unknown port"} else {f, ""} end
+    else
+      if c == 45 and v > 0 or v > 65535 do {-1, "address " <> t <> ": invalid port"} else {v, ""} end
+    end
+  end
+# The whole of a file, "" when it cannot be read.
+#: _file/1 needs Sys.open/3 _filed/3 _join/2
+  def _file(path: string): string do
+    fd = Sys.open(path, 0, 0)
+    if fd < 0 do "" else
+      empty: list[string] = []
+      pieces = TCP._filed(fd, empty, 0)
+      Sys.call(3, fd)
+      TCP._join(pieces, Enum.reduce(pieces, 0, fn x, acc -> acc + byte_size(x) end))
+    end
+  end
+#: _filed/3 needs _s/0
+  def _filed(fd: integer, got: list[string], size: integer): list[string] do
+    s = TCP._s() + 4096
+    n = Sys.call(0, fd, s, 196608)
+    if n == -4 do TCP._filed(fd, got, size) else
+      if n <= 0 or size > 67108864 do got else TCP._filed(fd, got ++ [Sys.text(s, n)], size + n) end
+    end
+  end
+# The next word of the n bytes at p, blanks before it passed over: where
+# it starts and its length (0: none).
+#: _word/2 needs _wend/2
+  def _word(p: integer, n: integer): tuple[integer, integer] do
+    if n == 0 do {p, 0} else
+      c = Sys.byte(p)
+      if c == 32 or c == 9 or c == 13 do TCP._word(p + 1, n - 1) else {p, TCP._wend(p, n)} end
+    end
+  end
+#: _wend/2
+  def _wend(p: integer, n: integer): integer do
+    if n == 0 do 0 else
+      c = Sys.byte(p)
+      if c == 32 or c == 9 or c == 13 do 0 else 1 + TCP._wend(p + 1, n - 1) end
+    end
+  end
+# The length of the line at p without its comment.
+#: _line/2
+  def _line(p: integer, n: integer): integer do
+    e = Sys.find(p, n, 10)
+    m = if e < 0 do n else e end
+    h = Sys.find(p, m, 35)
+    if h < 0 do m else h end
+  end
+# /etc/services, then the few Go knows by itself.
+#: _service/2 needs _file/1 _lower/1 _svc/4
+  def _service(net: string, name: string): integer do
+    t = TCP._file("/etc/services")
+    w = TCP._lower(name)
+    f = TCP._svc(Sys.addr(t), byte_size(t), w, "/" <> net)
+    if f >= 0 do f else
+      known = if net == "udp" do [{"domain", 53}] else [{"ftp", 21}, {"ftps", 990}, {"gopher", 70}, {"http", 80}, {"https", 443}, {"imap2", 143}, {"imap3", 220}, {"imaps", 993}, {"pop3", 110}, {"pop3s", 995}, {"smtp", 25}, {"submissions", 465}, {"ssh", 22}, {"telnet", 23}] end
+      Enum.reduce(known, -1, fn {k, v}, acc -> if k == w do v else acc end end)
+    end
+  end
+#: _svc/4 needs _line/2 _pnum/3 _svcname/3 _word/2
+  def _svc(p: integer, n: integer, name: string, net: string): integer do
+    if n <= 0 do -1 else
+      e = Sys.find(p, n, 10)
+      step = if e < 0 do n else e + 1 end
+      m = TCP._line(p, n)
+      {a, an} = TCP._word(p, m)
+      {b, bn} = TCP._word(a + an, m - (a + an - p))
+      slash = Sys.find(b, bn, 47)
+      port = if slash <= 0 do -1 else TCP._pnum(b, slash, 0) end
+      fits = port >= 0 and Sys.text(b + slash, bn - slash) == net
+      if fits and TCP._svcname(a, p + m - a, name) == 1 do port else TCP._svc(p + step, n - step, name, net) end
+    end
+  end
+# 1 when one of the words at p is the name; the second is the port and is
+# no name.
+#: _svcname/3 needs _word/2
+  def _svcname(p: integer, n: integer, name: string): integer do
+    {a, an} = TCP._word(p, n)
+    if an == 0 do 0 else
+      if Sys.text(a, an) == name do 1 else TCP._svcname(a + an, n - (a + an - p), name) end
+    end
+  end
+# An IPv4 address as Go reads one: four numbers from 0 to 255 without
+# leading zeros. The address as a number, or -1.
+#: _ip4/2 needs _ip4n/4
+  def _ip4(p: integer, n: integer): integer do
+    TCP._ip4n(p, n, 0, 0)
+  end
+#: _ip4n/4 needs _digits/2 _pnum/3
+  def _ip4n(p: integer, n: integer, k: integer, v: integer): integer do
+    d = TCP._digits(p, n)
+    x = if d == 0 or d > 3 do -1 else TCP._pnum(p, d, 0) end
+    if x < 0 or x > 255 or d > 1 and Sys.byte(p) == 48 do -1 else
+      if k == 3 do if d == n do v * 256 + x else -1 end else
+        if d < n and Sys.byte(p + d) == 46 do TCP._ip4n(p + d + 1, n - d - 1, k + 1, v * 256 + x) else -1 end
+      end
+    end
+  end
+#: _digits/2
+  def _digits(p: integer, n: integer): integer do
+    if n == 0 do 0 else
+      c = Sys.byte(p)
+      if c < 48 or c > 57 do 0 else 1 + TCP._digits(p + 1, n - 1) end
+    end
+  end
+# An IPv4 address as the C library's inet_aton reads one: one to four
+# numbers, each decimal, octal behind 0 or hexadecimal behind 0x, the last
+# filling the bytes that are left. The address, or -1.
+#: _aton/4 needs Enum.at/3 _atonv/4
+  def _aton(p: integer, n: integer, k: integer, v: integer): integer do
+    base = if n >= 2 and Sys.byte(p) == 48 and (Sys.byte(p + 1) == 120 or Sys.byte(p + 1) == 88) do 16 else if n >= 1 and Sys.byte(p) == 48 do 8 else 10 end end
+    skip = if base == 16 do 2 else 0 end
+    {d, x} = TCP._atonv(p + skip, n - skip, base, {0, 0})
+    used = skip + d
+    if d == 0 and base != 16 or x < 0 do -1 else
+      if used == n do
+        most = Enum.at([4294967295, 16777215, 65535, 255], k, 0)
+        if x > most do -1 else v * (most + 1) + x end
+      else
+        if k == 3 or x > 255 or Sys.byte(p + used) != 46 do -1 else TCP._aton(p + used + 1, n - used - 1, k + 1, v * 256 + x) end
+      end
+    end
+  end
+# The digits of a base at p: how many, and their value (-1 past 32 bits).
+#: _atonv/4
+  def _atonv(p: integer, n: integer, base: integer, acc: tuple[integer, integer]): tuple[integer, integer] do
+    {d, x} = acc
+    c = if n == 0 do 0 else Sys.byte(p) end
+    v = if c >= 48 and c <= 57 do c - 48 else if c >= 97 and c <= 102 do c - 87 else if c >= 65 and c <= 70 do c - 55 else 99 end end end
+    if n == 0 or v >= base do acc else
+      if x < 0 or x * base + v > 4294967295 do TCP._atonv(p + 1, n - 1, base, {d + 1, -1}) else TCP._atonv(p + 1, n - 1, base, {d + 1, x * base + v}) end
+    end
+  end
+# An IPv6 address without its zone, as its eight groups; [] when it is
+# none.
+#: _ip6/2 needs Enum.any?/2 List.duplicate/2 _dcolon/2 _groups/2
+  def _ip6(p: integer, n: integer): list[integer] do
+    i = TCP._dcolon(p, n)
+    if i < 0 do
+      g = TCP._groups(p, n)
+      if length(g) != 8 or Enum.any?(g, fn x -> x < 0 end) do [] else g end
+    else
+      head = TCP._groups(p, i)
+      tail = TCP._groups(p + i + 2, n - i - 2)
+      all = head ++ tail
+      if length(all) > 7 or Enum.any?(all, fn x -> x < 0 end) do [] else head ++ List.duplicate(0, 8 - length(all)) ++ tail end
+    end
+  end
+# Where "::" stands, or -1.
+#: _dcolon/2
+  def _dcolon(p: integer, n: integer): integer do
+    i = Sys.find(p, n, 58)
+    if i < 0 or i + 1 >= n do -1 else
+      if Sys.byte(p + i + 1) == 58 do i else
+        r = TCP._dcolon(p + i + 1, n - i - 1)
+        if r < 0 do -1 else r + i + 1 end
+      end
+    end
+  end
+# Groups of hexadecimal digits with a colon between them, the last maybe an
+# IPv4 address; one that is none is -1.
+#: _groups/2 needs _atonv/4 _ip4/2
+  def _groups(p: integer, n: integer): list[integer] do
+    if n == 0 do [] else
+      j = Sys.find(p, n, 58)
+      if j < 0 do
+        if Sys.find(p, n, 46) >= 0 do
+          v = TCP._ip4(p, n)
+          if v < 0 do [-1] else [div(v, 65536), rem(v, 65536)] end
+        else
+          {d, x} = TCP._atonv(p, n, 16, {0, 0})
+          if d != n or d > 4 do [-1] else [x] end
+        end
+      else
+        {d, x} = TCP._atonv(p, j, 16, {0, 0})
+        if d != j or d == 0 or d > 4 or j + 1 == n do [-1] else [x] ++ TCP._groups(p + j + 1, n - j - 1) end
+      end
+    end
+  end
+# An address as the system takes it, for IPv4: sixteen bytes.
+#: _sa4/2 needs _s/0
+  def _sa4(v: integer, port: integer): string do
+    s = TCP._s()
+    Sys.poke(s, 2 + div(port, 256) * 65536 + rem(port, 256) * 16777216)
+    Sys.poke(s + 4, div(v, 16777216) + rem(div(v, 65536), 256) * 256 + rem(div(v, 256), 256) * 65536)
+    Sys.poke(s + 7, rem(v, 256))
+    Sys.poke(s + 8, 0)
+    Sys.text(s, 16)
+  end
+# And for IPv6, of eight groups and a zone: twenty-eight bytes.
+#: _sa6/3 needs _s/0
+  def _sa6(g: list[integer], zone: integer, port: integer): string do
+    s = TCP._s()
+    Sys.poke(s, 10 + div(port, 256) * 65536 + rem(port, 256) * 16777216)
+    Enum.reduce(g, s + 8, fn x, a ->
+      Sys.poke(a, div(x, 256) + rem(x, 256) * 256)
+      a + 2
+    end)
+    Sys.poke(s + 24, zone)
+    Sys.text(s, 28)
+  end
+# The same address with another port.
+#: _ported/2 needs _s/0
+  def _ported(a: string, port: integer): string do
+    s = TCP._s()
+    n = byte_size(a)
+    Sys.copy(s, Sys.addr(a), n)
+    Sys.poke(s + 2, div(port, 256) + rem(port, 256) * 256 + div(Sys.peek(s + 2), 65536) * 65536)
+    Sys.text(s, n)
+  end
+#: _saport/1
+  def _saport(a: string): integer do
+    p = Sys.addr(a)
+    Sys.byte(p + 2) * 256 + Sys.byte(p + 3)
+  end
+# The eight groups of an IPv6 address.
+#: _sagroups/2
+  def _sagroups(p: integer, k: integer): list[integer] do
+    if k == 8 do [] else [Sys.byte(p + 8 + 2 * k) * 256 + Sys.byte(p + 9 + 2 * k)] ++ TCP._sagroups(p, k + 1) end
+  end
+# 1 for the address that stands for every address of the machine.
+#: _any/1 needs Enum.all?/2 _sagroups/2
+  def _any(a: string): integer do
+    p = Sys.addr(a)
+    if Sys.byte(p) == 2 do if rem(div(Sys.peek(p), 4294967296), 4294967296) == 0 do 1 else 0 end else
+      if Enum.all?(TCP._sagroups(p, 0), fn x -> x == 0 end) do 1 else 0 end
+    end
+  end
+# The number of a zone: an interface's name or a number; 0 for none.
+#: _zone/1 needs _pnum/3 _s/0
+  def _zone(z: string): integer do
+    n = byte_size(z)
+    v = if n == 0 do 0 else TCP._pnum(Sys.addr(z), n, 0) end
+    if n == 0 or n > 15 do 0 else
+      if v >= 0 do v else
+        s = TCP._s() + 256
+        Sys.poke(s, 0)
+        Sys.poke(s + 8, 0)
+        Sys.poke(s + 16, 0)
+        Sys.copy(s, Sys.addr(z), n)
+        fd = Sys.call(41, 2, 0x80002, 0)
+        r = Sys.call(16, fd, 0x8933, s)
+        Sys.call(3, fd)
+        if r < 0 do 0 else rem(Sys.peek(s + 16), 4294967296) end
+      end
+    end
+  end
+#: _zonename/1 needs _s/0
+  def _zonename(z: integer): string do
+    s = TCP._s() + 256
+    Sys.poke(s, 0)
+    Sys.poke(s + 8, 0)
+    Sys.poke(s + 16, z)
+    fd = Sys.call(41, 2, 0x80002, 0)
+    r = Sys.call(16, fd, 0x8910, s)
+    Sys.call(3, fd)
+    if r < 0 do "#{z}" else Sys.text(s, Sys.len(s)) end
+  end
+# An address the host h is written as, without a lookup: "" when it is a
+# name. Go's own reading first, then the C library's.
+#: _literal/1 needs Enum.at/3 Enum.take/2 _aton/4 _ip4/2 _ip6/2 _sa4/2 _sa6/3 _sub/3 _zone/1
+  def _literal(h: string): string do
+    n = byte_size(h)
+    p = Sys.addr(h)
+    v = TCP._ip4(p, n)
+    if v >= 0 do TCP._sa4(v, 0) else
+      z = Sys.find(p, n, 37)
+      g = TCP._ip6(p, if z < 0 do n else z end)
+      if g != [] do
+        if Enum.take(g, 6) == [0, 0, 0, 0, 0, 65535] do TCP._sa4(Enum.at(g, 6, 0) * 65536 + Enum.at(g, 7, 0), 0) else
+          TCP._sa6(g, if z < 0 do 0 else TCP._zone(TCP._sub(h, z + 1, n - z - 1)) end, 0)
+        end
+      else
+        w = if n == 0 do -1 else TCP._aton(p, n, 0, 0) end
+        if w >= 0 do TCP._sa4(w, 0) else "" end
+      end
+    end
+  end
+# The addresses /etc/hosts gives a name, in the file's order.
+#: _hosts/3 needs _hostsn/3 _line/2 _literal/1 _word/2
+  def _hosts(p: integer, n: integer, name: string): list[string] do
+    if n <= 0 do [] else
+      e = Sys.find(p, n, 10)
+      step = if e < 0 do n else e + 1 end
+      m = TCP._line(p, n)
+      {a, an} = TCP._word(p, m)
+      here = if an > 0 and TCP._hostsn(a + an, p + m - a - an, name) == 1 do TCP._literal(Sys.text(a, an)) else "" end
+      if here == "" do TCP._hosts(p + step, n - step, name) else [here] ++ TCP._hosts(p + step, n - step, name) end
+    end
+  end
+#: _hostsn/3 needs _lower/1 _word/2
+  def _hostsn(p: integer, n: integer, name: string): integer do
+    {a, an} = TCP._word(p, n)
+    if an == 0 do 0 else
+      if TCP._lower(Sys.text(a, an)) == name do 1 else TCP._hostsn(a + an, n - (a + an - p), name) end
+    end
+  end
+# The addresses of a host, each with port 0; [] when it has none. An
+# address written out is itself; a name is looked up in /etc/hosts and then
+# asked of the name servers of /etc/resolv.conf, which is the order the C
+# library's getaddrinfo follows for the pinned runtime on a system set up
+# the usual way ("hosts: files dns").
+#: _resolve/1 needs Process._g/0 _dns/1 _file/1 _hostname/2 _hosts/3 _literal/1 _lower/1 _sub/3 _usable/1
+  def _resolve(h: string): list[string] do
+    l = TCP._literal(h)
+    if l != "" do [l] else
+      n = byte_size(h)
+      bare = TCP._lower(if n > 1 and Sys.byte(Sys.addr(h) + n - 1) == 46 do TCP._sub(h, 0, n - 1) else h end)
+      t = TCP._file("/etc/hosts")
+      found = TCP._hosts(Sys.addr(t), byte_size(t), bare)
+      Sys.poke(Process._g() + 384, 0)
+      TCP._usable(if found != [] or TCP._hostname(Sys.addr(h), n) == 0 do found else TCP._dns(h) end)
+    end
+  end
+# An address as text: host:port, the host of an IPv6 address in brackets.
+#: _show/1 needs _host/1 _saport/1
+  def _show(a: string): string do
+    h = TCP._host(a)
+    port = TCP._saport(a)
+    if Sys.find(Sys.addr(h), byte_size(h), 58) >= 0 do "[#{h}]:#{port}" else "#{h}:#{port}" end
+  end
+# Its host alone, as Go's net.IP writes one.
+#: _host/1 needs Enum.take/2 _run/4 _sagroups/2 _six/4 _zonename/1
+  def _host(a: string): string do
+    p = Sys.addr(a)
+    if Sys.byte(p) == 2 do "#{Sys.byte(p + 4)}.#{Sys.byte(p + 5)}.#{Sys.byte(p + 6)}.#{Sys.byte(p + 7)}" else
+      g = TCP._sagroups(p, 0)
+      if Enum.take(g, 6) == [0, 0, 0, 0, 0, 65535] do "#{Sys.byte(p + 20)}.#{Sys.byte(p + 21)}.#{Sys.byte(p + 22)}.#{Sys.byte(p + 23)}" else
+        {at, run} = TCP._run(g, 0, {-1, 0}, {-1, 0})
+        zone = rem(Sys.peek(p + 24), 4294967296)
+        TCP._six(g, 0, if run < 2 do -1 else at end, run) <> (if zone == 0 do "" else "%" <> TCP._zonename(zone) end)
+      end
+    end
+  end
+# The longest run of zero groups, the first of several: where and how long.
+#: _run/4
+  def _run(g: list[integer], i: integer, now: tuple[integer, integer], best: tuple[integer, integer]): tuple[integer, integer] do
+    {a, n} = now
+    better = if n > elem(best, 1) do now else best end
+    case g do
+      [] -> better
+      [x | rest] -> if x == 0 do TCP._run(rest, i + 1, {if n == 0 do i else a end, n + 1}, best) else TCP._run(rest, i + 1, {-1, 0}, better) end
+    end
+  end
+#: _six/4 needs Enum.drop/2 _hex/1
+  def _six(g: list[integer], i: integer, at: integer, run: integer): string do
+    case g do
+      [] -> ""
+      [x | rest] ->
+        if i == at do "::" <> TCP._six(Enum.drop(g, run), i + run, -2, 0) else
+          (if i > 0 and at != -2 do ":" else "" end) <> TCP._hex(x) <> TCP._six(rest, i + 1, if at == -2 do -1 else at end, run)
+        end
+    end
+  end
+#: _hex/1
+  def _hex(x: integer): string do
+    d = "0123456789abcdef"
+    (if x >= 16 do TCP._hex(div(x, 16)) else "" end) <> Sys.text(Sys.addr(d) + rem(x, 16), 1)
+  end
+# A socket option that is a number.
+#: _opt/4 needs _s/0
+  def _opt(fd: integer, level: integer, name: integer, v: integer): integer do
+    s = TCP._s() + 256
+    Sys.poke(s, v)
+    Sys.call(54, fd, level, name, s, 4)
+  end
+# A new descriptor for the family of an address (kind 1 a stream, 2
+# datagrams), never blocking, with the options Go gives every socket.
+#: _socket/2 needs _opt/4
+  def _socket(family: integer, kind: integer): integer do
+    fd = Sys.call(41, family, kind + 0x80800, 0)
+    if fd >= 0 do
+      if family == 10 do TCP._opt(fd, 41, 26, 0) end
+      if kind == 2 and family == 2 do TCP._opt(fd, 1, 6, 1) end
+    end
+    fd
+  end
+# The address at one end of a descriptor (51 this end, 52 the other); ""
+# when it has none.
+#: _name/2 needs _s/0
+  def _name(fd: integer, call: integer): string do
+    s = TCP._s()
+    Sys.poke(s + 128, 28)
+    r = Sys.call(call, fd, s, s + 128)
+    if r < 0 do "" else Sys.text(s, rem(Sys.peek(s + 128), 4294967296)) end
+  end
+# The block of a new socket, which the running process owns.
+#: _new/3 needs _block/3 _own/3
+  def _new(g: integer, fd: integer, kind: integer): integer do
+    b = TCP._block(g, fd, kind)
+    TCP._own(g, b, Sys.peek(g))
+    b
+  end
+# The block of a new socket nobody owns yet.
+#: _block/3 needs Process._take/2 _name/2 _show/1
+  def _block(g: integer, fd: integer, kind: integer): integer do
+    b = Process._take(g, 208)
+    Sys.poke(b, fd)
+    Sys.poke(b + 8, kind)
+    here = TCP._name(fd, 51)
+    Sys.poke(b + 136, Process.__word(here))
+    Sys.poke(b + 104, Process.__word(if here == "" do "" else TCP._show(here) end))
+    there = if kind == 2 do TCP._name(fd, 52) else "" end
+    if there != "" do Sys.poke(b + 112, Process.__word(TCP._show(there))) end
+    b
+  end
+# Process q owns the socket: its end closes it, unless another owns it by
+# then.
+#: _own/3 needs Process._g/0 Process._onend/3 _close/2
+  def _own(g: integer, b: integer, q: integer): integer do
+    Sys.poke(b + 24, q)
+    f: fn[string, integer] = fn(r: string): integer do
+      if Sys.peek(b + 24) == q do TCP._close(Process._g(), b) end
+      0
+    end
+    Process._onend(g, q, Process.__word(f))
+  end
+# Closes a socket: 1, or 0 when it was closed. Whoever waits for it looks
+# again.
+#: _close/2 needs Process._fdshut/3
+  def _close(g: integer, b: integer): integer do
+    if Sys.peek(b + 16) == 1 do 0 else
+      if Sys.peek(b + 200) != 0 do
+        f: fn[integer] = Process.__any(Sys.peek(b + 200))
+        Sys.poke(b + 200, 0)
+        f()
+      end
+      Sys.poke(b + 16, 1)
+      Process._fdshut(g, Sys.peek(g + 280), Sys.peek(b))
+      Sys.call(3, Sys.peek(b))
+      1
+    end
+  end
+# The text of a failed system call on a socket, as Go's net.OpError has it.
+#: _fail/3
+  def _fail(b: integer, op: string, r: integer): string do
+    here: string = Process.__any(Sys.peek(b + 104))
+    there: string = if Sys.peek(b + 112) == 0 do "" else Process.__any(Sys.peek(b + 112)) end
+    net = if Sys.peek(b + 8) == 3 do "udp" else "tcp" end
+    op <> " " <> net <> " " <> here <> (if there == "" do "" else "->" <> there end) <> ": " <> op <> ": " <> Sys.errno(0 - r)
+  end
+# Why a read gave nothing is kept; "".
+#: _why/2
+  def _why(b: integer, r: string): string do
+    Sys.poke(b + 120, Process.__word(r))
+    ""
+  end
+# The host and port of an address for a network: the addresses the host
+# has, each with the port, or none and why.
+#: _addrs/2 needs Enum.map/2 Process._g/0 _port/2 _ported/2 _resolve/1 _sa4/2 _split/1
+  def _addrs(net: string, a: string): tuple[list[string], string] do
+    {h, p, why} = if a == "" do {"", "", ""} else TCP._split(a) end
+    if why != "" do {[], "address " <> a <> ": " <> why} else
+      {port, wrong} = TCP._port(net, p)
+      if wrong != "" do {[], wrong} else
+        found = if h == "" do [TCP._sa4(0, 0)] else TCP._resolve(h) end
+        if found == [] do {[], "lookup " <> h <> (if h != "" and Sys.peek(Process._g() + 384) == 1 do ": Temporary failure in name resolution" else ": no such host" end)} else {Enum.map(found, fn x -> TCP._ported(x, port) end), ""} end
+      end
+    end
+  end
+# An address as Go writes it in a failure: a host that was not given is
+# left out.
+#: _named/2 needs _saport/1 _show/1
+  def _named(a: string, x: string): string do
+    if Sys.byte(Sys.addr(a)) == 58 or a == "" do ":#{TCP._saport(x)}" else TCP._show(x) end
+  end
+# The first IPv4 address of some, else the first.
+#: _first4/1 needs Enum.filter/2
+  def _first4(l: list[string]): string do
+    case Enum.filter(l, fn x -> byte_size(x) == 16 end) do
+      [x | _] -> x
+      [] -> hd(l)
+    end
+  end
+# net.Listen and net.ListenPacket: a socket bound to the address (kind 1
+# listens for TCP connections, 3 is UDP). The address that stands for every
+# address is bound for IPv6 and IPv4 at once, as Go binds it.
+#: _bind/3 needs Process._g/0 _addrs/2 _any/1 _first4/1 _named/2 _new/3 _opt/4 _sa6/3 _saport/1 _socket/2
+  def _bind(net: string, a: string, kind: integer): result[socket, string] do
+    g = Process._g()
+    {found, why} = TCP._addrs(net, a)
+    if why != "" do error("listen " <> net <> ": " <> why) else
+      x = TCP._first4(found)
+      wide = if TCP._any(x) == 1 do TCP._sa6([0, 0, 0, 0, 0, 0, 0, 0], 0, TCP._saport(x)) else x end
+      first = TCP._socket(Sys.byte(Sys.addr(wide)), if kind == 1 do 1 else 2 end)
+      to = if first == -97 do x else wide end
+      fd = if first == -97 do TCP._socket(Sys.byte(Sys.addr(to)), if kind == 1 do 1 else 2 end) else first end
+      if fd < 0 do error("listen " <> net <> " " <> TCP._named(a, x) <> ": socket: " <> Sys.errno(0 - fd)) else
+        if kind == 1 do TCP._opt(fd, 1, 2, 1) end
+        r = Sys.call(49, fd, Sys.addr(to), byte_size(to))
+        r2 = if r < 0 or kind != 1 do r else Sys.call(50, fd, 4096) end
+        if r2 < 0 do
+          Sys.call(3, fd)
+          error("listen " <> net <> " " <> TCP._named(a, x) <> ": " <> (if r < 0 do "bind" else "listen" end) <> ": " <> Sys.errno(0 - r2))
+        else
+          made: socket = %socket{at: TCP._new(g, fd, kind), k: none}
+          ok(made)
+        end
+      end
+    end
+  end
+# A connection to one address, waited for until the time d: the descriptor,
+# or the error (-110 when the time came).
+#: _dial1/3 needs _dialw/3 _opt/4 _socket/2
+  def _dial1(g: integer, to: string, d: integer): integer do
+    fd = TCP._socket(Sys.byte(Sys.addr(to)), 1)
+    if fd < 0 do fd else
+      r = Sys.call(42, fd, Sys.addr(to), byte_size(to))
+      e = if r == -115 or r == -4 do TCP._dialw(g, fd, d) else r end
+      if e < 0 do
+        Sys.call(3, fd)
+        e
+      else
+        TCP._opt(fd, 6, 1, 1)
+        TCP._opt(fd, 1, 9, 1)
+        TCP._opt(fd, 6, 5, 15)
+        TCP._opt(fd, 6, 4, 15)
+        fd
+      end
+    end
+  end
+#: _dialw/3 needs Process._check/1 Process._fdwait/4 Process._now/1 _s/0
+  def _dialw(g: integer, fd: integer, d: integer): integer do
+    if d != 0 and Process._now(g) >= d do -110 else
+      v = Process._fdwait(g, fd, 4, d)
+      if Sys.peek(Sys.peek(g) + 56) == 1 do
+        Sys.call(3, fd)
+        Process._check(g)
+      end
+      if v == 0 do TCP._dialw(g, fd, d) else
+        s = TCP._s() + 256
+        Sys.poke(s, 0)
+        Sys.poke(s + 8, 4)
+        Sys.call(55, fd, 1, 4, s, s + 8)
+        0 - rem(Sys.peek(s), 4294967296)
+      end
+    end
+  end
+# net.Dial: the addresses of the host are tried in turn; the failure is
+# that of the first. The descriptor and "", or -1 and why.
+#: _dial/3 needs _addrs/2 _dialn/5
+  def _dial(g: integer, a: string, d: integer): tuple[integer, string] do
+    {found, why} = if a == "" do {[], "missing address"} else TCP._addrs("tcp", a) end
+    if why != "" do {-1, "dial tcp: " <> why} else TCP._dialn(g, a, found, d, "") end
+  end
+#: _dialn/5 needs _dial1/3 _named/2
+  def _dialn(g: integer, a: string, found: list[string], d: integer, first: string): tuple[integer, string] do
+    case found do
+      [] -> {-1, first}
+      [x | rest] ->
+        fd = TCP._dial1(g, x, d)
+        if fd >= 0 do {fd, ""} else
+          why = if fd == -110 do "timeout" else "dial tcp " <> TCP._named(a, x) <> ": connect: " <> Sys.errno(0 - fd) end
+          TCP._dialn(g, a, rest, d, if first == "" do why else first end)
+        end
+    end
+  end
+# The running process alone reads the socket from here to _unlock.
+#: _lock/2 needs Process._check/1 Process._drop/3 Process._push/5 Process._wait/2
+  def _lock(g: integer, b: integer): integer do
+    c = Sys.peek(g)
+    if Sys.peek(b + 88) == 0 do Sys.poke(b + 88, c) else
+      Process._push(g, b + 96, c, 0, 0)
+      Process._wait(g, 0)
+      Process._drop(g, b + 96, c)
+      Process._check(g)
+      TCP._lock(g, b)
+    end
+  end
+#: _unlock/2 needs Process._wake/2
+  def _unlock(g: integer, b: integer): integer do
+    Sys.poke(b + 88, 0)
+    Process._wake(g, b + 96)
+  end
+# One read of up to m bytes, waited for until the time d (0: for ever):
+# the bytes, or "" with the reason at b + 120.
+#: _read/4 needs Process._check/1 Process._fdwait/4 Process._now/1 _fail/3 _rawread/4 _s/0 _why/2
+  def _read(g: integer, b: integer, d: integer, m: integer): string do
+    if Sys.peek(b + 184) == 0 do TCP._rawread(g, b, d, m) else
+      f: fn[integer, integer, string] = Process.__any(Sys.peek(b + 184))
+      f(d, m)
+    end
+  end
+# What the system has of the socket's bytes; a socket that speaks TLS
+# (b + 176) is read through it (b + 184) and written through it (b + 192).
+#: _rawread/4 needs Process._check/1 Process._fdwait/4 Process._now/1 _fail/3 _s/0 _why/2
+  def _rawread(g: integer, b: integer, d: integer, m: integer): string do
+    Process._check(g)
+    fd = Sys.peek(b)
+    if Sys.peek(b + 16) == 1 do TCP._why(b, "closed") else
+      if d != 0 and Process._now(g) >= d or Sys.peek(b + 56) == 0 and Sys.peek(b + 64) != 0 do TCP._why(b, "timeout") else
+        s = TCP._s() + 4096
+        n = Sys.call(0, fd, s, m)
+        if n > 0 do
+          Sys.poke(b + 144, 1)
+          Sys.text(s, n)
+        else
+          if n == 0 do TCP._why(b, "closed") else
+            if n == -11 or n == -4 do
+              if n == -11 do Process._fdwait(g, fd, 1, d) end
+              TCP._rawread(g, b, d, m)
+            else TCP._why(b, TCP._fail(b, "read", n)) end
+          end
+        end
+      end
+    end
+  end
+# How many bytes were read and not yet taken; they are read anew when
+# there are none (up to m then): 0 with the reason at b + 120 when the read
+# gave nothing. b + 80 is the text they stand in and b + 168 how much of it
+# was taken.
+#: _fill/4 needs _read/4
+  def _fill(g: integer, b: integer, d: integer, m: integer): integer do
+    if Sys.peek(b + 80) != 0 do
+      held: string = Process.__any(Sys.peek(b + 80))
+      byte_size(held) - Sys.peek(b + 168)
+    else
+      t = TCP._read(g, b, d, m)
+      Sys.poke(b + 80, Process.__word(t))
+      Sys.poke(b + 168, 0)
+      if t == "" do Sys.poke(b + 80, 0) else byte_size(t) end
+    end
+  end
+# Where the first byte not yet taken stands.
+#: _at/1
+  def _at(b: integer): integer do
+    held: string = Process.__any(Sys.peek(b + 80))
+    Sys.addr(held) + Sys.peek(b + 168)
+  end
+# The first n of the bytes not yet taken, as a text of their own.
+#: _some/2
+  def _some(b: integer, n: integer): string do
+    held: string = Process.__any(Sys.peek(b + 80))
+    off = Sys.peek(b + 168)
+    size = byte_size(held)
+    if off + n == size do Sys.poke(b + 80, 0) else Sys.poke(b + 168, off + n) end
+    if off == 0 and n == size do held else Sys.text(Sys.addr(held) + off, n) end
+  end
+# They pass to the pieces of the packet.
+#: _move/2 needs _some/2
+  def _move(b: integer, n: integer): integer do
+    piece = TCP._some(b, n)
+    was: list[string] = if Sys.peek(b + 48) == 0 do [] else Process.__any(Sys.peek(b + 48)) end
+    Sys.poke(b + 48, Process.__word(was ++ [piece]))
+    Sys.poke(b + 128, Sys.peek(b + 128) + n)
+  end
+# Pieces as one text of n bytes.
+#: _join/2 needs _s/0
+  def _join(l: list[string], n: integer): string do
+    case l do
+      [] -> ""
+      [x] -> x
+      _ ->
+        m = if n <= 196608 do TCP._s() + 4096 else Sys.call(9, 0, n, 3, 34, -1, 0) end
+        if m < 0 do System.halt(71) end
+        Enum.reduce(l, m, fn x, a -> Sys.copy(a, Sys.addr(x), byte_size(x)) end)
+        t = Sys.text(m, n)
+        if n > 196608 do Sys.call(11, m, n) end
+        t
+    end
+  end
+# The pieces of the packet as one text; none are left.
+#: _taken/1 needs _join/2
+  def _taken(b: integer): string do
+    was: list[string] = if Sys.peek(b + 48) == 0 do [] else Process.__any(Sys.peek(b + 48)) end
+    t = TCP._join(was, Sys.peek(b + 128))
+    Sys.poke(b + 48, 0)
+    Sys.poke(b + 128, 0)
+    t
+  end
+# Exactly n bytes: the pieces grow until they hold them. "" with the reason
+# at b + 120 when they did not come; what came stays for the next read when
+# the time ran out.
+#: _exact/5 needs _fill/4 _move/2 _sub/3 _taken/1 _why/2
+  def _exact(g: integer, b: integer, d: integer, n: integer, got: integer): string do
+    have = Sys.peek(b + 128)
+    if have >= n do
+      all = TCP._taken(b)
+      if have > n do
+        Sys.poke(b + 48, Process.__word([TCP._sub(all, n, have - n)]))
+        Sys.poke(b + 128, have - n)
+        TCP._sub(all, 0, n)
+      else all end
+    else
+      want = n - have
+      size = TCP._fill(g, b, d, if want >= 4096 do if want > 196608 do 196608 else want end else 4096 end)
+      if size == 0 do
+        why: string = Process.__any(Sys.peek(b + 120))
+        if why != "timeout" do
+          Sys.poke(b + 48, 0)
+          Sys.poke(b + 128, 0)
+          if why == "closed" and got > 0 do TCP._why(b, "unexpected EOF") end
+        end
+        ""
+      else
+        TCP._move(b, if size < want do size else want end)
+        TCP._exact(g, b, d, n, got + 1)
+      end
+    end
+  end
+# A line with its newline: the pieces grow until one ends in it.
+#: _aline/3 needs _at/1 _fill/4 _move/2 _taken/1 _why/2
+  def _aline(g: integer, b: integer, d: integer): string do
+    if Sys.peek(b + 128) > 67108864 do TCP._why(b, "line too long") else
+      n = TCP._fill(g, b, d, 4096)
+      if n == 0 do "" else
+        i = Sys.find(TCP._at(b), n, 10)
+        if i >= 0 do
+          TCP._move(b, i + 1)
+          TCP._taken(b)
+        else
+          TCP._move(b, n)
+          TCP._aline(g, b, d)
+        end
+      end
+    end
+  end
+# A packet behind its length in k bytes.
+#: _framed/4 needs Port._big/3 _fill/4 _move/2 _sub/3 _taken/1 _why/2
+  def _framed(g: integer, b: integer, d: integer, k: integer): string do
+    have = Sys.peek(b + 128)
+    if have >= k and Sys.peek(b + 48) != 0 do
+      was: list[string] = Process.__any(Sys.peek(b + 48))
+      if length(was) > 1 and byte_size(hd(was)) < k do
+        all = TCP._taken(b)
+        Sys.poke(b + 48, Process.__word([all]))
+        Sys.poke(b + 128, have)
+      end
+    end
+    now: list[string] = if Sys.peek(b + 48) == 0 do [] else Process.__any(Sys.peek(b + 48)) end
+    size = if have >= k do Port._big(Sys.addr(hd(now)), k, 0) else -1 end
+    if size > 67108864 do TCP._why(b, "packet too large") else
+      if size >= 0 and have == k + size do
+        all = TCP._taken(b)
+        TCP._sub(all, k, size)
+      else
+        want = if size < 0 do k - have else k + size - have end
+        n = TCP._fill(g, b, d, if want >= 4096 do if want > 196608 do 196608 else want end else 4096 end)
+        if n == 0 do "" else
+          TCP._move(b, if n < want do n else want end)
+          TCP._framed(g, b, d, k)
+        end
+      end
+    end
+  end
+# The next packet, by the way the socket cuts them. Whether it came is
+# said by b + 120: a packet may be empty.
+#: _packet/3 needs _aline/3 _fill/4 _framed/4 _some/2 _taken/1
+  def _packet(g: integer, b: integer, d: integer): string do
+    Sys.poke(b + 120, 0)
+    k = Sys.peek(b + 40)
+    if k == 5 do TCP._aline(g, b, d) else
+      if k > 0 do TCP._framed(g, b, d, k) else
+        if Sys.peek(b + 128) > 0 do TCP._taken(b) else
+          n = TCP._fill(g, b, d, 4096)
+          if n == 0 do "" else TCP._some(b, n) end
+        end
+      end
+    end
+  end
+# The result of a read.
+#: _done/2
+  def _done(b: integer, t: string): result[string, string] do
+    if Sys.peek(b + 120) != 0 do error(Process.__any(Sys.peek(b + 120))) else ok(t) end
+  end
+# Why the socket cannot be read by a call now; "" when it can.
+#: _passive/1
+  def _passive(b: integer): string do
+    if Sys.peek(b + 8) != 2 do "not a connected socket" else
+      if Sys.peek(b + 56) != 0 or Sys.peek(b + 64) != 0 do "the socket is active" else "" end
+    end
+  end
+# All of the text is written: "" or why not.
+#: _write/5 needs Process._check/1 Process._fdwait/4 Process._now/1 _fail/3 _rawwrite/5
+  def _write(g: integer, b: integer, p: integer, n: integer, d: integer): string do
+    if Sys.peek(b + 192) == 0 do TCP._rawwrite(g, b, p, n, d) else
+      f: fn[integer, integer, integer, string] = Process.__any(Sys.peek(b + 192))
+      f(p, n, d)
+    end
+  end
+#: _rawwrite/5 needs Process._check/1 Process._fdwait/4 Process._now/1 _fail/3
+  def _rawwrite(g: integer, b: integer, p: integer, n: integer, d: integer): string do
+    if Sys.peek(b + 16) == 1 do "closed" else
+      if n == 0 do "" else
+        fd = Sys.peek(b)
+        r = Sys.call(44, fd, p, n, 0x4000, 0, 0)
+        if r >= 0 do TCP._rawwrite(g, b, p + r, n - r, d) else
+          if r == -11 or r == -4 do
+            if d != 0 and Process._now(g) >= d do "timeout" else
+              if r == -11 do Process._fdwait(g, fd, 4, d) end
+              Process._check(g)
+              TCP._rawwrite(g, b, p, n, d)
+            end
+          else TCP._fail(b, "write", r) end
+        end
+      end
+    end
+  end
+# The type of TCP.Event as the processes know types: the word a mailbox of
+# that type holds.
+#: _kind/0 needs Process.whereis/1
+  def _kind(): integer do
+    r: option[pid[TCP.Event]] = Process.whereis(:tcp_event)
+    Sys.peek(Sys.stack() - 48)
+  end
+# The process an active socket sends to: the one given by
+# controlling_process, else its owner; 0 when its messages are of another
+# type than k.
+#: _receiver/2 needs Process._same/2
+  def _receiver(b: integer, k: integer): integer do
+    r = if Sys.peek(b + 32) != 0 do Sys.peek(b + 32) else Sys.peek(b + 24) end
+    if r == 0 or Sys.peek(r + 136) == 0 or Sys.peek(r + 144) == 0 or Process._same(Sys.peek(r + 144), k) == 0 do 0 else r end
+  end
+# The message w reaches process r, however long its mailbox is full, unless
+# r ends first.
+#: _tell/3 needs Process._send/4
+  def _tell(g: integer, r: integer, w: integer): integer do
+    if Sys.peek(r + 376) == 1 do 0 else
+      if Process._send(g, r, w, 50) == 1 do 1 else
+        if Sys.peek(r + 56) == 1 do 0 else TCP._tell(g, r, w) end
+      end
+    end
+  end
+# What the process of an active socket does: packets go to r as messages
+# until the count is used up, the socket is made passive or it ends.
+#: _pump/2 needs Process._g/0 _lock/2 _packet/3 _tell/3 _unlock/2
+  def _pump(b: integer, r: integer): integer do
+    g = Process._g()
+    if Sys.peek(b + 16) == 1 or Sys.peek(b + 56) == 0 do Sys.poke(b + 64, 0) else
+      TCP._lock(g, b)
+      t = TCP._packet(g, b, 0)
+      TCP._unlock(g, b)
+      why: string = if Sys.peek(b + 120) == 0 do "" else Process.__any(Sys.peek(b + 120)) end
+      if Sys.peek(b + 16) == 1 do Sys.poke(b + 64, 0) else
+        if why == "timeout" do TCP._pump(b, r) else
+          if why != "" do
+            Sys.poke(b + 56, 0)
+            Sys.poke(b + 64, 0)
+            TCP._tell(g, r, Process.__word(if why == "closed" do TCP.Event.closed else TCP.Event.error(why) end))
+          else
+            if Sys.peek(b + 56) > 0 do Sys.poke(b + 56, Sys.peek(b + 56) - 1) end
+            TCP._tell(g, r, Process.__word(TCP.Event.data(t)))
+            TCP._pump(b, r)
+          end
+        end
+      end
+    end
+  end
+# How many packets the socket sends as messages from now: "" or why not.
+#: _activate/2 needs Process._g/0 Process._go/2 Process._ready/2 _kind/0 _pump/2 _receiver/2
+  def _activate(b: integer, count: integer): string do
+    g = Process._g()
+    if Sys.peek(b + 8) != 2 do "not a connected socket" else
+      if Sys.peek(b + 16) == 1 do "closed" else
+        Sys.poke(b + 56, count)
+        if Sys.peek(b + 64) != 0 do
+          if count == 0 do Process._ready(g, Sys.peek(b + 64)) end
+          ""
+        else
+          if count == 0 do "" else
+            r = TCP._receiver(b, TCP._kind())
+            if r == 0 do
+              Sys.poke(b + 56, 0)
+              "the controlling process does not take TCP.Event messages"
+            else
+              f: fn[integer] = fn(): integer do TCP._pump(b, r) end
+              Sys.poke(b + 64, Process._go(g, Process.__word(f)))
+              ""
+            end
+          end
+        end
+      end
+    end
+  end
+#: _setopts/2 needs Atom.to_string/1 _activate/2
+  def _setopts(b: integer, o: list[tuple[atom, atom]]): result[tuple[], string] do
+    case o do
+      [] -> ok({})
+      [{k, v} | rest] ->
+        if k == :active and (v == :true or v == :once or v == :false) do
+          why = TCP._activate(b, if v == :true do -1 else if v == :once do 1 else 0 end end)
+          if why != "" do error(why) else TCP._setopts(b, rest) end
+        else
+          if k == :packet and (v == :raw or v == :line) do
+            Sys.poke(b + 40, if v == :line do 5 else 0 end)
+            TCP._setopts(b, rest)
+          else
+            if k == :active or k == :packet do raise("TCP.setopts: " <> Atom.to_string(k) <> ": cannot be :" <> Atom.to_string(v)) else raise("TCP.setopts: unknown option :" <> Atom.to_string(k) <> "; the options are active: and packet:") end
+          end
+        end
+    end
+  end
+# The options a listener hands on are looked at when they are given.
+#: _options/1 needs Atom.to_string/1
+  def _options(o: list[tuple[atom, atom]]): integer do
+    case o do
+      [] -> 0
+      [{k, v} | rest] ->
+        if k == :active and (v == :true or v == :once or v == :false) or k == :packet and (v == :raw or v == :line) do TCP._options(rest) else
+          raise("TCP.listen: the options are active: true, :once or false, and packet: :raw or :line, not " <> Atom.to_string(k) <> ": :" <> Atom.to_string(v))
+        end
+    end
+  end
+# A connection that waits at a listening socket, awaited until the time d:
+# the descriptor, or 0 with the reason at b + 120.
+#: _accept/3 needs Process._check/1 Process._fdwait/4 Process._now/1 _why/2
+  def _accept(g: integer, b: integer, d: integer): integer do
+    Process._check(g)
+    fd = Sys.peek(b)
+    if Sys.peek(b + 16) == 1 do byte_size(TCP._why(b, "closed")) else
+      if d != 0 and Process._now(g) >= d do byte_size(TCP._why(b, "timeout")) else
+        n = Sys.call(288, fd, 0, 0, 0x80800)
+        if n >= 0 do n else
+          if n == -11 or n == -4 or n == -103 do
+            if n == -11 do Process._fdwait(g, fd, 1, d) end
+            TCP._accept(g, b, d)
+          else
+            here: string = Process.__any(Sys.peek(b + 104))
+            byte_size(TCP._why(b, "accept tcp " <> here <> ": accept4: " <> Sys.errno(0 - n)))
+          end
+        end
+      end
+    end
+  end
+#: listen/1 needs Process._check/1 Process._g/0 _bind/3
+  def listen(a: string): result[socket, string] do
+    Process._check(Process._g())
+    TCP._bind("tcp", a, 1)
+  end
+#: listen/2 needs Process._check/1 Process._g/0 _bind/3 _options/1
+  def listen(a: string, o: list[tuple[atom, atom]]): result[socket, string] do
+    Process._check(Process._g())
+    TCP._options(o)
+    made = TCP._bind("tcp", a, 1)
+    kept = case made do
+      ok(s) -> Sys.poke(s.at + 72, Process.__word(o))
+      error(_) -> 0
+    end
+    made
+  end
+#: accept/2 needs Process._due/2 Process._g/0 _accept/3 _new/3 _opt/4 _setopts/2
+  def accept(s: socket, ms: integer): result[socket, string] do
+    g = Process._g()
+    b = s.at
+    if Sys.peek(b + 8) != 1 do error("not a listening socket") else
+      Sys.poke(b + 120, 0)
+      fd = TCP._accept(g, b, Process._due(g, ms))
+      if Sys.peek(b + 120) != 0 do error(Process.__any(Sys.peek(b + 120))) else
+        TCP._opt(fd, 6, 1, 1)
+        TCP._opt(fd, 1, 9, 1)
+        TCP._opt(fd, 6, 5, 15)
+        TCP._opt(fd, 6, 4, 15)
+        made: socket = %socket{at: TCP._new(g, fd, 2), k: none}
+        if Sys.peek(b + 72) != 0 do TCP._setopts(made.at, Process.__any(Sys.peek(b + 72))) end
+        ok(made)
+      end
+    end
+  end
+#: connect/2 needs Process._check/1 Process._due/2 Process._g/0 _dial/3 _new/3
+  def connect(a: string, ms: integer): result[socket, string] do
+    g = Process._g()
+    Process._check(g)
+    {fd, why} = TCP._dial(g, a, Process._due(g, ms))
+    if fd < 0 do error(why) else
+      made: socket = %socket{at: TCP._new(g, fd, 2), k: none}
+      ok(made)
+    end
+  end
+#: connect/3 needs Process._g/0 _close/2 _setopts/2 connect/2
+  def connect(a: string, ms: integer, o: list[tuple[atom, atom]]): result[socket, string] do
+    made = TCP.connect(a, ms)
+    case made do
+      ok(s) ->
+        case TCP._setopts(s.at, o) do
+          ok(_) -> made
+          error(why) ->
+            TCP._close(Process._g(), s.at)
+            error(why)
+        end
+      error(_) -> made
+    end
+  end
+#: close/1 needs Process._g/0 _close/2
+  def close(s: socket): boolean do
+    TCP._close(Process._g(), s.at) == 1
+  end
+#: address/1
+  def address(s: socket): string do
+    Process.__any(Sys.peek(s.at + 104))
+  end
+#: peer/1
+  def peer(s: socket): option[string] do
+    if Sys.peek(s.at + 112) == 0 do none else some(Process.__any(Sys.peek(s.at + 112))) end
+  end
+#: controlling_process/2 needs Process._g/0 _own/3
+  def controlling_process(s: socket, p: pid[a]): boolean do
+    TCP._own(Process._g(), s.at, p.at)
+    Sys.poke(s.at + 32, p.at)
+    true
+  end
+#: send/2 needs Port._head/3 Process._check/1 Process._g/0 _write/5
+  def send(s: socket, text: string): result[tuple[], string] do
+    g = Process._g()
+    Process._check(g)
+    b = s.at
+    k = Sys.peek(b + 40)
+    h = if k == 5 do 0 else k end
+    n = byte_size(text)
+    if Sys.peek(b + 8) != 2 do error("not a connected socket") else
+      if h == 1 and n >= 256 or h == 2 and n >= 65536 or h > 0 and n > 67108864 do error("packet too large for its length header") else
+        out = if h == 0 do text else Port._head(n, h, text) end
+        why = TCP._write(g, b, Sys.addr(out), byte_size(out), 0)
+        if why == "" do ok({}) else error(why) end
+      end
+    end
+  end
+#: recv/3 needs Process._due/2 Process._g/0 _done/2 _exact/5 _lock/2 _packet/3 _passive/1 _unlock/2
+  def recv(s: socket, n: integer, ms: integer): result[string, string] do
+    g = Process._g()
+    b = s.at
+    if n < 0 do raise("TCP.recv needs a nonnegative length") end
+    why = TCP._passive(b)
+    if why != "" do error(why) else
+      TCP._lock(g, b)
+      try do
+        Sys.poke(b + 120, 0)
+        if n == 0 do TCP._done(b, TCP._packet(g, b, Process._due(g, ms))) else
+          if Sys.peek(b + 40) != 0 do error("a length is only given in raw packet mode") else TCP._done(b, TCP._exact(g, b, Process._due(g, ms), n, 0)) end
+        end
+      after
+        TCP._unlock(g, b)
+      end
+    end
+  end
+#: recv_line/2 needs Process._due/2 Process._g/0 _aline/3 _lock/2 _passive/1 _unlock/2
+  def recv_line(s: socket, ms: integer): result[string, string] do
+    g = Process._g()
+    b = s.at
+    why = TCP._passive(b)
+    if why != "" do error(why) else
+      TCP._lock(g, b)
+      try do
+        Sys.poke(b + 120, 0)
+        t = TCP._aline(g, b, Process._due(g, ms))
+        if Sys.peek(b + 120) != 0 do
+          gone: string = Process.__any(Sys.peek(b + 120))
+          if gone != "timeout" do
+            Sys.poke(b + 48, 0)
+            Sys.poke(b + 128, 0)
+          end
+          error(gone)
+        else
+          n = byte_size(t)
+          cut = if n >= 2 and Sys.byte(Sys.addr(t) + n - 2) == 13 do 2 else 1 end
+          ok(Sys.text(Sys.addr(t), n - cut))
+        end
+      after
+        TCP._unlock(g, b)
+      end
+    end
+  end
+#: setopts/2 needs _setopts/2
+  def setopts(s: socket, o: list[tuple[atom, atom]]): result[tuple[], string] do
+    TCP._setopts(s.at, o)
+  end
+#: setopts/2 form 2 needs Atom.to_string/1 _activate/2
+  def setopts(s: socket, o: list[tuple[atom, integer]]): result[tuple[], string] do
+    b = s.at
+    case o do
+      [] -> ok({})
+      [{k, v} | rest] ->
+        if k == :active and v >= 0 do
+          why = TCP._activate(b, v)
+          if why != "" do error(why) else TCP.setopts(s, rest) end
+        else
+          if k == :packet and (v == 0 or v == 1 or v == 2 or v == 4) do
+            Sys.poke(b + 40, v)
+            TCP.setopts(s, rest)
+          else
+            if k == :active or k == :packet do raise("TCP.setopts: " <> Atom.to_string(k) <> ": cannot be #{v}") else raise("TCP.setopts: unknown option :" <> Atom.to_string(k) <> "; the options are active: and packet:") end
+          end
+        end
+    end
+  end
+#: shutdown/2 needs Process._g/0 _close/2 _fail/3
+  def shutdown(s: socket, how: atom): result[tuple[], string] do
+    b = s.at
+    if Sys.peek(b + 8) != 2 or Sys.peek(b + 176) != 0 do error("not a connected socket") else
+      if how == :read_write do
+        TCP._close(Process._g(), b)
+        ok({})
+      else
+        if how != :read and how != :write do raise("TCP.shutdown takes :read, :write or :read_write") end
+        if Sys.peek(b + 16) == 1 do error("closed") else
+          r = Sys.call(48, Sys.peek(b), if how == :read do 0 else 1 end)
+          if r < 0 do error(TCP._fail(b, "shutdown", r)) else ok({}) end
+        end
+      end
+    end
+  end
+# TCP.connect_tls: the options in their order, up to the first that fails
+# (tcpConnectTLSWith): what went wrong, what is asked of TLS (1: nothing
+# is verified), the name the certificate must be for, and the roots.
+#: _tlsopts/2 needs Atom.to_string/1 TLS._cafile/1
+  def _tlsopts(o: list[tuple[atom, string]], got: tuple[string, integer, string, list[tuple[string, string]]]): tuple[string, integer, string, list[tuple[string, string]]] do
+    {why, flags, name, roots} = got
+    case o do
+      [] -> got
+      [{k, v} | rest] ->
+        if k != :ca_file and k != :insecure and k != :server_name do raise("TCP.connect_tls: unknown option :" <> Atom.to_string(k) <> "; the options are ca_file:, insecure: and server_name:") end
+        if k == :ca_file do
+          {pool, bad} = TLS._cafile(v)
+          if bad != "" do {bad, flags, name, roots} else TCP._tlsopts(rest, {why, flags, name, pool}) end
+        else
+          if k == :insecure do TCP._tlsopts(rest, {why, if v == "true" do 1 else 0 end, name, roots}) else TCP._tlsopts(rest, {why, flags, v, roots}) end
+        end
+    end
+  end
+#: connect_tls/3 needs Process._check/1 Process._due/2 Process._g/0 TLS._dial/5 _block/3 _close/2 _dial/3 _new/3 _split/1 _tlsopts/2
+  def connect_tls(a: string, ms: integer, o: list[tuple[atom, string]]): result[socket, string] do
+    g = Process._g()
+    Process._check(g)
+    {h, p, bad} = TCP._split(a)
+    empty: list[tuple[string, string]] = []
+    if bad != "" do error("address " <> a <> ": " <> bad) else
+      {why, flags, name, roots} = TCP._tlsopts(o, {"", 0, h, empty})
+      if why != "" do error(why) else
+        d = Process._due(g, ms)
+        {fd, gone} = TCP._dial(g, a, d)
+        if fd < 0 do error(gone) else
+          cb = TCP._new(g, fd, 2)
+          done = try do
+            elem(TLS._dial(g, cb, d, name, {flags, roots}), 1)
+          after
+            if Sys.peek(cb + 176) == 0 do TCP._close(g, cb) end
+          end
+          if done != "" do error(if done == "EOF" do "closed" else done end) else
+            made: socket = %socket{at: cb, k: none}
+            ok(made)
+          end
+        end
+      end
+    end
+  end
+#: connect_tls/2 needs connect_tls/3
+  def connect_tls(a: string, ms: integer): result[socket, string] do
+    empty: list[tuple[atom, string]] = []
+    TCP.connect_tls(a, ms, empty)
+  end
+# ---- Names ----
+# 1 when every byte is one a host's name is written with.
+#: _hostname/2
+  def _hostname(p: integer, n: integer): integer do
+    if n == 0 do 1 else
+      c = Sys.byte(p)
+      if c >= 48 and c <= 57 or c >= 65 and c <= 90 or c >= 97 and c <= 122 or c == 45 or c == 46 or c == 95 do TCP._hostname(p + 1, n - 1) else 0 end
+    end
+  end
+# Several addresses of one name in the order they are tried: those the
+# machine has a way to first, IPv6 before IPv4 among them (the order of RFC
+# 6724 as far as it shows on a machine with one address of each kind).
+#: _usable/1 needs Enum.filter/2 Enum.map/2 _reach/1
+  def _usable(l: list[string]): list[string] do
+    if length(l) < 2 do l else
+      marked = Enum.map(l, fn a -> {TCP._reach(a), a} end)
+      pick = fn(way: integer, size: integer): list[string] do Enum.map(Enum.filter(marked, fn {r, a} -> r == way and byte_size(a) == size end), fn {r, a} -> a end) end
+      pick(1, 28) ++ pick(1, 16) ++ pick(0, 28) ++ pick(0, 16)
+    end
+  end
+# 1 when the system knows a way to an address: a UDP socket connects to it,
+# which sends nothing.
+#: _reach/1 needs _ported/2 _socket/2
+  def _reach(a: string): integer do
+    fd = TCP._socket(Sys.byte(Sys.addr(a)), 2)
+    if fd < 0 do 0 else
+      to = TCP._ported(a, 9)
+      r = Sys.call(42, fd, Sys.addr(to), byte_size(to))
+      Sys.call(3, fd)
+      if r < 0 do 0 else 1 end
+    end
+  end
+# The name servers, the domains to search and the options of
+# /etc/resolv.conf (a text of that file's form): the servers as addresses
+# with port 53, the domains, and ndots, the seconds to wait and the
+# attempts.
+#: _resolv/1 needs Enum.take/2 _literal/1 _ported/2 _resolv1/3
+  def _resolv(t: string): tuple[list[string], list[string], tuple[integer, integer, integer]] do
+    blank: list[string] = []
+    {servers, search, o} = TCP._resolv1(Sys.addr(t), byte_size(t), {blank, blank, {1, 5, 2}})
+    {if servers == [] do [TCP._ported(TCP._literal("127.0.0.1"), 53)] else Enum.take(servers, 3) end, search, o}
+  end
+#: _resolv1/3 needs _line/2 _literal/1 _pnum/3 _ported/2 _sub/3 _word/2 _words/2
+  def _resolv1(p: integer, n: integer, acc: tuple[list[string], list[string], tuple[integer, integer, integer]]): tuple[list[string], list[string], tuple[integer, integer, integer]] do
+    if n <= 0 do acc else
+      {servers, search, o} = acc
+      e = Sys.find(p, n, 10)
+      step = if e < 0 do n else e + 1 end
+      semi = Sys.find(p, if e < 0 do n else e end, 59)
+      m = if semi < 0 do TCP._line(p, n) else if semi < TCP._line(p, n) do semi else TCP._line(p, n) end end
+      {a, an} = TCP._word(p, m)
+      key = Sys.text(a, an)
+      rest = TCP._words(a + an, p + m - a - an)
+      now = if key == "nameserver" and rest != [] do
+        s = TCP._literal(hd(rest))
+        {if s == "" do servers else servers ++ [TCP._ported(s, 53)] end, search, o}
+      else
+        if key == "search" or key == "domain" do {servers, rest, o} else
+          if key == "options" do {servers, search, Enum.reduce(rest, o, fn w, {dots, wait, tries} ->
+            c = Sys.find(Sys.addr(w), byte_size(w), 58)
+            v = if c < 0 do -1 else TCP._pnum(Sys.addr(w) + c + 1, byte_size(w) - c - 1, 0) end
+            name = if c < 0 do w else TCP._sub(w, 0, c) end
+            if v < 0 do {dots, wait, tries} else
+              if name == "ndots" do {if v > 15 do 15 else v end, wait, tries} else
+                if name == "timeout" do {dots, if v > 30 do 30 else if v < 1 do 1 else v end end, tries} else
+                  if name == "attempts" do {dots, wait, if v > 5 do 5 else if v < 1 do 1 else v end end} else {dots, wait, tries} end
+                end
+              end
+            end
+          end)} else acc end
+        end
+      end
+      TCP._resolv1(p + step, n - step, now)
+    end
+  end
+# The words of the n bytes at p.
+#: _words/2 needs _word/2
+  def _words(p: integer, n: integer): list[string] do
+    {a, an} = TCP._word(p, n)
+    if an == 0 do [] else [Sys.text(a, an)] ++ TCP._words(a + an, n - (a + an - p)) end
+  end
+# The question a name server is asked (RFC 1035): the addresses of a name
+# (kind 1 for IPv4, 28 for IPv6), under the number id. "" for a name that
+# cannot be asked.
+#: _question/3 needs _labels/3 _s/0
+  def _question(name: string, kind: integer, id: integer): string do
+    s = TCP._s() + 4096
+    Sys.poke(s, div(id, 256) + rem(id, 256) * 256 + 65536 + 16777216 * 0 + 1099511627776 * 0)
+    Sys.poke(s + 4, 256)
+    Sys.poke(s + 8, 0)
+    e = TCP._labels(Sys.addr(name), byte_size(name), s + 12)
+    if e == 0 or byte_size(name) > 253 do "" else
+      Sys.poke(e, 0)
+      Sys.poke(e + 1, div(kind, 256))
+      Sys.poke(e + 2, rem(kind, 256) + 256 * 256)
+      Sys.text(s, e + 5 - s)
+    end
+  end
+# The labels of a name, each behind its length: where they end, 0 for a
+# label that is empty or too long.
+#: _labels/3
+  def _labels(p: integer, n: integer, q: integer): integer do
+    if n == 0 do q else
+      dot = Sys.find(p, n, 46)
+      k = if dot < 0 do n else dot end
+      if k == 0 or k > 63 do 0 else
+        Sys.poke(q, k)
+        Sys.copy(q + 1, p, k)
+        if dot < 0 or dot + 1 == n do q + 1 + k else TCP._labels(p + dot + 1, n - dot - 1, q + 1 + k) end
+      end
+    end
+  end
+# Past the name that stands at index i of an answer.
+#: _past/3
+  def _past(p: integer, i: integer, n: integer): integer do
+    if i >= n do n else
+      c = Sys.byte(p + i)
+      if c == 0 do i + 1 else if c >= 192 do i + 2 else TCP._past(p, i + 1 + c, n) end end
+    end
+  end
+# What a name server answered to the question under id: -1 when it is no
+# answer to it, else its code (0 fine, 3 no such name) above whether it was
+# cut short, and the addresses it holds.
+#: _answer/2 needs List.duplicate/2 _past/3 _records/5
+  def _answer(reply: string, id: integer): tuple[integer, list[string]] do
+    n = byte_size(reply)
+    p = Sys.addr(reply)
+    blank: list[string] = []
+    if n < 12 or Sys.byte(p) * 256 + Sys.byte(p + 1) != id or Sys.byte(p + 2) < 128 do {-1, blank} else
+      code = rem(Sys.byte(p + 3), 16)
+      cut = rem(div(Sys.byte(p + 2), 2), 2)
+      asked = Sys.byte(p + 4) * 256 + Sys.byte(p + 5)
+      count = Sys.byte(p + 6) * 256 + Sys.byte(p + 7)
+      start = Enum.reduce(if asked == 0 do blank else List.duplicate("", asked) end, 12, fn x, i -> TCP._past(p, i, n) + 4 end)
+      {code * 2 + cut, if code != 0 do blank else TCP._records(p, start, n, count, blank) end}
+    end
+  end
+#: _records/5 needs _past/3 _sa4/2 _sa6/3 _sagroups/2
+  def _records(p: integer, i: integer, n: integer, count: integer, got: list[string]): list[string] do
+    j = TCP._past(p, i, n)
+    if count == 0 or j + 10 > n do got else
+      kind = Sys.byte(p + j) * 256 + Sys.byte(p + j + 1)
+      size = Sys.byte(p + j + 8) * 256 + Sys.byte(p + j + 9)
+      d = p + j + 10
+      if j + 10 + size > n do got else
+        here = if kind == 1 and size == 4 do [TCP._sa4(Sys.byte(d) * 16777216 + Sys.byte(d + 1) * 65536 + Sys.byte(d + 2) * 256 + Sys.byte(d + 3), 0)] else
+          if kind == 28 and size == 16 do [TCP._sa6(TCP._sagroups(d - 8, 0), 0, 0)] else [] end
+        end
+        TCP._records(p, j + 10 + size, n, count - 1, got ++ here)
+      end
+    end
+  end
+# One question to one name server, over UDP and again over TCP when the
+# answer was cut short: what _answer gives, -1 when none came by the time d.
+#: _ask/4 needs _heard/4 _socket/2 _tcpask/4
+  def _ask(g: integer, server: string, q: string, d: integer): tuple[integer, list[string]] do
+    blank: list[string] = []
+    id = Sys.byte(Sys.addr(q)) * 256 + Sys.byte(Sys.addr(q) + 1)
+    fd = TCP._socket(Sys.byte(Sys.addr(server)), 2)
+    if fd < 0 do {-1, blank} else
+      c = Sys.call(42, fd, Sys.addr(server), byte_size(server))
+      w = if c < 0 do c else Sys.call(44, fd, Sys.addr(q), byte_size(q), 0x4000, 0, 0) end
+      got = try do
+        if w < 0 do {-1, blank} else TCP._heard(g, fd, id, d) end
+      after
+        Sys.call(3, fd)
+      end
+      if elem(got, 0) >= 0 and rem(elem(got, 0), 2) == 1 do TCP._tcpask(g, server, q, d) else got end
+    end
+  end
+# The answer that comes to a descriptor by the time d.
+#: _heard/4 needs Process._check/1 Process._fdwait/4 Process._now/1 _answer/2 _s/0
+  def _heard(g: integer, fd: integer, id: integer, d: integer): tuple[integer, list[string]] do
+    blank: list[string] = []
+    s = TCP._s() + 4096
+    n = Sys.call(45, fd, s, 65535, 0, 0, 0)
+    if n == -11 or n == -4 do
+      if Process._now(g) >= d do {-1, blank} else
+        Process._fdwait(g, fd, 1, d)
+        Process._check(g)
+        TCP._heard(g, fd, id, d)
+      end
+    else
+      if n < 0 do {-1, blank} else
+        got = TCP._answer(Sys.text(s, n), id)
+        if elem(got, 0) < 0 do TCP._heard(g, fd, id, d) else got end
+      end
+    end
+  end
+#: _tcpask/4 needs Port._head/3 _answer/2 _block/3 _close/2 _dial1/3 _exact/5 _write/5
+  def _tcpask(g: integer, server: string, q: string, d: integer): tuple[integer, list[string]] do
+    blank: list[string] = []
+    fd = TCP._dial1(g, server, d)
+    if fd < 0 do {-1, blank} else
+      b = TCP._block(g, fd, 2)
+      out = Port._head(byte_size(q), 2, q)
+      sent = TCP._write(g, b, Sys.addr(out), byte_size(out), d)
+      Sys.poke(b + 120, 0)
+      size = if sent != "" do "" else TCP._exact(g, b, d, 2, 0) end
+      reply = if size == "" do "" else TCP._exact(g, b, d, Sys.byte(Sys.addr(size)) * 256 + Sys.byte(Sys.addr(size) + 1), 0) end
+      TCP._close(g, b)
+      if reply == "" do {-1, blank} else TCP._answer(reply, Sys.byte(Sys.addr(q)) * 256 + Sys.byte(Sys.addr(q) + 1)) end
+    end
+  end
+# The addresses a name has for one kind of address, asked of the servers
+# in turn, each waited for wait seconds, tries times over: the code (0, 3,
+# or -1 when no server answered) and the addresses.
+#: _lookup/5 needs Process._due/2 Process._g/0 _ask/4 _question/3 _s/0
+  def _lookup(servers: list[string], all: list[string], name: string, kind: integer, o: tuple[integer, integer]): tuple[integer, list[string]] do
+    g = Process._g()
+    {wait, tries} = o
+    blank: list[string] = []
+    case servers do
+      [] -> if tries <= 1 do {-1, blank} else TCP._lookup(all, all, name, kind, {wait, tries - 1}) end
+      [server | rest] ->
+        s = TCP._s() + 512
+        Sys.call(318, s, 2, 0)
+        q = TCP._question(name, kind, Sys.byte(s) * 256 + Sys.byte(s + 1))
+        if q == "" do {3, blank} else
+          {code, found} = TCP._ask(g, server, q, Process._due(g, wait * 1000))
+          if code == 0 or code == 6 do {div(code, 2), found} else TCP._lookup(rest, all, name, kind, o) end
+        end
+    end
+  end
+# The addresses the name servers give a name, IPv4 before IPv6: the name
+# as it is and with each domain of the search list, in the order the C
+# library tries them.
+#: _dns/1 needs Enum.filter/2 Enum.map/2 String.split/2 _file/1 _resolv/1 _sub/3 _tryall/3
+  def _dns(h: string): list[string] do
+    {servers, search, {dots, wait, tries}} = TCP._resolv(TCP._file("/etc/resolv.conf"))
+    n = byte_size(h)
+    rooted = n > 0 and Sys.byte(Sys.addr(h) + n - 1) == 46
+    bare = if rooted do TCP._sub(h, 0, n - 1) else h end
+    has = length(String.split(bare, ".")) - 1
+    by0 = Enum.map(Enum.filter(search, fn d -> d != "." end), fn d -> bare <> "." <> d end)
+    names = if rooted or bare == "" do [bare] else if has >= dots do [bare] ++ by0 else by0 ++ [bare] end end
+    TCP._tryall(servers, names, {wait, tries})
+  end
+#: _tryall/3 needs Process._g/0 _lookup/5
+  def _tryall(servers: list[string], names: list[string], o: tuple[integer, integer]): list[string] do
+    case names do
+      [] -> []
+      [name | rest] ->
+        {a, four} = TCP._lookup(servers, servers, name, 1, o)
+        {b, six} = if a != 0 do {a, four} else TCP._lookup(servers, servers, name, 28, o) end
+        if a < 0 or b < 0 do Sys.poke(Process._g() + 384, 1) end
+        if four ++ six != [] do four ++ six else TCP._tryall(servers, rest, o) end
+    end
+  end

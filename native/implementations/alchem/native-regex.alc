@@ -1,0 +1,979 @@
+defmodule NativeRegex do
+  # Regular expressions in RE2 syntax, as Go's regexp/syntax reads them
+  # (spec/alchem-regex.md): rx_compile turns a pattern into the program the
+  # library's matcher runs (library/Regex.alc). The compiler uses it for a
+  # ~r; scripts/generate-prelude.py gives the same text to the library for
+  # Regex.compile, so it uses nothing of the compiler but the tables rx_tb
+  # (native-regex-data.alc), and only what the seed-built compiler takes.
+  def rx_q(v: integer, d: integer): integer do
+    if v < d do 0 else if d > v-d do 1 else
+      q = rx_q(v,d*2)*2
+      if v-q*d >= d do q+1 else q end
+    end end
+  end
+  def rx_3(v: integer): bytes do
+    h = if v < 65536 do 0 else rx_q(v,65536) end
+    m = if v-h*65536 < 256 do 0 else rx_q(v-h*65536,256) end
+    b[v-h*65536-m*256,m,h]
+  end
+  def rx_2(v: integer): bytes do
+    h = if v < 256 do 0 else rx_q(v,256) end
+    b[v-h*256,h]
+  end
+  def rx_g(d: bytes, p: integer): integer do Enum.at(d,p,0)+Enum.at(d,p+1,0)*256+Enum.at(d,p+2,0)*65536 end
+  def rx_h(d: bytes, p: integer): integer do Enum.at(d,p,0)+Enum.at(d,p+1,0)*256 end
+  def rx_j(a: bytes, c: bytes, d: bytes): bytes do Enum.concat(Enum.concat(a,c),d) end
+  def rx_s(d: bytes, a: integer, z: integer): bytes do if a >= z do b[] else Enum.slice(d,a,z-a) end end
+  def rx_mx(a: integer, c: integer): integer do if a > c do a else c end end
+  def rx_mi(a: integer, c: integer): integer do if a < c do a else c end end
+  def rx_c(v: integer): integer do if (v-128)*(191-v) >= 0 do 1 else 0 end end
+  # The width of the character at p, 1 to 4; 0 for a byte that starts none.
+  def rx_w(s: bytes, p: integer): integer do
+    a = Enum.at(s,p,0)
+    e = Enum.at(s,p+1,0)
+    lo = if a == 224 do 160 else if a == 240 do 144 else 128 end end
+    hi = if a == 237 do 159 else if a == 244 do 143 else 191 end end
+    k = if (e-lo)*(hi-e) >= 0 do 1 else 0 end
+    if a < 128 do 1 else if a < 194 do 0 else
+      if a < 224 do 2*k else
+        if a < 240 do 3*k*rx_c(Enum.at(s,p+2,0)) else
+          if a > 244 do 0 else 4*k*rx_c(Enum.at(s,p+2,0))*rx_c(Enum.at(s,p+3,0)) end
+        end
+      end
+    end end
+  end
+  # Its code point, given the width.
+  def rx_r(s: bytes, p: integer, w: integer): integer do
+    a = Enum.at(s,p,0)
+    if w <= 1 do a else if w == 2 do (a-192)*64+Enum.at(s,p+1,0)-128 else
+      if w == 3 do (a-224)*4096+(Enum.at(s,p+1,0)-128)*64+Enum.at(s,p+2,0)-128 else
+        (a-240)*262144+(Enum.at(s,p+1,0)-128)*4096+(Enum.at(s,p+2,0)-128)*64+Enum.at(s,p+3,0)-128
+      end
+    end end
+  end
+  # The first byte from p up to z that starts no character, z when all do.
+  def rx_u(s: bytes, p: integer, z: integer): integer do
+    if p >= z do z else if rx_w(s,p) == 0 do p else rx_u8(s,p+rx_w(s,p),z,64) end end
+  end
+  def rx_u8(s: bytes, p: integer, z: integer, left: integer): integer do
+    if p >= z do z else if rx_w(s,p) == 0 do p else if left == 0 do rx_u(s,p,z) else rx_u8(s,p+rx_w(s,p),z,left-1) end end end
+  end
+  # The first byte c from p up to z, -1 when there is none.
+  def rx_ix(s: bytes, p: integer, z: integer, c: integer): integer do
+    if p >= z do -1 else if Enum.at(s,p,0) == c do p else rx_i8(s,p+1,z,c,64) end end
+  end
+  def rx_i8(s: bytes, p: integer, z: integer, c: integer, left: integer): integer do
+    if p >= z do -1 else if Enum.at(s,p,0) == c do p else if left == 0 do rx_ix(s,p,z,c) else rx_i8(s,p+1,z,c,left-1) end end end
+  end
+  # A failure: its code, then where the text it names starts and stops.
+  def rx_e(c: integer, a: integer, z: integer): bytes do rx_j(b[0,c],rx_3(a),rx_3(z)) end
+  # A parsed node: 1, the position after it (3 bytes), the state (the
+  # flags: 1 i, 2 m, 4 s, 8 U, 16 inside \Q; then the number of groups, 3
+  # bytes), then what the limits need of it (its height and size, 3 bytes
+  # each, and the copies its counts ask for, 2), then the node.
+  def rx_k(p: integer, st: bytes, at: bytes, node: bytes): bytes do Enum.concat(rx_j(b[1],rx_3(p),st),Enum.concat(at,node)) end
+  def rx_st(k: bytes): bytes do rx_s(k,4,8) end
+  def rx_nd(k: bytes): bytes do rx_s(k,16,Enum.count(k)) end
+  # 1 when v has the bit of weight w.
+  def rx_b(v: integer, w: integer): integer do rx_q(v,w)-rx_q(v,w*2)*2 end
+  # The parser's limits on a node just made (checkLimits): a program of
+  # more than 3355443 instructions, a tree more than 1000 high.
+  def rx_lm(s: bytes, k: bytes): bytes do
+    if rx_g(k,11) > 3355443 do rx_e(14,0,Enum.count(s)) else if rx_g(k,8) > 1000 do rx_e(13,0,Enum.count(s)) else k end end
+  end
+  # A character read: 1, the position after it, the character.
+  def rx_ok(p: integer, r: integer): bytes do rx_j(b[1],rx_3(p),rx_3(r)) end
+  def rx_o8(s: bytes, t: integer): integer do
+    d = Enum.at(s,t,0)-48
+    if t >= Enum.count(s) do -1 else if d*(7-d) >= 0 do d else -1 end end
+  end
+  def rx_oc(s: bytes, t: integer, r: integer, left: integer): bytes do
+    if left == 0 do rx_ok(t,r) else if rx_o8(s,t) < 0 do rx_ok(t,r) else rx_oc(s,t+1,r*8+rx_o8(s,t),left-1) end end
+  end
+  def rx_x(c: integer): integer do
+    if (c-48)*(57-c) >= 0 do c-48 else if (c-97)*(102-c) >= 0 do c-87 else if (c-65)*(70-c) >= 0 do c-55 else -1 end end end
+  end
+  # \x{...} from t, after the brace; p is the backslash.
+  def rx_xb(s: bytes, p: integer, t: integer, r: integer, nh: integer): bytes do
+    n = Enum.count(s)
+    w = rx_w(s,t)
+    c = rx_r(s,t,w)
+    if t >= n do rx_e(2,p,n) else if w == 0 do rx_e(7,t,n) else
+      if c == 125 do if nh == 0 do rx_e(2,p,t+w) else rx_ok(t+w,r) end else
+        if rx_x(c) < 0 do rx_e(2,p,t+w) else if r*16+rx_x(c) > 1114111 do rx_e(2,p,t+w) else rx_xb(s,p,t+w,r*16+rx_x(c),nh+1) end end
+      end
+    end end
+  end
+  # \xHH from t, after the x.
+  def rx_xh(s: bytes, p: integer, t: integer): bytes do
+    n = Enum.count(s)
+    w = rx_w(s,t)
+    c = rx_r(s,t,w)
+    u = t+w
+    v = rx_w(s,u)
+    if t >= n do rx_e(2,p,t) else if w == 0 do rx_e(7,t,n) else
+      if c == 123 do rx_xb(s,p,u,0,0) else
+        if u >= n do rx_e(2,p,n) else if v == 0 do rx_e(7,u,n) else
+          if rx_x(c) < 0 do rx_e(2,p,u+v) else if rx_x(rx_r(s,u,v)) < 0 do rx_e(2,p,u+v) else rx_ok(u+v,rx_x(c)*16+rx_x(rx_r(s,u,v))) end end
+        end end
+      end
+    end end
+  end
+  def rx_an(c: integer): integer do
+    if (c-48)*(57-c) >= 0 do 1 else if (c-65)*(90-c) >= 0 do 1 else if (c-97)*(122-c) >= 0 do 1 else 0 end end end
+  end
+  # The escape at p, a backslash (parseEscape).
+  def rx_es(s: bytes, p: integer): bytes do
+    n = Enum.count(s)
+    w = rx_w(s,p+1)
+    c = rx_r(s,p+1,w)
+    t = p+1+w
+    if p+1 >= n do rx_e(11,0,0) else if w == 0 do rx_e(7,p+1,n) else if c >= 128 do rx_e(2,p,t) else
+      if (c-49)*(55-c) >= 0 do if rx_o8(s,t) < 0 do rx_e(2,p,t) else rx_oc(s,t,c-48,2) end else
+        if c == 48 do rx_oc(s,t,0,2) else if c == 120 do rx_xh(s,p,t) else
+          if c == 97 do rx_ok(t,7) else if c == 102 do rx_ok(t,12) else if c == 110 do rx_ok(t,10) else if c == 114 do rx_ok(t,13) else if c == 116 do rx_ok(t,9) else if c == 118 do rx_ok(t,11) else
+            if rx_an(c) == 1 do rx_e(2,p,t) else rx_ok(t,c) end
+          end end end end end end
+        end end
+      end
+    end end end
+  end
+  # The digits at p: where they stop and their value, at most 1001; b[]
+  # when there are none or a zero leads (parseInt).
+  def rx_in(s: bytes, p: integer): bytes do
+    d = Enum.at(s,p,0)-48
+    e = Enum.at(s,p+1,0)-48
+    if p >= Enum.count(s) do b[] else if d*(9-d) < 0 do b[] else
+      if d == 0 do if p+1 < Enum.count(s) do if e*(9-e) >= 0 do b[] else rx_id(s,p,0) end else rx_id(s,p,0) end else rx_id(s,p,0) end
+    end end
+  end
+  def rx_id(s: bytes, p: integer, v: integer): bytes do
+    d = Enum.at(s,p,0)-48
+    if p >= Enum.count(s) do Enum.concat(rx_3(p),rx_2(v)) else if d*(9-d) < 0 do Enum.concat(rx_3(p),rx_2(v)) else rx_id(s,p+1,rx_mi(v*10+d,1001)) end end
+  end
+  # {n}, {n,} or {n,m} at p: where it stops, n and m (65535 for none);
+  # b[] when it is not a count (parseRepeat).
+  def rx_rp(s: bytes, p: integer): bytes do
+    n = Enum.count(s)
+    a = rx_in(s,p+1)
+    q = rx_g(a,0)
+    c = if Enum.count(a) == 0 do b[] else if q+1 >= n do b[] else if Enum.at(s,q,0) != 44 do b[] else if Enum.at(s,q+1,0) == 125 do Enum.concat(rx_3(q+1),b[255,255]) else rx_in(s,q+1) end end end end
+    if Enum.count(a) == 0 do b[] else if q >= n do b[] else
+      if Enum.at(s,q,0) == 125 do rx_j(rx_3(q+1),rx_s(a,3,5),rx_s(a,3,5)) else
+        if Enum.count(c) == 0 do b[] else if Enum.at(s,rx_g(c,0),0) != 125 do b[] else if rx_g(c,0) >= n do b[] else rx_j(rx_3(rx_g(c,0)+1),rx_s(a,3,5),rx_s(c,3,5)) end end end
+      end
+    end end
+  end
+  # f with the flag of weight bit (1, 2, 4, 8) set to on.
+  def rx_fs(f: integer, bit: integer, onn: integer): integer do
+    has = rx_q(f,bit)-rx_q(f,bit*2)*2
+    f-has*bit+onn*bit
+  end
+  # The flags of (?flags) or (?flags: from q; p is the parenthesis. sg: 1
+  # after a minus, then 2 once a flag followed it. Kind 2 for a group, 3 for
+  # flags alone, then the position after it and the flags.
+  def rx_fg(s: bytes, p: integer, q: integer, f: integer, sg: integer): bytes do
+    n = Enum.count(s)
+    w = rx_w(s,q)
+    c = rx_r(s,q,w)
+    bit = if c == 105 do 1 else if c == 109 do 2 else if c == 115 do 4 else if c == 85 do 8 else 0 end end end end
+    if q >= n do rx_e(4,p,n) else if w == 0 do rx_e(7,q,n) else
+      if bit > 0 do rx_fg(s,p,q+1,rx_fs(f,bit,if sg == 0 do 1 else 0 end),if sg == 0 do 0 else 2 end) else
+        if c == 45 do if sg > 0 do rx_e(4,p,q+1) else rx_fg(s,p,q+1,f,1) end else
+          if (c-58)*(c-41) != 0 do rx_e(4,p,q+w) else if sg == 1 do rx_e(4,p,q+1) else rx_j(b[if c == 58 do 2 else 3 end],rx_3(q+1),b[f]) end end
+        end
+      end
+    end end
+  end
+  def rx_nc(s: bytes, p: integer, z: integer): integer do
+    c = Enum.at(s,p,0)
+    if p >= z do 1 else if c == 95 do rx_nc(s,p+1,z) else if rx_an(c) == 1 do rx_nc(s,p+1,z) else 0 end end end
+  end
+  # What follows (? at p (parsePerlFlags): kind 1 for a named group, with
+  # the position after it and where its name starts and stops; else rx_fg.
+  def rx_fl(s: bytes, p: integer, f: integer): bytes do
+    n = Enum.count(s)
+    lead = if n-p > 4 do if Enum.at(s,p+2,0) == 80 do if Enum.at(s,p+3,0) == 60 do 4 else 0 end else 0 end else 0 end
+    from = if lead > 0 do lead else if n-p > 3 do if Enum.at(s,p+2,0) == 60 do 3 else 0 end else 0 end end
+    stop = rx_ix(s,p,n,62)
+    if from == 0 do rx_fg(s,p,p+2,f,0) else
+      if stop < 0 do if rx_u(s,p,n) < n do rx_e(7,rx_u(s,p,n),n) else rx_e(3,p,n) end else
+        if rx_u(s,p+from,stop) < stop do rx_e(7,rx_u(s,p+from,stop),stop) else
+          if stop == p+from do rx_e(3,p,stop+1) else if rx_nc(s,p+from,stop) == 0 do rx_e(3,p,stop+1) else rx_j(b[1],rx_3(stop+1),Enum.concat(rx_3(p+from),rx_3(stop))) end end
+        end
+      end
+    end
+  end
+  # The ranges of \d, \s and \w, and of the names between [: and :], each
+  # as pairs of bytes: per name its length, the name, the number of pairs
+  # and the pairs.
+  def rx_pd(c: integer): bytes do
+    if c == 100 do b[48,57] else if c == 115 do b[9,10,12,13,32,32] else b[48,57,65,90,95,95,97,122] end end
+  end
+  def rx_px(): bytes do
+    Enum.concat(b[5,97,108,110,117,109,3,48,57,65,90,97,122,5,97,108,112,104,97,2,65,90,97,122,5,97,115,99,105,105,1,0,127,5,98,108,97,110,107,2,9,9,32,32,5,99,110,116,114,108,2,0,31,127,127,5,100,105,103,105,116,1,48,57,5,103,114,97,112,104,1,33,126,5,108,111,119,101,114,1,97,122,5,112,114,105,110,116,1,32,126],b[5,112,117,110,99,116,4,33,47,58,64,91,96,123,126,5,115,112,97,99,101,2,9,13,32,32,5,117,112,112,101,114,1,65,90,4,119,111,114,100,4,48,57,65,90,95,95,97,122,6,120,100,105,103,105,116,3,48,57,65,70,97,102])
+  end
+  def rx_eq(s: bytes, p: integer, g: bytes, i: integer, n: integer): integer do
+    if n == 0 do 1 else if Enum.at(s,p,0) != Enum.at(g,i,0) do 0 else rx_eq(s,p+1,g,i+1,n-1) end end
+  end
+  # The pairs of the name from p up to z in table g from i, b[] for none.
+  def rx_pn(s: bytes, p: integer, z: integer, g: bytes, i: integer): bytes do
+    n = Enum.at(g,i,0)
+    m = Enum.at(g,i+1+n,0)
+    if i >= Enum.count(g) do b[] else
+      if n == z-p do if rx_eq(s,p,g,i+1,n) == 1 do rx_s(g,i+2+n,i+2+n+m*2) else rx_pn(s,p,z,g,i+2+n+m*2) end else rx_pn(s,p,z,g,i+2+n+m*2) end
+    end
+  end
+  def rx_p6(pr: bytes, i: integer): bytes do
+    if i >= Enum.count(pr) do b[] else Enum.concat(b[Enum.at(pr,i,0),0,0,Enum.at(pr,i+1,0),0,0],rx_p6(pr,i+2)) end
+  end
+  # The ranges of pairs, or all but them; f: 1 under (?i).
+  def rx_gi(pr: bytes, neg: integer, f: integer): bytes do
+    d = if f == 1 do rx_fd(rx_p6(pr,0)) else rx_p6(pr,0) end
+    if neg == 1 do rx_ng(d) else d end
+  end
+  # The name of a Unicode class from p up to z as a number: the name as
+  # Go's canonicalName has it, hashed.
+  def rx_nh(s: bytes, p: integer, z: integer, h: integer, first: integer): integer do
+    c = Enum.at(s,p,0)
+    u = if first == 1 do if (c-97)*(122-c) >= 0 do c-32 else c end else if (c-65)*(90-c) >= 0 do c+32 else c end end
+    v = h*31+u
+    if p >= z do h else
+      if (c-95)*(c-45)*(c-32) == 0 do rx_nh(s,p+1,z,h,first) else rx_nh(s,p+1,z,v-rx_q(v,4294967291)*4294967291,0) end
+    end
+  end
+  # The table of a name's number: its place among the four bytes each of
+  # the tables' first part, or for another name the byte after its number
+  # in the second; -1 for none. g: the tables, i up to z the part.
+  def rx_ni(g: bytes, h: bytes, i: integer, z: integer, w: integer): integer do
+    if i >= z do -1 else
+      if Enum.at(g,i,0) == Enum.at(h,0,0) do if Enum.at(g,i+1,0) == Enum.at(h,1,0) do if Enum.at(g,i+2,0) == Enum.at(h,2,0) do if Enum.at(g,i+3,0) == Enum.at(h,3,0) do if w == 4 do rx_q(i-rx_g(g,0),4) else Enum.at(g,i+4,0) end else rx_ni(g,h,i+w,z,w) end else rx_ni(g,h,i+w,z,w) end else rx_ni(g,h,i+w,z,w) end else rx_ni(g,h,i+w,z,w) end
+    end
+  end
+  def rx_4(v: integer): bytes do
+    h = rx_q(v,65536)
+    Enum.concat(rx_2(v-h*65536),rx_2(h))
+  end
+  # \p or \P at p: 1, the position after it, 2 for a table and 3 for all
+  # outside it, then the table (parseUnicodeClass).
+  def rx_uc(s: bytes, p: integer): bytes do
+    n = Enum.count(s)
+    q = p+2
+    w = rx_w(s,q)
+    brace = if q >= n do 0 else if Enum.at(s,q,0) == 123 do 1 else 0 end end
+    stop = if brace == 1 do rx_ix(s,p,n,125) else if q >= n do q else q+w end end
+    from = if brace == 1 do q+1 else q end
+    if q < n do if w == 0 do rx_e(7,q,n) else rx_un(s,p,from,stop,brace) end else rx_un(s,p,from,stop,brace) end
+  end
+  def rx_un(s: bytes, p: integer, from: integer, stop: integer, brace: integer): bytes do
+    n = Enum.count(s)
+    hat = if from < stop do if Enum.at(s,from,0) == 94 do 1 else 0 end else 0 end
+    num = rx_4(rx_nh(s,from+hat,stop,7,1))
+    g = rx_tb()
+    direct = rx_ni(g,num,rx_g(g,0),rx_g(g,3),4)
+    id = if direct >= 0 do direct else rx_ni(g,num,rx_g(g,3),rx_g(g,6),5) end
+    neg = if Enum.at(s,p+1,0) == 80 do 1 else 0 end
+    flip = if id == 254 do 1 else 0 end
+    sign = neg+hat+flip
+    odd = sign-rx_q(sign,2)*2
+    if stop < 0 do if rx_u(s,p,n) < n do rx_e(7,rx_u(s,p,n),n) else rx_e(1,p,n) end else
+      if rx_u(s,from,stop) < stop do rx_e(7,rx_u(s,from,stop),stop) else
+        if id < 0 do rx_e(1,p,stop+brace) else rx_j(b[1],rx_3(stop+brace),b[2+odd,if id == 254 do 0 else id end]) end
+      end
+    end
+  end
+  # Items, branches and class items are gathered a doubling number at a
+  # time, so that a long pattern is neither nested deep nor copied often.
+  # A run: 1, the position, the state, 1 once it has ended, thirteen bytes
+  # of its own, then what it gathered. m: 0 the items of a concatenation,
+  # 1 the branches of an alternation, 2 the items of a class.
+  def rx_mn(s: bytes, t: bytes, k: integer, m: integer): bytes do
+    if k <= 1 do if m == 0 do rx_s1(s,t) else if m == 1 do rx_a1(s,t) else rx_c1(s,t) end end else
+      a = rx_mn(s,t,rx_q(k,2),m)
+      if Enum.at(a,0,0) == 0 do a else if Enum.at(a,8,0) == 1 do a else
+        c = rx_mn(s,rx_s(a,1,22),k-rx_q(k,2),m)
+        if Enum.at(c,0,0) == 0 do c else rx_j(rx_s(c,0,22),rx_s(a,22,Enum.count(a)),rx_s(c,22,Enum.count(c))) end
+      end end
+    end
+  end
+  def rx_dr(s: bytes, r: bytes, k: integer, m: integer): bytes do
+    if Enum.at(r,0,0) == 0 do r else if Enum.at(r,8,0) == 1 do r else
+      c = rx_mn(s,rx_s(r,1,22),k,m)
+      if Enum.at(c,0,0) == 0 do c else rx_dr(s,rx_j(rx_s(c,0,22),rx_s(r,22,Enum.count(r)),rx_s(c,22,Enum.count(c))),k*2,m) end
+    end end
+  end
+  def rx_t(p: integer, st: bytes): bytes do rx_j(Enum.concat(b[1],rx_3(p)),st,b[0,0,0,0,0,0,0,0,0,0,0,0,0,0]) end
+  # A character of a class at p; o is the bracket (parseClassChar).
+  def rx_cc(s: bytes, p: integer, o: integer): bytes do
+    n = Enum.count(s)
+    w = rx_w(s,p)
+    if p >= n do rx_e(8,o,n) else if Enum.at(s,p,0) == 92 do rx_es(s,p) else if w == 0 do rx_e(7,p,n) else rx_ok(p+w,rx_r(s,p,w)) end end end
+  end
+  # The colon of the first :] from p, -1 for none.
+  def rx_i2(s: bytes, p: integer): integer do
+    q = rx_ix(s,p,Enum.count(s),58)
+    if q < 0 do -1 else if Enum.at(s,q+1,0) == 93 do q else rx_i2(s,q+1) end end
+  end
+  # A step of a class: its end at p, or the ranges d of an item that ends
+  # there.
+  def rx_cr(t: bytes, p: integer, done: integer, d: bytes): bytes do
+    rx_j(rx_j(b[1],rx_3(p),rx_s(t,3,7)),b[done,0],Enum.concat(rx_s(t,9,21),d))
+  end
+  def rx_c1(s: bytes, t: bytes): bytes do
+    n = Enum.count(s)
+    p = rx_g(t,0)
+    c = Enum.at(s,p,0)
+    e = Enum.at(s,p+1,0)
+    f = rx_b(Enum.at(t,3,0),1)
+    named = if p+2 >= n do -1 else if c != 91 do -1 else if e != 58 do -1 else rx_i2(s,p+2) end end end
+    kind = if p >= n do 5 else if c == 93 do if Enum.at(t,8,0) == 0 do 1 else 5 end else if named >= 0 do 2 else
+      if c != 92 do 5 else if (e-112)*(e-80) == 0 do 3 else if (e-100)*(e-68)*(e-115)*(e-83)*(e-119)*(e-87) == 0 do 4 else 5 end end end
+    end end end
+    if kind == 1 do rx_cr(t,p+1,1,b[]) else if kind == 2 do rx_c2(s,t,named,f) else if kind == 3 do rx_c3(t,rx_uc(s,p),f) else
+      if kind == 4 do rx_cr(t,p+2,0,rx_gi(rx_pd(if e < 97 do e+32 else e end),if e < 97 do 1 else 0 end,f)) else rx_c5(s,t,rx_cc(s,p,rx_g(t,11)),f) end
+    end end end
+  end
+  def rx_c2(s: bytes, t: bytes, colon: integer, f: integer): bytes do
+    p = rx_g(t,0)
+    hat = if Enum.at(s,p+2,0) == 94 do 1 else 0 end
+    pr = rx_pn(s,p+2+hat,colon,rx_px(),0)
+    if Enum.count(pr) == 0 do rx_e(1,p,colon+2) else rx_cr(t,colon+2,0,rx_gi(pr,hat,f)) end
+  end
+  def rx_c3(t: bytes, u: bytes, f: integer): bytes do
+    if Enum.at(u,0,0) == 0 do u else rx_cr(t,rx_g(u,1),0,rx_ur(u,f)) end
+  end
+  def rx_c5(s: bytes, t: bytes, lo: bytes, f: integer): bytes do
+    q = rx_g(lo,1)
+    to = if q+1 >= Enum.count(s) do 0 else if Enum.at(s,q,0) != 45 do 0 else if Enum.at(s,q+1,0) == 93 do 0 else 1 end end end
+    hi = if to == 1 do rx_cc(s,q+1,rx_g(t,11)) else lo end
+    d = Enum.concat(rx_s(lo,4,7),rx_s(hi,4,7))
+    if Enum.at(lo,0,0) == 0 do lo else if Enum.at(hi,0,0) == 0 do hi else
+      if rx_g(hi,4) < rx_g(lo,4) do rx_e(1,rx_g(t,0),rx_g(hi,1)) else rx_cr(t,rx_g(hi,1),0,if f == 0 do d else Enum.concat(d,rx_fa(rx_tb(),d,0,1)) end) end
+    end end
+  end
+  # A node that stands alone, of height and size 1.
+  def rx_at(p: integer, st: bytes, node: bytes): bytes do rx_k(p,st,b[1,0,0,1,0,0,0,0],node) end
+  def rx_l(f: integer, r: integer): bytes do Enum.concat(b[8,0,0,3,f],rx_3(r)) end
+  # The node of a class of ranges d, which ends at p: a class, or for one
+  # character, or two that fold to each other alone, that character (push).
+  def rx_cf(p: integer, st: bytes, d: bytes): bytes do
+    lo = rx_g(d,0)
+    two = if Enum.count(d) == 6 do if rx_g(d,3) == lo+1 do 1 else 0 end else if Enum.count(d) != 12 do 0 else if rx_g(d,3) != lo do 0 else if rx_g(d,9) == rx_g(d,6) do 1 else 0 end end end end
+    pair = if two == 0 do 0 else if Enum.count(rx_ob(lo)) != Enum.count(d) do 0 else rx_eq(d,0,rx_ob(lo),0,Enum.count(d)) end end
+    one = if Enum.count(d) != 6 do 0 else if rx_g(d,3) == lo do 1 else 0 end end
+    rx_at(p,st,if one+pair > 0 do rx_l(pair,lo) else rx_j(rx_3(4+Enum.count(d)),b[4],d) end)
+  end
+  # The class that starts at p, a bracket (parseClass).
+  def rx_cl(s: bytes, p: integer, st: bytes): bytes do
+    neg = if Enum.at(s,p+1,0) == 94 do 1 else 0 end
+    r = rx_dr(s,rx_j(Enum.concat(b[1],rx_3(p+1+neg)),st,rx_j(b[0,1,0,0],rx_3(p),b[0,0,0,0,0,0,0])),1,2)
+    d = rx_cu(rx_s(r,22,Enum.count(r)))
+    if Enum.at(r,0,0) == 0 do r else rx_cf(rx_g(r,1),st,if neg == 1 do rx_ng(d) else d end) end
+  end
+  # What a backslash at p starts.
+  def rx_bs(s: bytes, p: integer, st: bytes): bytes do
+    e = Enum.at(s,p+1,0)
+    f = rx_b(Enum.at(st,0,0),1)
+    mark = if e == 65 do 13 else if e == 98 do 15 else if e == 66 do 16 else if e == 122 do 14 else 0 end end end end
+    u = if (e-112)*(e-80) == 0 do rx_uc(s,p) else if (e-100)*(e-68)*(e-115)*(e-83)*(e-119)*(e-87) == 0 do b[] else rx_es(s,p) end end
+    if p+1 >= Enum.count(s) do rx_e(11,0,0) else
+      if mark > 0 do rx_at(p+2,st,b[5,0,0,7,mark]) else if e == 67 do rx_e(2,p,p+2) else
+        if Enum.count(u) == 0 do rx_cf(p+2,st,rx_gi(rx_pd(if e < 97 do e+32 else e end),if e < 97 do 1 else 0 end,f)) else
+          if Enum.at(u,0,0) == 0 do u else if (e-112)*(e-80) == 0 do rx_cf(rx_g(u,1),st,rx_ur(u,f)) else rx_at(rx_g(u,1),st,rx_l(f,rx_g(u,4))) end end
+        end
+      end end
+    end
+  end
+  # One thing a repetition may follow, at p.
+  def rx_am(s: bytes, p: integer, st: bytes): bytes do
+    c = Enum.at(s,p,0)
+    fl = Enum.at(st,0,0)
+    w = rx_w(s,p)
+    plain = if fl >= 16 do 1 else if (c-40)*(c-91)*(c-94)*(c-36)*(c-46)*(c-92) == 0 do 0 else 1 end end
+    if plain == 1 do
+      if w == 0 do rx_e(7,p,if fl >= 16 do rx_qe(s,p) else Enum.count(s) end) else rx_at(p+w,st,rx_l(rx_b(fl,1),rx_r(s,p,w))) end
+    else
+      if c == 40 do rx_gp(s,p,st) else if c == 91 do rx_cl(s,p,st) else if c == 92 do rx_bs(s,p,st) else
+        if c == 94 do rx_at(p+1,st,b[5,0,0,7,13-2*rx_b(fl,2)]) else if c == 36 do rx_at(p+1,st,b[5,0,0,7,14-2*rx_b(fl,2)]) else rx_at(p+1,st,b[4,0,0,5+rx_b(fl,4)]) end end
+      end end end
+    end
+  end
+  # Where the text after \Q that holds p stops: at its \E or at the end.
+  def rx_qe(s: bytes, p: integer): integer do
+    q = rx_ix(s,p,Enum.count(s),92)
+    if q < 0 do Enum.count(s) else if Enum.at(s,q+1,0) == 69 do q else rx_qe(s,q+1) end end
+  end
+  # A group at p, a parenthesis that does not only set flags.
+  def rx_gp(s: bytes, p: integer, st: bytes): bytes do
+    g = if Enum.at(s,p+1,0) == 63 do rx_fl(s,p,Enum.at(st,0,0)) else rx_j(b[1],rx_3(p+1),b[0,0,0,0,0,0]) end
+    if Enum.at(g,0,0) == 0 do g else rx_g2(s,st,g) end
+  end
+  def rx_g2(s: bytes, st: bytes, g: bytes): bytes do
+    n = Enum.count(s)
+    cap = if Enum.at(g,0,0) == 1 do 1 else 0 end
+    k = rx_al(s,rx_g(g,1),if cap == 1 do Enum.concat(rx_s(st,0,1),rx_3(rx_g(st,1)+1)) else Enum.concat(rx_s(g,4,5),rx_s(st,1,4)) end)
+    e = rx_g(k,1)
+    st3 = Enum.concat(rx_s(st,0,1),rx_s(k,5,8))
+    name = rx_s(s,rx_g(g,4),rx_g(g,7))
+    if Enum.at(k,0,0) == 0 do k else if e >= n do rx_e(9,0,n) else
+      if cap == 0 do rx_k(e+1,st3,rx_s(k,8,16),rx_nd(k)) else
+        rx_lm(s,rx_k(e+1,st3,rx_j(rx_3(rx_g(k,8)+1),rx_3(rx_mi(rx_g(k,11)+2,3355444)),rx_s(k,14,16)),rx_j(rx_3(Enum.count(k)-16+9+Enum.count(name)),Enum.concat(b[8],rx_3(rx_g(st,1)+1)),rx_j(rx_2(Enum.count(name)),name,rx_nd(k)))))
+      end
+    end end
+  end
+  # A parsed node with its position and flags changed.
+  def rx_pf(k: bytes, p: integer, fl: integer): bytes do rx_j(Enum.concat(b[1],rx_3(p)),b[fl],rx_s(k,5,Enum.count(k))) end
+  def rx_bd(mn: integer, mx: integer): integer do
+    if mn > 1000 do 1 else if mx == 65535 do 0 else if mx > 1000 do 1 else if mn > mx do 1 else 0 end end end end
+  end
+  # The repetition operators after the node k, and the flag settings among
+  # them. lr: where the operator before starts, -1 when another thing came
+  # between (repeat).
+  def rx_po(s: bytes, k: bytes, lr: integer): bytes do
+    n = Enum.count(s)
+    p = rx_g(k,1)
+    fl = Enum.at(k,4,0)
+    c = Enum.at(s,p,0)
+    e = Enum.at(s,p+1,0)
+    rp = if c == 123 do rx_rp(s,p) else b[] end
+    g = if c != 40 do b[] else if e != 63 do b[] else if fl >= 16 do b[] else rx_fl(s,p,fl) end end end
+    if Enum.at(k,0,0) == 0 do k else
+      if fl >= 16 do
+        if p >= n do rx_pf(k,p,fl-16) else if c != 92 do k else if e != 69 do k else rx_po(s,rx_pf(k,p+2,fl-16),-1) end end end
+      else
+        if p >= n do k else
+          if (c-42)*(c-43)*(c-63) == 0 do rx_po(s,rx_ap(s,k,rx_j(b[if c == 42 do 0 else if c == 43 do 1 else 2 end end,0,0,0,0],rx_3(p),rx_3(p+1)),lr),p) else
+            if Enum.count(rp) > 0 do
+              if rx_bd(rx_h(rp,3),rx_h(rp,5)) == 1 do rx_e(6,p,rx_g(rp,0)) else rx_po(s,rx_ap(s,k,rx_j(Enum.concat(b[3],rx_s(rp,3,7)),rx_3(p),rx_s(rp,0,3)),lr),p) end
+            else
+              if Enum.at(g,0,0) == 3 do rx_po(s,rx_pf(k,rx_g(g,1),Enum.at(g,4,0)),-1) else
+                if c != 92 do k else if e != 81 do k else rx_po(s,rx_pf(k,p+2,fl+16),-1) end end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  # The node k repeated. o: the operator (0 star, 1 plus, 2 quest, 3 a
+  # count), its two numbers, where it starts and where it stops.
+  def rx_ap(s: bytes, k: bytes, o: bytes, lr: integer): bytes do
+    kind = Enum.at(o,0,0)
+    mn = rx_h(o,1)
+    mx = rx_h(o,3)
+    e = rx_g(o,8)
+    q = if Enum.at(s,e,0) == 63 do 1 else 0 end
+    u = rx_b(Enum.at(k,4,0),8)
+    z = rx_g(k,11)
+    r = rx_h(k,14)
+    m = if mx == 65535 do mn else mx end
+    zz = if kind == 0 do z+2 else if kind < 3 do z+1 else if mx == 65535 do if mn == 0 do z+2 else 1+mn*z end else mx*z+mx-mn end end end
+    rr = if kind < 3 do r else if mx == 0 do 0 else if m == 0 do r else rx_mi(rx_mx(m,m*r),1001) end end end
+    node = rx_j(rx_3(Enum.count(k)-16+10),rx_j(b[9,kind,u+q-2*u*q],rx_2(mn),rx_2(mx)),rx_nd(k))
+    made = rx_lm(s,rx_k(e+q,rx_st(k),rx_j(rx_3(rx_g(k,8)+1),rx_3(rx_mi(rx_mx(zz,1),3355444)),rx_2(rr)),node))
+    if lr >= 0 do rx_e(5,lr,e+q) else if Enum.at(made,0,0) == 0 do made else
+      if kind < 3 do made else if rr <= 1000 do made else if rx_mx(mn,m) < 2 do made else rx_e(6,rx_g(o,5),e+q) end end end
+    end end
+  end
+  # The run t with its position and flags changed, and ended.
+  def rx_sr(t: bytes, p: integer, fl: integer): bytes do rx_j(Enum.concat(b[1],rx_3(p)),b[fl],rx_s(t,4,21)) end
+  def rx_se(t: bytes): bytes do rx_j(Enum.concat(b[1],rx_s(t,0,7)),b[1],rx_s(t,8,21)) end
+  # A step of a concatenation: its end, a flag setting, or an item.
+  def rx_s1(s: bytes, t: bytes): bytes do
+    n = Enum.count(s)
+    p = rx_g(t,0)
+    fl = Enum.at(t,3,0)
+    c = Enum.at(s,p,0)
+    e = Enum.at(s,p+1,0)
+    rp = if c == 123 do if fl >= 16 do b[] else rx_rp(s,p) end else b[] end
+    g = if c != 40 do b[] else if e != 63 do b[] else if fl >= 16 do b[] else rx_fl(s,p,fl) end end end
+    if fl >= 16 do
+      if p >= n do rx_sr(t,p,fl-16) else if c != 92 do rx_s2(s,t) else if e != 69 do rx_s2(s,t) else rx_sr(t,p+2,fl-16) end end end
+    else
+      if p >= n do rx_se(t) else if (c-124)*(c-41) == 0 do rx_se(t) else
+        if Enum.count(g) > 0 do
+          if Enum.at(g,0,0) == 0 do g else if Enum.at(g,0,0) == 3 do rx_sr(t,rx_g(g,1),Enum.at(g,4,0)) else rx_s2(s,t) end end
+        else
+          if c == 92 do if e == 81 do rx_sr(t,p+2,fl+16) else rx_s2(s,t) end else
+            if (c-42)*(c-43)*(c-63) == 0 do rx_e(10,p,p+1+if e == 63 do 1 else 0 end) else
+              if Enum.count(rp) == 0 do rx_s2(s,t) else
+                if rx_bd(rx_h(rp,3),rx_h(rp,5)) == 1 do rx_e(6,p,rx_g(rp,0)) else rx_e(10,p,rx_g(rp,0)+if Enum.at(s,rx_g(rp,0),0) == 63 do 1 else 0 end) end
+              end
+            end
+          end
+        end
+      end end
+    end
+  end
+  # An item: the thing at the position, the operators after it, and what
+  # the concatenation keeps of it: how many nodes Go's parser would hold
+  # for it so far (a run of literal characters is one), whether the last
+  # is such a character (1, 2 under (?i)) and whether it joins the one
+  # before, then the greatest height, the sizes and the copies, and 2 once
+  # there is more than one node.
+  def rx_s2(s: bytes, t: bytes): bytes do
+    it = rx_po(s,rx_am(s,rx_g(t,0),rx_s(t,3,7)),-1)
+    op = Enum.at(it,19,0)
+    lc = if (op-3)*(op-12) == 0 do 1+Enum.at(it,20,0) else 0 end
+    h = if op == 10 do rx_g(it,8)-1 else rx_g(it,8) end
+    acc = rx_j(b[0,rx_mi(Enum.at(t,8,0)-Enum.at(t,10,0)+1,3),lc,if lc == 0 do 0 else if lc == Enum.at(t,9,0) do 1 else 0 end end],rx_3(rx_mx(rx_g(t,11),h)),rx_3(rx_mi(rx_g(t,14)+rx_g(it,11),3355444)))
+    if Enum.at(it,0,0) == 0 do it else
+      rx_j(rx_s(it,0,8),Enum.concat(acc,rx_2(rx_mx(rx_h(t,17),rx_h(it,14)))),Enum.concat(b[0,rx_mi(Enum.at(t,20,0)+1,2)],rx_nd(it)))
+    end
+  end
+  # The concatenation from p (concat).
+  def rx_sq(s: bytes, p: integer, st: bytes): bytes do
+    r = rx_dr(s,rx_t(p,st),1,0)
+    n = Enum.at(r,9,0)-Enum.at(r,11,0)
+    q = rx_g(r,1)
+    nodes = rx_s(r,22,Enum.count(r))
+    one = if Enum.at(nodes,3,0) == 10 do 1 else 0 end
+    if Enum.at(r,0,0) == 0 do r else
+      if n == 0 do rx_at(q,rx_st(r),b[4,0,0,1]) else
+        if n == 1 do
+          if Enum.at(r,21,0) > 1 do rx_k(q,rx_st(r),rx_j(b[1,0,0],rx_s(r,15,18),b[0,0]),rx_j(rx_3(5+Enum.count(nodes)),b[12,Enum.at(r,10,0)-1],nodes)) else
+            rx_k(q,rx_st(r),Enum.concat(rx_3(rx_g(r,12)+one),rx_s(r,15,20)),nodes)
+          end
+        else
+          rx_lm(s,rx_k(q,rx_st(r),rx_j(rx_3(rx_g(r,12)+1),rx_3(rx_mx(rx_g(r,15),1)),rx_s(r,18,20)),rx_j(rx_3(4+Enum.count(nodes)),b[10],nodes)))
+        end
+      end
+    end
+  end
+  # A step of an alternation: a branch and the bar after it.
+  def rx_a1(s: bytes, t: bytes): bytes do
+    k = rx_sq(s,rx_g(t,0),rx_s(t,3,7))
+    e = rx_g(k,1)
+    cnt = Enum.at(t,8,0)
+    bar = if e >= Enum.count(s) do 0 else if Enum.at(s,e,0) == 124 do 1 else 0 end end
+    h = if Enum.at(k,19,0) == 11 do rx_g(k,8)-1 else rx_g(k,8) end
+    acc = rx_j(b[1-bar,rx_mi(cnt+1,2),0,0],rx_3(rx_mx(rx_g(t,11),h)),rx_3(rx_mi(rx_g(t,14)+rx_g(k,11)+if cnt > 0 do 1 else 0 end,3355444)))
+    if Enum.at(k,0,0) == 0 do k else
+      rx_j(rx_j(b[1],rx_3(e+bar),rx_st(k)),Enum.concat(acc,rx_2(rx_mx(rx_h(t,17),rx_h(k,14)))),Enum.concat(b[0,0],rx_nd(k)))
+    end
+  end
+  # The alternation from p, up to a closing parenthesis or the end
+  # (alternate).
+  def rx_al(s: bytes, p: integer, st: bytes): bytes do
+    r = rx_dr(s,rx_t(p,st),1,1)
+    q = rx_g(r,1)
+    nodes = rx_s(r,22,Enum.count(r))
+    one = if Enum.at(nodes,3,0) == 11 do 1 else 0 end
+    if Enum.at(r,0,0) == 0 do r else
+      if Enum.at(r,9,0) == 1 do rx_k(q,rx_st(r),Enum.concat(rx_3(rx_g(r,12)+one),rx_s(r,15,20)),nodes) else
+        rx_lm(s,rx_k(q,rx_st(r),rx_j(rx_3(rx_g(r,12)+1),rx_3(rx_mx(rx_g(r,15),1)),rx_s(r,18,20)),rx_j(rx_3(4+Enum.count(nodes)),b[11],nodes)))
+      end
+    end
+  end
+  # The program of a node (Simplify and Compile). Generated code: 1 when it
+  # can match the empty string, the next number for a mark, the code.
+  # Jumps are relative to their own instruction, plus 8388608. ctx: 1 inside
+  # a loop whose body can match the empty string, where every place two
+  # paths meet gets a mark (instruction 18), so that the matcher can stop a
+  # path that comes back to it without having moved, as Go's does.
+  def rx_gk(nul: integer, nid: integer, code: bytes): bytes do rx_j(b[nul],rx_3(nid),code) end
+  def rx_cd(g: bytes): bytes do rx_s(g,4,Enum.count(g)) end
+  def rx_lc(r: integer, f: integer): bytes do
+    fold = if f == 0 do 0 else if r >= 128 do 1 else if (r-65)*(90-r) >= 0 do 1 else if (r-97)*(122-r) >= 0 do 1 else 0 end end end end
+    o = if fold == 1 do rx_ob(r) else b[] end
+    if if Enum.count(o) > 6 do 0 else if fold == 0 do 1 else if rx_g(o,0) == rx_g(o,3) do 1 else 0 end end end == 1 do if r < 128 do b[1,r] else Enum.concat(b[2],rx_3(r)) end else
+      if r >= 128 do rx_j(b[6],rx_3(rx_rn(o)),o) else if Enum.count(o) > 12 do rx_j(b[6],rx_3(rx_rn(o)),o) else b[3,if r < 97 do r+32 else r end] end end
+    end
+  end
+  def rx_gn(t: bytes, at: integer, ctx: integer, nid: integer): bytes do
+    op = Enum.at(t,at+3,0)
+    len = rx_g(t,at)
+    if op == 3 do rx_gk(0,nid,rx_lc(rx_g(t,at+5),Enum.at(t,at+4,0))) else if op == 4 do rx_gk(0,nid,rx_j(b[6],rx_3(rx_q(len-4,6)),rx_s(t,at+4,at+len))) else
+      if op == 5 do rx_gk(0,nid,b[5]) else if op == 6 do rx_gk(0,nid,b[4]) else if op == 7 do rx_gk(1,nid,b[Enum.at(t,at+4,0)]) else
+        if op == 8 do rx_g8(t,at,rx_gn(t,at+9+rx_h(t,at+7),ctx,nid)) else if op == 9 do rx_g9(t,at,ctx,nid) else
+          if op == 10 do rx_gs(t,at+4,at+len,ctx,nid) else if op == 12 do rx_gs(t,at+5,at+len,ctx,nid) else
+            if op == 11 do rx_go(rx_gs(t,at+4,at+len,ctx+2,nid),ctx) else rx_gk(1,nid,b[]) end
+          end end
+        end end
+      end end end
+    end end
+  end
+  def rx_g8(t: bytes, at: integer, g: bytes): bytes do
+    i = rx_g(t,at+4)*2
+    rx_gk(Enum.at(g,0,0),rx_g(g,1),rx_j(Enum.concat(b[10],rx_3(i)),rx_cd(g),Enum.concat(b[10],rx_3(i+1))))
+  end
+  def rx_go(g: bytes, ctx: integer): bytes do
+    if ctx == 0 do g else rx_gk(Enum.at(g,0,0),rx_g(g,1)+1,rx_j(rx_cd(g),b[18],rx_s(g,1,4))) end
+  end
+  # The nodes from a up to z one after the other (cm below 2) or as the
+  # branches of an alternation (cm 2 and 3), a doubling number at a time:
+  # nullable, next mark, the node after, code.
+  def rx_gq(t: bytes, a: integer, z: integer, cm: integer, nid: integer, k: integer): bytes do
+    if k <= 1 do
+      g = rx_gn(t,a,if cm >= 2 do cm-2 else cm end,nid)
+      rx_j(rx_s(g,0,4),rx_3(a+rx_g(t,a)),rx_cd(g))
+    else
+      x = rx_gq(t,a,z,cm,nid,rx_q(k,2))
+      if rx_g(x,4) >= z do x else rx_gm(x,rx_gq(t,rx_g(x,4),z,cm,rx_g(x,1),k-rx_q(k,2)),cm) end
+    end
+  end
+  def rx_gm(x: bytes, y: bytes, cm: integer): bytes do
+    lx = Enum.count(x)-7
+    ly = Enum.count(y)-7
+    if cm < 2 do rx_j(b[Enum.at(x,0,0)*Enum.at(y,0,0)],rx_s(y,1,7),Enum.concat(rx_s(x,7,7+lx),rx_s(y,7,7+ly))) else
+      rx_j(b[rx_mx(Enum.at(x,0,0),Enum.at(y,0,0))],rx_s(y,1,7),Enum.concat(rx_j(b[7],rx_3(lx+8+8388608),rx_s(x,7,7+lx)),rx_j(b[9],rx_3(ly+4+8388608),rx_s(y,7,7+ly))))
+    end
+  end
+  def rx_gd(t: bytes, x: bytes, z: integer, cm: integer, k: integer): bytes do
+    if rx_g(x,4) >= z do x else rx_gd(t,rx_gm(x,rx_gq(t,rx_g(x,4),z,cm,rx_g(x,1),k),cm),z,cm,k*2) end
+  end
+  def rx_gs(t: bytes, a: integer, z: integer, cm: integer, nid: integer): bytes do
+    x = rx_gd(t,rx_gq(t,a,z,cm,nid,1),z,cm,1)
+    if a >= z do rx_gk(1,nid,b[]) else Enum.concat(rx_s(x,0,4),rx_s(x,7,Enum.count(x))) end
+  end
+  # What Simplify makes of a node: 1 the empty match, 2 and 3 a star, 4 and
+  # 5 a plus, 6 and 7 a quest (the odd ones lazy), 0 anything else.
+  def rx_tp(t: bytes, at: integer): integer do
+    op = Enum.at(t,at+3,0)
+    k = Enum.at(t,at+4,0)
+    lz = Enum.at(t,at+5,0)
+    mn = rx_h(t,at+6)
+    mx = rx_h(t,at+8)
+    c = if op == 9 do rx_tp(t,at+10) else 0 end
+    if op == 1 do 1 else if op != 9 do 0 else
+      if k < 3 do if c == 1 do 1 else 2*k+2+lz end else
+        if mn+mx == 0 do 1 else
+          if mx == 65535 do if mn > 1 do 0 else if c == 1 do 1 else 2*mn+2+lz end end else
+            if mn > 0 do if mx == 1 do c else 0 end else if mx > 1 do 6+lz else if c == 1 do 1 else 6+lz end end end
+          end
+        end
+      end
+    end end
+  end
+  # 1 when a node can match the empty string, as Go's compiler has it.
+  def rx_nu(t: bytes, at: integer): integer do
+    op = Enum.at(t,at+3,0)
+    k = Enum.at(t,at+4,0)
+    if (op-1)*(op-7) == 0 do 1 else if op == 8 do rx_nu(t,at+9+rx_h(t,at+7)) else
+      if op == 9 do if rx_tp(t,at) == 1 do 1 else if (k-0)*(k-2) == 0 do 1 else if k == 1 do rx_nu(t,at+10) else if rx_h(t,at+6) == 0 do 1 else rx_nu(t,at+10) end end end end else
+        if op == 10 do rx_n1(t,at+4,at+rx_g(t,at),0) else if op == 11 do rx_n1(t,at+4,at+rx_g(t,at),1) else 0 end end
+      end
+    end end
+  end
+  def rx_n1(t: bytes, a: integer, z: integer, any: integer): integer do
+    if a >= z do 1-any else if rx_nu(t,a) == any do any else rx_n1(t,a+rx_g(t,a),z,any) end end
+  end
+  # 1 for a node that is one instruction taking one character.
+  def rx_sc(t: bytes, at: integer): integer do
+    op = Enum.at(t,at+3,0)
+    if (op-3)*(op-4)*(op-5)*(op-6) == 0 do 1 else 0 end
+  end
+  def rx_ck(nid: integer): bytes do Enum.concat(b[18],rx_3(nid)) end
+  def rx_jp(op: integer, rel: integer): bytes do Enum.concat(b[op],rx_3(rel+8388608)) end
+  # node* (k 0), node+ (k 1) and node? (k 2) for the node at c.
+  def rx_gx(t: bytes, c: integer, ctx: integer, nid: integer, lz: integer, k: integer): bytes do
+    tc = rx_tp(t,c)
+    nul = rx_nu(t,c)
+    ins = if k == 0 do nul else if k == 1 do rx_mx(nul,ctx) else 0 end end
+    mark = if k == 2 do 0 else rx_mx(ins,ctx) end
+    g = rx_gn(t,c,if k == 2 do ctx else rx_mx(ins,ctx) end,nid+mark)
+    code = rx_cd(g)
+    size = Enum.count(code)
+    head = if mark == 1 do rx_ck(nid) else b[] end
+    aft = rx_g(g,1)
+    if tc == 1 do rx_gn(t,c,ctx,nid) else if tc == 2*k+2+lz do rx_gn(t,c,ctx,nid) else
+      if k == 2 do rx_go(rx_gk(1,aft,Enum.concat(rx_jp(7+lz,4+size),code)),ctx) else
+        if rx_sc(t,c) == 1 do
+          if k == 1 do rx_gk(0,nid+ctx,rx_j(if ctx == 1 do rx_ck(nid) else b[] end,code,Enum.concat(b[19+lz],code))) else
+            if ctx == 1 do rx_gk(1,nid+1,rx_j(b[21+lz],rx_3(nid),code)) else rx_gk(1,nid,Enum.concat(b[19+lz],code)) end
+          end
+        else
+          if k == 1 do rx_gk(nul,aft,rx_j(head,code,rx_jp(8-lz,0-size-4*mark))) else
+            if nul == 1 do rx_go(rx_gk(1,aft,rx_j(Enum.concat(rx_jp(7+lz,12+size),head),code,rx_jp(8-lz,0-size-4))),ctx) else
+              rx_gk(1,aft,rx_j(Enum.concat(head,rx_jp(7+lz,8+size)),code,rx_jp(9,0-size-4-4*mark)))
+            end
+          end
+        end
+      end
+    end end
+  end
+  # code n times over.
+  def rx_dp(code: bytes, n: integer): bytes do
+    h = if n < 2 do b[] else rx_dp(code,rx_q(n,2)) end
+    if n <= 0 do b[] else if n == 1 do code else if rx_q(n,2)*2 == n do Enum.concat(h,h) else rx_j(h,h,code) end end end
+  end
+  # The node at c n times over.
+  def rx_gc(t: bytes, c: integer, ctx: integer, nid: integer, n: integer): bytes do
+    g = if n <= 0 do rx_gk(1,nid,b[]) else rx_gn(t,c,ctx,nid) end
+    x = if n < 2 do g else if rx_g(g,1) == nid do g else rx_gc(t,c,ctx,nid,rx_q(n,2)) end end
+    y = if n < 2 do g else if rx_g(g,1) == nid do g else rx_gc(t,c,ctx,rx_g(x,1),n-rx_q(n,2)) end end
+    if n < 2 do g else
+      if rx_g(g,1) == nid do rx_gk(Enum.at(g,0,0),nid,rx_dp(rx_cd(g),n)) else rx_gk(Enum.at(g,0,0),rx_g(y,1),Enum.concat(rx_cd(x),rx_cd(y))) end
+    end
+  end
+  # The optional copies of node{n,m} past the n: levels i up to i+k of
+  # node(node(node)?)?. o: ctx, lazy, 1 when the innermost stands bare, the
+  # size of a copy and the number of levels (3 bytes each).
+  def rx_gh(t: bytes, c: integer, o: bytes, nid: integer, i: integer, k: integer): bytes do
+    j = rx_g(o,6)
+    if k <= 1 do
+      g = rx_gn(t,c,Enum.at(o,0,0),nid)
+      bare = if i == j-1 do Enum.at(o,2,0) else 0 end
+      Enum.concat(rx_3(rx_g(g,1)),if bare == 1 do rx_cd(g) else Enum.concat(rx_jp(7+Enum.at(o,1,0),(j-i)*(4+rx_g(o,3))-4*Enum.at(o,2,0)),rx_cd(g)) end)
+    else
+      x = rx_gh(t,c,o,nid,i,rx_q(k,2))
+      y = rx_gh(t,c,o,rx_g(x,0),i+rx_q(k,2),k-rx_q(k,2))
+      rx_j(rx_s(y,0,3),rx_s(x,3,Enum.count(x)),rx_s(y,3,Enum.count(y)))
+    end
+  end
+  def rx_g9(t: bytes, at: integer, ctx: integer, nid: integer): bytes do
+    k = Enum.at(t,at+4,0)
+    lz = Enum.at(t,at+5,0)
+    mn = rx_h(t,at+6)
+    mx = rx_h(t,at+8)
+    c = at+10
+    if rx_tp(t,at) == 1 do rx_gk(1,nid,b[]) else if k < 3 do rx_gx(t,c,ctx,nid,lz,k) else
+      if mx == 65535 do
+        if mn < 2 do rx_gx(t,c,ctx,nid,lz,mn) else rx_g7(rx_gc(t,c,ctx,nid,mn-1),t,c,b[ctx,lz]) end
+      else
+        if mn*mx == 1 do rx_gn(t,c,ctx,nid) else rx_g6(rx_gc(t,c,ctx,nid,mn),t,at,ctx) end
+      end
+    end end
+  end
+  def rx_g7(pre: bytes, t: bytes, c: integer, o: bytes): bytes do
+    g = rx_gx(t,c,Enum.at(o,0,0),rx_g(pre,1),Enum.at(o,1,0),1)
+    rx_gk(Enum.at(pre,0,0)*Enum.at(g,0,0),rx_g(g,1),Enum.concat(rx_cd(pre),rx_cd(g)))
+  end
+  def rx_g6(pre: bytes, t: bytes, at: integer, ctx: integer): bytes do
+    lz = Enum.at(t,at+5,0)
+    mn = rx_h(t,at+6)
+    j = rx_h(t,at+8)-mn
+    tc = rx_tp(t,at+10)
+    bare = if tc == 1 do 1 else if tc == 6+lz do 1 else 0 end end
+    size = Enum.count(rx_gn(t,at+10,ctx,0))-4
+    x = if j <= 0 do rx_3(rx_g(pre,1)) else rx_gh(t,at+10,rx_j(b[ctx,lz,bare],rx_3(size),rx_3(j)),rx_g(pre,1),0,j) end
+    made = rx_gk(if mn == 0 do 1 else Enum.at(pre,0,0) end,rx_g(x,0),Enum.concat(rx_cd(pre),rx_s(x,3,Enum.count(x))))
+    if j <= 0 do made else rx_go(made,ctx) end
+  end
+  # The names of the groups of a tree from at up to z: per named group its
+  # number (3 bytes), the length of its name (2) and the name. A step looks
+  # at up to left nodes and gives where the next one starts first.
+  def rx_nm(t: bytes, at: integer, z: integer, left: integer): bytes do
+    op = Enum.at(t,at+3,0)
+    nl = rx_h(t,at+7)
+    next = if op == 8 do at+9+nl else if op == 9 do at+10 else if (op-10)*(op-11) == 0 do at+4 else if op == 12 do at+5 else at+rx_g(t,at) end end end end
+    rest = if at >= z do b[] else if left == 0 do b[] else rx_nm(t,next,z,left-1) end end
+    if at >= z do rx_3(z) else if left == 0 do rx_3(at) else
+      if op != 8 do rest else if nl == 0 do rest else rx_j(rx_s(rest,0,3),rx_s(t,at+4,at+9+nl),rx_s(rest,3,Enum.count(rest))) end end
+    end end
+  end
+  def rx_nn(t: bytes, at: integer, acc: bytes): bytes do
+    r = rx_nm(t,at,Enum.count(t),64)
+    if at >= Enum.count(t) do acc else rx_nn(t,rx_g(r,0),Enum.concat(acc,rx_s(r,3,Enum.count(r)))) end
+  end
+  def rx_ms(c: integer): bytes do
+    if c == 1 do b[105,110,118,97,108,105,100,32,99,104,97,114,97,99,116,101,114,32,99,108,97,115,115,32,114,97,110,103,101] else if c == 2 do b[105,110,118,97,108,105,100,32,101,115,99,97,112,101,32,115,101,113,117,101,110,99,101] else if c == 3 do b[105,110,118,97,108,105,100,32,110,97,109,101,100,32,99,97,112,116,117,114,101] else if c == 4 do b[105,110,118,97,108,105,100,32,111,114,32,117,110,115,117,112,112,111,114,116,101,100,32,80,101,114,108,32,115,121,110,116,97,120] else if c == 5 do b[105,110,118,97,108,105,100,32,110,101,115,116,101,100,32,114,101,112,101,116,105,116,105,111,110,32,111,112,101,114,97,116,111,114] else if c == 6 do b[105,110,118,97,108,105,100,32,114,101,112,101,97,116,32,99,111,117,110,116] else if c == 7 do b[105,110,118,97,108,105,100,32,85,84,70,45,56] else if c == 8 do b[109,105,115,115,105,110,103,32,99,108,111,115,105,110,103,32,93] else if c == 9 do b[109,105,115,115,105,110,103,32,99,108,111,115,105,110,103,32,41] else if c == 10 do b[109,105,115,115,105,110,103,32,97,114,103,117,109,101,110,116,32,116,111,32,114,101,112,101,116,105,116,105,111,110,32,111,112,101,114,97,116,111,114] else if c == 11 do b[116,114,97,105,108,105,110,103,32,98,97,99,107,115,108,97,115,104,32,97,116,32,101,110,100,32,111,102,32,101,120,112,114,101,115,115,105,111,110] else if c == 12 do b[117,110,101,120,112,101,99,116,101,100,32,41] else if c == 13 do b[101,120,112,114,101,115,115,105,111,110,32,110,101,115,116,115,32,116,111,111,32,100,101,101,112,108,121] else b[101,120,112,114,101,115,115,105,111,110,32,116,111,111,32,108,97,114,103,101] end end end end end end end end end end end end end
+  end
+  # A pattern compiled: 1, then the number of groups with the whole match,
+  # where the program and the pattern's text start (3 bytes each), the
+  # names (rx_nm), the text and the program. For a pattern Go's parser
+  # refuses: 0, then its error's text.
+  def rx_compile(s: bytes): bytes do
+    n = Enum.count(s)
+    k = rx_al(s,0,b[0,0,0,0])
+    bad = if Enum.at(k,0,0) == 0 do k else if rx_g(k,1) < n do rx_e(12,0,n) else b[] end end
+    tree = rx_nd(k)
+    names = if Enum.count(bad) > 0 do b[] else rx_nn(tree,0,b[]) end
+    if Enum.count(bad) > 0 do rx_j(Enum.concat(b[0,101,114,114,111,114,32,112,97,114,115,105,110,103,32,114,101,103,101,120,112,58,32],rx_ms(Enum.at(bad,1,0))),b[58,32,96],Enum.concat(rx_s(s,rx_g(bad,2),rx_g(bad,5)),b[96])) else
+      rx_j(rx_j(Enum.concat(b[1],rx_3(rx_g(k,5)+1)),rx_3(9+Enum.count(names)+n),rx_3(9+Enum.count(names))),Enum.concat(names,s),Enum.concat(rx_cd(rx_gn(tree,0,0,0)),b[0]))
+    end
+  end
+  # A class is its ranges, six bytes each (first and last character), in
+  # order and apart, as Go's cleanClass leaves them.
+  def rx_rn(d: bytes): integer do rx_q(Enum.count(d),6) end
+  def rx_r1(lo: integer, hi: integer): bytes do
+    a = if lo < 65536 do 0 else rx_q(lo,65536) end
+    c = if lo-a*65536 < 256 do 0 else rx_q(lo-a*65536,256) end
+    e = if hi < 65536 do 0 else rx_q(hi,65536) end
+    f = if hi-e*65536 < 256 do 0 else rx_q(hi-e*65536,256) end
+    b[lo-a*65536-c*256,c,a,hi-e*65536-f*256,f,e]
+  end
+  # The first of the ranges a up to z of d that starts at key or after it.
+  def rx_lb(d: bytes, key: integer, a: integer, z: integer): integer do
+    m = a+rx_q(z-a,2)
+    if a >= z do a else if rx_g(d,m*6) < key do rx_lb(d,key,m+1,z) else rx_lb(d,key,a,m) end end
+  end
+  # The ranges xa up to xz of x and ya up to yz of y, each in order, as one
+  # run in order.
+  def rx_mg(x: bytes, xa: integer, xz: integer, y: bytes, ya: integer, yz: integer): bytes do
+    m = xa+rx_q(xz-xa,2)
+    j = rx_lb(y,rx_g(x,m*6),ya,yz)
+    if ya >= yz do rx_s(x,xa*6,xz*6) else if xa >= xz do rx_s(y,ya*6,yz*6) else
+      if rx_g(x,xz*6-6) <= rx_g(y,ya*6) do Enum.concat(rx_s(x,xa*6,xz*6),rx_s(y,ya*6,yz*6)) else if rx_g(y,yz*6-6) <= rx_g(x,xa*6) do Enum.concat(rx_s(y,ya*6,yz*6),rx_s(x,xa*6,xz*6)) else
+        if xz-xa < yz-ya do rx_mg(y,ya,yz,x,xa,xz) else rx_j(rx_mg(x,xa,m,y,ya,j),rx_s(x,m*6,m*6+6),rx_mg(x,m+1,xz,y,j,yz)) end
+      end end
+    end end
+  end
+  # The ranges a up to z of d in the order of their first characters.
+  def rx_so(d: bytes, a: integer, z: integer): bytes do
+    m = a+rx_q(z-a,2)
+    if z-a <= 1 do rx_s(d,a*6,z*6) else rx_m2(rx_so(d,a,m),rx_so(d,m,z)) end
+  end
+  def rx_m2(x: bytes, y: bytes): bytes do rx_mg(x,0,rx_rn(x),y,0,rx_rn(y)) end
+  # 2 when the ranges of d from i on are in order and apart, 1 when they
+  # are in order, else 0.
+  def rx_od(d: bytes, i: integer, n: integer, v: integer): integer do
+    if i >= n do v else if rx_g(d,i*6) < rx_g(d,i*6-6) do 0 else rx_od(d,i+1,n,if rx_g(d,i*6) > rx_g(d,i*6-3)+1 do v else 1 end) end end
+  end
+  # What is gathered a doubling number of steps at a time: ranges, then 1
+  # once it has ended and a state of nine bytes. mode 0: the ranges in
+  # order x with those that meet or touch made one (state: the next range,
+  # the first character of the one being made plus one, its last). mode 1:
+  # the general categories of the tables x that y has a 1 for (rx_pw).
+  def rx_gt(x: bytes, y: bytes, r: bytes, k: integer, mode: integer): bytes do
+    e = Enum.count(r)-10
+    if k <= 1 do if mode == 0 do rx_cw(x,rx_g(r,e+1),rx_g(r,e+4)-1,rx_g(r,e+7),16) else rx_pw(x,y,rx_g(r,e+1),rx_g(r,e+4),rx_g(r,e+7)-1,16) end else
+      a = rx_gt(x,y,r,rx_q(k,2),mode)
+      if Enum.at(a,Enum.count(a)-10,0) == 1 do a else rx_g3(a,rx_gt(x,y,a,k-rx_q(k,2),mode)) end
+    end
+  end
+  def rx_g3(a: bytes, c: bytes): bytes do Enum.concat(rx_s(a,0,Enum.count(a)-10),c) end
+  def rx_ga(x: bytes, y: bytes, r: bytes, k: integer, mode: integer): bytes do
+    if Enum.at(r,Enum.count(r)-10,0) == 1 do rx_s(r,0,Enum.count(r)-10) else rx_ga(x,y,rx_g3(r,rx_gt(x,y,r,k,mode)),k*2,mode) end
+  end
+  def rx_cw(d: bytes, i: integer, lo: integer, hi: integer, left: integer): bytes do
+    l = rx_g(d,i*6)
+    h = rx_g(d,i*6+3)
+    if i >= rx_rn(d) do Enum.concat(if lo < 0 do b[] else rx_r1(lo,hi) end,b[1,0,0,0,0,0,0,0,0,0]) else
+      if lo < 0 do rx_cw(d,i+1,l,h,left) else if l <= hi+1 do rx_cw(d,i+1,lo,rx_mx(hi,h),left) else
+        if left == 0 do rx_j(Enum.concat(b[0],rx_3(i)),rx_3(lo+1),rx_3(hi)) else Enum.concat(rx_r1(lo,hi),rx_cw(d,i+1,l,h,left-1)) end
+      end end
+    end
+  end
+  # Ranges in any order as Go's cleanClass leaves them.
+  def rx_cu(d: bytes): bytes do
+    v = if Enum.count(d) <= 6 do 2 else rx_od(d,1,rx_rn(d),2) end
+    if v == 2 do d else rx_ga(if v == 1 do d else rx_so(d,0,rx_rn(d)) end,b[],b[0,0,0,0,0,0,0,0,0,0],1,0) end
+  end
+  # All that the ranges d leave out: the gaps i up to i+k of its n ranges.
+  def rx_n2(d: bytes, i: integer, k: integer, n: integer): bytes do
+    lo = if i == 0 do 0 else rx_g(d,i*6-3)+1 end
+    hi = if i == n do 1114111 else rx_g(d,i*6)-1 end
+    if k <= 0 do b[] else if k == 1 do if lo > hi do b[] else rx_r1(lo,hi) end else
+      Enum.concat(rx_n2(d,i,rx_q(k,2),n),rx_n2(d,i+rx_q(k,2),k-rx_q(k,2),n))
+    end end
+  end
+  def rx_ng(d: bytes): bytes do rx_n2(d,0,rx_rn(d)+1,rx_rn(d)) end
+  # A number of the tables at p, and where the next thing starts.
+  def rx_vv(t: bytes, p: integer): integer do
+    c = Enum.at(t,p,0)
+    if c < 128 do c else c-128+128*rx_vv(t,p+1) end
+  end
+  def rx_vn(t: bytes, p: integer): integer do if Enum.at(t,p,0) < 128 do p+1 else rx_vn(t,p+1) end end
+  # Every other character from lo up to hi, each a range.
+  def rx_sg(lo: integer, hi: integer): bytes do
+    m = lo+rx_q(rx_q(hi-lo,2),2)*2
+    if lo > hi do b[] else if lo == hi do rx_r1(lo,lo) else Enum.concat(rx_sg(lo,m),rx_sg(m+2,hi)) end end
+  end
+  # Where the characters lo up to hi go that are among s, s+step, ..., e,
+  # moved by shift; nothing when that is among lo up to hi again.
+  def rx_im(o: bytes, s: integer, e: integer, shift: integer): bytes do
+    step = Enum.at(o,6,0)
+    a = rx_mx(rx_g(o,0),s)
+    z = rx_mi(rx_g(o,3),e)
+    a2 = if step == 1 do a else a+a-s-rx_q(a-s,2)*2 end
+    z2 = if step == 1 do z else z-(z-s-rx_q(z-s,2)*2) end
+    if a > z do b[] else if rx_mi(a2+shift-rx_g(o,0),rx_g(o,3)-z2-shift) >= 0 do b[] else if step == 1 do rx_r1(a+shift,z+shift) else rx_sg(a2+shift,z2+shift) end end end
+  end
+  # The partners of the characters lo up to hi among the pairs of the
+  # tables from p; first: the first character of the run before.
+  def rx_fi(t: bytes, lo: integer, hi: integer, p: integer, first: integer): bytes do
+    s = first+rx_vv(t,p)
+    p1 = rx_vn(t,p)
+    c = rx_vv(t,p1)
+    p2 = rx_vn(t,p1)
+    d = rx_vv(t,p2)
+    step = 1+c-rx_q(c,2)*2
+    e = s+rx_q(c,2)*step
+    if p >= rx_g(t,9) do b[] else if s > hi do b[] else
+      if rx_mi(hi,e+d) < rx_mx(lo,s) do rx_fi(t,lo,hi,rx_vn(t,p2),s) else Enum.concat(rx_f2(rx_j(rx_3(lo),rx_3(hi),b[step]),s,e,d),rx_fi(t,lo,hi,rx_vn(t,p2),s)) end
+    end end
+  end
+  def rx_f2(o: bytes, s: integer, e: integer, d: integer): bytes do Enum.concat(rx_im(o,s,e,d),rx_im(o,s+d,e+d,0-d)) end
+  # 1 when one of the n characters at p is among lo up to hi.
+  def rx_b1(t: bytes, lo: integer, hi: integer, p: integer, n: integer): integer do
+    if n == 0 do 0 else if (rx_g(t,p)-lo)*(hi-rx_g(t,p)) >= 0 do 1 else rx_b1(t,lo,hi,p+3,n-1) end end
+  end
+  def rx_b4(t: bytes, p: integer, n: integer): bytes do
+    if n == 0 do b[] else rx_j(rx_s(t,p,p+3),rx_s(t,p,p+3),rx_b4(t,p+3,n-1)) end
+  end
+  # The groups of three and four that fold together and hold one of lo up
+  # to hi.
+  def rx_bo(t: bytes, lo: integer, hi: integer, p: integer): bytes do
+    n = Enum.at(t,p,0)
+    if p >= rx_g(t,12) do b[] else
+      if rx_b1(t,lo,hi,p+1,n) == 0 do rx_bo(t,lo,hi,p+1+n*3) else Enum.concat(rx_b4(t,p+1,n),rx_bo(t,lo,hi,p+1+n*3)) end
+    end
+  end
+  # What the ranges a up to z of d fold to (unicode.SimpleFold): not in order.
+  def rx_fa(t: bytes, d: bytes, a: integer, z: integer): bytes do
+    m = a+rx_q(z-a,2)
+    if a >= z do b[] else
+      if z-a == 1 do Enum.concat(rx_fi(t,rx_g(d,a*6),rx_g(d,a*6+3),rx_g(t,6),0),rx_bo(t,rx_g(d,a*6),rx_g(d,a*6+3),rx_g(t,9))) else Enum.concat(rx_fa(t,d,a,m),rx_fa(t,d,m,z)) end
+    end
+  end
+  # The ranges d with all they fold to.
+  def rx_fd(d: bytes): bytes do rx_cu(Enum.concat(d,rx_fa(rx_tb(),d,0,rx_rn(d)))) end
+  # The general categories of the tables t from p on as runs, the first
+  # at character c: the ranges of those m has a 1 for. a: where a range is
+  # open from, -1 for none. A step gives up to left ranges after its state:
+  # where it stopped, the character there and a plus one.
+  def rx_pw(t: bytes, m: bytes, p: integer, c: integer, a: integer, left: integer): bytes do
+    v = Enum.at(t,p,0)
+    id = rx_q(v,8)
+    n = if v-id*8 < 7 do v-id*8+1 else 8+rx_vv(t,p+1) end
+    q = if v-id*8 < 7 do p+1 else rx_vn(t,p+1) end
+    if p >= rx_g(t,15) do Enum.concat(if a < 0 do b[] else rx_r1(a,c-1) end,b[1,0,0,0,0,0,0,0,0,0]) else
+      if Enum.at(m,id,0) == 1 do rx_pw(t,m,q,c+n,if a < 0 do c else a end,left) else if a < 0 do rx_pw(t,m,q,c+n,-1,left) else
+        if left == 0 do rx_j(Enum.concat(b[0],rx_3(p)),rx_3(c),rx_3(a+1)) else Enum.concat(rx_r1(a,c-1),rx_pw(t,m,q,c+n,-1,left-1)) end
+      end end
+    end
+  end
+  def rx_z(n: integer): bytes do if n <= 0 do b[] else if n == 1 do b[0] else Enum.concat(rx_z(rx_q(n,2)),rx_z(n-rx_q(n,2))) end end end
+  # The ranges of a script: n pairs of numbers from p, after the character c.
+  def rx_sw(t: bytes, p: integer, z: integer, c: integer, left: integer): bytes do
+    lo = c+rx_vv(t,p)
+    hi = lo+rx_vv(t,rx_vn(t,p))
+    if p >= z do Enum.concat(rx_3(p),rx_3(c)) else if left == 0 do Enum.concat(rx_3(p),rx_3(c)) else
+      r = rx_sw(t,rx_vn(t,rx_vn(t,p)),z,hi,left-1)
+      rx_j(rx_s(r,0,6),rx_r1(lo,hi),rx_s(r,6,Enum.count(r)))
+    end end
+  end
+  def rx_sv(t: bytes, z: integer, r: bytes, acc: bytes): bytes do
+    if rx_g(r,0) >= z do Enum.concat(acc,rx_s(r,6,Enum.count(r))) else rx_sv(t,z,rx_sw(t,rx_g(r,0),z,rx_g(r,3),48),Enum.concat(acc,rx_s(r,6,Enum.count(r)))) end
+  end
+  # Where the script k starts among those from p.
+  def rx_sk(t: bytes, p: integer, k: integer): integer do
+    if k == 0 do p else rx_sk(t,rx_vn(t,p)+rx_vv(t,p),k-1) end
+  end
+  # The ranges of table id of \p{...}.
+  def rx_ut(id: integer): bytes do
+    t = rx_tb()
+    p = if id < 38 do 0 else if id >= 212 do 0 else rx_sk(t,rx_g(t,18),id-38) end end
+    if id == 212 do b[0,0,0,255,255,16] else if id == 213 do b[0,0,0,127,0,0] else
+      if id < 30 do rx_ga(t,rx_j(rx_z(id),b[1],rx_z(29-id)),rx_j(Enum.concat(b[0],rx_3(rx_g(t,12))),b[0,0,0],b[0,0,0]),1,1) else
+        if id < 38 do rx_ga(t,rx_s(t,rx_g(t,15)+(id-30)*30,rx_g(t,15)+(id-29)*30),rx_j(Enum.concat(b[0],rx_3(rx_g(t,12))),b[0,0,0],b[0,0,0]),1,1) else
+          rx_sv(t,rx_vn(t,p)+rx_vv(t,p),rx_sw(t,rx_vn(t,p),rx_vn(t,p)+rx_vv(t,p),0,0),b[])
+        end
+      end
+    end end
+  end
+  # The characters a character folds with, itself among them.
+  def rx_ob(r: integer): bytes do rx_fd(rx_r1(r,r)) end
+  # The ranges of \p{...} as rx_uc read it; f: 1 under (?i), where a class
+  # holds all its characters fold to, but for U+0345 in LC (table 32), which
+  # Go's tables leave out.
+  def rx_ur(u: bytes, f: integer): bytes do
+    id = Enum.at(u,5,0)
+    d = rx_ut(id)
+    e = if f == 0 do d else if id == 32 do rx_ng(rx_cu(Enum.concat(rx_ng(rx_fd(d)),b[69,3,0,69,3,0]))) else rx_fd(d) end end
+    if Enum.at(u,4,0) == 3 do rx_ng(e) else e end
+  end
+  # Native smoke test; assembled with the compiler.
+  def main() do System.halt(0) end
+end

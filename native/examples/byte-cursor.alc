@@ -1,0 +1,14 @@
+defmodule ByteCursor do
+  def sum(values: bytes, index: integer): integer do
+    if index >= Enum.count(values) do
+      0
+    else
+      Enum.at(values, index, 0) + sum(values, index + 1)
+    end
+  end
+
+  def main() do
+    values = b[0, 12, 30]
+    System.halt(sum(values, 0))
+  end
+end

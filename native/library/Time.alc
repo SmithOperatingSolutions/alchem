@@ -1,0 +1,94 @@
+# Time: times of day and the program clock, after the pinned runtime. The
+# struct and the functions named with two letters are in library/Date.alc,
+# which says how these files are written.
+#: new/4 needs Date.cm/2
+  def new(h: integer, m: integer, s: integer, u: integer): result[Time, string] do
+    if Date.cb([2000, 1, 1], [h, m, s, u]) do error("invalid time") else ok(%Time{hour: h, minute: m, second: s, microsecond: u}) end
+  end
+#: new/3 needs new/4
+  def new(h: integer, m: integer, s: integer): result[Time, string] do
+    Time.new(h, m, s, 0)
+  end
+#: new!/3 needs new/4
+  def new!(h: integer, m: integer, s: integer): Time do
+    case Time.new(h, m, s, 0) do
+      ok(a) -> a
+      error(e) -> raise(e)
+    end
+  end
+#: from_iso8601/1 needs Date.cr/2
+  def from_iso8601(s: string): result[Time, string] do
+    case Date.cr(s, 1) do
+      [h, m, c, u] -> ok(%Time{hour: h, minute: m, second: c, microsecond: u})
+      _ -> error("invalid time: "<>inspect(s))
+    end
+  end
+#: from_iso8601!/1 needs from_iso8601/1
+  def from_iso8601!(s: string): Time do
+    case Time.from_iso8601(s) do
+      ok(a) -> a
+      error(e) -> raise(e)
+    end
+  end
+#: to_iso8601/1 needs Date.cm/2
+  def to_iso8601(t: Time): string do
+    Date.ct([t.hour, t.minute, t.second, t.microsecond], "")
+  end
+#: to_string/1 needs Date.cm/2
+  def to_string(t: Time): string do
+    Date.ct([t.hour, t.minute, t.second, t.microsecond], "")
+  end
+#: diff/3 needs Date.cm/2
+  def diff(a: Time, b: Time, u: atom): integer do
+    Date.cp(Date.cg(a, b), u)
+  end
+#: diff/2 needs Date.cm/2
+  def diff(a: Time, b: Time): integer do
+    Date.cg(a, b)/1000000
+  end
+#: compare/2 needs Date.cm/2
+  def compare(a: Time, b: Time): atom do
+    Date.co(Date.cg(a, b), 0)
+  end
+#: before?/2 needs Date.cm/2
+  def before?(a: Time, b: Time): boolean do
+    Date.cg(a, b)<0
+  end
+#: after?/2 needs Date.cm/2
+  def after?(a: Time, b: Time): boolean do
+    Date.cg(a, b)>0
+  end
+#: add/3 needs Date.cm/2
+# The pinned runtime takes the amount modulo one more than the units in a
+# day.
+  def add(t: Time, a: integer, u: atom): Time do
+    n = Date.cp(86400000000, u)
+    Date.ck(t, a%(n+1)*(86400000000/n))
+  end
+#: add/2 needs Date.cm/2
+  def add(t: Time, s: integer): Time do
+    Date.ck(t, s%86400*1000000)
+  end
+#: truncate/2 needs Date.cm/2
+  def truncate(t: Time, p: atom): Time do
+    %Time{t | microsecond: Date.cc(t.microsecond, p)}
+  end
+#: shift/2 needs Date.cm/2
+  def shift(t: Time, b: Duration): Time do
+    if b.year != 0 or b.month != 0 or b.week != 0 or b.day != 0 do raise("a time is shifted by hours, minutes, seconds and microseconds only") end
+    [y, m, d, h, i, s, u] = Date.ch([1970, 1, 1, t.hour, t.minute, t.second, t.microsecond], [0, 0, 0, 0, b.hour, b.minute, b.second, b.microsecond])
+    %Time{hour: h, minute: i, second: s, microsecond: u}
+  end
+#: utc_now/0 needs Date.cm/2
+  def utc_now(): Time do
+    Date.ck(%Time{hour: 0, minute: 0, second: 0, microsecond: 0}, System.system_time()/1000%86400000000)
+  end
+#: now/0
+  def now(): integer do
+    System.system_time()/1000000
+  end
+#: monotonic/0 needs System.monotonic_time/0
+# Microseconds since the program started, as the pinned runtime gives them.
+  def monotonic(): integer do
+    div(System.monotonic_time(), 1000)
+  end

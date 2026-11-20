@@ -1,0 +1,779 @@
+defmodule NativeComprehensions do
+  # with and for (spec/alchem-comprehensions.md).
+  #
+  # A packet at another position, its marks kept.
+  def wc_at(value: bytes, pos: integer): bytes do
+    if nc_pos(value) < 0 do b[] else if pos < 0 do b[] else
+      Enum.concat(nc_u24(pos+nc_cursor(value,0)-nc_pos(value)),nc_slice(value,3,Enum.count(value)))
+    end end
+  end
+  # The program ends naming pos and a reason the trace routine has no number
+  # for: the message follows the call as a string.
+  def wc_fail(table: bytes, pos: integer, message: bytes): bytes do
+    if nz_on(table) == 0 do nc_exit_code(70) else
+      nc_join(Enum.concat(b[191],nc_u32(pos)),Enum.concat(xa_mark(8+Enum.count(message),b[72,141,53,9,0,0,0]),nc_call(nz_slot(table))),Enum.concat(nt_word(Enum.count(message)),message))
+    end
+  end
+  # What fails is a closure in the pinned compiler: one more line of a trace,
+  # at the statement pos.
+  def wc_enter(table: bytes, pos: integer): bytes do
+    if nz_on(table) == 0 do b[] else Enum.concat(nz_at(table,pos),b[72,139,133,120,255,255,255,80,255,181,112,255,255,255,72,137,165,112,255,255,255]) end
+  end
+  # The position after the pattern at pos; an atom is two tokens.
+  def wc_skip(source: bytes, pos: integer): integer do
+    start = nc_start(source,pos)
+    if byte_at(source,start) != 58 do np_skip(source,start) else if classify_ascii(byte_at(source,start+1)) != 2 do -1 else nc_end(source,start+1) end end
+  end
+  # 1 when the arms from pos to the end that closes them are arms by their
+  # form: a pattern, perhaps a guard, an arrow and a body. Arms no value
+  # reaches are not compiled, and still have to be arms.
+  def wc_shapes(source: bytes, pos: integer, budget: integer): integer do
+    start = nc_start(source,pos)
+    next = byte_at(source,nc_start(source,nc_end(source,start)))
+    call = if classify_ascii(byte_at(source,start)) != 2 do 0 else if next != 40 do 0 else if (byte_at(source,start)-65)*(90-byte_at(source,start)) >= 0 do 0 else 1-nx_constructor(source,start) end end end
+    body = wc_arm_body(source,wc_skip(source,start))
+    after = wc_scan(source,body,1)
+    if budget == 0 do 0 else if call == 1 do 0 else if after < 0 do 0 else if nc_start(source,after) == nc_start(source,body) do 0 else
+      if nc_word(source,after,b[101,110,100]) == 1 do 1 else wc_shapes(source,after,budget-1) end
+    end end end end
+  end
+  # 1 when with stands at pos and names no binding (the library written in
+  # Alchem has parameters of that name).
+  def wc_keyword(source: bytes, pos: integer, env: bytes): integer do
+    if nc_word(source,pos,b[119,105,116,104]) == 0 do 0 else if nc_lookup(source,nc_start(source,pos),env,2) >= 0 do 0 else 1 end end
+  end
+  # 1 when "<-" stands at pos.
+  def wc_arrow(source: bytes, pos: integer): integer do
+    start = nc_start(source,pos)
+    if start < 0 do 0 else if byte_at(source,start)*256+byte_at(source,start+1) == 15405 do 1 else 0 end end
+  end
+  # Reading on by tokens, brackets and do/fn ... end nesting: in mode 0 to the
+  # end that closes the block the position stands in, in mode 1 to where the
+  # next arm of that block starts or the block ends, in mode 2 to its else or
+  # end, in mode 3 to the next do, in mode 4 to the next arrow or the end,
+  # in mode 5 to the bar of a list and in mode 6 to the next word of a try
+  # (rescue, catch, else, after) or its end. A state is nk_state's; the answer 1
+  # carries the position.
+  def wc_scan_step(source: bytes, pos: integer, depth: integer, mode: integer): bytes do
+    start = nc_start(source,pos)
+    value = byte_at(source,start)
+    opens = if (value-40)*(value-91)*(value-123) == 0 do 1 else if value == 100 do nc_opens(source,start) else if value == 102 do nf_untyped(source,start) else 0 end end end
+    closes = if (value-41)*(value-93)*(value-125) == 0 do 1 else if value == 101 do nc_word(source,start,b[101,110,100]) else 0 end end
+    found = if depth > 0 do 0 else if mode == 0 do nc_word(source,start,b[101,110,100]) else if mode == 1 do wc_arm_at(source,start) else
+      if mode == 3 do nc_word(source,start,b[100,111]) else if mode == 5 do if byte_at(source,start+1) == 62 do 0 else nc_word(source,start,b[124]) end else nc_word(source,start,b[101,110,100])+(if mode == 2 do wc_other(source,start) else if mode == 6 do wc_other(source,start)+ty_word(source,start) else nc_word(source,start,b[45,62]) end end) end end
+    end end end
+    if start < 0 do nk_state(0,0,0) else if start >= Enum.count(source) do nk_state(0,0,0) else
+      if found == 1 do nk_state(start,0,1) else
+        if depth+opens-closes < 0 do nk_state(0,0,0) else nk_state(nc_end(source,start),depth+opens-closes,2) end
+      end
+    end end
+  end
+  # 1 for the else of a block; the else: of a one-line if ends no block.
+  def wc_other(source: bytes, start: integer): integer do
+    if nc_word(source,start,b[101,108,115,101]) == 0 do 0 else if byte_at(source,nc_end(source,start)) == 58 do 0 else 1 end end
+  end
+  # Where an arm starts: a pattern and its arrow or guard.
+  def wc_arm_at(source: bytes, start: integer): integer do
+    after = wc_skip(source,start)
+    if nc_word(source,start,b[101,110,100])+wc_other(source,start) > 0 do 1 else
+      if after < 0 do 0 else nc_word(source,after,b[45,62])+nc_word(source,after,b[119,104,101,110]) end
+    end
+  end
+  def wc_scan_run(source: bytes, state: bytes, size: integer, mode: integer): bytes do
+    half = nc_half(size)
+    if Enum.at(state,5,0) != 2 do state else
+      if size == 1 do wc_scan_step(source,nc_cursor(state,0),nc_read(state,3),mode) else
+        wc_scan_run(source,wc_scan_run(source,state,half,mode),size-half,mode)
+      end
+    end
+  end
+  def wc_scan(source: bytes, pos: integer, mode: integer): integer do
+    state = if pos < 0 do b[] else wc_scan_run(source,nk_state(pos,0,2),16777216,mode) end
+    if Enum.at(state,5,0) == 1 do nc_cursor(state,0) else -1 end
+  end
+  # 1 when the pattern tree at offset matches every value by its form alone:
+  # a name, _, or a tuple or struct of such.
+  def wc_open(tree: bytes, offset: integer): integer do
+    layout = np_layout(tree,offset)
+    if Enum.at(tree,offset,0) < 2 do 1 else
+      if (layout-0)*(layout-11) != 0 do 0 else wc_open_parts(tree,np_below(tree,offset),np_count(tree,offset)) end
+    end
+  end
+  def wc_open_parts(tree: bytes, offset: integer, count: integer): integer do
+    if count == 0 do 1 else if wc_open(tree,offset) == 0 do 0 else wc_open_parts(tree,np_size(tree,offset),count-1) end end
+  end
+  def wc_row(tree: bytes): bytes do Enum.concat(nc_u32(Enum.count(tree)),tree) end
+  # with pattern <- expression, ... do body else pattern -> body ... end,
+  # as the pinned compiler's nested cases: each clause matches its pattern
+  # and goes on; a value that does not match goes to the else arms, or without
+  # else is the result.
+  def wc_with(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
+    inner = if depth > 190 do b[] else wc_clause(source,nc_end(source,start),env,table,depth+1,start) end
+    after = nc_pos(inner)
+    other = nc_expect(source,after,b[101,108,115,101])
+    stop = if after < 0 do -1 else if other < 0 do nc_expect(source,after,b[101,110,100]) else
+      if wc_shapes(source,other,100000) == 0 do -1 else nc_expect(source,wc_scan(source,other,0),b[101,110,100]) end
+    end end
+    wc_at(inner,stop)
+  end
+  # A with used as a value is a closure in the pinned compiler: a trace shows
+  # it running the with.
+  def wc_value(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
+    zf_valued(source,table,env,nz_closure(source,table,wc_with(source,start,nj_valued(env),table,depth),start),start)
+  end
+  # The clause at pos and everything after it: a packet at the end of the body.
+  def wc_clause(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, origin: integer): bytes do
+    arrow = wc_skip(source,pos)
+    value = if wc_arrow(source,arrow) == 0 do b[] else nw_settled(nc_expression(source,nc_start(source,arrow)+2,env,table,depth)) end
+    slot = nc_env_count(env,2)
+    mark = if arrow < 0 do 0 else arrow end
+    held = Enum.concat(env,nc_env_record(mark,mark,nc_kind(value)))
+    parsed = if nc_pos(value) < 0 do b[] else if nc_tag(value) == 12 do b[] else np_parse(source,pos,held,table,nc_kind(value)) end end
+    # A clause's pattern made of names, tuples, structs and none is to the pinned compiler one that matches everything, and with a none it is then rejected as a case that does not.
+    fits = if nc_pos(parsed) < 0 do 0 else if nc_start(source,nc_pos(parsed)) == nc_start(source,arrow) do 1-zf_bare(np_tree(parsed),0,1)*(1-wc_open(np_tree(parsed),0)) else 0 end end
+    next = nc_pos(value)
+    inner = if fits == 0 do b[] else
+      if nc_word(source,next,b[44]) == 1 do zf_counted(source,table,env,wc_clause(source,nc_end(source,next),np_env(parsed),table,depth,origin),origin) else
+        if nc_opens(source,next) == 0 do b[] else nc_branch(source,nc_end(source,next),np_env(parsed),table,depth) end
+      end
+    end
+    if nc_pos(inner) < 0 do b[] else wc_matched(source,table,nc_join(Enum.concat(nc_u24(slot),b[depth]),nc_u24(origin),nc_u24(nc_start(source,nc_start(source,arrow)+2))),value,nc_join(wc_row(np_tree(parsed)),held,b[]),wc_both(inner,np_env(parsed))) end
+  end
+  # Two packets as one: the first after its length (3 bytes).
+  def wc_both(first: bytes, second: bytes): bytes do nc_join(nc_u32(Enum.count(first)),first,second) end
+  def wc_first(both: bytes): bytes do nc_slice(both,4,4+nc_long(both,0)) end
+  def wc_second(both: bytes): bytes do nc_slice(both,4+nc_long(both,0),Enum.count(both)) end
+  # plan: the slot the value waits in, the depth, where the with stands and
+  # where the clause's expression does. given: the pattern's tree as a row,
+  # then the environment with the value's slot. rest: what follows the clause
+  # and the environment with the pattern's names.
+  def wc_matched(source: bytes, table: bytes, plan: bytes, value: bytes, given: bytes, rest: bytes): bytes do
+    slot = nc_cursor(plan,0)
+    tree = nc_slice(given,4,4+nc_long(given,0))
+    held = nc_slice(given,4+nc_long(given,0),Enum.count(given))
+    inner = wc_first(rest)
+    match = np_emit(source,wc_second(rest),table,tree,0)
+    store = Enum.concat(nc_code(value),nc_slot(b[72,137,69],slot))
+    other = nc_expect(source,nc_pos(inner),b[101,108,115,101])
+    # What a value that does not match meets is a statement of its own in the pinned compiler, where the with stands.
+    missed = if wc_open(tree,0) == 1 do b[] else
+      if other < 0 do wc_unmatched(table,plan,nc_kind(value),inner) else
+        wc_arms(source,other,held,table,Enum.at(plan,3,0),nc_join(nc_slice(plan,0,7),b[0],nc_join(nc_u32(Enum.count(given)-Enum.count(held)),nc_slice(given,0,Enum.count(given)-Enum.count(held)),b[])))
+      end
+    end
+    miss = zf_counted(source,table,held,missed,nc_cursor(plan,4))
+    if Enum.count(match) == 0 do b[] else
+      if wc_open(tree,0) == 1 do nw_keep(nc_value(nc_pos(inner),nc_join(store,match,nc_code(inner)),nc_kind(inner)),inner,b[]) else
+        if nc_pos(miss) < 0 do b[] else np_join(nc_join(store,match,b[132,192,15,132]),b[],inner,wc_at(miss,nc_pos(inner))) end
+      end
+    end
+  end
+  # Without else a value that does not match is the result when it has the
+  # type of the body; an error passes to another result of the same reason
+  # type and an option that does not match is none. A with whose value cannot
+  # be the result leaves no value: it is a statement.
+  def wc_unmatched(table: bytes, plan: bytes, kind: bytes, inner: bytes): bytes do
+    want = nc_kind(inner)
+    load = nc_slot(b[72,139,69],nc_cursor(plan,0))
+    fail = Enum.concat(wc_enter(table,nc_cursor(plan,4)),wc_fail(table,nc_cursor(plan,7),b[110,111,32,119,105,116,104,32,99,108,97,117,115,101,32,109,97,116,99,104,101,100]))
+    passed = nt_merge(want,Enum.concat(b[6,9],nt_child(kind,1)))
+    if nt_tag(want) == 12 do nc_value(nc_pos(inner),b[],b[12]) else
+      if nt_tag(nt_merge(want,kind)) >= 0 do wc_hinted(nc_value(nc_pos(inner),load,kind),inner) else
+        if nt_tag(want)*nt_tag(kind) == 36 do
+          if nt_tag(passed) < 0 do nc_value(nc_pos(inner),b[],b[12]) else
+            wc_hinted(nc_value(nc_pos(inner),nc_join(load,b[72,131,56,0,116,Enum.count(fail)],fail),passed),inner)
+          end
+        else
+          if nt_tag(want)*nt_tag(kind) == 16 do wc_hinted(nc_value(nc_pos(inner),b[49,192],want),inner) else nc_value(nc_pos(inner),b[],b[12]) end
+        end
+      end
+    end
+  end
+  # The pinned compiler needs the type of the whole with to say what a value
+  # that does not match becomes: a body of open type has to get it from
+  # where the with stands.
+  def wc_hinted(value: bytes, inner: bytes): bytes do
+    if nw_marked(inner) == 1 do nw_mark(value) else if nu_holes(nc_kind(inner),0) == 1 do nw_mark(value) else value end end
+  end
+  # The else arms for one clause's value, which waits in a slot: the arms
+  # whose pattern fits its type, until they and the clause's own pattern
+  # match every value. state: the slot, the depth, where the with stands, how
+  # many arms were taken, the rows that count toward that (after their length,
+  # 2 bytes), then the rows of the arms taken that have no guard.
+  def wc_arms(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
+    slot = nc_cursor(state,0)
+    size = nc_long(state,8)
+    cover = nc_slice(state,12,12+size)
+    start = nc_start(source,pos)
+    kind = nt_read(env,nc_env_offset(env,slot)+7)
+    done = if nc_word(source,start,b[101,110,100]) == 1 do 1 else 1-np_useful(source,cover,b[0],1) end
+    if start < 0 do b[] else
+      if done == 1 do
+        if Enum.at(state,7,0) == 0 do b[] else nc_value(start,wc_fail(table,nc_cursor(state,4),b[110,111,32,99,97,115,101,32,98,114,97,110,99,104,32,109,97,116,99,104,101,100]),b[9]) end
+      else
+        parsed = np_parse(source,start,env,table,kind)
+        stop = wc_skip(source,start)
+        fits = if nc_pos(parsed) < 0 do 0 else if nc_start(source,nc_pos(parsed)) == nc_start(source,stop) do 1 else 0 end end
+        next = wc_scan(source,wc_arm_body(source,stop),1)
+        if next < 0 do b[] else
+          if fits == 0 do wc_arms(source,next,env,table,depth,state) else
+            if np_useful(source,nc_slice(state,12+size,Enum.count(state)),np_tree(parsed),1) == 0 do b[] else wc_arm(source,wc_both(parsed,nc_u24(next)),env,table,depth,state) end
+          end
+        end
+      end
+    end
+  end
+  # The position after the arrow of the arm whose pattern ends at pos.
+  def wc_arm_body(source: bytes, pos: integer): integer do
+    if nc_word(source,pos,b[119,104,101,110]) == 0 do nc_expect(source,pos,b[45,62]) else wc_arm_arrow(source,nc_end(source,pos),0,16777216) end
+  end
+  def wc_arm_arrow(source: bytes, pos: integer, depth: integer, budget: integer): integer do
+    start = nc_start(source,pos)
+    value = byte_at(source,start)
+    opens = if (value-40)*(value-91)*(value-123) == 0 do 1 else if value == 100 do nc_opens(source,start) else if value == 102 do nf_untyped(source,start) else 0 end end end
+    closes = if (value-41)*(value-93)*(value-125) == 0 do 1 else if value == 101 do nc_word(source,start,b[101,110,100]) else 0 end end
+    if start < 0 do -1 else if budget == 0 do -1 else if start >= Enum.count(source) do -1 else
+      if depth == 0 do if nc_word(source,start,b[45,62]) == 1 do nc_end(source,start) else wc_arm_arrow(source,nc_end(source,start),depth+opens-closes,budget-1) end else
+        wc_arm_arrow(source,nc_end(source,start),depth+opens-closes,budget-1)
+      end
+    end end end
+  end
+  def wc_arm(source: bytes, found: bytes, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
+    parsed = wc_first(found)
+    next = nc_cursor(wc_second(found),0)
+    scope = np_env(parsed)
+    guarded = nc_word(source,nc_pos(parsed),b[119,104,101,110])
+    guard = if guarded == 0 do nc_value(nc_pos(parsed),b[],b[3]) else nc_condition(source,nc_end(source,nc_pos(parsed)),sg_conditional(scope),table,depth+1) end
+    arrow = nc_expect(source,nc_pos(guard),b[45,62])
+    body = if arrow < 0 do b[] else nc_branch(source,arrow,scope,table,depth+1) end
+    size = nc_long(state,8)
+    row = if guarded == 1 do b[] else wc_row(np_tree(parsed)) end
+    grown = nc_join(nc_join(nc_slice(state,0,7),b[1],nc_u32(size+Enum.count(row))),nc_join(nc_slice(state,12,12+size),row,nc_slice(state,12+size,Enum.count(state))),row)
+    rest = if nc_pos(body) < 0 do b[] else if nc_start(source,nc_pos(body)) != next do b[] else wc_arms(source,next,env,table,depth,grown) end end
+    match = np_emit(source,scope,table,np_tree(parsed),0)
+    check = if guarded == 0 do b[] else Enum.concat(nc_code(guard),b[72,133,192,15,132]) end
+    if Enum.count(match) == 0 do b[] else np_join(nc_join(nc_slot(b[72,139,69],nc_cursor(state,0)),match,b[132,192,15,132]),check,body,rest) end
+  end
+  # [first, second | rest]: the listed elements before those of another
+  # list. spans are the literal's elements as nc_list_collect finds them, the
+  # last of which holds the bar; b[] when there is none.
+  def wc_cons(source: bytes, state: bytes, env: bytes, table: bytes, depth: integer): bytes do
+    spans = nc_code(state)
+    count = nc_units(Enum.count(spans),6)
+    first = nc_cursor(spans,count*6-6)
+    stop = nc_cursor(spans,count*6-3)
+    bar = wc_scan(source,first,5)
+    cut = Enum.concat(nc_slice(spans,0,count*6-3),nc_u24(if bar < 0 do 0 else bar end))
+    items = if bar < 0 do b[] else if bar >= stop do b[] else nl_items(source,cut,env,table,depth,nc_join(nc_u24(0),nc_u24(count),if nf_parted(source,env,table) == 1 do b[1] else b[] end)) end end
+    plain = if nc_pos(items) < 0 do b[] else nc_expression(source,bar+1,env,table,depth) end
+    # A tail that does not compile without its type (one that holds a fn) is given the type of the elements before the bar.
+    rest = if nc_pos(items) < 0 do b[] else if nc_pos(plain) >= 0 do plain else nc_expression(source,bar+1,nw_expect(env,0,nt_unary(7,nc_kind(items))),table,depth) end end
+    kind = nt_merge(nt_unary(7,nc_kind(items)),nc_kind(rest))
+    made = nc_value(nc_pos(state),nc_join(nc_join(nc_code(items),nc_code(rest),b[80]),Enum.concat(b[185],nc_u32(count)),nl_cons_emit()),kind)
+    if nc_pos(rest) < 0 do b[] else if nc_start(source,nc_pos(rest)) != stop do b[] else if nt_tag(kind) != 7 do b[] else
+      # A tail of open type ([none], [[]]) has its type from the elements: nothing is left for the surroundings to say.
+      if nu_holes(kind,0) == 0 do if nw_marked(items) == 1 do nw_keep(made,items,b[]) else made end else nw_keep(made,items,rest) end
+    end end end
+  end
+  # for pattern <- enumerable, filter, ... do body end, and its one-line form
+  # ending in ", do: expression". It is a loop in the enclosing function's
+  # frame: each generator keeps its list and its index in two slots (and a
+  # closure record in two more), and the body's values wait on the stack
+  # until the list that holds them is made, so a for allocates its result
+  # once.
+  #
+  # 1 when for stands at pos and names no binding.
+  def wf_keyword(source: bytes, pos: integer, env: bytes): integer do
+    if nc_word(source,pos,b[102,111,114]) == 0 do 0 else if nc_lookup(source,nc_start(source,pos),env,2) >= 0 do 0 else 1 end end
+  end
+  # The environment with one more slot that has no name.
+  def wf_record(env: bytes, pos: integer, kind: bytes): bytes do
+    Enum.concat(env,nc_env_record(pos,pos,kind))
+  end
+  # mode 0: the for is a value. mode 1: its value is dropped, so the body is
+  # run for its effects and no list is made. The for has three slots of its
+  # own (the count of values or the accumulator; the {} of a body run for
+  # its effect; the line the frame stood on when the for began) and the
+  # slots of two closure records. A state is: the mode, the first slot, the
+  # length of the environment with the for's own slots (3 bytes), the option
+  # (1 into, 2 uniq: true, 3 reduce, 4 uniq: false) and where its value
+  # starts (3 bytes), 1 for the form in parentheses, where the for stands (3
+  # bytes), how many generators came so far, the line the next item stands
+  # on (past the for's own), the chain slot of the innermost record so far,
+  # and the first slots of the for's record and of the body's.
+  def wf_for(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, mode: integer): bytes do
+    after = nc_end(source,start)
+    paren = nc_word(source,after,b[40])
+    first = if paren == 1 do nc_end(source,after) else after end
+    slot = nc_env_count(env,2)
+    whole = wf_pair(wf_record(wf_record(wf_record(env,start,b[0]),start,b[0]),start,b[0]),start)
+    pair = wf_pair(whole,start)
+    # A for is a closure of the pinned compiler: no return stands in it, and
+    # a call in it is not the function's result (nj_valued, tl_allowed).
+    held = nj_valued(pair)
+    state = nc_join(nc_join(Enum.concat(b[mode],nc_u24(slot)),nc_u24(Enum.count(held)),b[0,0,0,0,paren]),nc_join(nc_u24(start),nc_u24(0),nc_u24(2)),nc_join(nc_u24(nc_env_count(whole,2)-1),nc_u24(nc_env_count(whole,2)-2),nc_u24(nc_env_count(pair,2)-2)))
+    made = if depth > 190 do b[] else wf_items(source,first,held,table,depth+1,state) end
+    parts = nc_code(made)
+    if nc_pos(made) < 0 do b[] else
+      nw_keep(nc_value(nc_pos(made),nc_join(wc_first(parts),wc_first(wc_second(parts)),Enum.concat(wc_second(wc_second(parts)),wf_resume(source,table,slot,nc_pos(made)))),nc_kind(made)),made,b[])
+    end
+  end
+  # Two more slots that lie side by side, for a closure record: the outer
+  # chain in the second and below it in memory, the line in the first.
+  # Slots 15 and 16 are apart.
+  def wf_pair(env: bytes, pos: integer): bytes do
+    base = if nc_env_count(env,2) == 15 do wf_record(env,pos,b[0]) else env end
+    wf_record(wf_record(base,pos,b[0]),pos,b[0])
+  end
+  # What a trace shows of a for is what the pinned compiler makes of it: a
+  # closure for the for, one for each generator and one for the body, each
+  # standing on a line of the generated code. Lines are counted from the
+  # line the statement stood on when the for began (kept in the for's third
+  # slot) and from the last line of the body; a line is a position with the
+  # lines past it above its low 22 bits. The records are frame slots, since
+  # the body's values are on the stack.
+  #
+  # The frame stands at line `past` after the for's own and its closures end
+  # with the record whose chain slot is `record`.
+  def wf_word(slot: integer, line: integer): bytes do
+    high = nc_units(line,4294967296)
+    if line < 2147483648 do Enum.concat(nc_slot(b[72,199,69],slot),nc_u32(line)) else
+      nc_join(b[72,184],Enum.concat(nc_u32(line-high*4294967296),nc_u32(high)),nc_slot(b[72,137,69],slot))
+    end
+  end
+  # RAX moved on by count lines: past 127 of them through RCX.
+  def wf_lines(count: integer): bytes do
+    high = nc_units(count*16777216,4294967296)
+    if count < 128 do Enum.concat(b[72,5],nc_u32(count*16777216)) else nc_join(b[72,185],Enum.concat(nc_u32(count*16777216-high*4294967296),nc_u32(high)),b[72,1,200]) end
+  end
+  def wf_at(table: bytes, state: bytes, past: integer, record: integer): bytes do
+    if nz_on(table) == 0 do b[] else
+      nc_join(nc_join(nc_slot(b[72,141,69],record),b[72,137,133,112,255,255,255],nc_slot(b[72,139,69],nc_cursor(state,1)+2)),wf_lines(past),b[72,137,133,120,255,255,255])
+    end
+  end
+  # The record in the slots from first: the line `past` after the for's own,
+  # under the record whose chain slot is `record`.
+  def wf_note(table: bytes, state: bytes, first: integer): bytes do
+    if nz_on(table) == 0 do b[] else
+      nc_join(nc_join(nc_slot(b[72,139,69],nc_cursor(state,1)+2),wf_lines(nc_cursor(state,18)),nc_slot(b[72,137,69],first)),nc_slot(b[72,141,69],nc_cursor(state,21)),nc_slot(b[72,137,69],first+1))
+    end
+  end
+  # The for begins: its line is kept, its record made (the function stands
+  # at line final while the for runs) and the for stands one line on.
+  def wf_enter(table: bytes, state: bytes, final: integer): bytes do
+    slot = nc_cursor(state,1)
+    record = nc_cursor(state,24)
+    if nz_on(table) == 0 do b[] else
+      nc_join(nc_join(b[72,139,133,120,255,255,255],nc_slot(b[72,137,69],slot+2),wf_word(record,final)),nc_join(b[72,139,133,112,255,255,255],nc_slot(b[72,137,69],record+1),wf_at(table,state,1,record+1)),b[])
+    end
+  end
+  # The body begins: its record says where the generator around it stands,
+  # line cursor, and the frame stands at pos when pos is one.
+  def wf_inside(table: bytes, state: bytes, cursor: integer, pos: integer): bytes do
+    record = nc_cursor(state,27)
+    if nz_on(table) == 0 do b[] else
+      nc_join(nc_join(wf_word(record,cursor),nc_slot(b[72,141,69],nc_cursor(state,21)),nc_slot(b[72,137,69],record+1)),Enum.concat(nc_slot(b[72,141,69],record+1),b[72,137,133,112,255,255,255]),if pos < 0 do b[] else nz_at(table,pos) end)
+    end
+  end
+  # The for is over: the function has its own closures again and stands at
+  # line final.
+  def wf_leave(table: bytes, state: bytes, final: integer): bytes do
+    if nz_on(table) == 0 do b[] else nc_join(nc_slot(b[72,139,69],nc_cursor(state,24)+1),b[72,137,133,112,255,255,255],nz_at(table,final)) end
+  end
+  # The line the function stands at once the for is over: the line after the
+  # body, two for each generator and two more. A call the for is an argument
+  # of stays where it stood, as for an if or case (nz_closure).
+  def wf_final(state: bytes, cursor: integer): integer do cursor+(nc_cursor(state,15)*2+2)*16777216 end
+  def wf_resume(source: bytes, table: bytes, slot: integer, stop: integer): bytes do
+    next = byte_at(source,nc_start(source,stop))
+    piped = if next*256+byte_at(source,nc_start(source,stop)+1) == 31806 do 1 else 0 end
+    if nz_on(table) == 0 do b[] else if (next-41)*(next-44)*(next-93)*(next-125)*(piped-1) != 0 do b[] else nc_join(nc_slot(b[72,139,77],slot+2),b[72,137,141,120,255,255,255],b[]) end end
+  end
+  # A for that is a statement. Where its value is dropped (wf_dropped) it is
+  # run for its effects; otherwise it ends a block and is that block's value
+  # when it has one.
+  def wf_auto(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
+    kept = if wf_kept(source,start,env,table) == 0 do b[] else wf_for(source,start,env,table,depth,0) end
+    stop = nc_pos(kept)
+    if stop < 0 do wf_either(source,start,env,table,depth) else
+      if nx_whole(source,stop)*ty_ends(source,stop,env) == 0 do wf_either(source,start,env,table,depth) else kept end
+    end
+  end
+  # The for run for its effects when its value is dropped, else as a value
+  # when its body has one.
+  def wf_either(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
+    first = wf_for(source,start,env,table,depth,1)
+    stop = nc_pos(first)
+    if stop < 0 do b[] else if nx_whole(source,stop) == 0 do b[] else
+      if wf_dropped(source,stop,env,table) == 1 do if nx_pure(first) == 1 do b[] else first end else
+        second = wf_for(source,start,env,table,depth,0)
+        if nc_pos(second) < 0 do first else second end
+      end
+    end end
+  end
+  # 1 when the value of the statement that ends at stop is dropped: another
+  # statement follows it, or it ends a block of a form whose own value is
+  # dropped (noted in the environment under that form's end), or it ends a
+  # function that declares no result.
+  def wf_dropped(source: bytes, stop: integer, env: bytes, table: bytes): integer do
+    if ty_ends(source,stop,env) == 0 do 1 else if wf_marked(env,wc_scan(source,nc_start(source,stop),0),2) == 1 do 1 else wf_closes(source,nc_start(source,stop),env,table) end end
+  end
+  # The environment for the blocks of the if, unless, case, cond or with
+  # that is the statement at start: when its value is dropped, so is that of
+  # the statement each of its blocks ends in, which the end that closes it
+  # notes.
+  def wf_inherit(source: bytes, start: integer, env: bytes, table: bytes): bytes do
+    opener = wc_scan(source,nc_end(source,start),3)
+    close = if opener < 0 do -1 else if byte_at(source,nc_end(source,opener)) == 58 do -1 else wc_scan(source,nc_end(source,opener),0) end end
+    if close < 0 do env else if wf_dropped(source,nc_end(source,close),env,table) == 0 do env else wf_mark(env,close) end end
+  end
+  # The environment with one more end noted. The ends are the type of a
+  # record with no name, behind tag 24: one slot holds about eighty.
+  def wf_mark(env: bytes, pos: integer): bytes do
+    at = wf_noted(env,2,-1)
+    held = nt_read(env,at+7)
+    if pos < 0 do env else if at < 0 do wf_record(env,pos,Enum.concat(b[24],nc_u24(pos))) else if Enum.count(held) > 250 do wf_record(env,pos,Enum.concat(b[24],nc_u24(pos))) else
+      nc_join(nc_slice(env,0,at+7),nt_cell(Enum.concat(held,nc_u24(pos))),nc_slice(env,nt_after(env,at+7),Enum.count(env)))
+    end end end
+  end
+  # The offset of the last record that notes ends; found when there is none.
+  def wf_noted(env: bytes, offset: integer, found: integer): integer do
+    if offset >= Enum.count(env) do found else wf_noted(env,nc_env_next(env,offset),if nc_env_tag(env,offset) == 24 do offset else found end) end
+  end
+  # 1 when the for at start has a block that plainly ends where its value is
+  # used, read from its do and end alone: it is then compiled once.
+  def wf_kept(source: bytes, start: integer, env: bytes, table: bytes): integer do
+    opener = wc_scan(source,nc_end(source,start),3)
+    close = if opener < 0 do -1 else if byte_at(source,nc_end(source,opener)) == 58 do -1 else wc_scan(source,nc_end(source,opener),0) end end
+    if close < 0 do 0 else 1-wf_dropped(source,nc_end(source,close),env,table) end
+  end
+  # 1 when the end at pos closes the function the environment is of and that
+  # function declares no result: its last statement is run for its effect.
+  def wf_closes(source: bytes, pos: integer, env: bytes, table: bytes): integer do
+    id = nc_read(env,0)
+    if nj_result(table,id) != 0 do 0 else if nc_meta(table,id,12) == pos do 1 else 0 end end
+  end
+  # 1 when the end at pos is noted in the environment from offset on.
+  def wf_marked(env: bytes, pos: integer, offset: integer): integer do
+    if pos < 0 do 0 else if offset >= Enum.count(env) do 0 else
+      if nc_env_tag(env,offset) != 24 do wf_marked(env,pos,nc_env_next(env,offset)) else
+        if wf_among(env,offset+8+nt_head(env,offset+7),nc_env_next(env,offset),pos) == 1 do 1 else wf_marked(env,pos,nc_env_next(env,offset)) end
+      end
+    end end
+  end
+  def wf_among(env: bytes, first: integer, stop: integer, pos: integer): integer do
+    if first >= stop do 0 else if nc_cursor(env,first) == pos do 1 else wf_among(env,first+3,stop,pos) end end
+  end
+  # The environment the for stands in, with the for's own slots.
+  def wf_outer(env: bytes, state: bytes): bytes do nc_slice(env,0,nc_cursor(state,4)) end
+  # What follows from pos: a packet at the end of the for whose code holds
+  # what runs before the loops, the loops so far and what runs after them.
+  def wf_items(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
+    start = nc_start(source,pos)
+    choice = if nc_identifier(source,start) == 0 do 0 else if byte_at(source,nc_end(source,start)) == 58 do 1 else 0 end end
+    if start < 0 do b[] else
+      if nc_word(source,start,b[100,111]) == 1 do
+        if nc_cursor(state,15) == 0 do b[] else wf_body(source,start,env,table,depth,state) end
+      else
+        if choice == 1 do wf_option(source,start,env,table,depth,state) else
+          if wc_arrow(source,wc_skip(source,start)) == 1 do wf_generator(source,start,env,table,depth,state) else
+            if nc_cursor(state,15) == 0 do b[] else wf_filter(source,start,env,table,depth,state) end
+          end
+        end
+      end
+    end
+  end
+  # After an item: a comma and the next one, or the body.
+  def wf_next(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
+    if pos < 0 do b[] else
+      if nc_word(source,pos,b[44]) == 1 do wf_items(source,nc_end(source,pos),env,table,depth,state) else
+        if nc_word(source,pos,b[100,111]) == 1 do wf_items(source,pos,env,table,depth,state) else b[] end
+      end
+    end
+  end
+  # into: collectable, uniq: true or reduce: initial; one of them at most.
+  # Its value is compiled where it is used.
+  def wf_option(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
+    value = nc_start(source,nc_end(source,start)+1)
+    yes = nc_word(source,value,b[116,114,117,101])
+    no = nc_word(source,value,b[102,97,108,115,101])
+    choice = if nc_word(source,start,b[105,110,116,111]) == 1 do 1 else
+      if nc_word(source,start,b[117,110,105,113]) == 1 do if yes == 1 do 2 else if no == 1 do 4 else 0 end end else
+        if nc_word(source,start,b[114,101,100,117,99,101]) == 1 do 3 else 0 end
+      end
+    end
+    probe = if choice == 0 do b[] else if Enum.at(state,7,0) != 0 do b[] else nc_expression(source,value,wf_outer(env,state),table,depth) end end
+    after = if yes+no == 0 do nc_pos(probe) else nc_end(source,value) end
+    if nc_pos(probe) < 0 do b[] else if after != nc_pos(probe) do b[] else
+      wf_next(source,after,env,table,depth,nc_join(nc_slice(state,0,7),Enum.concat(b[choice],nc_u24(value)),nc_slice(state,11,Enum.count(state))))
+    end end
+  end
+  # pattern <- enumerable: a list, a set (its elements in order), a map (its
+  # entries in key order), or a range or a stream, read as it gives. An element the pattern does not match
+  # is passed over.
+  def wf_generator(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
+    arrow = wc_skip(source,start)
+    value = nw_settled(nc_expression(source,nc_start(source,arrow)+2,env,table,depth))
+    tag = nc_tag(value)
+    kind = nc_kind(value)
+    item = nn_element(kind)
+    slot = nc_env_count(env,2)
+    held = wf_pair(wf_record(wf_record(env,start,b[0]),start,b[0]),start)
+    parsed = if Enum.count(item) == 0 do b[] else np_parse(source,start,held,table,item) end
+    fits = if nc_pos(parsed) < 0 do 0 else if nc_start(source,nc_pos(parsed)) == nc_start(source,arrow) do 1 else 0 end end
+    match = if fits == 0 do b[] else np_emit(source,np_env(parsed),table,np_tree(parsed),0) end
+    names = nc_env_count(np_env(parsed),2)-nc_env_count(held,2)
+    past = nc_cursor(state,18)+2+names
+    record = nc_env_count(held,2)-2
+    inner = if Enum.count(match) == 0 do b[] else wf_next(source,nc_pos(value),np_env(parsed),table,depth,nc_join(nc_join(nc_slice(state,0,15),nc_u24(nc_cursor(state,15)+1),nc_u24(past)),nc_u24(record+1),nc_slice(state,24,30))) end
+    lazy = if (tag-23)*(tag-26) == 0 do 1 else 0 end
+    head = nc_join(wf_at(table,state,nc_cursor(state,18),nc_cursor(state,21)),nc_code(value),if lazy == 0 do nn_convert(kind,7) else nn_convert(kind,26) end)
+    if nc_pos(inner) < 0 do b[] else wf_loop(inner,nc_join(head,b[80],Enum.concat(wf_note(table,state,record),b[88])),match,slot*2+lazy) end
+  end
+  # head leaves the list in RAX; match takes an element in RAX and leaves 1
+  # or 0 in AL. The loops inside run once for each element that matches.
+  # place: twice the slot, and 1 more for a stream in RAX: its iterator waits
+  # in the slot, its context in the next one, and the context is ended
+  # after the last element.
+  def wf_loop(inner: bytes, head: bytes, match: bytes, place: integer): bytes do
+    parts = nc_code(inner)
+    rest = wc_second(parts)
+    action = wc_first(rest)
+    slot = nt_div(place,2)
+    lazy = place-slot*2
+    setup = if lazy == 1 do nc_join(Enum.concat(head,nn_begin()),nc_slot(b[72,137,69],slot),Enum.concat(b[88],nc_slot(b[72,137,69],slot+1))) else nc_join(head,nc_slot(b[72,137,69],slot),Enum.concat(nc_slot(b[72,199,69],slot+1),b[0,0,0,0])) end
+    test = if lazy == 1 do Enum.concat(nc_slot(b[76,139,85],slot),b[65,255,18,72,133,192,15,132]) else nc_join(nc_slot(b[72,139,69],slot),nc_slot(b[72,139,77],slot+1),b[72,59,8,15,131]) end
+    step = if lazy == 1 do nc_join(b[72,139,64,8],match,Enum.concat(b[132,192,15,132],nc_u32(Enum.count(action)))) else nc_join(b[72,141,4,200,72,139,68,200,8],nc_slot(b[72,255,69],slot+1),nc_join(match,b[132,192,15,132],nc_u32(Enum.count(action)))) end
+    size = Enum.count(step)+Enum.count(action)+5
+    after = if lazy == 1 do Enum.concat(nc_slot(b[72,139,85],slot+1),b[76,139,82,8,65,255,18]) else b[] end
+    loop = nc_join(nc_join(setup,test,nc_u32(size)),nc_join(step,action,b[233]),Enum.concat(nq_rel(0-Enum.count(test)-4-size),after))
+    nw_keep(nc_value(nc_pos(inner),wc_both(wc_first(parts),wc_both(loop,wc_second(rest))),nc_kind(inner)),inner,b[])
+  end
+  # A filter: what follows runs when it holds.
+  def wf_filter(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
+    condition = nc_condition(source,start,env,table,depth)
+    past = nc_cursor(state,18)
+    inner = wf_next(source,nc_pos(condition),env,table,depth,nc_join(nc_slice(state,0,18),nc_u24(past+1),nc_slice(state,21,30)))
+    parts = nc_code(inner)
+    rest = wc_second(parts)
+    action = wc_first(rest)
+    guarded = nc_join(Enum.concat(wf_at(table,state,past,nc_cursor(state,21)),nc_code(condition)),Enum.concat(b[72,133,192,15,132],nc_u32(Enum.count(action))),action)
+    if nc_pos(inner) < 0 do b[] else nw_keep(nc_value(nc_pos(inner),wc_both(wc_first(parts),wc_both(guarded,wc_second(rest))),nc_kind(inner)),inner,b[]) end
+  end
+  # The body at its do: a block to end, or after "do:" one expression.
+  def wf_body(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
+    line = if byte_at(source,nc_end(source,start)) == 58 do 1 else 0 end
+    paren = Enum.at(state,11,0)
+    first = if line == 1 do nc_end(source,start)+1 else nc_end(source,start) end
+    plain = if Enum.at(state,7,0) == 0 do 1 else if Enum.at(state,7,0) == 4 do 1 else 0 end end
+    inside = if Enum.at(state,0,0)*plain*(1-line) == 0 do env else wf_mark(env,wc_scan(source,first,0)) end
+    block = if line+paren > 0 do b[] else if Enum.at(state,7,0) == 3 do b[] else wf_block(source,first,inside,table,depth) end end
+    given = if line == 1 do wf_line(source,first,env,table,depth) else wc_first(block) end
+    # A body run for its effects ends in a {} of the pinned compiler's own (zf_unit).
+    body = if Enum.at(state,0,0)*plain+(if nc_tag(given) == 12 do 1 else 0 end) == 0 do given else zf_unit(source,table,env,given,if line == 1 do nc_start(source,first) else nc_pos(wc_second(block)) end) end
+    stop = if line == 0 do nc_expect(source,nc_pos(body),b[101,110,100]) else if paren == 1 do nc_expect(source,nc_pos(body),b[41]) else nc_pos(body) end end
+    if Enum.at(state,7,0) == 3 do if line+paren > 0 do b[] else wf_reduce(source,start,env,table,depth,state) end else
+      if stop < 0 do b[] else wf_collect(source,table,env,nc_join(state,nc_u24(nc_start(source,first)),b[depth,line]),wc_at(body,stop),if line == 1 do nc_value(nc_start(source,first),b[],b[12]) else wc_second(block) end) end
+    end
+  end
+  # The expression of the one-line form; one that is no call is marked as such.
+  def wf_line(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    value = nc_expression(source,pos,env,table,depth)
+    # A call without a value (IO.write) is a body run for its effect, as in
+    # a block: the statement it is there. The pinned compiler counts the
+    # expression as a statement (zf_counted; the statement counts itself).
+    # IO.puts(text) and assert are statements alone, no calls.
+    lone = if nc_pos(value) >= 0 do b[] else if nc_word(source,nc_start(source,pos),b[73,79])*nc_word(source,nc_start(source,nc_end(source,nc_end(source,nc_start(source,pos)))),b[112,117,116,115])+nc_word(source,nc_start(source,pos),b[97,115,115,101,114,116]) > 0 do b[] else nx_step(source,pos,env,table,depth) end end
+    if nc_pos(value) < 0 do if nc_pos(lone) < 0 do b[] else if nt_tag(nx_kind(lone)) != 12 do b[] else nc_value(nc_pos(lone),nx_code(lone),b[12]) end end else if nc_tag(value) == 12 do b[] else
+      zf_counted(source,table,env,if nx_callish(source,nc_start(source,pos),nc_pos(value)) == 1 do value else nx_impure(value) end,nc_start(source,pos))
+    end end
+  end
+  # The block at pos as nx_block compiles it, with its last statement: a
+  # packet of where that starts whose code holds the environment it is
+  # compiled in and its code.
+  def wf_block(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    all = ev_block(source,pos,env,table,b[depth,1])
+    flags = ev_flags(all)
+    marked = if flags >= 4 do 1 else 0 end
+    value = if ev_pos(all) < 0 do b[] else nc_value(ev_pos(all),ev_code(all),ev_kind(all)) end
+    plain = if marked == 1 do nw_mark(value) else value end
+    if ev_pos(all) < 0 do b[] else wc_both(if flags-marked*4 >= 2 do nx_impure(plain) else plain end,ev_last(all)) end
+  end
+  def wf_last(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    wc_second(wf_block(source,pos,env,table,depth))
+  end
+  # 1 when the statement at last, which ends a block, is run for its
+  # effect: output, assert or a call that gives nothing. The for of such a
+  # body gives {} for each element.
+  def wf_effect(source: bytes, last: integer, env: bytes): integer do
+    branch = nc_word(source,last,b[105,102])+nc_word(source,last,b[117,110,108,101,115,115])+nc_word(source,last,b[99,97,115,101])+nc_word(source,last,b[99,111,110,100])+wc_keyword(source,last,env)+wf_keyword(source,last,env)+ty_keyword(source,last,env)
+    if last < 0 do 0 else if ns_output_statement(source,last)+nx_halts(source,last) > 0 do 1 else
+      if nf_binds(source,last)+np_binds(source,last) > 0 do 0 else if branch > 0 do 0 else 1 end end
+    end end
+  end
+  # The line after the code the pinned compiler makes of the statement at
+  # last, which ends a block whose value is used: the next line; for an if
+  # the line after its last branch and one more; for a for the line its
+  # function stands at when it is over, and one more.
+  def wf_after(source: bytes, found: bytes, table: bytes, depth: integer): integer do
+    last = nc_pos(found)
+    env = wc_first(nc_code(found))
+    if last < 0 do 0 else
+      if nc_word(source,last,b[105,102])+nc_word(source,last,b[117,110,108,101,115,115]) == 1 do wf_branch(source,last,env,table,depth) else
+        if wf_keyword(source,last,env)+ty_keyword(source,last,env) > 0 do wf_inner(wc_second(nc_code(found)),last) else
+          if nc_word(source,last,b[99,111,110,100])*nc_opens(source,nc_end(source,last)) == 1 do wf_cond(source,nc_join(nc_u24(last),nc_u24(nc_end(source,nc_end(source,last))),b[0,0,0,0]),env,table,depth) else last+16777216 end
+        end
+      end
+    end
+  end
+  # A cond is nested ifs to the pinned compiler: a line for each arm after
+  # the last arm's body when its condition is true, else after the line that
+  # follows the cond. plan: where the cond stands, where to read on, the
+  # arrow of the last arm so far and how many arms came.
+  def wf_cond(source: bytes, plan: bytes, env: bytes, table: bytes, depth: integer): integer do
+    next = wc_scan(source,nc_cursor(plan,3),4)
+    count = Enum.at(plan,9,0)
+    arrow = nc_cursor(plan,6)
+    if next < 0 do nc_cursor(plan,0)+16777216 else if count > 250 do nc_cursor(plan,0)+16777216 else
+      if nc_word(source,next,b[45,62]) == 1 do wf_cond(source,nc_join(nc_slice(plan,0,3),nc_u24(next+2),Enum.concat(nc_u24(next),b[count+1])),env,table,depth) else
+        if wf_true(source,nz_before(source,arrow-1)) == 0 do nc_cursor(plan,0)+(1+count)*16777216 else wf_after(source,wf_last(source,arrow+2,env,table,depth),table,depth)+(count-1)*16777216 end
+      end
+    end end
+  end
+  # 1 when the word that ends at pos is true and starts its line.
+  def wf_true(source: bytes, pos: integer): integer do
+    if pos < 3 do 0 else if nc_word_at(source,pos-3,b[116,114,117,101],0) == 0 do 0 else nk_line_start(source,pos-3) end end
+  end
+  def wf_branch(source: bytes, last: integer, env: bytes, table: bytes, depth: integer): integer do
+    opener = wc_scan(source,nc_end(source,last),3)
+    other = wc_scan(source,nc_end(source,opener),2)
+    final = if nc_word(source,other,b[101,108,115,101]) == 1 do nc_end(source,other) else nc_end(source,opener) end
+    if opener < 0 do last+16777216 else if byte_at(source,nc_end(source,opener)) == 58 do last+33554432 else
+      wf_after(source,wf_last(source,final,env,table,depth),table,depth)+16777216
+    end end
+  end
+  # A for leaves the line its function then stands at in its last
+  # instruction: code is that of a statement that is a for.
+  def wf_inner(code: bytes, last: integer): integer do
+    size = Enum.count(code)
+    noted = if size < 10 do 0 else nt_same(nc_slice(code,size-10,size-4),b[199,133,120,255,255,255]) end
+    halved = if size < 20 do 0 else nt_same(nc_slice(code,size-20,size-14),b[199,133,120,255,255,255])*nt_same(nc_slice(code,size-10,size-4),b[199,133,124,255,255,255]) end
+    upper = nc_read(code,size-4)+nc_read(code,size-2)*65536
+    if halved == 1 do nc_read(code,size-14)+nc_read(code,size-12)*65536+upper*4294967296+16777216 else
+      if noted == 0 do last+16777216 else upper+16777216 end
+    end
+  end
+  # The three parts of a for's code with what a trace needs: cursor is the
+  # line after the body and pos where the frame stands as the body begins,
+  # -1 when the body's statements say it.
+  def wf_traced(table: bytes, state: bytes, cursor: integer, pos: integer, parts: bytes): bytes do
+    rest = wc_second(parts)
+    final = wf_final(state,cursor)
+    after = if Enum.count(wc_second(rest)) == 0 do b[] else nz_at(table,final) end
+    wc_both(Enum.concat(wf_enter(table,state,final),wc_first(parts)),wc_both(Enum.concat(wf_inside(table,state,cursor,pos),wc_first(rest)),nc_join(wf_leave(table,state,final),wc_second(rest),after)))
+  end
+  # The values of the body as the for's result. state has also where the
+  # body starts, the depth and 1 for the one-line form.
+  def wf_collect(source: bytes, table: bytes, env: bytes, state: bytes, body: bytes, found: bytes): bytes do
+    line = Enum.at(state,34,0)
+    plain = if Enum.at(state,7,0) == 0 do 1 else if Enum.at(state,7,0) == 4 do 1 else 0 end end
+    empty = if nc_tag(body) == 12 do 1 else nh_effect(source,nc_pos(found),b[],2) end
+    effect = if empty == 0 do 0 else wf_effect(source,nc_pos(found),env) end
+    item = if empty == 0 do nc_kind(body) else if effect == 1 do b[5,0] else b[] end end
+    cursor = if line == 1 do nc_cursor(state,30)+16777216 else
+      if Enum.at(state,0,0)*plain+empty > 0 do nc_pos(found)+16777216 else wf_after(source,found,table,Enum.at(state,33,0)) end
+    end
+    start = if line == 1 do nc_cursor(state,30) else -1 end
+    if Enum.at(state,0,0)*plain == 1 do
+      nw_keep(nc_value(nc_pos(body),wf_traced(table,state,cursor,start,wc_both(b[],wc_both(nc_code(body),b[]))),b[12]),body,b[])
+    else
+      made = if Enum.count(item) == 0 do b[] else wf_listed(source,table,env,state,nc_value(nc_pos(body),nc_code(body),item)) end
+      value = if nc_pos(made) < 0 do b[] else nc_value(nc_pos(body),wf_traced(table,state,cursor,start,nc_code(made)),nc_kind(made)) end
+      if plain == 1 do nw_keep(value,body,b[]) else if nw_marked(body) == 1 do nw_mark(value) else value end end
+    end
+  end
+  # The parts that make the list: body is the body's code with the type of
+  # an element, {} for a body run for its effect, which the for's second slot
+  # then holds.
+  def wf_listed(source: bytes, table: bytes, env: bytes, state: bytes, body: bytes): bytes do
+    slot = nc_cursor(state,1)
+    empty = if nt_same(nc_kind(body),b[5,0]) == 1 do 1 else 0 end
+    tail = wf_tail(source,table,env,state,nc_kind(body))
+    keep = nc_join(nc_code(body),if empty == 1 do nc_slot(b[72,255,117],slot+1) else b[80] end,nc_slot(b[72,255,69],slot))
+    unit = if empty == 0 do b[] else nc_join(nc_allocate_emit(0),b[72,199,2,0,0,0,0],nc_slot(b[72,137,85],slot+1)) end
+    made = nc_join(nc_slot(b[72,139,77],slot),nl_pack_blob(),nc_code(tail))
+    if nc_pos(tail) < 0 do b[] else
+      nc_value(nc_pos(body),wc_both(nc_join(nc_slot(b[72,199,69],slot),b[0,0,0,0],unit),wc_both(keep,made)),nc_kind(tail))
+    end
+  end
+  # What the option makes of the list in RAX, whose elements are of type
+  # item: a packet of that code and the type of the result.
+  def wf_tail(source: bytes, table: bytes, env: bytes, state: bytes, item: bytes): bytes do
+    choice = Enum.at(state,7,0)
+    list = nt_unary(7,item)
+    compare = if choice != 2 do b[] else if nq_comparable(source,table,item,b[]) == 0 do b[] else nq_code(source,table,item,nu_vars(env,2)) end end
+    if choice == 1 do wf_into(source,table,env,state,item) else
+      if choice != 2 do nc_value(0,b[],list) else
+        if Enum.count(compare) == 0 do b[] else
+          nc_value(0,nc_join(wf_uniq_emit(),nc_u32(Enum.count(compare)+1),Enum.concat(compare,b[195])),list)
+        end
+      end
+    end
+  end
+  # The list in RAX without the elements that equal an earlier one. The
+  # comparison is a routine behind it, which a jump passes.
+  def wf_uniq_emit(): bytes do
+    Enum.concat(b[80,72,139,8,73,137,203,73,193,227,4,79,141,92,28,24,77,57,235,118,12,255,20,37,120,4,64,0,15,31,68,0,0,73,199,4,36,254,255,255,255,73,141,84,36,16,77,137,220,82,106,0,80,72,139,4,36,72,131,56,0,116,92,106,0,72,139,12,36,72,59,76,36,16,115,38,72,139,84,36,24,72,193,225,4,72,139,116],b[10,8,72,139,68,36,8,72,139,120,8,232,76,0,0,0,132,192,117,39,72,255,4,36,235,207,72,139,68,36,8,72,139,120,8,72,139,84,36,24,72,139,76,36,16,72,193,225,4,72,137,124,10,8,72,255,68,36,16,89,72,131,4,36,16,235,154,89,89,88,72,137,194,72,137,10,72,131,194,16,72,131,233,1,121,243,89,233])
+  end
+  # into: a list takes the elements after its own, a map the {key, value}
+  # tuples as entries (a later one replaces an earlier one of its key), a
+  # set the elements and a string the strings.
+  def wf_into(source: bytes, table: bytes, env: bytes, state: bytes, item: bytes): bytes do
+    target = nc_expression(source,nc_cursor(state,8),wf_outer(env,state),table,Enum.at(state,33,0))
+    tag = nc_tag(target)
+    pair = if nt_tag(item) != 5 do b[] else if nt_count(item) != 2 do b[] else nt_binary(8,nt_child(item,0),nt_child(item,1)) end end
+    kind = if tag == 7 do nt_merge(nc_kind(target),nt_unary(7,item)) else if tag == 8 do nt_merge(nc_kind(target),pair) else if tag == 25 do nt_merge(nc_kind(target),nt_unary(25,item)) else if tag != 2 do b[] else if nt_tag(item) == 2 do b[2] else b[] end end end end end
+    tagged = if (tag-8)*(tag-25) != 0 do b[] else nm_tagged(nt_child(kind,0),nu_vars(env,2)) end
+    swap = Enum.concat(nc_code(target),b[89,80,81])
+    if nc_pos(target) < 0 do b[] else if nt_tag(kind) < 0 do b[] else
+      if tag == 7 do nc_value(0,nc_join(b[80],swap,nl_concat_emit()),kind) else
+        if tag == 2 do nc_value(0,nc_join(Enum.concat(b[80,106,0],na_join_emit()),Enum.concat(b[80],swap),ns_concat_emit()),kind) else
+          if Enum.count(tagged) == 0 do b[] else
+            nc_value(0,nc_join(nc_join(if tag == 25 do Enum.concat(nn_pairs(),b[80]) else b[80] end,nc_code(target),Enum.concat(b[80,65,186,2,0,0,0],nm_entries_emit())),Enum.concat(b[89,80,81],nl_concat_emit()),nc_join(b[80],tagged,nm_new_emit())),kind)
+          end
+        end
+      end
+    end end
+  end
+  # reduce: initial with arms of accumulator -> body: the accumulator waits
+  # in the for's slot, the arms are a case over it and its value is the next
+  # accumulator. An initial value of open type (an empty %{} or []) takes
+  # its type from what the for is bound to, or else from what the arms give;
+  # the value is then marked as one that needed a type.
+  def wf_reduce(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
+    gm_reduced(wf_reduce_in(source,start,gm_arm(source,start,env),table,depth,state))
+  end
+  def wf_reduce_in(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
+    slot = nc_cursor(state,1)
+    initial = nc_expression(source,nc_cursor(state,8),wf_outer(env,state),table,depth)
+    wanted = nw_expected(env,nc_cursor(state,12),2)
+    given = if Enum.count(wanted) == 0 do nc_kind(initial) else nt_merge(nc_kind(initial),wanted) end
+    load = nc_slot(b[72,139,69],slot)
+    plain = if nc_pos(initial) < 0 do b[] else if nt_tag(given) < 0 do b[] else np_case(source,nc_value(start,load,given),env,table,depth,start) end end
+    # Arms that cannot be typed over an open accumulator are tried with the
+    # result type of the function the for stands in.
+    guess = if nc_pos(plain) >= 0 do b[] else if nc_pos(initial) < 0 do b[] else if nu_holes(given,0) == 0 do b[] else nt_merge(given,nc_return_kind(source,table,nc_read(env,0))) end end end
+    base = if nt_tag(guess) < 0 do given else guess end
+    first = if nt_tag(guess) < 0 do plain else np_case(source,nc_value(start,load,guess),env,table,depth,start) end
+    kind = nt_merge(base,nc_kind(first))
+    arms = if nt_tag(kind) < 0 do b[] else if nt_same(kind,base) == 1 do first else np_case(source,nc_value(start,load,kind),env,table,depth,start) end end
+    store = nc_slot(b[72,137,69],slot)
+    if nc_pos(arms) < 0 do b[] else if no_compatible(kind,nc_kind(arms)) == 0 do b[] else
+      # The arms are a statement where the for stands, counted each time round.
+      value = nc_value(nc_pos(arms),wf_traced(table,state,nc_cursor(state,12)+16777216,nc_cursor(state,12),wc_both(Enum.concat(nc_code(initial),store),wc_both(nc_join(zf_cover(source,table,env,start),nc_code(arms),store),load))),kind)
+      if nu_holes(given,0) == 1 do nw_mark(value) else if nw_marked(arms) == 1 do nw_mark(value) else value end end
+    end end
+  end
+  # Native smoke test; comprehensions.
+  def main() do System.halt(0) end
+end

@@ -1,0 +1,196 @@
+defmodule NativeMaps do
+  def nm_unary(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    if nc_word(source,pos,b[77,97,112]) == 1 do ny_or(nm_builtin(source,pos,env,table,depth),source,pos,env,table,depth) else
+      if nc_word(source,pos,b[37])*classify_ascii(byte_at(source,nc_start(source,nc_end(source,pos)))) == 2 do nd_literal(source,pos,env,table,depth) else
+      if nc_word(source,pos,b[37]) == 1 do
+        begin = nc_expect(source,nc_end(source,pos),b[123])
+        stop = nc_expect(source,begin,b[125])
+        if stop < 0 do if begin < 0 do b[] else nm_literal(source,begin,nf_inward(source,nc_start(source,pos),env),table,depth) end else nc_value(stop,nc_literal_emit(b[]),b[8,9,9]) end
+      else nl_unary(source,pos,env,table,depth) end
+      end
+    end
+  end
+  def nm_key(kind: bytes): integer do
+    tag = nt_tag(kind)
+    if tag == 0 do 1 else if tag == 2 do 1 else if tag == 3 do 1 else if tag == 22 do 1 else if tag == 24 do 1 else 0 end end end end end
+  end
+  # The code that leaves in R8 what the map routines need to know of a key
+  # type: 0 for integers and booleans, 2 for strings, 24 for floats. A type
+  # variable's comparator says it at run time: 0 for words, 1 for strings, 12
+  # for floats. For a tuple of key types R8 is twice the address of its
+  # comparator, placed where the code stands (od_keyed), which is also what a
+  # variable's comparator for one is. b[] for a type that cannot be a key.
+  def nm_tagged(kind: bytes, vars: bytes): bytes do
+    tag = nt_tag(kind)
+    slot = if tag != 16 do -1 else nq_slot(vars,nc_slice(kind,2,Enum.count(kind)),0) end
+    if nm_key(kind) == 1 do b[65,184,if tag == 22 do 2 else tag end,0,0,0] else if tag == 5 do if nn_key(kind) == 0 do b[] else od_keyed(kind) end else
+      if slot < 0 do b[] else
+        Enum.concat(if slot < 16777216 do nc_slot(b[76,139,69],slot) else Enum.concat(b[76,139,69,248,77,139,128],nc_u32((slot-16777216)*8)) end,b[77,1,192])
+      end
+    end end
+  end
+  def nm_builtin(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    dot = nc_expect(source,nc_end(source,pos),b[46])
+    op = if nc_word(source,dot,b[103,101,116]) == 1 do 1 else
+      if nc_word(source,dot,b[102,101,116,99,104]) == 1 do 2 else
+        if nc_word(source,dot,b[104,97,115,95,107,101,121,63]) == 1 do 3 else
+          if nc_word(source,dot,b[112,117,116])+nn_library(source,env,table)*(nc_word(source,dot,b[111,95,112,117,116])+nc_word(source,dot,b[111,95,107,101,101,112])) == 1 do 4 else
+            if nc_word(source,dot,b[100,101,108,101,116,101]) == 1 do 5 else
+              if nc_word(source,dot,b[107,101,121,115]) == 1 do 6 else
+                if nc_word(source,dot,b[118,97,108,117,101,115]) == 1 do 7 else
+                  if nc_word(source,dot,b[116,111,95,108,105,115,116])+nc_word(source,dot,b[101,110,116,114,105,101,115]) == 1 do 8 else
+                    if nc_word(source,dot,b[110,101,119]) == 1 do 9 else 0 end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+    begin = nc_expect(source,nc_end(source,dot),b[40])
+    args = if begin < 0 do b[] else nc_arguments(source,begin,env,table,depth) end
+    if op == 0 do b[] else
+    if nc_pos(args) < 0 do b[] else
+      if op == 9 do nw_library(nm_new(args,nu_vars(env,2)),args,1) else
+        kind = nc_arg_kind(args,0)
+        if nt_tag(kind) != 8 do b[] else
+          if op == 4 do nw_library(nm_put(args,nu_vars(env,2),if nc_word(source,dot,b[111,95,112,117,116]) == 1 do 1 else if nc_word(source,dot,b[111,95,107,101,101,112]) == 1 do 2 else gm_puts(source,env,begin) end end),args,1) else if op == 5 do nw_library(nm_delete(args,nu_vars(env,2)),args,1) else
+            if op < 4 do nw_library(nm_get(args,op,nu_vars(env,2)),args,2) else nw_library(nm_entries(args,op),args,2) end
+          end end
+        end
+      end
+    end
+  end
+    end
+  def nm_put(args: bytes, vars: bytes, owned: integer): bytes do
+    if nc_arg_count(args) != 3 do b[] else
+      key = nt_merge(nt_child(nc_arg_kind(args,0),0),nc_arg_kind(args,1))
+      value = nt_merge(nt_child(nc_arg_kind(args,0),1),nc_arg_kind(args,2))
+      kind = nt_binary(8,key,value)
+      if Enum.count(nm_tagged(key,vars)) == 0 do b[] else if nt_tag(kind) < 0 do b[] else
+        nc_value(nc_pos(args),nc_join(nc_arg_code(args),nm_tagged(key,vars),if owned == 1 do gm_put_emit() else if owned == 2 do gm_keep_emit(nm_put_emit()) else nm_put_emit() end end),kind)
+      end end
+    end
+  end
+  def nm_get(args: bytes, op: integer, vars: bytes): bytes do
+    count = nc_arg_count(args)
+    expected = if op == 1 do count else 2 end
+    if count < 2 do b[] else if count > 3 do b[] else if count != expected do b[] else
+      key = nt_child(nc_arg_kind(args,0),0)
+      actual = nc_arg_kind(args,1)
+      if Enum.count(nm_tagged(actual,vars)) == 0 do b[] else if no_compatible(actual,key) == 0 do b[] else
+        value = nt_child(nc_arg_kind(args,0),1)
+        mode = if op == 3 do 2 else if count == 2 do 1 else 0 end end
+        result = if mode == 2 do b[3] else if mode == 1 do nt_unary(4,value) else nt_merge(value,nc_arg_kind(args,2)) end end
+        if nt_tag(result) < 0 do b[] else
+          dummy = if count == 2 do b[106,0] else b[] end
+          code = nc_join(dummy,Enum.concat(nm_tagged(actual,vars),b[65,185,mode,0,0,0]),nm_get_emit())
+          nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),code),result)
+        end
+      end end
+    end end end
+  end
+  def nm_delete(args: bytes, vars: bytes): bytes do
+    if nc_arg_count(args) != 2 do b[] else
+      key = nt_child(nc_arg_kind(args,0),0)
+      actual = nc_arg_kind(args,1)
+      if Enum.count(nm_tagged(actual,vars)) == 0 do b[] else if no_compatible(actual,key) == 0 do b[] else
+        nc_value(nc_pos(args),nc_join(nc_arg_code(args),nm_tagged(actual,vars),nm_delete_emit()),nc_arg_kind(args,0))
+      end end
+    end
+  end
+  def nm_entries(args: bytes, op: integer): bytes do
+    if nc_arg_count(args) != 1 do b[] else if op < 6 do b[] else if op > 8 do b[] else
+      key = nt_child(nc_arg_kind(args,0),0)
+      value = nt_child(nc_arg_kind(args,0),1)
+      element = if op == 6 do key else if op == 7 do value else nt_tuple(Enum.concat(nt_cell(key),nt_cell(value)),2) end end
+      kind = nt_unary(7,element)
+      if nt_tag(kind) < 0 do b[] else nc_value(nc_pos(args),nc_join(nc_arg_code(args),b[65,186,op-6,0,0,0],nm_entries_emit()),kind) end
+    end end end
+  end
+  def nm_new(args: bytes, vars: bytes): bytes do
+    if nc_arg_count(args) != 1 do b[] else
+      list = nc_arg_kind(args,0)
+      if nt_tag(list) != 7 do b[] else
+        pair = nt_child(list,0)
+        if nt_tag(pair) == 9 do nc_value(nc_pos(args),nc_join(nc_arg_code(args),b[65,184,0,0,0,0],nm_new_emit()),b[8,9,9]) else
+          if nt_tag(pair) != 5 do b[] else if nt_count(pair) != 2 do b[] else
+            key = nt_child(pair,0)
+            value = nt_child(pair,1)
+            kind = nt_binary(8,key,value)
+            if Enum.count(nm_tagged(key,vars)) == 0 do b[] else if nt_tag(kind) < 0 do b[] else
+              nc_value(nc_pos(args),nc_join(nc_arg_code(args),nm_tagged(key,vars),nm_new_emit()),kind)
+            end end
+          end end
+        end
+      end
+    end
+  end
+  def nm_enum(args: bytes, op: integer): bytes do
+    if nc_arg_count(args) != 1 do b[] else
+      if op == 1 do nc_value(nc_pos(args),nc_join(nc_arg_code(args),nc_count_emit(),b[72,15,186,240,62]),b[0]) else
+        if op == 9 do nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),nc_builtin_code(op)),b[3]) else b[] end
+      end
+    end
+  end
+  def nm_literal(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    spans = nc_list_collect(source,pos,b[],0,125)
+    plain = if nc_pos(spans) < 0 do b[] else nm_pairs(source,nc_code(spans),env,table,depth,nc_join(nc_u24(0),nc_u24(nc_units(Enum.count(nc_code(spans)),6)),if nf_parted(source,env,table) == 1 do b[1] else b[] end)) end
+    # Values after the first are expected to have its type.
+    led = if nc_pos(spans) < 0 do b[] else if nc_pos(plain) >= 0 do b[] else nm_led(source,nc_code(spans),env,table,depth) end end
+    if nc_pos(spans) < 0 do b[] else
+      items = if Enum.count(led) == 0 do plain else nm_pairs(source,nc_code(spans),led,table,depth,nc_join(nc_u24(0),nc_u24(nc_units(Enum.count(nc_code(spans)),6)),b[1])) end
+      if nc_pos(items) < 0 do b[] else
+        key = nt_child(nc_kind(items),0)
+        kind = nt_binary(8,key,nt_child(nc_kind(items),1))
+        if Enum.count(nm_tagged(key,nu_vars(env,2))) == 0 do b[] else if nt_tag(kind) < 0 do b[] else
+          count = nc_units(Enum.count(nc_code(spans)),6)
+          list = nc_join(nc_code(items),Enum.concat(b[185],nc_u32(count)),nl_pack_blob())
+          nc_value(nc_pos(spans),nc_join(list,Enum.concat(b[80],nm_tagged(key,nu_vars(env,2))),nm_new_emit()),kind)
+        end end
+      end
+    end
+  end
+  def nm_led(source: bytes, spans: bytes, env: bytes, table: bytes, depth: integer): bytes do
+    count = nc_units(Enum.count(spans),6)
+    later = if count < 2 do 0 else ny_has(source,nc_cursor(spans,6),nc_cursor(spans,count*6-3),b[102,110])+ny_has(source,nc_cursor(spans,6),nc_cursor(spans,count*6-3),b[38]) end
+    first = if later == 0 do b[] else nm_pair(source,spans,env,table,depth,0) end
+    kind = nt_binary(8,nt_child(nc_kind(first),0),nt_child(nc_kind(first),1))
+    if nc_pos(first) < 0 do b[] else if nu_has(kind,10,0,Enum.count(kind)) == 0 do b[] else nw_expect(env,0,kind) end end
+  end
+  def nm_pairs(source: bytes, spans: bytes, env: bytes, table: bytes, depth: integer, bounds: bytes): bytes do
+    first = nc_cursor(bounds,0)
+    stop = nc_cursor(bounds,3)
+    if stop-first == 1 do nm_pair(source,spans,env,table,depth,first+16777216*(Enum.count(bounds)-6)) else
+      middle = first+nc_half(stop-first)
+      left = nm_pairs(source,spans,env,table,depth,nc_join(nc_u24(first),nc_u24(middle),nc_slice(bounds,6,7)))
+      if nc_pos(left) < 0 do b[] else
+        right = nm_pairs(source,spans,env,table,depth,nc_join(nc_u24(middle),nc_u24(stop),nc_slice(bounds,6,7)))
+        kind = nt_merge(nc_kind(left),nc_kind(right))
+        if nc_pos(right) < 0 do b[] else if nt_tag(kind) < 0 do b[] else nc_value(nc_pos(right),Enum.concat(nc_code(left),nc_code(right)),kind) end end
+      end
+    end
+  end
+  # From 16777216 on the index says that the values are expected to hold functions.
+  def nm_pair(source: bytes, spans: bytes, env: bytes, table: bytes, depth: integer, plan: integer): bytes do
+    index = if plan >= 16777216 do plan-16777216 else plan end
+    key = nc_expression(source,nc_cursor(spans,index*6),env,table,depth+2)
+    if nc_pos(key) < 0 do b[] else
+      begin = nc_expect(source,nc_pos(key),b[61,62])
+      value = if begin < 0 do b[] else nc_expression(source,begin,if plan < 16777216 do env else nf_expecting(source,env,begin,nf_part(source,env,table,1)) end,table,depth+2) end
+      if nc_pos(value) < 0 do b[] else
+        if nc_start(source,nc_pos(value)) != nc_cursor(spans,index*6+3) do b[] else
+          kind = nt_tuple(Enum.concat(nt_cell(nc_kind(key)),nt_cell(nc_kind(value))),2)
+          if nt_tag(kind) < 0 do b[] else
+            pushed = nc_join(nc_code(key),b[80],Enum.concat(nc_code(value),b[80]))
+            allocate = nc_join(nc_allocate_emit(16),b[72,199,2,2,0,0,0],nr_stores(2))
+            nc_value(nc_pos(value),nc_join(pushed,allocate,b[72,137,208,80]),kind)
+          end
+        end
+      end
+    end
+  end
+  # Native smoke test; immutable associative word collections.
+  def main() do System.halt(0) end
+end

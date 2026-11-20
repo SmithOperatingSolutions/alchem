@@ -1,0 +1,54 @@
+{
+  "version": 7,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "bytes.const",
+              "dest": "a",
+              "values": [
+                97,
+                98
+              ]
+            },
+            {
+              "op": "bytes.const",
+              "dest": "b",
+              "values": [
+                99,
+                100
+              ]
+            },
+            {
+              "op": "bytes.concat",
+              "dest": "joined",
+              "lhs": "a",
+              "rhs": "b"
+            },
+            {
+              "op": "bytes.write",
+              "dest": "n",
+              "value": "joined",
+              "stream": "stdout"
+            },
+            {
+              "op": "const.i64",
+              "dest": "r",
+              "value": 0
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+defmodule RecursiveSum do
+  def sum(value: integer): integer do
+    if value <= 0 do
+      0
+    else
+      value + sum(value - 1)
+    end
+  end
+
+  def main() do
+    System.halt(sum(8) + 6)
+  end
+end

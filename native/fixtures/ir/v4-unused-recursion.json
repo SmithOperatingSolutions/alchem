@@ -1,0 +1,55 @@
+{
+  "version": 4,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "const.i64",
+              "dest": "answer",
+              "value": 42
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "answer"
+          }
+        }
+      ]
+    },
+    {
+      "name": "forever",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "r",
+              "callee": "forever",
+              "args": [
+                "x"
+              ]
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    }
+  ]
+}

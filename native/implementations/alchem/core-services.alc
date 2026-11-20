@@ -1,0 +1,45 @@
+defmodule NativeCoreServices do
+  def core_lex_records(source: bytes, cursor: integer): bytes do
+    kind = token_kind(source, cursor)
+    start = token_start(source, cursor)
+    stop = token_end(source, cursor)
+    record = b[kind, start, stop]
+    if kind == 9 do record else Enum.concat(record, core_lex_records(source, stop)) end
+  end
+
+  def core_lexer(source: bytes): bytes do
+    if first_error(source, 0) != -1 do b[] else core_lex_records(source, 0) end
+  end
+
+  def core_integer_result(source: bytes, cursor: integer, negative: integer): bytes do
+    if integer_error(source, cursor, negative) != 0 do b[] else
+      if token_kind(source, token_end(source, cursor)) != 9 do b[] else
+        core_format_i64(integer_or(source, cursor, negative, 0))
+      end
+    end
+  end
+
+  def core_integer(source: bytes): bytes do
+    if token_error(source, 0) != 0 do b[] else
+      kind = token_kind(source, 0)
+      if kind == 5 do core_integer_result(source, token_end(source, 0), 1) else
+        if kind == 4 do core_integer_result(source, token_end(source, 0), 0) else core_integer_result(source, 0, 0) end
+      end
+    end
+  end
+
+  def core_expression(source: bytes): bytes do
+    if expression_error(source) != 0 do b[] else core_format_i64(expression_or(source, 0)) end
+  end
+
+  def core_encoder(source: bytes): bytes do
+    if Enum.count(source) != 1 do b[] else emit_elf_exit(Enum.at(source, 0, 0)) end
+  end
+
+  def core_arithmetic(source: bytes): bytes do
+    compile_expression(source)
+  end
+
+  # Native smoke test; the module manifest selects a native_compile adapter.
+  def main() do System.halt(0) end
+end

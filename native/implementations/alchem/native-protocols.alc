@@ -1,0 +1,328 @@
+defmodule NativeProtocols do
+  # Protocols (spec/alchem-protocols.md). A function of a defimpl becomes a
+  # function of its module named function, byte 127, the protocol, byte 127
+  # and the number of functions its module defined before the defimpl, with
+  # the type it is for written on its first parameter. No program can write
+  # such a name; a trace shows it with $ for the byte, as the pinned
+  # compiler names the function.
+  def mp_digits(value: integer): bytes do
+    if value < 10 do b[48+value] else Enum.concat(mp_digits(nc_units(value,10)),b[48+value-nc_units(value,10)*10]) end
+  end
+  def mp_shown(name: bytes, at: integer): bytes do
+    if at >= Enum.count(name) do b[] else Enum.concat(b[if Enum.at(name,at,0) == 127 do 36 else Enum.at(name,at,0) end],mp_shown(name,at+1)) end
+  end
+  # The parameters of a protocol's function from pos: where they end, -1
+  # when one is no name with or without a type, or when there is none.
+  def mp_decl_params(work: bytes, pos: integer, count: integer): integer do
+    start = nc_start(work,pos)
+    stop = nc_end(work,start)
+    typed = nc_expect(work,stop,b[58])
+    after = if typed < 0 do stop else nc_pos(nc_type(work,typed)) end
+    if nc_word(work,start,b[41]) == 1 do if count == 0 do -1 else stop end else
+      if mx_name(work,start) == 0 do -1 else if after < 0 do -1 else
+        if nc_word(work,after,b[44]) == 1 do mp_decl_params(work,nc_end(work,after),count+1) else nc_expect(work,after,b[41]) end
+      end end
+    end
+  end
+  # The declarations of a protocol from pos: where its end stands, -1 for a
+  # body that is not def name(parameters): type, one or more times.
+  def mp_declared(work: bytes, pos: integer, count: integer): integer do
+    start = nc_start(work,pos)
+    name = nc_start(work,nc_end(work,start))
+    after = mp_decl_params(work,nc_expect(work,nc_end(work,name),b[40]),0)
+    typed = nc_expect(work,after,b[58])
+    if nc_word(work,start,b[101,110,100]) == 1 do if count == 0 do -1 else start end else
+      if nc_word(work,start,b[100,101,102]) == 0 do -1 else if mx_name(work,name) == 0 do -1 else if after < 0 do -1 else
+        mp_declared(work,if typed < 0 do after else nc_pos(nc_type(work,typed)) end,count+1)
+      end end end
+    end
+  end
+  # defprotocol Name do ... end at pos: where it ends, then its records.
+  def mp_protocol(work: bytes, pos: integer, cur: integer): bytes do
+    name = nc_start(work,nc_end(work,pos))
+    stop = nc_end(work,name)
+    body = nc_expect(work,stop,b[100,111])
+    last = if body < 0 do -1 else mp_declared(work,body,0) end
+    if mx_upper(byte_at(work,name)) == 0 do b[] else if byte_at(work,stop) == 46 do b[] else if last < 0 do b[] else
+      nc_join(nc_u24(nc_end(work,last)),mx_record(5,cur,mx_three(name,stop,body),b[]),mx_record(7,cur,mx_two(pos,nc_end(work,last)),b[]))
+    end end end
+  end
+  # The functions a module has defined so far, from record at on.
+  def mp_defined(ix: bytes, cur: integer, at: integer): integer do
+    kind = Enum.at(ix,at,0)
+    if at >= Enum.count(ix) do 0 else
+      (if (kind-3)*(kind-6) != 0 do 0 else if nc_read(ix,at+1) == cur do 1 else 0 end end)+mp_defined(ix,cur,at+24)
+    end
+  end
+  # 1 when the tokens from a up to stop are those from b up to end.
+  def mp_same(work: bytes, a: integer, stop: integer, places: bytes): integer do
+    b = nc_cursor(places,0)
+    first = nc_start(work,a)
+    second = nc_start(work,b)
+    size = nc_end(work,first)-first
+    done = if first >= stop do 1 else if first < 0 do 1 else 0 end end
+    over = if second >= nc_cursor(places,3) do 1 else if second < 0 do 1 else 0 end end
+    if done+over > 0 do if done+over == 2 do 1 else 0 end else
+      if mx_same(work,first,second,size) == 0 do 0 else mp_same(work,first+size,stop,Enum.concat(nc_u24(second+size),nc_slice(places,3,6))) end
+    end
+  end
+  # defimpl Protocol, for: Type do ... end at pos: where it ends, then its
+  # records. ix: the records so far.
+  def mp_impl(work: bytes, ix: bytes, pos: integer, cur: integer): bytes do
+    name = nc_start(work,nc_end(work,pos))
+    word = nc_start(work,nc_expect(work,nc_end(work,name),b[44]))
+    colon = if nc_word(work,word,b[102,111,114]) == 0 do -1 else nc_expect(work,nc_end(work,word),b[58]) end
+    typed = if colon < 0 do b[] else nc_type(work,colon) end
+    body = nc_expect(work,nc_pos(typed),b[100,111])
+    if mx_name(work,name) == 0 do b[] else if body < 0 do b[] else
+      mp_functions(work,body,nc_join(nc_join(nc_u16(cur),mx_two(name,nc_end(work,name)),mx_two(nc_start(work,colon),nc_pos(typed))),nc_u24(mp_defined(ix,cur,0)),nc_u24(pos)),b[],0)
+    end end
+  end
+  # plan: the module, the protocol's name, the type (from, to), the number
+  # of the block and where defimpl stands.
+  def mp_functions(work: bytes, pos: integer, plan: bytes, acc: bytes, count: integer): bytes do
+    start = nc_start(work,pos)
+    cur = nc_read(plan,0)
+    made = if nc_word(work,start,b[100,101,102])+nc_word(work,start,b[100,101,102,112]) == 0 do b[] else mp_function(work,start,plan) end
+    if nc_word(work,start,b[101,110,100]) == 1 do
+      if count == 0 do b[] else nc_join(nc_u24(nc_end(work,start)),acc,mx_record(7,cur,mx_two(start,nc_end(work,start)),b[])) end
+    else
+      if Enum.count(made) < 3 do b[] else
+        mp_functions(work,nc_cursor(made,0),plan,nc_join(acc,if count == 0 do mx_record(7,cur,mx_two(nc_cursor(plan,17),start),b[]) else b[] end,nc_slice(made,3,Enum.count(made))),count+1)
+      end
+    end
+  end
+  # One function of a defimpl at start: where it ends, then its records.
+  # Its first parameter is a name, with the type it is for or with none; a
+  # function with a pattern there, a guard or no result type is one the
+  # pinned compiler does not build.
+  def mp_function(work: bytes, start: integer, plan: bytes): bytes do
+    name = nc_start(work,nc_end(work,start))
+    stop = nc_end(work,name)
+    first = nc_start(work,nc_expect(work,stop,b[40]))
+    named = nc_end(work,first)
+    typed = nc_expect(work,named,b[58])
+    given = if typed < 0 do b[] else nc_type(work,typed) end
+    fits = if typed < 0 do nc_word(work,named,b[44])+nc_word(work,named,b[41]) else if nc_pos(given) < 0 do 0 else mp_same(work,typed,nc_pos(given),nc_slice(plan,8,14)) end end
+    close = np_close(work,stop,0,16777216)
+    result = nc_expect(work,close,b[58])
+    body = if result < 0 do -1 else nc_expect(work,nc_pos(nc_type(work,result)),b[100,111]) end
+    last = if body < 0 do -1 else nc_body_end(work,body,16777216) end
+    told = mx_record(6,nc_read(plan,0),nc_join(mx_two(name,stop),nc_slice(plan,2,14),nc_slice(plan,14,17)),b[])
+    if mx_name(work,name)*mx_name(work,first)*fits == 0 do b[] else if last < 0 do b[] else if mp_named(work,nc_start(work,nc_expect(work,if typed < 0 do named else nc_pos(given) end,b[44])),16) == 0 do b[] else
+      nc_join(Enum.concat(nc_u24(nc_end(work,last)),told),mx_record(8,nc_read(plan,0),mx_two(stop,stop),Enum.concat(nc_slice(plan,2,8),nc_slice(plan,14,17))),if typed < 0 do mx_record(9,nc_read(plan,0),mx_two(named,named),nc_slice(plan,8,14)) else b[] end)
+    end end end
+  end
+  # 1 when the parameters from pos on (after the first) are names with their
+  # types: a pattern there makes clauses of the function, which the pinned
+  # compiler does not build in a defimpl.
+  def mp_named(work: bytes, pos: integer, budget: integer): integer do
+    typed = nc_expect(work,nc_end(work,pos),b[58])
+    after = if typed < 0 do -1 else nc_pos(nc_type(work,typed)) end
+    if pos < 0 do 1 else if budget == 0 do 0 else if mx_name(work,pos) == 0 do 0 else if after < 0 do 0 else
+      if nc_word(work,after,b[44]) == 1 do mp_named(work,nc_start(work,nc_end(work,after)),budget-1) else 1 end
+    end end end end
+  end
+  # The record of a kind from first up to stop whose name is the name at
+  # pos, of any module: the first one, -1 for none.
+  def mp_first(work: bytes, ix: bytes, kind: integer, pos: integer, bounds: bytes): integer do
+    first = nc_cursor(bounds,0)
+    stop = nc_cursor(bounds,3)
+    middle = first+nc_half(stop-first)
+    base = mx_base(ix)+first*24
+    if stop-first <= 0 do -1 else
+      if stop-first == 1 do
+        if Enum.at(ix,base,0) != kind do -1 else if mx_same(work,nc_cursor(ix,base+3),pos,nc_cursor(ix,base+6)-nc_cursor(ix,base+3)) == 1 do base else -1 end end
+      else
+        left = mp_first(work,ix,kind,pos,mx_two(first,middle))
+        if left >= 0 do left else mp_first(work,ix,kind,pos,mx_two(middle,stop)) end
+      end
+    end
+  end
+  # Where a protocol declares the function named at pos, from the def at
+  # at on: its name, -1 for none.
+  def mp_declares(work: bytes, at: integer, pos: integer): integer do
+    start = nc_start(work,at)
+    name = nc_start(work,nc_end(work,start))
+    after = mp_decl_params(work,nc_expect(work,nc_end(work,name),b[40]),0)
+    typed = nc_expect(work,after,b[58])
+    if nc_word(work,start,b[100,101,102]) == 0 do -1 else
+      if mx_same(work,pos,name,nc_end(work,pos)-pos) == 1 do name else mp_declares(work,if typed < 0 do after else nc_pos(nc_type(work,typed)) end,pos) end
+    end
+  end
+  # How many arguments the function named at name takes, and where its
+  # result type stands (from, to; zeros for none): seven bytes.
+  def mp_outline(work: bytes, name: integer): bytes do
+    stop = nc_end(work,name)
+    open = nc_expect(work,stop,b[40])
+    spans = if nc_word(work,open,b[41]) == 1 do b[] else nc_code(nc_list_collect(work,open,b[],0,41)) end
+    close = np_close(work,stop,0,16777216)
+    typed = nc_expect(work,close,b[58])
+    Enum.concat(b[nc_units(Enum.count(spans),6)],if typed < 0 do b[0,0,0,0,0,0] else mx_two(typed,nc_pos(nc_type(work,typed))) end)
+  end
+  # 1 when the record at base, a function of a defimpl, is not one the
+  # pinned compiler takes: its protocol is unknown or lacks the function,
+  # the number of arguments or the result type differ, or the protocol has
+  # the function for that type already.
+  def mp_wrong_one(work: bytes, ix: bytes, base: integer): integer do
+    at = nc_units(base-mx_base(ix),24)
+    home = mp_first(work,ix,5,nc_cursor(ix,base+9),mx_two(0,mx_count(ix)))
+    wanted = if home < 0 do -1 else mp_declares(work,nc_cursor(ix,home+9),nc_cursor(ix,base+3)) end
+    ours = mp_outline(work,nc_cursor(ix,base+3))
+    theirs = if wanted < 0 do b[0,0,0,0,0,0,0] else mp_outline(work,wanted) end
+    typed = if nc_cursor(theirs,1) == 0 do 0 else mp_same(work,nc_cursor(ours,1),nc_cursor(ours,4),nc_slice(theirs,1,7)) end
+    if wanted < 0 do 1 else if Enum.at(ours,0,0) != Enum.at(theirs,0,0) do 1 else if typed == 0 do 1 else mp_twice(work,ix,base,0) end end end
+  end
+  # 1 when a record before the one at base implements the same function of
+  # the same protocol for the same type, or is a clause of the same function.
+  def mp_twice(work: bytes, ix: bytes, base: integer, at: integer): integer do
+    other = mx_base(ix)+at*24
+    alike = if Enum.at(ix,other,0) != 6 do 0 else mx_same(work,nc_cursor(ix,base+3),nc_cursor(ix,other+3),nc_cursor(ix,base+6)-nc_cursor(ix,base+3))*mx_same(work,nc_cursor(ix,base+9),nc_cursor(ix,other+9),nc_cursor(ix,base+12)-nc_cursor(ix,base+9)) end
+    block = if nc_cursor(ix,other+21) != nc_cursor(ix,base+21) do 0 else if nc_read(ix,other+1) == nc_read(ix,base+1) do 1 else 0 end end
+    if other >= base do 0 else
+      if alike == 0 do mp_twice(work,ix,base,at+1) else
+        if block == 1 do 1 else if mp_same(work,nc_cursor(ix,base+15),nc_cursor(ix,base+18),nc_slice(ix,other+15,other+21)) == 1 do 1 else mp_twice(work,ix,base,at+1) end end
+      end
+    end
+  end
+  # 1 when the block of the record at base has the function named at pos.
+  def mp_has(work: bytes, ix: bytes, base: integer, pos: integer, at: integer): integer do
+    other = mx_base(ix)+at*24
+    block = if Enum.at(ix,other,0) != 6 do 0 else if nc_cursor(ix,other+21) != nc_cursor(ix,base+21) do 0 else if nc_read(ix,other+1) == nc_read(ix,base+1) do 1 else 0 end end end
+    if other >= Enum.count(ix) do 0 else
+      if block*mx_same(work,pos,nc_cursor(ix,other+3),nc_end(work,pos)-pos) == 1 do 1 else mp_has(work,ix,base,pos,at+1) end
+    end
+  end
+  # 1 when the block of the record at base lacks a function its protocol
+  # declares, from the def at at on.
+  def mp_lacks(work: bytes, ix: bytes, base: integer, at: integer): integer do
+    start = nc_start(work,at)
+    name = nc_start(work,nc_end(work,start))
+    after = mp_decl_params(work,nc_expect(work,nc_end(work,name),b[40]),0)
+    typed = nc_expect(work,after,b[58])
+    if nc_word(work,start,b[100,101,102]) == 0 do 0 else
+      if mp_has(work,ix,base,name,0) == 0 do 1 else mp_lacks(work,ix,base,if typed < 0 do after else nc_pos(nc_type(work,typed)) end) end
+    end
+  end
+  # 1 when a protocol is declared twice or an implementation is not sound.
+  def mp_wrong_from(work: bytes, ix: bytes, at: integer): integer do
+    base = mx_base(ix)+at*24
+    kind = Enum.at(ix,base,0)
+    home = if kind != 6 do -1 else mp_first(work,ix,5,nc_cursor(ix,base+9),mx_two(0,mx_count(ix))) end
+    bad = if kind == 5 do if mp_first(work,ix,5,nc_cursor(ix,base+3),mx_two(0,at)) >= 0 do 1 else 0 end else
+      if kind != 6 do 0 else if home < 0 do 1 else if mp_wrong_one(work,ix,base) == 1 do 1 else mp_lacks(work,ix,base,nc_cursor(ix,home+9)) end end end
+    end
+    if base >= Enum.count(ix) do 0 else if bad == 1 do 1 else mp_wrong_from(work,ix,at+1) end end
+  end
+  def mp_wrong(work: bytes, ix: bytes): integer do mp_wrong_from(work,ix,0) end
+  # Protocol.function(arguments) at pos, where no module is called
+  # Protocol: the first function that implements it, in the order of the
+  # program, which the arguments fit. plan: the nesting and where to look
+  # from.
+  def mp_fits(source: bytes, table: bytes, index: integer, pos: integer): integer do
+    name = nc_start(source,nc_end(source,nc_end(source,pos)))
+    size = nc_end(source,name)-name
+    wide = nc_end(source,pos)-pos
+    start = nc_meta(table,index,0)
+    if Enum.at(table,index*27+16,0) >= 32 do 0 else if nc_meta(table,index,3)-start < size+wide+3 do 0 else
+      if byte_at(source,start+size) != 127 do 0 else if byte_at(source,start+size+1+wide) != 127 do 0 else
+        nc_equal(source,start,name,size)*nc_equal(source,start+size+1,pos,wide)
+      end end
+    end end
+  end
+  def mp_next(source: bytes, table: bytes, pos: integer, first: integer, stop: integer): integer do
+    middle = first+nc_half(stop-first)
+    if stop-first <= 0 do -1 else
+      if stop-first == 1 do if mp_fits(source,table,first,pos) == 1 do first else -1 end else
+        left = mp_next(source,table,pos,first,middle)
+        if left >= 0 do left else mp_next(source,table,pos,middle,stop) end
+      end
+    end
+  end
+  # The modules of the program in the order the pinned compiler takes them:
+  # each after the modules it imports, the entry last. state: how many
+  # modules have been entered, their header records, then the order.
+  def mp_entered(state: bytes, home: integer, at: integer): integer do
+    if at >= nc_read(state,0) do 0 else if nc_read(state,2+at*2) == home do 1 else mp_entered(state,home,at+1) end end
+  end
+  def mp_visit(source: bytes, table: bytes, home: integer, state: bytes): bytes do
+    count = nc_read(state,0)
+    if home < 0 do state else if mp_entered(state,home,0) == 1 do state else
+      inner = mp_imports(source,table,nc_meta(table,home,6),nc_join(nc_u16(count+1),nc_slice(state,2,2+count*2),Enum.concat(nc_u16(home),nc_slice(state,2+count*2,Enum.count(state)))))
+      Enum.concat(inner,nc_u16(home))
+    end end
+  end
+  def mp_imports(source: bytes, table: bytes, pos: integer, state: bytes): bytes do
+    opening = nc_start(source,nc_end(source,pos))
+    if nc_word(source,pos,b[105,109,112,111,114,116]) != 1 do state else
+      mp_imports(source,table,nc_end(source,opening),mp_visit(source,table,nc_find(source,opening+8,table,-1),state))
+    end
+  end
+  def mp_order(source: bytes, table: bytes): bytes do
+    state = mp_visit(source,table,0,b[0,0])
+    nc_slice(state,2+nc_read(state,0)*2,Enum.count(state))
+  end
+  # Where the records of a module stop, from record at on.
+  def mp_module_end(table: bytes, at: integer): integer do
+    if at >= nc_records(Enum.count(table)) do at else if Enum.at(table,at*27+16,0) == 32 do at else mp_module_end(table,at+1) end end
+  end
+  # The first implementation from first up to stop whose type the argument
+  # of type kind fits.
+  def mp_pick_in(source: bytes, table: bytes, pos: integer, kind: bytes, first: integer, stop: integer): integer do
+    found = mp_next(source,table,pos,first,stop)
+    if found < 0 do -1 else
+      if Enum.count(nu_unify(nt_item(nj_cells(source,table,found),0),kind,b[])) > 0 do found else mp_pick_in(source,table,pos,kind,found+1,stop) end
+    end
+  end
+  def mp_pick(source: bytes, table: bytes, pos: integer, kind: bytes, order: bytes, at: integer): integer do
+    home = nc_read(order,at)
+    found = if at >= Enum.count(order) do -1 else mp_pick_in(source,table,pos,kind,home+1,mp_module_end(table,home+1)) end
+    if at >= Enum.count(order) do -1 else if found >= 0 do found else mp_pick(source,table,pos,kind,order,at+2) end end
+  end
+  # The implementation is chosen by the type of the first argument alone,
+  # which must be known where the call stands.
+  def mp_call(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    open = nc_end(source,nc_start(source,nc_end(source,nc_end(source,pos))))
+    args = nc_arguments_open(source,nc_end(source,open),env,table,depth)
+    kind = nc_arg_kind(args,0)
+    known = if nc_pos(args) < 0 do 0 else if nc_arg_count(args) == 0 do 0 else if nw_arg_marked(args,0) == 1 do 0 else 1-nu_holes(kind,0) end end end
+    target = if known == 0 do -1 else mp_pick(source,table,pos,kind,mp_order(source,table),0) end
+    if target < 0 do b[] else nj_enter(source,open,env,table,depth,Enum.concat(nc_u16(target),b[0])) end
+  end
+  # A call of a module the program does not have: a protocol's function,
+  # or a function of the library.
+  def mp_or(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    name = nc_start(source,nc_end(source,nc_end(source,pos)))
+    ours = if nc_library_module(source,pos) == 1 do -1 else if byte_at(source,nc_end(source,name)) != 40 do -1 else mp_next(source,table,pos,0,nc_records(Enum.count(table))) end end
+    if ours >= 0 do mp_call(source,pos,env,table,depth) else ny_call(source,pos,env,table,depth) end
+  end
+  # &Protocol.function/2 is &Protocol.function(&1, &2).
+  def mp_refer(work: bytes, ctx: bytes, state: bytes): bytes do
+    pos = nc_cursor(state,0)
+    stop = nc_end(work,nc_end(work,pos)+1)
+    count = byte_at(work,stop+1)-48
+    mx_done(state,stop+2,stop+2,nc_join(mx_run(ctx,nc_cursor(state,9),stop),mx_lit(ctx,b[40],pos),Enum.concat(mp_places(ctx,pos,1,count),mx_lit(ctx,b[41],pos))))
+  end
+  def mp_places(ctx: bytes, pos: integer, index: integer, count: integer): bytes do
+    if index > count do b[] else nc_join(mx_lit(ctx,b[38,48+index],pos),if index == count do b[] else mx_lit(ctx,b[44,32],pos) end,mp_places(ctx,pos,index+1,count)) end
+  end
+  # 1 when &Name.function/N at pos names a protocol of the program.
+  def mp_referred(work: bytes, ix: bytes, pos: integer): integer do
+    stop = nc_end(work,pos)
+    after = nc_end(work,stop+1)
+    if byte_at(work,pos-1) != 38 do 0 else if byte_at(work,stop) != 46 do 0 else if byte_at(work,after) != 47 do 0 else
+      if is_digit(byte_at(work,after+1)) == 0 do 0 else if is_digit(byte_at(work,after+2)) == 1 do 0 else if mp_first(work,ix,5,pos,mx_two(0,mx_count(ix))) >= 0 do 1 else 0 end end end
+    end end end
+  end
+  # 1 when the program declares a protocol.
+  def mp_any(ix: bytes, first: integer, stop: integer): integer do
+    middle = first+nc_half(stop-first)
+    if stop-first <= 0 do 0 else
+      if stop-first == 1 do if Enum.at(ix,mx_base(ix)+first*24,0) == 5 do 1 else 0 end else
+        if mp_any(ix,first,middle) == 1 do 1 else mp_any(ix,middle,stop) end
+      end
+    end
+  end
+  # Native smoke test; assembled with the compiler.
+  def main() do System.halt(0) end
+end

@@ -1,0 +1,398 @@
+defmodule NativePrelude do
+  # Library functions written in Alchem (library/*.alc). The compiler appends
+  # to a program the ones it mentions, as modules named Alchem, the library
+  # module and the number of parameters: AlchemEnum2 holds Enum.find/2. A
+  # call the compiler has no code of its own for is looked up there. A
+  # compiler entry gets none.
+  def ny_has(source: bytes, first: integer, stop: integer, word: bytes): integer do
+    if stop-first > 64 do
+      middle = first+nc_half(stop-first)
+      if ny_has(source,first,middle,word) == 1 do 1 else ny_has(source,middle,stop,word) end
+    else ny_scan(source,first,stop,word) end
+  end
+  def ny_scan(source: bytes, pos: integer, stop: integer, word: bytes): integer do
+    if pos >= stop do 0 else
+      if byte_at(source,pos) != Enum.at(word,0,0) do ny_scan(source,pos+1,stop,word) else
+        if nc_word(source,pos,word) == 1 do 1 else ny_scan(source,pos+1,stop,word) end
+      end
+    end
+  end
+  # The library text is held packed: a byte below 128 is itself, and a code
+  # from 128 up is a pair of such symbols, or after 255 one byte from 128 up.
+  def ny_symbol(pairs: bytes, code: integer): bytes do
+    left = Enum.at(pairs,(code-128)*2,0)
+    right = Enum.at(pairs,(code-128)*2+1,0)
+    if code < 128 do b[code] else if left == 255 do b[right] else Enum.concat(ny_symbol(pairs,left),ny_symbol(pairs,right)) end end
+  end
+  # In the packed text a symbol is written as its rank by frequency (order).
+  def ny_expand_range(tables: bytes, packed: bytes, first: integer, stop: integer): bytes do
+    if stop-first <= 0 do b[] else
+      if stop-first == 1 do ny_symbol(tables,Enum.at(tables,254+Enum.at(packed,first,0),0)) else
+        middle = first+nc_half(stop-first)
+        Enum.concat(ny_expand_range(tables,packed,first,middle),ny_expand_range(tables,packed,middle,stop))
+      end
+    end
+  end
+  # tables: the 127 pairs, then the order, 509 bytes in all.
+  def ny_tables(): bytes do
+    Enum.concat(nc_join(ny_pairs(),nc_zeros(254-Enum.count(ny_pairs())),ny_order()),nc_zeros(255-Enum.count(ny_order())))
+  end
+  # Which library functions a program gets. The program's text is read once
+  # (ny_pick): at each byte the texts of the index that start with it are
+  # tried (the layout and the rules are in scripts/generate-prelude.py), and
+  # a text found marks its entries with all they need, or sets a flag. state
+  # holds one byte per entry and then one per flag, 1 when it is marked.
+  # Only the program's code is read: a comment is passed over, and of a
+  # string or heredoc only what stands in its #{ }. A sigil is read whole,
+  # since the text of one may be code (a template). The last three bytes of
+  # state say where the reading has got to: a comment or a string may end
+  # past the stretch a call was given, and the next stretch starts there.
+  def ny_pick(source: bytes, index: bytes, state: bytes, first: integer, stop: integer): bytes do
+    if stop-first > 64 do
+      middle = first+nc_half(stop-first)
+      ny_pick(source,index,ny_pick(source,index,state,first,middle),middle,stop)
+    else
+      reached = nc_cursor(state,Enum.count(state)-3)
+      ny_pick_scan(source,index,state,if reached > first do reached else first end,stop)
+    end
+  end
+  def ny_reached(state: bytes, pos: integer): bytes do
+    Enum.concat(nc_slice(state,0,Enum.count(state)-3),nc_u24(pos))
+  end
+  def ny_pick_scan(source: bytes, index: bytes, state: bytes, pos: integer, stop: integer): bytes do
+    value = Enum.at(source,pos,0)
+    if pos >= stop do if pos == stop do state else ny_reached(state,pos) end else
+      if value == 35 do ny_pick_scan(source,index,state,ny_comment_end(source,pos),stop) else
+        if value == 34 do ny_pick_text(source,index,state,pos,stop) else
+          if value == 126 do ny_pick_sigil(source,index,state,pos,stop) else ny_pick_scan(source,index,ny_pick_at(source,index,state,pos),pos+1,stop) end
+        end
+      end
+    end
+  end
+  # The texts of the index that stand at pos.
+  def ny_pick_at(source: bytes, index: bytes, state: bytes, pos: integer): bytes do
+    bucket = Enum.at(index,Enum.at(source,pos,0),0)
+    if bucket == 0 do state else ny_try(source,index,state,pos,nc_cursor(index,265+bucket*3)) end
+  end
+  def ny_comment_end(source: bytes, pos: integer): integer do
+    next = nc_line_chunk(source,pos,64)
+    if next-pos == 64 do ny_comment_end(source,next) else next end
+  end
+  # A string or heredoc at pos: its holes are read, then the code after it.
+  # One that does not end is read as code, as everything was.
+  def ny_pick_text(source: bytes, index: bytes, state: bytes, pos: integer, stop: integer): bytes do
+    strict = ns_token_end(source,pos)
+    # A text the compiler's own passes wrote may hold bytes a program's may
+    # not: it ends at its quote all the same.
+    after = if strict > pos do strict else if ns_tripled(source,pos) == 1 do strict else ny_quote_end(source,pos+1) end end
+    first = if ns_tripled(source,pos) == 1 do pos+3 else pos+1 end
+    if after <= pos do ny_pick_scan(source,index,ny_pick_at(source,index,state,pos),pos+1,stop) else
+      ny_pick_scan(source,index,ny_pick_holes(source,index,state,first,after),after,stop)
+    end
+  end
+  # The position after the quote that closes a text, -1 when its line ends first.
+  def ny_quote_end(source: bytes, pos: integer): integer do
+    next = ny_quote_run(source,pos,64)
+    if next < 0 do 0-2-next else ny_quote_end(source,next) end
+  end
+  def ny_quote_run(source: bytes, pos: integer, left: integer): integer do
+    value = Enum.at(source,pos,10)
+    if left == 0 do pos else if value == 10 do -1 else if value == 34 do 0-3-pos else ny_quote_run(source,if value == 92 do pos+2 else pos+1 end,left-1) end end end
+  end
+  # The #{ } of the text from pos up to stop; a backslash keeps the byte
+  # after it from opening one.
+  def ny_pick_holes(source: bytes, index: bytes, state: bytes, pos: integer, stop: integer): bytes do
+    at = ny_hole_at(source,pos,stop)
+    close = if at >= stop do -1 else np_close(source,at+2,1,16777216) end
+    if at >= stop do state else if close < 0 do state else if close > stop do state else
+      ny_pick_holes(source,index,ny_pick(source,index,ny_reached(state,at+2),at+2,close-1),close,stop)
+    end end end
+  end
+  # Where the next #{ stands from pos on, stop when there is none.
+  def ny_hole_at(source: bytes, pos: integer, stop: integer): integer do
+    next = ny_hole_run(source,pos,stop,64)
+    if next < 0 do 0-1-next else ny_hole_at(source,next,stop) end
+  end
+  # Up to left bytes from pos: where to go on, or below zero the answer.
+  def ny_hole_run(source: bytes, pos: integer, stop: integer, left: integer): integer do
+    value = Enum.at(source,pos,0)
+    if pos >= stop do 0-1-stop else if left == 0 do pos else
+      if value == 92 do ny_hole_run(source,pos+2,stop,left-1) else
+        if value != 35 do ny_hole_run(source,pos+1,stop,left-1) else if Enum.at(source,pos+1,0) == 123 do 0-1-pos else ny_hole_run(source,pos+1,stop,left-1) end end
+      end
+    end end
+  end
+  # A sigil at pos: every byte of it is read, as code is.
+  def ny_pick_sigil(source: bytes, index: bytes, state: bytes, pos: integer, stop: integer): bytes do
+    after = if sg_starts(source,pos) == 0 do pos+1 else sg_token_end(source,pos) end
+    last = if after <= pos do pos+1 else after end
+    ny_pick_scan(source,index,ny_pick_raw(source,index,state,pos,last),last,stop)
+  end
+  def ny_pick_raw(source: bytes, index: bytes, state: bytes, first: integer, stop: integer): bytes do
+    if stop-first > 64 do
+      middle = first+nc_half(stop-first)
+      ny_pick_raw(source,index,ny_pick_raw(source,index,state,first,middle),middle,stop)
+    else ny_pick_raw_scan(source,index,state,first,stop) end
+  end
+  def ny_pick_raw_scan(source: bytes, index: bytes, state: bytes, pos: integer, stop: integer): bytes do
+    if pos >= stop do state else ny_pick_raw_scan(source,index,ny_pick_at(source,index,state,pos),pos+1,stop) end
+  end
+  # The texts of one bucket from offset at on, against the text at pos.
+  def ny_try(source: bytes, index: bytes, state: bytes, pos: integer, at: integer): bytes do
+    size = Enum.at(index,at,0)
+    if size == 0 do state else
+      if ny_text_at(source,pos,index,at+1,size-1) == 0 do ny_try(source,index,state,pos,at+size+5) else
+        ny_try(source,index,ny_hit(source,index,state,pos,at),pos,at+size+5)
+      end
+    end
+  end
+  # 1 when the bytes from index offset at up to at+last, the first of which
+  # is known to be there, stand at pos.
+  def ny_text_at(source: bytes, pos: integer, index: bytes, at: integer, last: integer): integer do
+    if last == 0 do 1 else
+      if Enum.at(source,pos+last,-1) != Enum.at(index,at+last,0) do 0 else ny_text_at(source,pos,index,at,last-1) end
+    end
+  end
+  # The text of the index record at stands at pos: what it marks, by its
+  # kind. 0: wherever it stands. The other kinds are whole words, as nc_word
+  # reads one. 1: the word itself. 2: a module, for the name after its dot.
+  def ny_hit(source: bytes, index: bytes, state: bytes, pos: integer, at: integer): bytes do
+    size = Enum.at(index,at,0)
+    kind = Enum.at(index,at+size+1,0)
+    payload = nc_cursor(index,at+size+2)
+    if kind == 0 do ny_mark_list(index,state,payload+2,nc_read(index,payload)) else
+      if nc_end(source,pos)-pos != size do state else
+        if kind == 1 do ny_mark_list(index,state,payload+2,nc_read(index,payload)) else ny_named(source,index,state,pos,payload) end
+      end
+    end
+  end
+  # Module.name with the module at pos: the name after the dot, looked up
+  # among the module's names. Its first list is marked for any use of the
+  # name, the others for a call with their number of arguments (nh_given).
+  def ny_named(source: bytes, index: bytes, state: bytes, pos: integer, names: integer): bytes do
+    dot = nc_expect(source,nc_end(source,pos),b[46])
+    name = nc_start(source,dot)
+    found = if name < 0 do -1 else ny_name(source,name,nc_end(source,name)-name,index,names+2,names+2+nc_read(index,names)*4) end
+    any = nc_cursor(index,found)
+    if found < 0 do state else
+      ny_counted(source,index,ny_mark_list(index,state,any+2,nc_read(index,any)),Enum.concat(nc_u24(pos),nc_u24(nc_end(source,dot))),found+4,Enum.at(index,found+3,0))
+    end
+  end
+  # The lists of a name for calls with a number of arguments, count of them
+  # from index offset at. span: where the module and the end of the name are.
+  def ny_counted(source: bytes, index: bytes, state: bytes, span: bytes, at: integer, count: integer): bytes do
+    held = nc_cursor(index,at+1)
+    if count == 0 do state else
+      # Arguments are counted only for a list that still has something to mark.
+      given = if ny_all(index,state,held+2,nc_read(index,held)) == 1 do 0 else nh_given(source,nc_cursor(span,0),nc_cursor(span,3),Enum.at(index,at,0)) end
+      ny_counted(source,index,if given == 0 do state else ny_mark_list(index,state,held+2,nc_read(index,held)) end,span,at+4,count-1)
+    end
+  end
+  # The offset after the name of the module's record for the name of size
+  # bytes at pos, -1 when the module has no such name: a search of the name
+  # offsets from first up to stop, which are in byte order.
+  def ny_name(source: bytes, pos: integer, size: integer, index: bytes, first: integer, stop: integer): integer do
+    if first >= stop do -1 else
+      middle = first+nc_half(nc_half(nc_half(stop-first)))*4
+      record = nc_cursor(index,middle)
+      order = ny_compare(source,pos,size,index,record,0)
+      if order == 0 do record+1+Enum.at(index,record,0) else
+        if order < 0 do ny_name(source,pos,size,index,first,middle) else ny_name(source,pos,size,index,middle+4,stop) end
+      end
+    end
+  end
+  # The name at pos against the name of an index record from byte done on:
+  # negative when it sorts before, 0 when they are the same.
+  def ny_compare(source: bytes, pos: integer, size: integer, index: bytes, record: integer, done: integer): integer do
+    length = Enum.at(index,record,0)
+    if done >= size do if done >= length do 0 else -1 end else if done >= length do 1 else
+      gap = Enum.at(source,pos+done,0)-Enum.at(index,record+1+done,0)
+      if gap != 0 do gap else ny_compare(source,pos,size,index,record,done+1) end
+    end end
+  end
+  def ny_mark_list(index: bytes, state: bytes, at: integer, count: integer): bytes do
+    if count == 0 do state else ny_mark_list(index,ny_mark(index,state,nc_read(index,at)),at+2,count-1) end
+  end
+  # Number id is marked: a flag, or an entry and with it every entry it needs.
+  def ny_mark(index: bytes, state: bytes, id: integer): bytes do
+    if Enum.at(state,id,0) == 1 do state else
+      needs = if id >= nc_read(index,262) do 0 else nc_cursor(index,nc_cursor(index,256)+id*17+8) end
+      ny_mark_list(index,nc_join(nc_slice(state,0,id),b[1],nc_slice(state,id+1,Enum.count(state))),needs+2,if needs == 0 do 0 else nc_read(index,needs) end)
+    end
+  end
+  # 1 when every number of the list is marked (an empty list: 1).
+  def ny_all(index: bytes, state: bytes, at: integer, count: integer): integer do
+    if count == 0 do 1 else if Enum.at(state,nc_read(index,at),0) == 0 do 0 else ny_all(index,state,at+2,count-1) end end
+  end
+  # 1 when a number of the list is marked.
+  def ny_some(index: bytes, state: bytes, at: integer, count: integer): integer do
+    if count == 0 do 0 else if Enum.at(state,nc_read(index,at),0) == 1 do 1 else ny_some(index,state,at+2,count-1) end end
+  end
+  # One byte per entry from first up to stop, 1 when it is appended: it is
+  # marked or one of its extras is set, and all of its homes are set.
+  def ny_chosen(index: bytes, state: bytes, first: integer, stop: integer): bytes do
+    if first >= stop do b[] else
+      if stop-first == 1 do
+        record = nc_cursor(index,256)+first*17
+        homes = nc_cursor(index,record+11)
+        extras = nc_cursor(index,record+14)
+        if Enum.at(state,first,0)+ny_some(index,state,extras+2,nc_read(index,extras)) == 0 do b[0] else b[ny_all(index,state,homes+2,nc_read(index,homes))] end
+      else
+        middle = first+nc_half(stop-first)
+        Enum.concat(ny_chosen(index,state,first,middle),ny_chosen(index,state,middle,stop))
+      end
+    end
+  end
+  def ny_any(chosen: bytes, first: integer, stop: integer): integer do
+    if first >= stop do 0 else
+      if stop-first == 1 do Enum.at(chosen,first,0) else
+        middle = first+nc_half(stop-first)
+        if ny_any(chosen,first,middle) == 1 do 1 else ny_any(chosen,middle,stop) end
+      end
+    end
+  end
+  # The appended entries as modules, in the order of the index. work: the
+  # byte per entry of ny_chosen, then the state.
+  def ny_groups(index: bytes, work: bytes, tables: bytes, first: integer, stop: integer): bytes do
+    if first >= stop do b[] else
+      if stop-first == 1 do ny_group(index,work,tables,first) else
+        middle = first+nc_half(stop-first)
+        Enum.concat(ny_groups(index,work,tables,first,middle),ny_groups(index,work,tables,middle,stop))
+      end
+    end
+  end
+  def ny_group(index: bytes, work: bytes, tables: bytes, group: integer): bytes do
+    record = nc_cursor(index,259)+group*8
+    first = nc_read(index,record)
+    stop = nc_read(index,record+8)
+    name = nc_cursor(index,record+2)
+    guard = nc_cursor(index,record+5)
+    count = nc_read(index,262)
+    open = if guard == 0 do 1 else ny_some(index,nc_slice(work,count,Enum.count(work)),guard+2,nc_read(index,guard)) end
+    if open*ny_any(work,first,stop) == 0 do b[] else
+      header = nc_join(b[100,101,102,109,111,100,117,108,101,32],nc_slice(index,name+1,name+1+Enum.at(index,name,0)),b[32,100,111,10])
+      nc_join(header,ny_members(index,nc_join(nc_slice(work,0,count),tables,ny_data(group)),first,stop),b[101,110,100,10])
+    end
+  end
+  # work: the byte per entry, the tables of the packed text (509 bytes) and
+  # the packed text of the group.
+  def ny_members(index: bytes, work: bytes, first: integer, stop: integer): bytes do
+    if first >= stop do b[] else
+      if stop-first == 1 do
+        record = nc_cursor(index,256)+first*17
+        count = nc_read(index,262)
+        start = count+509+nc_cursor(index,record+2)
+        if Enum.at(work,first,0) == 0 do b[] else ny_expand_range(nc_slice(work,count,count+509),work,start,start+nc_cursor(index,record+5)) end
+      else
+        middle = first+nc_half(stop-first)
+        Enum.concat(ny_members(index,work,first,middle),ny_members(index,work,middle,stop))
+      end
+    end
+  end
+  def ny_prelude(source: bytes): bytes do
+    index = ny_index()
+    count = nc_read(index,262)
+    # Calendar sigils name their structs without writing them.
+    hinted = nc_join(source,sg_hints(source),nn_hinted(source))
+    state = nc_slice(ny_pick(hinted,index,nc_zeros(count+nc_read(index,266)+3),0,Enum.count(hinted)),0,count+nc_read(index,266))
+    # The first flag is native_compile: a compiler entry gets no library.
+    modules = if Enum.at(state,count,0) == 1 do b[] else ny_groups(index,Enum.concat(ny_chosen(index,state,0,count),state),ny_tables(),0,nc_read(index,264)) end
+    if Enum.count(modules) == 0 do b[] else Enum.concat(b[10],modules) end
+  end
+  def ny_digits(value: integer): bytes do
+    if value < 10 do b[48+value] else if value < 100 do b[48+ny_tens(value,0),48+value-ny_tens(value,0)*10] else b[48,48,48] end end
+  end
+  def ny_tens(value: integer, tens: integer): integer do
+    if value < 10 do tens else ny_tens(value-10,tens+1) end
+  end
+  # The header record of the module called name, -1 if there is none.
+  def ny_module(source: bytes, table: bytes, name: bytes, bounds: bytes): integer do
+    if nc_indexed(table) == 0 do ny_module_plain(source,table,name,bounds) else nc_index_find(source,table,Enum.concat(nc_index_key(table,0,Enum.count(name),0,0),name),1) end
+  end
+  def ny_module_plain(source: bytes, table: bytes, name: bytes, bounds: bytes): integer do
+    first = nc_cursor(bounds,0)
+    stop = nc_cursor(bounds,3)
+    middle = first+nc_half(stop-first)
+    match = if first >= stop do 0 else if Enum.at(table,middle*27+16,0) != 32 do 0 else nt_same(nc_slice(source,nc_meta(table,middle,0),nc_meta(table,middle,3)),name) end end
+    if first >= stop do -1 else if match == 1 do middle else
+      left = ny_module_plain(source,table,name,Enum.concat(nc_u24(first),nc_u24(middle)))
+      if left >= 0 do left else ny_module_plain(source,table,name,Enum.concat(nc_u24(middle+1),nc_u24(stop))) end
+    end end
+  end
+  # Module.name(arguments) at pos, for a function of the library written in
+  # Alchem; a piped value counts among the arguments. A name may have several
+  # forms for one number of arguments (modules ...v2 to ...v16, for other
+  # types): the call takes the first its arguments fit.
+  def ny_call(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    ny_called(source,ac_module(source,pos),env,table,depth,nc_start(source,pos))
+  end
+  def ny_called(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, place: integer): bytes do
+    dot = nc_expect(source,nc_end(source,pos),b[46])
+    name = nc_start(source,dot)
+    paren = if dot < 0 do -1 else nc_expect(source,nc_end(source,name),b[40]) end
+    spans = if paren < 0 do b[] else if nc_word(source,paren,b[41]) == 1 do b[] else nc_list_collect(source,paren,b[],0,41) end end
+    given = if nc_pos(spans) < 0 do 0 else nc_units(Enum.count(nc_code(spans)),6) end
+    count = if paren < 0 do 0 else if nc_pos(nf_piped(source,paren,env)) < 0 do given else given+1 end end
+    wanted = nc_join(b[65,108,99,104,101,109],nc_slice(source,nc_start(source,pos),nc_end(source,pos)),ny_digits(count))
+    # An empty list literal says nothing of its elements, which the Enum and
+    # List functions take from their arguments.
+    generic = nc_word(source,pos,b[69,110,117,109])+nc_word(source,pos,b[76,105,115,116])
+    # Unless the call is expected to give a type, which settles them.
+    bare = if generic == 0 do 0 else if nc_word(source,paren,b[91]) == 0 do 0 else if nc_word(source,nc_end(source,paren),b[93]) == 0 do 0 else if Enum.count(nw_expected(env,paren-1,2)) > 0 do 0 else 1 end end end end
+    # A name that begins with an underscore is the library's own.
+    inner = if byte_at(source,name) != 95 do 0 else if nn_library(source,env,table) == 0 do 2 else 1 end end
+    made = if inner == 1 do nn_intrinsic(source,pos,env,table,depth) else b[] end
+    # String.split(text, x) and String.replace(text, x, y) take a regular
+    # expression only written as a ~r, a name or Regex.compile!(...), as the
+    # pinned compiler has it (spec/alchem-regex.md).
+    args = if paren < 0 do b[] else nc_arguments_open(source,paren,env,table,depth) end
+    held = if nc_word(source,pos,b[83,116,114,105,110,103]) == 0 do 0 else if nc_word(source,name,b[115,112,108,105,116])*(count-2)*(count-2)+nc_word(source,name,b[114,101,112,108,97,99,101])*(count-3)*(count-3) != 0 do 0 else nc_word(source,name,b[115,112,108,105,116])+nc_word(source,name,b[114,101,112,108,97,99,101]) end end
+    barred = if held == 0 do 0 else if nt_tag(nc_arg_kind(args,1)) != 29 do 0 else 1-ny_regular(source,nc_cursor(nc_code(spans),(1+given-count)*6)) end end
+    if nc_pos(made) >= 0 do made else if paren < 0 do b[] else if bare+inner+barred*2 >= 2 do b[] else if bare == 1 do b[] else zf_received(source,table,pos,nh_placed(table,dn_typed(source,pos,env,table,args,ac_typed(source,pos,name,args,nn_passes(source,pos,name,env,table,nc_join(b[depth,1,0,Enum.count(wanted)],wanted,args)))),place)) end end end end
+  end
+  # 1 when the argument at pos is plainly a regular expression (regular).
+  def ny_regular(source: bytes, pos: integer): integer do
+    after = nc_end(source,pos)
+    if nc_word(source,pos,b[40]) == 1 do ny_regular(source,after) else if byte_at(source,nc_start(source,pos))*256+byte_at(source,nc_start(source,pos)+1) == 32370 do 1 else
+      if nc_word(source,pos,b[82,101,103,101,120])*nc_word(source,after,b[46])*nc_word(source,nc_end(source,after),b[99,111,109,112,105,108,101,33]) == 1 do 1 else
+        if nc_identifier(source,pos) == 0 do 0 else nc_word(source,after,b[44])+nc_word(source,after,b[41]) end
+      end
+    end end
+  end
+  # name(arguments) at pos for a function called without a module name.
+  def ny_bare(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    name = nc_start(source,pos)
+    paren = nc_expect(source,nc_end(source,name),b[40])
+    spans = if paren < 0 do b[] else if nc_word(source,paren,b[41]) == 1 do b[] else nc_list_collect(source,paren,b[],0,41) end end
+    given = if nc_pos(spans) < 0 do 0 else nc_units(Enum.count(nc_code(spans)),6) end
+    count = if paren < 0 do 0 else if nc_pos(nf_piped(source,paren,env)) < 0 do given else given+1 end end
+    # map, filter and reduce without a module take a function that has its
+    # types: a named one or fn(x: type): type, not fn x -> ... or a capture.
+    typed = if nc_word(source,name,b[109,97,112])+nc_word(source,name,b[102,105,108,116,101,114])+nc_word(source,name,b[114,101,100,117,99,101]) == 0 do 1 else if nc_pos(spans) < 0 do 1 else 1-ny_untyped(source,nc_code(spans),0) end end
+    if paren < 0 do b[] else if typed == 0 do b[] else zf_voided(source,table,env,nh_placed(table,ny_forms(source,name,env,table,nc_join(b[depth,1],b[65,108,99,104,101,109,75,101,114,110,101,108],ny_digits(count))),nk_from(source,name)),zf_void(source,-1,name)) end end
+  end
+  # 1 when an argument among the spans from index on is fn x -> ... or a capture.
+  def ny_untyped(source: bytes, spans: bytes, index: integer): integer do
+    start = nc_start(source,nc_cursor(spans,index*6))
+    if index*6 >= Enum.count(spans) do 0 else
+      if nf_untyped(source,start)+nf_capture_form(source,start) > 0 do 1 else ny_untyped(source,spans,index+1) end
+    end
+  end
+  # plan: the nesting, the form to try and the module name without its form.
+  def ny_forms(source: bytes, name: integer, env: bytes, table: bytes, plan: bytes): bytes do
+    form = Enum.at(plan,1,0)
+    base = nc_slice(plan,2,Enum.count(plan))
+    wanted = if form == 1 do base else nc_join(base,b[118],ny_digits(form)) end
+    home = ny_module(source,table,wanted,Enum.concat(nc_u24(0),nc_u24(nc_records(Enum.count(table)))))
+    target = if home < 0 do -1 else nc_find(source,name,table,home) end
+    call = if target < 0 do b[] else nc_call_function(source,nc_end(source,name),env,table,Enum.at(plan,0,0),target) end
+    if nc_pos(call) >= 0 do call else if form >= 16 do b[] else ny_forms(source,name,env,table,nc_join(b[Enum.at(plan,0,0),form+1],base,b[])) end end
+  end
+  # A library call: the compiler's own code for it, else the function written
+  # in Alchem.
+  def ny_or(built: bytes, source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    if nc_pos(built) >= 0 do built else ny_call(source,pos,env,table,depth) end
+  end
+  # Native smoke test; assembled with the compiler.
+  def main() do System.halt(0) end
+end

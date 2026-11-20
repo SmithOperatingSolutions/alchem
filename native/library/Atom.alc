@@ -1,0 +1,5 @@
+# Atom: an atom is the string of its name at run time.
+#: to_string/1
+  def to_string(a: atom): string do
+    "#{a}"
+  end

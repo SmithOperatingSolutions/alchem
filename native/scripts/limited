@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Run a command with a ceiling on memory and time, so that a runaway program
+# (an endless stream collected into a list, a compile that explodes) is
+# killed alone instead of taking the machine down with it.
+#
+#   scripts/limited COMMAND [ARGS...]
+#   ALCHEM_MEMORY=6G    memory for the command and everything it starts
+#   ALCHEM_SECONDS=600  wall-clock seconds
+#
+# The command runs in a systemd user scope with MemoryMax and no swap; when
+# no user manager is reachable it falls back to an address-space limit.
+set -euo pipefail
+memory="${ALCHEM_MEMORY:-6G}"
+seconds="${ALCHEM_SECONDS:-600}"
+if systemd-run --user --scope --quiet -p MemoryMax=1G true 2>/dev/null; then
+  exec systemd-run --user --scope --quiet -p MemoryMax="$memory" -p MemorySwapMax=0 timeout --signal=KILL "$seconds" "$@"
+fi
+bytes="$(numfmt --from=iec "$memory")"
+exec prlimit --as="$bytes" timeout --signal=KILL "$seconds" "$@"

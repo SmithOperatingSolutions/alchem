@@ -1,0 +1,135 @@
+{
+  "version": 2,
+  "functions": [
+    {
+      "name": "sum6",
+      "params": [
+        {
+          "name": "a",
+          "type": "i64"
+        },
+        {
+          "name": "b",
+          "type": "i64"
+        },
+        {
+          "name": "c",
+          "type": "i64"
+        },
+        {
+          "name": "d",
+          "type": "i64"
+        },
+        {
+          "name": "e",
+          "type": "i64"
+        },
+        {
+          "name": "f",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "mul.i64",
+              "dest": "bc",
+              "lhs": "b",
+              "rhs": "c"
+            },
+            {
+              "op": "sub.i64",
+              "dest": "abc",
+              "lhs": "a",
+              "rhs": "bc"
+            },
+            {
+              "op": "mul.i64",
+              "dest": "de",
+              "lhs": "d",
+              "rhs": "e"
+            },
+            {
+              "op": "add.i64",
+              "dest": "abcde",
+              "lhs": "abc",
+              "rhs": "de"
+            },
+            {
+              "op": "sub.i64",
+              "dest": "r",
+              "lhs": "abcde",
+              "rhs": "f"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    },
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "const.i64",
+              "dest": "x0",
+              "value": 90
+            },
+            {
+              "op": "const.i64",
+              "dest": "x1",
+              "value": 2
+            },
+            {
+              "op": "const.i64",
+              "dest": "x2",
+              "value": 3
+            },
+            {
+              "op": "const.i64",
+              "dest": "x3",
+              "value": 4
+            },
+            {
+              "op": "const.i64",
+              "dest": "x4",
+              "value": 5
+            },
+            {
+              "op": "const.i64",
+              "dest": "x5",
+              "value": 62
+            },
+            {
+              "op": "call",
+              "dest": "r",
+              "callee": "sum6",
+              "args": [
+                "x0",
+                "x1",
+                "x2",
+                "x3",
+                "x4",
+                "x5"
+              ]
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    }
+  ]
+}

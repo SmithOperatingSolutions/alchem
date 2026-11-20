@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Run a linux/arm64 program under QEMU's user-mode emulator
+# (scripts/fetch-arm64-tools.sh): scripts/run-arm64 PROGRAM [ARGS...]
+set -euo pipefail
+exec "$(cd "$(dirname "$0")/.." && pwd)/build/arm64-tools/bin/qemu-aarch64-static" "$@"

@@ -1,0 +1,436 @@
+defmodule Bundler do
+  # alchem-bundle ENTRY.alc: bundles an entry file and its imports for the
+  # self-hosted compiler, which reads one source and opens no files. Follows
+  # import "path.alc" lines (relative to the importing file) and writes every
+  # module once, the entry first and then each module after the modules it
+  # imports (the order the pinned compiler writes their code in, which its
+  # coverage lists follow), each with its imports rewritten to
+  # import "module:Name" on the line of its defmodule Name do:
+  #
+  #     alchem-bundle app.alc | alchem-compiler > app
+  #
+  # Every file keeps its lines: an import line becomes an empty one. The
+  # bundle starts with "#alchem-bundle N" and one line "# length path" per
+  # file, giving its length in the bundle and its absolute path, so a failing
+  # program names the file and line it failed in.
+  #
+  # A package is imported as "host/owner/repo@v1.2.0/lib/file.alc" and read
+  # from the Go module cache (GOMODCACHE, else the first GOPATH entry's
+  # pkg/mod, else ~/go/pkg/mod); the bundler does not download. Its files
+  # import each other with relative paths that stay inside it, and a program
+  # uses one version of a package. alchem.lock beside the entry file records
+  # each package's content hash, as the pinned compiler writes it; with
+  # --locked the bundler fails instead of updating it.
+  #
+  # Output equals scripts/bundle-alchem.py. Errors go to standard error with
+  # status 1: unreadable files, files over 1 MiB, import cycles, duplicate
+  # module names and imported modules that define main. Paths are compared after lexical
+  # cleaning; symbolic links are not resolved.
+  #
+  # State is {module names in bundle order, name -> bundled text, cleaned path
+  # -> name, name -> path, package -> version, "package version" -> hash}.
+
+  # Lexical path cleaning: "." and empty parts go, ".." removes the part before it.
+  def clean_step(part: string, kept: list[string], absolute: boolean): list[string] do
+    count = Enum.count(kept)
+    if part == "" do kept else if part == "." do kept else
+      if part != ".." do Enum.concat(kept, [part]) else
+        if count == 0 do if absolute do kept else [".."] end else
+          if Enum.at(kept, count - 1, "") == ".." do Enum.concat(kept, [part]) else Enum.take(kept, count - 1) end
+        end
+      end
+    end end
+  end
+
+  def clean(path: string): string do
+    absolute = String.starts_with?(path, "/")
+    empty: list[string] = []
+    joined = path |> String.split("/") |> Enum.reduce(empty, fn part, kept -> clean_step(part, kept, absolute) end) |> Enum.join("/")
+    if absolute do "/" <> joined else if joined == "" do "." else joined end end
+  end
+
+  # The directory of a path with its trailing "/", or "" for a bare file name.
+  def directory(path: string): string do
+    parts = String.split(path, "/")
+    count = Enum.count(parts)
+    if count == 1 do "" else Enum.join(Enum.take(parts, count - 1), "/") <> "/" end
+  end
+
+  def blanks(text: string): string do
+    text |> String.replace("\t", " ") |> String.replace("\r", " ") |> String.replace("\n", " ")
+  end
+
+  def words(text: string): list[string] do
+    text |> blanks() |> String.split(" ") |> Enum.filter(&(&1 != ""))
+  end
+
+  # The target of an import line: optional blanks, import, blanks, a quoted
+  # path, optional blanks. "" for any other line.
+  def import_target(line: string): string do
+    parts = String.split(line, "\"")
+    head = blanks(Enum.at(parts, 0, ""))
+    if Enum.count(parts) != 3 do "" else
+      if String.trim(head) != "import" do "" else
+        if String.ends_with?(head, " ") do if String.trim(Enum.at(parts, 2, "")) == "" do Enum.at(parts, 1, "") else "" end else "" end
+      end
+    end
+  end
+
+  def defines_main(line: string): boolean do
+    parts = String.split(line, "(")
+    head = words(Enum.at(parts, 0, ""))
+    if Enum.count(parts) < 2 do false else
+      if Enum.count(head) != 2 do false else Enum.at(head, 0, "") == "def" and Enum.at(head, 1, "") == "main" end
+    end
+  end
+
+  def capital(name: string): boolean do
+    name != "" and String.contains?("ABCDEFGHIJKLMNOPQRSTUVWXYZ", String.slice(name, 0, 1))
+  end
+
+  # Splitting at "do": found is {name, text so far, pieces seen, index}. The
+  # header's do follows the first piece at which the text so far is blanks, a
+  # module name and blanks.
+  def header_step(piece: string, found: tuple[string, string, integer, integer]): tuple[string, string, integer, integer] do
+    text = elem(found, 1) <> piece
+    seen = elem(found, 2)
+    head = blanks(text)
+    named = words(head)
+    if elem(found, 0) != "" do found else
+      if Enum.count(named) == 1 and String.starts_with?(head, " ") and String.ends_with?(head, " ") and capital(Enum.at(named, 0, "")) do
+        {Enum.at(named, 0, ""), "", seen + 1, seen}
+      else {"", text <> "do", seen + 1, -1} end
+    end
+  end
+
+  # For the text after a "defmodule": {name, text through the header's do, text
+  # after it}, with name "" when it is not a module header.
+  def header(part: string): tuple[string, string, string] do
+    pieces = String.split(part, "do")
+    start = {"", "", 0, -1}
+    found = Enum.reduce(pieces, start, &header_step/2)
+    index = elem(found, 3)
+    if index < 0 or index + 1 >= Enum.count(pieces) do {"", "", ""} else
+      {elem(found, 0), Enum.join(Enum.take(pieces, index + 1), "do") <> "do", Enum.join(Enum.drop(pieces, index + 1), "do")}
+    end
+  end
+
+  # Splitting at "defmodule": found is {name, parts seen, index of the header part}.
+  def module_step(part: string, found: tuple[string, integer, integer]): tuple[string, integer, integer] do
+    seen = elem(found, 1)
+    name = if seen == 0 do "" else elem(header(part), 0) end
+    if elem(found, 0) != "" do found else
+      if name == "" do {"", seen + 1, -1} else {name, seen + 1, seen} end
+    end
+  end
+
+  def module_parts(parts: list[string], index: integer, name: string): tuple[string, string, string] do
+    found = header(Enum.at(parts, index, ""))
+    rest = Enum.drop(parts, index + 1)
+    before = Enum.join(Enum.take(parts, index), "defmodule") <> "defmodule" <> elem(found, 1)
+    {name, before, if Enum.empty?(rest) do elem(found, 2) else elem(found, 2) <> "defmodule" <> Enum.join(rest, "defmodule") end}
+  end
+
+  # {name, text through the first "defmodule Name do", text after it}; name ""
+  # when there is none.
+  def split_module(body: string): tuple[string, string, string] do
+    parts = String.split(body, "defmodule")
+    start = {"", 0, -1}
+    found = Enum.reduce(parts, start, &module_step/2)
+    if elem(found, 2) < 0 do {"", "", ""} else module_parts(parts, elem(found, 2), elem(found, 0)) end
+  end
+
+  def add_import(names: list[string], name: string): list[string] do
+    if Enum.count(Enum.filter(names, &(&1 == name))) > 0 do names else Enum.concat(names, [name]) end
+  end
+
+  def insert(sorted: list[string], item: string): list[string] do
+    Enum.concat(Enum.concat(Enum.filter(sorted, fn other -> other <= item end), [item]), Enum.filter(sorted, fn other -> other > item end))
+  end
+
+  # Strings in byte order.
+  def sort(items: list[string]): list[string] do
+    empty: list[string] = []
+    Enum.reduce(items, empty, fn item, sorted -> insert(sorted, item) end)
+  end
+
+  # Whether every character of text from index on is one of allowed.
+  def only(text: string, allowed: string, index: integer): boolean do
+    if index >= String.length(text) do true else
+      if String.contains?(allowed, String.slice(text, index, 1)) do only(text, allowed, index + 1) else false end
+    end
+  end
+
+  # A package path or version as the Go module cache spells it: "!" and the
+  # lower case letter for an upper case one.
+  def escaped(text: string, index: integer): string do
+    letter = String.slice(text, index, 1)
+    piece = if String.contains?("ABCDEFGHIJKLMNOPQRSTUVWXYZ", letter) do "!" <> String.downcase(letter) else letter end
+    if index >= String.length(text) do "" else piece <> escaped(text, index + 1) end
+  end
+
+  def cache(): string do
+    case System.get_env("GOMODCACHE") do
+      some(path) -> path
+      none ->
+        case System.get_env("GOPATH") do
+          some(paths) -> Enum.at(String.split(paths, ":"), 0, "") <> "/pkg/mod"
+          none -> System.get_env("HOME", "") <> "/go/pkg/mod"
+        end
+    end
+  end
+
+  # {package, version, file} of an import written "package@version/file.alc",
+  # all "" when it is not written so.
+  def remote(target: string): tuple[string, string, string] do
+    halves = String.split(target, "@")
+    package = Enum.at(halves, 0, "")
+    rest = String.split(Enum.at(halves, 1, ""), "/")
+    version = Enum.at(rest, 0, "")
+    file = Enum.join(Enum.drop(rest, 1), "/")
+    plain = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    segments = package |> String.replace(".", "/") |> String.split("/")
+    named = Enum.count(Enum.filter(segments, fn part -> part == "" or not only(part, plain <> "_~-", 0) end)) == 0
+    versioned = String.starts_with?(version, "v") and String.length(version) > 1 and String.contains?("0123456789", String.slice(version, 1, 1)) and only(version, plain <> ".+-", 0)
+    filed = String.ends_with?(file, ".alc") and String.length(file) > 4 and only(file, plain <> "_./-", 0) and not String.contains?(file, "..") and not String.contains?(file, "//")
+    if Enum.count(halves) == 2 and named and versioned and filed do {package, version, file} else {"", "", ""} end
+  end
+
+  # The directory of the package an import names, with its version and
+  # content hash noted in the state.
+  def package(real: string, target: string, state: tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]]): result[tuple[tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]], string], string] do
+    parts = remote(target)
+    name = elem(parts, 0)
+    version = elem(parts, 1)
+    known = Map.get(elem(state, 4), name, version)
+    base = cache()
+    if name == "" do error(real <> ": remote imports are written \"module/path@v1.2.3/file.alc\"") else
+      if known != version do error(real <> ": conflicting versions of " <> name <> ": " <> known <> " and " <> version) else
+        case File.read(base <> "/cache/download/" <> escaped(name, 0) <> "/@v/" <> escaped(version, 0) <> ".ziphash") do
+          error(_) -> error(real <> ": fetch " <> name <> "@" <> version <> ": not in the module cache " <> base <> "; run go mod download " <> name <> "@" <> version)
+          ok(sum) ->
+            ok({{elem(state, 0), elem(state, 1), elem(state, 2), elem(state, 3), Map.put(elem(state, 4), name, version), Map.put(elem(state, 5), name <> " " <> version, String.trim(sum))}, clean(base <> "/" <> escaped(name, 0) <> "@" <> escaped(version, 0))})
+        end
+      end
+    end
+  end
+
+  # Load an imported file and note its module's name.
+  def follow(path: string, root: string, stack: string, state: tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]], names: list[string]): result[tuple[tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]], list[string]], string] do
+    case load(path, root, stack, state) do
+      error(reason) -> error(reason)
+      ok(next) -> ok({next, add_import(names, Map.get(elem(next, 2), path, ""))})
+    end
+  end
+
+  # One import of the file real, which belongs to the package at root ("" for
+  # a file of the program). acc is {state, names imported so far}.
+  def import_step(real: string, root: string, target: string, stack: string, acc: result[tuple[tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]], list[string]], string]): result[tuple[tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]], list[string]], string] do
+    case acc do
+      error(reason) -> error(reason)
+      ok(pair) ->
+        path = clean(directory(real) <> target)
+        if String.starts_with?(target, "module:") do error(real <> ": import \"" <> target <> "\": only file and package imports are supported") else
+          if String.contains?(target, "@") do
+            case package(real, target, elem(pair, 0)) do
+              error(reason) -> error(reason)
+              ok(found) -> follow(clean(elem(found, 1) <> "/" <> elem(remote(target), 2)), elem(found, 1), stack, elem(found, 0), elem(pair, 1))
+            end
+          else
+            if root != "" and not String.starts_with?(path <> "/", root <> "/") do error(real <> ": import \"" <> target <> "\" leaves the package") else follow(path, root, stack, elem(pair, 0), elem(pair, 1)) end
+          end
+        end
+    end
+  end
+
+  # Imports are followed in the order of their text, as the pinned compiler does.
+  def imports(targets: list[string], real: string, root: string, stack: string, state: tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]]): result[tuple[tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]], list[string]], string] do
+    unnamed: list[string] = []
+    start: result[tuple[tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]], list[string]], string] = ok({state, unnamed})
+    Enum.reduce(sort(targets), start, fn target, acc -> import_step(real, root, target, stack, acc) end)
+  end
+
+  # Store the module's text with its imports on the header's line.
+  def finish(parts: tuple[string, string, string], imported: result[tuple[tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]], list[string]], string]): result[tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]], string] do
+    case imported do
+      error(reason) -> error(reason)
+      ok(pair) ->
+        state = elem(pair, 0)
+        lines = elem(pair, 1) |> Enum.map(fn name -> " import \"module:" <> name <> "\"" end) |> Enum.join("")
+        text = elem(parts, 1) <> lines <> elem(parts, 2)
+        full = if String.ends_with?(text, "\n") do text else text <> "\n" end
+        # The entry stands first (register); every other module after those it imports.
+        names = if elem(parts, 0) in elem(state, 0) do elem(state, 0) else Enum.concat(elem(state, 0), [elem(parts, 0)]) end
+        ok({names, Map.put(elem(state, 1), elem(parts, 0), full), elem(state, 2), elem(state, 3), elem(state, 4), elem(state, 5)})
+    end
+  end
+
+  def register(state: tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]], name: string, real: string): tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]] do
+    {if elem(state, 0) == [] do [name] else elem(state, 0) end, elem(state, 1), Map.put(elem(state, 2), real, name), Map.put(elem(state, 3), name, real), elem(state, 4), elem(state, 5)}
+  end
+
+  def parse(text: string, real: string, root: string, stack: string, state: tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]]): result[tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]], string] do
+    lines = String.split(text, "\n")
+    body = lines |> Enum.map(fn line -> if import_target(line) == "" do line else "" end end) |> Enum.join("\n")
+    targets = lines |> Enum.map(&import_target/1) |> Enum.filter(&(&1 != ""))
+    parts = split_module(body)
+    name = elem(parts, 0)
+    if name == "" do error(real <> ": expected defmodule Name do") else
+      if Map.has_key?(elem(state, 3), name) do error(real <> ": duplicate module " <> name <> " (also " <> Map.get(elem(state, 3), name, "") <> ")") else
+        if stack != "\n" and Enum.count(Enum.filter(lines, &defines_main/1)) > 0 do error(real <> ": imported modules cannot define main") else
+          finish(parts, imports(targets, real, root, stack <> real <> "\n", register(state, name, real)))
+        end
+      end
+    end
+  end
+
+  # stack holds the cleaned paths being loaded, each between newlines.
+  def load(path: string, root: string, stack: string, state: tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]]): result[tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]], string] do
+    real = clean(path)
+    if String.contains?(stack, "\n" <> real <> "\n") do error(real <> ": import cycle") else
+      if Map.has_key?(elem(state, 2), real) do ok(state) else
+        case File.read(real) do
+          # The pinned compiler reads no source file over 1 MiB.
+          ok(text) -> if byte_size(text) > 1048576 do error(real <> ": read source: source exceeds 1048576 bytes") else parse(text, real, root, stack, state) end
+          error(reason) -> error(reason)
+        end
+      end
+    end
+  end
+
+  # One line of alchem.lock: found is {package -> hash, Go module lines, an
+  # error, the line's number}.
+  def lock_step(line: string, found: tuple[map[string, string], list[string], string, integer]): tuple[map[string, string], list[string], string, integer] do
+    fields = words(line)
+    number = elem(found, 3) + 1
+    count = Enum.count(fields)
+    kind = Enum.at(fields, 0, "")
+    if elem(found, 2) != "" do found else
+      if count == 0 or String.starts_with?(line, "#") do {elem(found, 0), elem(found, 1), "", number} else
+        if count == 4 and kind == "package" do {Map.put(elem(found, 0), Enum.at(fields, 1, "") <> " " <> Enum.at(fields, 2, ""), Enum.at(fields, 3, "")), elem(found, 1), "", number} else
+          if count == 4 and kind == "module" do {elem(found, 0), Enum.concat(elem(found, 1), [Enum.join(Enum.drop(fields, 1), " ")]), "", number} else
+            {elem(found, 0), elem(found, 1), "alchem.lock:" <> Integer.to_string(number) <> ": unrecognized line", number}
+          end
+        end
+      end
+    end
+  end
+
+  # One package against the lock: checked is {lock lines, an error}.
+  def lock_check(key: string, sum: string, recorded: map[string, string], locked: boolean, checked: tuple[list[string], string]): tuple[list[string], string] do
+    name = String.replace(key, " ", "@")
+    listed = Map.has_key?(recorded, key)
+    if elem(checked, 1) != "" do checked else
+      if listed and Map.get(recorded, key, "") != sum do {elem(checked, 0), name <> " does not match alchem.lock: locked " <> Map.get(recorded, key, "") <> ", fetched " <> sum} else
+        if locked and not listed do {elem(checked, 0), "alchem.lock has no entry for " <> name <> "; run without --locked to update it"} else
+          {Enum.concat(elem(checked, 0), ["package " <> key <> " " <> sum]), ""}
+        end
+      end
+    end
+  end
+
+  def lock_write(path: string, old: string, lines: list[string]): result[integer, string] do
+    header = "# Generated by alchem. Records the content of remote packages and Go modules; commit this file.\n"
+    text = if Enum.empty?(lines) do "" else header <> Enum.join(sort(lines), "\n") <> "\n" end
+    if text == old do ok(0) else
+      if text == "" do
+        case File.remove(path) do
+          ok(_) -> ok(0)
+          error(reason) -> error(reason)
+        end
+      else
+        case File.write(path, text) do
+          ok(_) -> ok(0)
+          error(reason) -> error(reason)
+        end
+      end
+    end
+  end
+
+  # Check the packages against alchem.lock beside the entry file and bring
+  # the file up to date; with locked nothing is written.
+  def sync(entry: string, packages: map[string, string], locked: boolean): result[integer, string] do
+    path = directory(entry) <> "alchem.lock"
+    old = case File.read(path) do
+      ok(text) -> text
+      error(_) -> ""
+    end
+    none_recorded: map[string, string] = %{}
+    no_lines: list[string] = []
+    found = Enum.reduce(String.split(old, "\n"), {none_recorded, no_lines, "", 0}, &lock_step/2)
+    checked = Enum.reduce(Map.keys(packages), {no_lines, ""}, fn key, sofar -> lock_check(key, Map.get(packages, key, ""), elem(found, 0), locked, sofar) end)
+    lines = Enum.concat(elem(checked, 0), Enum.map(elem(found, 1), fn line -> "module " <> line end))
+    if elem(found, 2) != "" do error(elem(found, 2)) else
+      if elem(checked, 1) != "" do error(elem(checked, 1)) else
+        if locked do ok(0) else lock_write(path, old, lines) end
+      end
+    end
+  end
+
+  # The path a failure shows: absolute, cleaned without following links.
+  def shown(path: string): string do
+    if String.starts_with?(path, "/") do clean(path) else clean(System.cwd!() <> "/" <> path) end
+  end
+
+  # One manifest line per module, then the modules.
+  def manifest(state: tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]]): tuple[integer, string] do
+    names = elem(state, 0)
+    paths = Enum.map(names, fn name -> shown(Map.get(elem(state, 3), name, "")) end)
+    lines = names |> Enum.map(fn name -> "# " <> Integer.to_string(byte_size(Map.get(elem(state, 1), name, ""))) <> " " <> shown(Map.get(elem(state, 3), name, "")) <> "\n" end) |> Enum.join("")
+    texts = names |> Enum.map(fn name -> Map.get(elem(state, 1), name, "") end) |> Enum.join("")
+    if Enum.count(Enum.filter(paths, &String.contains?(&1, "\n"))) > 0 do {1, "E_BUNDLE: path contains a line break"} else
+      {0, "#alchem-bundle " <> Integer.to_string(Enum.count(names)) <> "\n" <> lines <> texts}
+    end
+  end
+
+  def start(): tuple[list[string], map[string, string], map[string, string], map[string, string], map[string, string], map[string, string]] do
+    unordered: list[string] = []
+    empty: map[string, string] = %{}
+    {unordered, empty, empty, empty, empty, empty}
+  end
+
+  # A program of the caller's files keeps its lock; one run straight from a
+  # package keeps none.
+  def bundle(entry: string, locked: boolean): tuple[integer, string] do
+    if elem(remote(entry), 0) != "" do
+      case package(entry, entry, start()) do
+        error(reason) -> {1, "E_BUNDLE: " <> reason}
+        ok(found) ->
+          case load(elem(found, 1) <> "/" <> elem(remote(entry), 2), elem(found, 1), "\n", elem(found, 0)) do
+            ok(state) -> manifest(state)
+            error(reason) -> {1, "E_BUNDLE: " <> reason}
+          end
+      end
+    else
+      case load(entry, "", "\n", start()) do
+        error(reason) -> {1, "E_BUNDLE: " <> reason}
+        ok(state) ->
+          case sync(clean(entry), elem(state, 5), locked) do
+            ok(_) -> manifest(state)
+            error(reason) -> {1, "E_BUNDLE: " <> reason}
+          end
+      end
+    end
+  end
+
+  def run(args: list[string]): tuple[integer, string] do
+    count = Enum.count(args)
+    locked = count == 2 and Enum.at(args, 0, "") == "--locked"
+    if locked or (count == 1 and Enum.at(args, 0, "") != "--locked") do bundle(Enum.at(args, count - 1, ""), locked) else {2, "Usage: alchem-bundle [--locked] ENTRY.alc"} end
+  end
+
+  # The bundle on standard output, or the message on standard error.
+  def emit(outcome: tuple[integer, string]): integer do
+    if elem(outcome, 0) == 0 do
+      IO.write(elem(outcome, 1))
+      0
+    else
+      IO.warn(elem(outcome, 1))
+      elem(outcome, 0)
+    end
+  end
+
+  def main() do
+    System.halt(emit(run(System.argv())))
+  end
+end

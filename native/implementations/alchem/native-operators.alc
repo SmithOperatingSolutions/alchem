@@ -1,0 +1,519 @@
+defmodule NativeOperators do
+  # Integer operators as the pinned language has them: + - * fail when the
+  # result leaves 64 bits, / and % when the divisor is zero, ** when the
+  # exponent is negative. Each failure names the operator. A compiler entry
+  # keeps wrapping + - *, which is what the seed gives it.
+  def nk_checked(code: bytes, table: bytes, pos: integer): bytes do
+    if nz_on(table) == 0 do code else nc_join(code,b[113,19],nz_fail(table,pos,3)) end
+  end
+  def nk_negate(table: bytes, pos: integer): bytes do nk_checked(b[72,247,216],table,pos) end
+  # RCX holds the left operand and RAX the right one.
+  def nk_divide(table: bytes, pos: integer): bytes do
+    nc_join(nc_join(b[72,133,192,117,19],nz_fail(table,pos,4),b[72,131,248,255,117,29,72,247,217,113,19]),nz_fail(table,pos,3),b[72,137,200,235,7,72,145,72,153,72,247,249])
+  end
+  def nk_remainder(table: bytes, pos: integer): bytes do
+    nc_join(b[72,133,192,117,19],nz_fail(table,pos,4),b[72,131,248,255,117,4,49,192,235,10,72,145,72,153,72,247,249,72,137,208])
+  end
+  def nk_raise(table: bytes, pos: integer): bytes do
+    first = nc_join(b[72,133,192,121,19],nz_fail(table,pos,5),b[72,137,194,184,1,0,0,0,72,133,210,116,60,246,194,1,116,25,72,15,175,193,113,19])
+    nc_join(first,nz_fail(table,pos,3),Enum.concat(b[72,209,234,116,25,72,15,175,201,113,210],nz_fail(table,pos,3)))
+  end
+  # ** binds tightest and to the right.
+  def nk_power(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    left = nc_unary(source,pos,env,table,depth)
+    if nc_pos(left) < 0 do b[] else
+      op = nc_start(source,nc_pos(left))
+      if nc_word(source,op,b[42,42]) == 0 do left else
+        right = nk_power(source,nc_end(source,op),env,table,depth+1)
+        if nc_pos(right) < 0 do b[] else if nc_tag(left) == 24 do ne_arith(source,table,left,right,op) else nc_binary(left,right,nk_raise(table,op)) end end
+      end
+    end
+  end
+  # %Name starts a struct and %{ a map; any other % is the remainder.
+  def nk_product_code(source: bytes, table: bytes, op: integer): bytes do
+    value = byte_at(source,op)
+    if nc_end(source,op)-op != 1 do b[] else
+      if value == 42 do nk_checked(b[72,15,175,193],table,op) else
+        if value == 47 do nk_divide(table,op) else if value != 37 do b[] else if (byte_at(source,op+1)-65)*(90-byte_at(source,op+1)) >= 0 do b[] else if byte_at(source,op+1) == 123 do b[] else nk_remainder(table,op) end end end end
+      end
+    end
+  end
+  def nk_product_tail(source: bytes, left: bytes, env: bytes, table: bytes, depth: integer, budget: integer): bytes do
+    if nc_pos(left) < 0 do b[] else
+      op = nc_start(source,nc_pos(left))
+      code = nk_product_code(source,table,op)
+      if Enum.count(code) == 0 do left else
+        if budget == 0 do b[] else
+          right = nk_power(source,nc_end(source,op),env,table,depth)
+          if nc_pos(right) < 0 do b[] else nk_product_tail(source,if nc_tag(left) == 24 do ne_arith(source,table,left,right,op) else nc_binary(left,right,code) end,env,table,depth,budget-1) end
+        end
+      end
+    end
+  end
+  # 1 when a line ends between first and stop.
+  def nk_broken(source: bytes, first: integer, stop: integer): integer do
+    if first >= stop do 0 else if byte_at(source,first) == 10 do 1 else nk_broken(source,first+1,stop) end end
+  end
+  # + and -. A minus that starts a line starts a statement, and the arrow of
+  # a case arm is no minus.
+  def nk_sum_code(source: bytes, table: bytes, first: integer, op: integer): bytes do
+    value = byte_at(source,op)
+    if nc_end(source,op)-op != 1 do b[] else
+      if value == 43 do nk_checked(b[72,1,200],table,op) else
+        if value != 45 do b[] else if nk_broken(source,first,op) == 1 do b[] else nk_checked(b[72,41,193,72,137,200],table,op) end end
+      end
+    end
+  end
+  def nk_sum_tail(source: bytes, left: bytes, env: bytes, table: bytes, depth: integer, budget: integer): bytes do
+    if nc_pos(left) < 0 do b[] else
+      op = nc_start(source,nc_pos(left))
+      code = nk_sum_code(source,table,nc_pos(left),op)
+      if Enum.count(code) == 0 do left else
+        if budget == 0 do b[] else
+          right = nc_product(source,nc_end(source,op),env,table,depth)
+          if nc_pos(right) < 0 do b[] else nk_sum_tail(source,if nc_tag(left) == 24 do ne_arith(source,table,left,right,op) else nc_binary(left,right,code) end,env,table,depth,budget-1) end
+        end
+      end
+    end
+  end
+  # <> joins strings, ++ joins lists and -- takes from the left list the
+  # first element equal to each element of the right one; they bind looser
+  # than + and -.
+  def nk_join_tail(source: bytes, left: bytes, env: bytes, table: bytes, depth: integer, budget: integer): bytes do
+    op = nc_start(source,nc_pos(left))
+    if nc_pos(left) < 0 do b[] else
+      if nc_word(source,op,b[60,62]) == 1 do ns_concat(source,left,env,table,depth,budget) else
+        if nc_word(source,op,b[46,46]) == 1 do nk_range(source,left,env,table,depth) else if nc_word(source,op,b[43,43])+nc_word(source,op,b[45,45]) == 0 do left else
+          if budget <= 0 do b[] else
+            right = nc_sum(source,nc_end(source,op),env,table,depth)
+            joined = if nc_pos(right) < 0 do b[] else nk_lists(source,table,Enum.concat(left,nc_u32(Enum.count(left))),right,Enum.concat(b[byte_at(source,op)],nu_vars(env,2))) end
+            nk_join_tail(source,joined,env,table,depth,budget-1)
+          end
+        end end
+      end
+    end
+  end
+  # first..last and first..last//step: a range (native-sets.alc). Without a
+  # step, or with step 0, it counts up or down.
+  def nk_range(source: bytes, left: bytes, env: bytes, table: bytes, depth: integer): bytes do
+    op = nc_start(source,nc_pos(left))
+    right = nc_sum(source,nc_end(source,op),env,table,depth)
+    stepped = if nc_pos(right) < 0 do 0 else nc_word(source,nc_pos(right),b[47,47]) end
+    step = if stepped == 0 do nc_value(nc_pos(right),b[49,192],b[0]) else nc_sum(source,nc_end(source,nc_pos(right)),env,table,depth) end
+    if nc_pos(step) < 0 do b[] else if nc_tag(left)+nc_tag(right)+nc_tag(step) != 0 do b[] else
+      nc_value(nc_pos(step),nc_join(nc_join(nc_code(left),b[80],nc_code(right)),nc_join(b[80],nc_code(step),Enum.concat(b[80,65,185],nc_u32(if stepped == 0 do 0 else op end))),nn_range_emit()),b[23])
+    end end
+  end
+  # first, last and step from the stack: the list of the integers, then the
+  # three.
+  def nk_range_emit(): bytes do
+    Enum.concat(b[65,88,94,95,77,133,192,117,19,73,199,192,1,0,0,0,72,57,247,126,7,73,199,192,255,255,255,255,49,201,77,133,192,120,22,72,57,247,127,43,72,137,240,72,41,248,49,210,73,247,240,72,141,72,1,235,26,72,57,247,124,21,72,137,248,72,41,240,77,137,193,73,247,217,49,210,73,247,241,72,141,72,1],b[72,137,202,72,193,226,4,72,131,194,48,77,141,28,20,77,57,235,118,7,255,20,37,120,4,64,0,76,137,224,15,31,68,0,0,77,137,220,72,199,0,254,255,255,255,72,131,192,16,72,137,194,73,137,249,72,133,201,116,19,72,137,10,76,137,74,8,77,1,193,72,131,194,16,72,255,201,235,232,72,199,2,0,0,0,0,72,137,122,8,72,137,114,16,76,137,66,24])
+  end
+  # range.first, range.last and range.step.
+  def nk_range_field(source: bytes, value: bytes): bytes do
+    name = nc_start(source,nc_end(source,nc_pos(value)))
+    index = if nc_word(source,name,b[102,105,114,115,116]) == 1 do 0 else if nc_word(source,name,b[108,97,115,116]) == 1 do 1 else if nc_word(source,name,b[115,116,101,112]) == 1 do 2 else -1 end end end
+    if index < 0 do b[] else nc_value(nc_end(source,name),Enum.concat(nc_code(value),b[72,139,8,72,1,201,72,139,68,200,8+index*8]),b[0]) end
+  end
+  # A field of a range that is no name: (first..last).step.
+  def nk_range_dot(source: bytes, value: bytes): bytes do
+    field = if nc_word(source,nc_pos(value),b[46]) != 1 do b[] else nk_range_field(source,value) end
+    if nc_pos(field) < 0 do value else field end
+  end
+  # pair is the left value and then its length; plan the operator's first
+  # byte and the type variables in reach.
+  def nk_lists(source: bytes, table: bytes, pair: bytes, right: bytes, plan: bytes): bytes do
+    left = nc_slice(pair,0,nc_long(pair,Enum.count(pair)-4))
+    kind = nt_merge(nc_kind(left),nc_kind(right))
+    pushed = nc_join(nc_code(left),b[80],nc_code(right))
+    # The left list takes no type from the right one's elements, and one of the
+    # two must say what the elements are.
+    if nt_tag(nc_kind(left)) != 7 do b[] else if nt_tag(kind) != 7 do b[] else if nw_marked(left)+nu_holes(kind,0) > 0 do b[] else
+      if Enum.at(plan,0,0) == 43 do nc_value(nc_pos(right),nc_join(pushed,b[80],nl_concat_emit()),kind) else
+        compare = if nq_comparable(source,table,nt_child(kind,0),b[]) == 0 do b[] else nq_code(source,table,nt_child(kind,0),nc_slice(plan,1,Enum.count(plan))) end
+        if Enum.count(compare) == 0 do b[] else
+          nc_value(nc_pos(right),nc_join(pushed,nc_join(nk_subtract_emit(),nc_u32(Enum.count(compare)+1),compare),b[195]),kind)
+        end
+      end
+    end end end
+  end
+  # RAX holds the right list and the stack the left one. The comparison is a
+  # routine after the loop, which a jump passes.
+  def nk_subtract_emit(): bytes do
+    Enum.concat(b[80,72,139,124,36,8,72,139,15,73,137,203,73,193,227,4,79,141,92,28,24,77,57,235,118,12,255,20,37,120,4,64,0,15,31,68,0,0,73,199,4,36,254,255,255,255,73,141,68,36,16,77,137,220,72,137,254,72,137,199,72,141,76,9,1,243,72,165,80,255,48,255,116,36,16,72,139,20,36,72,131,58,0,116,111,49,201,72,59,76,36,8,115,95,72,139,84,36,16,72,137,200,72,193,224,4,72,139,124,2],b[8,72,139,20,36,72,139,114,8,81,232,99,0,0,0,89,132,192,117,5,72,255,193,235,208,72,139,84,36,16,72,137,200,72,193,224,4,72,141,124,2,8,72,139,68,36,8,72,255,200,72,137,68,36,8,72,41,200,72,133,192,116,16,72,139,87,16,72,137,23,72,131,199,16,72,255,200,235,235,72,131,4,36,16,235,135,89,89,88,72,137,194,72,137,10,72,131,194,16,72,131,233,1,121,243,72,131,196,16,233])
+  end
+  # value in enumerable: whether an element equals the value. A list or the
+  # entries of a map are walked, a set is asked for the key, and a range or a
+  # stream is read until the value comes (native-sets.alc).
+  def nk_member(source: bytes, table: bytes, left: bytes, right: bytes, vars: bytes): bytes do
+    tag = nt_tag(nc_kind(right))
+    element = if tag != 7 do nt_merge(nc_kind(left),nn_element(nc_kind(right))) else if nw_marked(right)+nu_holes(nc_kind(right),0) > 0 do b[] else nt_merge(nc_kind(left),nt_child(nc_kind(right),0)) end end
+    compare = if nt_tag(element) < 0 do b[] else if nq_comparable(source,table,element,b[]) == 0 do b[] else nq_code(source,table,element,vars) end end
+    pushed = nc_join(nc_code(left),b[80],nc_code(right))
+    if Enum.count(compare) == 0 do b[] else
+      if tag == 25 do nn_has(nc_pos(right),pushed,nm_tagged(element,vars)) else
+        if (tag-23)*(tag-26) == 0 do nc_value(nc_pos(right),nc_join(pushed,nn_convert(nc_kind(right),26),nn_member(compare)),b[3]) else
+          nc_value(nc_pos(right),nc_join(Enum.concat(pushed,nn_convert(nc_kind(right),7)),nc_join(b[80,106,0,72,139,84,36,8,72,131,58,0,116,31,72,139,124,36,16,72,139,114,8,72,131,68,36,8,16,232,22,0,0,0,132,192,116,221,184,1,0,0,0,235,2,49,192,72,131,196,24,233],nc_u32(Enum.count(compare)+1),compare),b[195]),b[3])
+        end
+      end
+    end
+  end
+  # The bitwise operators are written with one sign three times: &&& and,
+  # ||| or, ^^^ exclusive or, <<< and >>> shifts, ~~~ complement. As the
+  # pinned parser has them: ||| and ^^^ bind as `or` does, &&& as `and`,
+  # the shifts as |>, all to the left, and ~~~ takes the value after it as
+  # a minus does. They stand for the functions of Bitwise.
+  def nk_tripled(source: bytes, pos: integer): integer do
+    value = byte_at(source,pos)
+    if (value-38)*(value-124)*(value-94)*(value-60)*(value-62)*(value-126) != 0 do 0 else
+      if byte_at(source,pos+1) != value do 0 else if byte_at(source,pos+2) != value do 0 else 1 end end
+    end
+  end
+  # The operator of that kind at pos as its sign, 0 for none: which holds
+  # the signs to look for.
+  def nk_bit_at(source: bytes, pos: integer, which: bytes): integer do
+    start = nc_start(source,pos)
+    value = byte_at(source,start)
+    if start < 0 do 0 else if nk_tripled(source,start) == 0 do 0 else if (value-Enum.at(which,0,0))*(value-Enum.at(which,1,0)) == 0 do value else 0 end end end
+  end
+  # left op right for two integers. Both wait on the stack; and, or and
+  # exclusive or are the processor's (dn_emit, which the library's own
+  # Process.__and and the like use too). A shift by a negative count is
+  # the opposite shift by its size; left by 64 or more gives 0, right by 64
+  # or more shifts by 63, and right keeps the sign, as Go's do for
+  # Bitwise.bsl and Bitwise.bsr.
+  def nk_bits(left: bytes, right: bytes, sign: integer): bytes do
+    code = if sign == 38 do dn_emit(8) else if sign == 124 do dn_emit(9) else if sign == 94 do dn_emit(7) else
+      if sign == 60 do b[89,88,72,133,201,121,5,72,247,217,235,15,72,131,249,64,115,5,72,211,224,235,18,49,192,235,14,72,131,249,63,118,5,185,63,0,0,0,72,211,248] else
+        b[89,88,72,133,201,121,20,72,247,217,235,0,72,131,249,64,115,5,72,211,224,235,18,49,192,235,14,72,131,249,63,118,5,185,63,0,0,0,72,211,248]
+      end
+    end end end
+    if nc_pos(left) < 0 do b[] else if nc_pos(right) < 0 do b[] else if nw_marked(left) > 0 do b[] else if nj_integer(left)*nj_integer(right) == 0 do b[] else
+      nc_result(nc_pos(right),nc_join(Enum.concat(nc_code(left),b[80]),Enum.concat(nc_code(right),b[80]),code))
+    end end end end
+  end
+  # ~~~value.
+  def nk_bnot(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    operand = nc_unary(source,nc_end(source,pos),env,table,depth+1)
+    if nc_pos(operand) < 0 do b[] else if nj_integer(operand) == 0 do b[] else nc_result(nc_pos(operand),Enum.concat(nc_code(operand),b[72,247,208])) end end
+  end
+  # 1 when the token at start joins two operands, so that an expression goes
+  # on across a line break beside it.
+  def nk_joins(source: bytes, start: integer): integer do
+    value = byte_at(source,start)
+    if value == 94 do nk_tripled(source,start) else
+    if nc_and((value-42)*(value-43)*(value-45)*(value-47)*(value-37)*(value-60)*(value-62),(value-124)*(value-38)*(value-61)*(value-33)*(value-46)*(value-44)) == 0 do 1 else nk_links(source,start) end
+    end
+  end
+  # and, or, in, when and do stand between operands.
+  def nk_links(source: bytes, start: integer): integer do
+    value = byte_at(source,start)
+    if value == 97 do nc_word(source,start,b[97,110,100]) else if value == 111 do nc_word(source,start,b[111,114]) else
+      if value == 105 do nc_word(source,start,b[105,110]) else if value == 119 do nc_word(source,start,b[119,104,101,110]) else
+        if value == 100 do nc_opens(source,start) else 0 end
+      end end
+    end end
+  end
+  # 1 for a word that stands before an operand: not, if, case and the like.
+  def nk_leads(source: bytes, start: integer): integer do
+    value = byte_at(source,start)
+    if value == 110 do nc_word(source,start,b[110,111,116]) else if value == 105 do nc_word(source,start,b[105,102]) else
+      if value == 99 do nc_word(source,start,b[99,97,115,101])+nc_word(source,start,b[99,111,110,100]) else
+        if value == 117 do nc_word(source,start,b[117,110,108,101,115,115]) else if value == 102 do nc_word(source,start,b[102,110]) else 0 end end
+      end
+    end end
+  end
+  # 1 when the token at start can end an operand, and when it can begin one.
+  def nk_closes(source: bytes, start: integer): integer do
+    value = byte_at(source,start)
+    kind = classify_ascii(value)
+    if (value-41)*(value-93)*(value-125)*(value-34) == 0 do 1 else
+      if kind == 3 do 1 else if kind != 2 do 0 else 1-nk_links(source,start)-nk_leads(source,start) end end
+    end
+  end
+  def nk_begins(source: bytes, start: integer): integer do
+    value = byte_at(source,start)
+    kind = classify_ascii(value)
+    if value == 34 do 1 else if kind == 3 do 1 else if kind != 2 do 0 else 1-nk_links(source,start) end end end
+  end
+  # Whether an expression starts at a position and "->" follows it: the next
+  # arm of a cond. Read by its tokens: brackets and do/fn ... end nest; at the
+  # outer level the expression ends where an operand follows an operand, and
+  # at a line break unless an operator stands beside it. A state is the
+  # position, the nesting and 2 while the answer is open, else the answer.
+  def nk_state(pos: integer, depth: integer, verdict: integer): bytes do
+    if depth > 2000 do b[0,0,0,0,0,0] else nc_join(nc_u24(pos),nc_u16(depth),b[verdict]) end
+  end
+  def nk_arm_step(source: bytes, pos: integer, depth: integer): bytes do
+    start = nc_start(source,pos)
+    stop = if start < 0 do -1 else nc_end(source,start) end
+    value = byte_at(source,start)
+    opens = if (value-40)*(value-91)*(value-123) == 0 do 1 else if value == 100 do nc_opens(source,start) else if value == 102 do nf_untyped(source,start) else 0 end end end
+    closes = if (value-41)*(value-93)*(value-125) == 0 do 1 else if value == 101 do nc_word(source,start,b[101,110,100]) else 0 end end
+    after = depth+opens-closes
+    if stop < 0 do nk_state(0,0,0) else if start >= Enum.count(source) do nk_state(0,0,0) else
+      if value == 45 do if depth == 0 do if byte_at(source,start+1) == 62 do nk_state(0,0,1) else nk_arm_on(source,start,stop,nc_start(source,stop)) end else nk_state(stop,depth,2) end else
+        if after < 0 do nk_state(0,0,0) else if after > 0 do nk_state(stop,after,2) else
+          if depth == 0 do if nk_stops(source,start) == 1 do nk_state(0,0,0) else nk_arm_on(source,start,stop,nc_start(source,stop)) end else nk_arm_on(source,start,stop,nc_start(source,stop)) end
+        end end
+      end
+    end end
+  end
+  # else and a lone = are no part of an expression.
+  def nk_stops(source: bytes, start: integer): integer do
+    value = byte_at(source,start)
+    if value == 61 do nc_word(source,start,b[61]) else if value == 101 do nc_word(source,start,b[101,108,115,101]) else 0 end end
+  end
+  # The token from start to stop is at the outer level and next follows it.
+  def nk_arm_on(source: bytes, start: integer, stop: integer, next: integer): bytes do
+    if nk_closes(source,start)*nk_begins(source,next) == 1 do nk_state(0,0,0) else
+      if nk_broken(source,stop,next) == 0 do nk_state(stop,0,2) else
+        if nk_joins(source,start) == 1 do nk_state(stop,0,2) else
+          if byte_at(source,next) == 45 do if byte_at(source,next+1) == 62 do nk_state(0,0,1) else nk_state(0,0,0) end else
+            if nk_joins(source,next) == 1 do nk_state(stop,0,2) else nk_state(0,0,0) end
+          end
+        end
+      end
+    end
+  end
+  # size tokens on from a state, by halves.
+  def nk_arm_run(source: bytes, state: bytes, size: integer): bytes do
+    half = nc_half(size)
+    if Enum.at(state,5,0) != 2 do state else
+      if size == 1 do nk_arm_step(source,nc_cursor(state,0),nc_read(state,3)) else
+        nk_arm_run(source,nk_arm_run(source,state,half),size-half)
+      end
+    end
+  end
+  def nk_arm_starts(source: bytes, start: integer): integer do
+    if start < 0 do 0 else if nc_word(source,start,b[45,62]) == 1 do 0 else
+      if Enum.at(nk_arm_run(source,nk_state(start,0,2),16777216),5,0) == 1 do 1 else 0 end
+    end end
+  end
+  # 1 when a |> stands at the outer level between start and stop: the
+  # expression is a pipeline, whose value is a call's.
+  def nk_pipe_step(source: bytes, pos: integer, depth: integer, stop: integer): bytes do
+    start = nc_start(source,pos)
+    value = byte_at(source,start)
+    opens = if (value-40)*(value-91)*(value-123) == 0 do 1 else if value == 100 do nc_opens(source,start) else if value == 102 do nf_untyped(source,start) else 0 end end end
+    closes = if (value-41)*(value-93)*(value-125) == 0 do 1 else if value == 101 do nc_word(source,start,b[101,110,100]) else 0 end end
+    if start < 0 do nk_state(0,0,0) else if start >= stop do nk_state(0,0,0) else
+      if value == 124 do if depth == 0 do if byte_at(source,start+1) == 62 do nk_state(0,0,1) else nk_state(start+1,0,2) end else nk_state(start+1,depth,2) end else
+        if depth+opens-closes < 0 do nk_state(0,0,0) else nk_state(nc_end(source,start),depth+opens-closes,2) end
+      end
+    end end
+  end
+  def nk_pipe_run(source: bytes, state: bytes, size: integer, stop: integer): bytes do
+    half = nc_half(size)
+    if Enum.at(state,5,0) != 2 do state else
+      if size == 1 do nk_pipe_step(source,nc_cursor(state,0),nc_read(state,3),stop) else
+        nk_pipe_run(source,nk_pipe_run(source,state,half,stop),size-half,stop)
+      end
+    end
+  end
+  def nk_piped(source: bytes, start: integer, stop: integer): integer do
+    if Enum.at(nk_pipe_run(source,nk_state(start,0,2),16777216,stop),5,0) == 1 do 1 else 0 end
+  end
+  # Where the expression that starts at a position ends: brackets and do/fn
+  # ... end nest, and at the outer level a line break ends it unless an
+  # operator stands beside it. The state's answer 1 carries the position.
+  def nk_end_step(source: bytes, pos: integer, depth: integer): bytes do
+    start = nc_start(source,pos)
+    stop = if start < 0 do -1 else nc_end(source,start) end
+    value = byte_at(source,start)
+    opens = if (value-40)*(value-91)*(value-123) == 0 do 1 else if value == 100 do nc_opens(source,start) else if value == 102 do nf_untyped(source,start) else 0 end end end
+    closes = if (value-41)*(value-93)*(value-125) == 0 do 1 else if value == 101 do nc_word(source,start,b[101,110,100]) else 0 end end
+    next = nc_start(source,stop)
+    if stop < 0 do nk_state(pos,0,1) else if start >= Enum.count(source) do nk_state(pos,0,1) else
+      if depth+opens-closes < 0 do nk_state(pos,0,1) else if depth+opens-closes > 0 do nk_state(stop,depth+opens-closes,2) else
+        if next < 0 do nk_state(stop,0,1) else if next >= Enum.count(source) do nk_state(stop,0,1) else
+          if nk_broken(source,stop,next) == 0 do nk_state(stop,0,2) else
+            if nk_joins(source,start) == 1 do nk_state(stop,0,2) else
+              if byte_at(source,next) == 45 do nk_state(stop,0,1) else if nk_joins(source,next) == 1 do nk_state(stop,0,2) else nk_state(stop,0,1) end end
+            end
+          end
+        end end
+      end end
+    end end
+  end
+  def nk_end_run(source: bytes, state: bytes, size: integer): bytes do
+    half = nc_half(size)
+    if Enum.at(state,5,0) != 2 do state else
+      if size == 1 do nk_end_step(source,nc_cursor(state,0),nc_read(state,3)) else
+        nk_end_run(source,nk_end_run(source,state,half),size-half)
+      end
+    end
+  end
+  def nk_value_end(source: bytes, pos: integer): integer do
+    state = nk_end_run(source,nk_state(pos,0,2),16777216)
+    if pos < 0 do -1 else if Enum.at(state,5,0) == 1 do nc_cursor(state,0) else -1 end end
+  end
+  # @name value declares a module constant and @name stands for the value,
+  # compiled where it is used with no bindings in reach. The declaration is
+  # the first "@name" that starts a line of the module.
+  def nk_line_start(source: bytes, pos: integer): integer do
+    value = byte_at(source,pos-1)
+    if pos == 0 do 1 else if value == 10 do 1 else if (value-32)*(value-9) == 0 do nk_line_start(source,pos-1) else 0 end end end
+  end
+  def nk_declared(source: bytes, first: integer, stop: integer, name: integer): integer do
+    if stop-first > 64 do
+      middle = first+nc_half(stop-first)
+      left = nk_declared(source,first,middle,name)
+      if left >= 0 do left else nk_declared(source,middle,stop,name) end
+    else nk_declared_scan(source,first,stop,name) end
+  end
+  def nk_declared_scan(source: bytes, pos: integer, stop: integer, name: integer): integer do
+    size = nc_end(source,name)-name
+    if pos >= stop do -1 else
+      if byte_at(source,pos) != 64 do nk_declared_scan(source,pos+1,stop,name) else
+        if pos+1 == name do nk_declared_scan(source,pos+1,stop,name) else
+          if nc_end(source,pos+1)-pos-1 != size do nk_declared_scan(source,pos+1,stop,name) else
+            if nc_equal(source,pos+1,name,size)*nk_line_start(source,pos) == 1 do pos else nk_declared_scan(source,pos+1,stop,name) end
+          end
+        end
+      end
+    end
+  end
+  # Where the module of header record owner ends: the next module's name.
+  def nk_module_end(source: bytes, table: bytes, index: integer): integer do
+    if index >= nc_records(Enum.count(table)) do Enum.count(source) else
+      if Enum.at(table,index*27+16,0) == 32 do nc_meta(table,index,0) else nk_module_end(source,table,index+1) end
+    end
+  end
+  def nk_constant(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
+    owner = nc_owner(table,nc_read(env,0))
+    found = if classify_ascii(byte_at(source,start+1)) != 2 do -1 else nk_declared(source,nc_meta(table,owner,0),nk_module_end(source,table,owner+1),start+1) end
+    value = if found < 0 do b[] else if depth > 190 do b[] else nc_expression(source,nc_end(source,found+1),nc_u16(nc_read(env,0)),table,depth+1) end end
+    if nc_pos(value) < 0 do b[] else nc_value(nc_end(source,start+1),nc_code(value),nc_kind(value)) end
+  end
+  # :name is an atom: at run time the string of its name, with a type of its own.
+  def nk_atom(source: bytes, start: integer): bytes do
+    stop = nc_end(source,start+1)
+    if classify_ascii(byte_at(source,start+1)) != 2 do b[] else nc_value(stop,nc_text_emit(nc_slice(source,start+1,stop)),b[22]) end
+  end
+  # name: value in a list literal is the tuple {:name, value}: a keyword list.
+  def nk_keyword(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
+    colon = nc_end(source,start)
+    # A key may be any word, reserved ones too: [case: :lower].
+    value = if classify_ascii(byte_at(source,start)) != 2 do b[] else if nc_word(source,colon,b[58]) == 0 do b[] else nc_expression(source,nc_end(source,colon),env,table,depth+1) end end
+    kind = nt_tuple(Enum.concat(b[1,22],nt_cell(nc_kind(value))),2)
+    pushed = nc_join(nc_text_emit(nc_slice(source,start,colon)),b[80],Enum.concat(nc_code(value),b[80]))
+    if nc_pos(value) < 0 do b[] else if nt_tag(kind) < 0 do b[] else
+      nc_value(nc_pos(value),nc_join(pushed,nc_join(nc_allocate_emit(16),b[72,199,2,2,0,0,0],nr_stores(2)),b[72,137,208]),kind)
+    end end
+  end
+  # cond do condition -> body ... end: the first arm whose condition holds.
+  # When none does the program ends, naming the cond.
+  def nk_cond(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
+    begin = nc_expect(source,nc_end(source,start),b[100,111])
+    if depth > 251 do b[] else if begin < 0 do b[] else
+      if nc_word(source,begin,b[101,110,100]) == 1 do b[] else pk_arms(source,env,table,nc_join(b[depth],nc_u24(start),nc_u24(begin))) end
+    end end
+  end
+  def nk_cond_arms(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, origin: integer): bytes do
+    if nc_word(source,pos,b[101,110,100]) == 1 do nc_value(nc_end(source,pos),Enum.concat(zf_cover_end(source,table,env,origin),nz_fail(table,origin,8)),b[9,2]) else
+      condition = zf_cover_arm(source,table,env,nc_condition(source,pos,sg_conditional(env),table,depth+1),pos)
+      arrow = nc_expect(source,nc_pos(condition),b[45,62])
+      first = if arrow < 0 do b[] else nc_branch(source,arrow,env,table,depth+1) end
+      # An arm that waits for the type of the arms after it (nf_hinting).
+      hinting = if arrow < 0 do b[] else if nc_pos(first) >= 0 do b[] else nf_trial(source,arrow,env,table) end end
+      trial = if Enum.count(hinting) == 0 do b[] else nc_branch(source,arrow,hinting,table,depth+1) end
+      later = if nc_pos(trial) < 0 do b[] else nk_cond_arms(source,nc_pos(trial),env,table,depth,origin) end
+      settled = nf_settling(env,later)
+      body = if nc_pos(first) >= 0 do first else if Enum.count(settled) == 0 do b[] else nc_branch(source,arrow,settled,table,depth+1) end end
+      plain = if nc_pos(body) < 0 do b[] else if nc_pos(later) >= 0 do later else nk_cond_arms(source,nc_pos(body),env,table,depth,origin) end end
+      led = if nc_pos(plain) >= 0 do b[] else nf_led(source,env,table,body) end
+      rest = zf_cover_rest(source,table,env,pos,if Enum.count(led) == 0 do plain else nk_cond_arms(source,nc_pos(body),led,table,depth,origin) end)
+      if nc_pos(rest) < 0 do b[] else if nf_both_open(env,body,rest) == 1 do b[] else nc_if_code(condition,body,rest,nc_pos(rest)) end end
+    end
+  end
+  # Enum.sum of a list leaves the carry flag set when the sum left 64 bits.
+  def nk_summed(table: bytes, value: bytes, op: integer, pos: integer): bytes do
+    if op != 5 do value else if nc_pos(value) < 0 do value else
+      nc_value(nc_pos(value),nc_join(nc_code(value),b[115,19],nz_fail(table,pos,3)),nc_kind(value))
+    end end
+  end
+  # Functions called without a module name, or as Kernel.name.
+  def nk_op(source: bytes, pos: integer): integer do
+    if nc_word(source,pos,b[114,101,109]) == 1 do 1 else if nc_word(source,pos,b[100,105,118]) == 1 do 2 else
+    if nc_word(source,pos,b[97,98,115]) == 1 do 3 else if nc_word(source,pos,b[109,105,110]) == 1 do 4 else
+    if nc_word(source,pos,b[109,97,120]) == 1 do 5 else if nc_word(source,pos,b[108,101,110,103,116,104]) == 1 do 6 else
+    if nc_word(source,pos,b[104,100]) == 1 do 7 else if nc_word(source,pos,b[116,108]) == 1 do 8 else
+    if nc_word(source,pos,b[116,111,95,115,116,114,105,110,103]) == 1 do 9 else if nc_word(source,pos,b[109,97,112,95,115,105,122,101]) == 1 do 10 else
+    if nc_word(source,pos,b[97,115,115,101,114,116]) == 1 do 11 else if nc_word(source,pos,b[105,110,115,112,101,99,116]) == 1 do 12 else ne_op(source,pos) end end
+    end end end end end end end end end end
+  end
+  # hd of a list whose elements have no type yet (hd([])) takes its type
+  # from where it stands, as the pinned compiler types it.
+  def nk_kernel(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    op = nk_op(source,pos)
+    begin = nc_expect(source,nc_end(source,pos),b[40])
+    args = if op == 0 do b[] else if begin < 0 do b[] else nc_arguments(source,begin,env,table,depth) end end
+    if op == 0 do if nc_word(source,pos,b[114,97,105,115,101]) == 1 do ty_raise(source,pos,env,table,depth) else if nc_word(source,pos,b[116,104,114,111,119]) == 1 do ty_throw(source,pos,env,table,depth) else ny_bare(source,pos,env,table,depth) end end else if nc_pos(args) < 0 do b[] else nk_ordered(nw_library(if op == 12 do ni_call(source,table,args,env) else ne_call(table,args,op,nk_from(source,nc_start(source,pos))) end,args,if op == 7 do 1 else 2 end),source,pos,Enum.concat(b[depth,op],env),table) end end
+  end
+  # Kernel.name for a name that is no function of the library (elem, some,
+  # byte_size, put_elem) is the name alone. plan: the nesting, the environment.
+  def nk_else(built: bytes, source: bytes, name: integer, plan: bytes, table: bytes): bytes do
+    if nc_pos(built) >= 0 do built else if nc_word(source,name,b[75,101,114,110,101,108]) == 1 do built else if nc_find(source,name,table,nc_owner(table,nc_read(plan,1))) >= 0 do b[] else nc_unary_plain(source,name,nc_slice(plan,1,Enum.count(plan)),table,Enum.at(plan,0,0)+1) end end end
+  end
+  # A failure of Kernel.name(...) is named at the module, as a library call's.
+  def nk_from(source: bytes, pos: integer): integer do
+    if pos < 7 do pos else if nc_word_at(source,pos-7,b[75,101,114,110,101,108,46],0) == 1 do pos-7 else pos end end
+  end
+  # min and max of other types with an order are written in Alchem
+  # (library/Kernel.alc). plan: the nesting, the function, the environment.
+  def nk_ordered(built: bytes, source: bytes, pos: integer, plan: bytes, table: bytes): bytes do
+    if nc_pos(built) >= 0 do built else if (Enum.at(plan,1,0)-4)*(Enum.at(plan,1,0)-5) != 0 do built else ny_bare(source,pos,nc_slice(plan,2,Enum.count(plan)),table,Enum.at(plan,0,0)) end end
+  end
+  def nk_call(table: bytes, args: bytes, op: integer, pos: integer): bytes do
+    count = nc_arg_count(args)
+    first = nt_tag(nc_arg_kind(args,0))
+    if op < 3 do
+      if count != 2 do b[] else if first+nt_tag(nc_arg_kind(args,1)) != 0 do b[] else
+        nc_result(nc_pos(args),nc_join(nc_arg_code(args),b[88,89],if op == 1 do nk_remainder(table,pos) else nk_divide(table,pos) end))
+      end end
+    else
+      if (op-4)*(op-5) == 0 do nk_least(args,op) else
+        if count != 1 do b[] else nk_single(table,args,op,pos) end
+      end
+    end
+  end
+  # min and max of two integers, booleans or strings.
+  def nk_least(args: bytes, op: integer): bytes do
+    kind = nc_arg_kind(args,0)
+    tag = nt_tag(kind)
+    move = if op == 4 do 76 else 79 end
+    if nc_arg_count(args) != 2 do b[] else if nt_same(kind,nc_arg_kind(args,1)) == 0 do b[] else
+      if tag*(tag-3) == 0 do nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),b[88,89,72,57,193,72,15,move,193]),kind) else
+        if tag != 2 do b[] else
+          nc_value(nc_pos(args),nc_join(nc_arg_code(args),Enum.concat(b[72,139,76,36,8,72,139,4,36],na_str_cmp_emit()),b[72,133,192,88,89,72,15,move,193]),kind)
+        end
+      end
+    end end
+  end
+  def nk_single(table: bytes, args: bytes, op: integer, pos: integer): bytes do
+    kind = nc_arg_kind(args,0)
+    tag = nt_tag(kind)
+    stop = nc_pos(args)
+    code = nc_arg_code(args)
+    if op == 3 do if tag != 0 do b[] else nc_result(stop,nc_join(code,b[88,72,133,192,121,24,72,247,216,113,19],nz_fail(table,pos,3))) end else
+    if op == 6 do
+      if tag == 7 do nl_builtin(args,1) else if tag == 8 do nm_enum(args,1) else
+        if tag != 5 do b[] else nc_result(stop,nc_join(code,b[88,184],nc_u32(nt_count(kind)))) end
+      end end
+    else
+    if op == 7 do if tag != 7 do b[] else nc_value(stop,nc_join(code,Enum.concat(b[88,72,131,56,0,117,19],nz_fail(table,pos,7)),b[72,139,64,8]),nt_child(kind,0)) end else
+    if op == 8 do if tag != 7 do b[] else
+      nc_value(stop,nc_join(code,nc_join(b[72,139,4,36,72,131,56,0,117,19],nz_fail(table,pos,7),b[106,1]),Enum.concat(b[94,95,72,139,15,72,137,202,72,133,246,121,12,72,1,206,121,2,49,246,72,137,242,49,246,87,86,82],nl_slice_emit())),kind)
+    end else
+    if op == 9 do
+      shown = ne_shown(table,nc_value(stop,Enum.concat(code,b[88]),kind))
+      if Enum.count(shown) == 0 do b[] else nc_value(stop,shown,b[2]) end
+    else
+    if op == 10 do if tag != 8 do b[] else nm_enum(args,1) end else
+      if tag != 3 do b[] else nc_value(stop,nc_join(code,b[88,72,133,192,117,19],nz_fail(table,pos,6)),b[12]) end
+    end end end end end end
+  end
+  # Native smoke test; assembled with the compiler.
+  def main() do System.halt(0) end
+end

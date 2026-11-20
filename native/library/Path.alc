@@ -1,0 +1,272 @@
+# Path: the functions written in Alchem.
+#: join/2
+  def join(left: string, right: string): string do
+    whole = if left == "" do right else if right == "" do left else left <> "/" <> right end end
+    if whole == "" do "" else
+      kept = Enum.o_turn(join_clean(String.split(whole, "/"), String.starts_with?(whole, "/"), []))
+      text = if String.starts_with?(whole, "/") do "/" <> Enum.join(kept, "/") else Enum.join(kept, "/") end
+      if text == "" do "." else text end
+    end
+  end
+  # done holds the parts kept so far, the last one first.
+  defp join_clean(parts: list[string], rooted: boolean, done: list[string]): list[string] do
+    if parts == [] do done else
+      part = hd(parts)
+      if part == "" or part == "." do join_clean(tl(parts), rooted, done) else
+        if part == ".." do
+          if done == [] do
+            if rooted do join_clean(tl(parts), rooted, done) else join_clean(tl(parts), rooted, [part | done]) end
+          else
+            if hd(done) == ".." do join_clean(tl(parts), rooted, [part | done]) else join_clean(tl(parts), rooted, tl(done)) end
+          end
+        else
+          join_clean(tl(parts), rooted, [part | done])
+        end
+      end
+    end
+  end
+#: join/1 needs join/2
+  def join(parts: list[string]): string do
+    kept = Enum.filter(parts, fn part -> part != "" end)
+    if parts == [] do raise("cannot join an empty list of paths") end
+    if kept == [] do "" else Path.join(Enum.join(kept, "/"), "") end
+  end
+#: split/1
+  def split(path: string): list[string] do
+    kept = Enum.filter(String.split(path, "/"), fn part -> part != "" end)
+    if String.starts_with?(path, "/") do ["/"] ++ kept else kept end
+  end
+#: basename/1
+  def basename(path: string): string do
+    kept = Enum.filter(String.split(path, "/"), fn part -> part != "" end)
+    if path == "" do "" else
+      if kept == [] do "/" else hd(Enum.reverse(kept)) end
+    end
+  end
+#: basename/2 needs basename/1 rootname/2
+  def basename(path: string, extension: string): string do
+    Path.rootname(Path.basename(path), extension)
+  end
+#: dirname/1 needs join/2
+  def dirname(path: string): string do
+    parts = String.split(path, "/")
+    if length(parts) < 2 do "." else
+      Path.join(Enum.join(Enum.take(parts, length(parts) - 1), "/") <> "/", "")
+    end
+  end
+#: extname/1
+  def extname(path: string): string do
+    parts = String.split(path, "/")
+    pieces = String.split(hd(Enum.reverse(parts)), ".")
+    if length(pieces) < 2 do "" else "." <> hd(Enum.reverse(pieces)) end
+  end
+#: rootname/1
+  def rootname(path: string): string do
+    parts = String.split(path, "/")
+    pieces = String.split(hd(Enum.reverse(parts)), ".")
+    if length(pieces) < 2 do path else
+      Enum.join(Enum.take(parts, length(parts) - 1) ++ [Enum.join(Enum.take(pieces, length(pieces) - 1), ".")], "/")
+    end
+  end
+#: rootname/2
+  def rootname(path: string, extension: string): string do
+    if extension == "" or not String.ends_with?(path, extension) do path else
+      mark = String.slice(extension, 0, 1)
+      parts = String.split(path, mark)
+      rootname_cut(path, tl(parts), hd(parts), mark, byte_size(path) - byte_size(extension), String.length(path) - String.length(extension))
+    end
+  end
+  defp rootname_cut(path: string, parts: list[string], done: string, mark: string, want: integer, count: integer): string do
+    if byte_size(done) == want do done else
+      if parts == [] or byte_size(done) > want do String.slice(path, 0, count) else
+        rootname_cut(path, tl(parts), done <> mark <> hd(parts), mark, want, count)
+      end
+    end
+  end
+#: relative_to/2 needs join/2
+  def relative_to(path: string, from: string): string do
+    base = if from == "" do "." else Path.join(from, "") end
+    target = if path == "" do "." else Path.join(path, "") end
+    if target == base do "." else
+      if String.starts_with?(base, "/") != String.starts_with?(target, "/") do path else
+        left = Enum.filter(String.split(base, "/"), fn part -> part != "" and part != "." end)
+        right = Enum.filter(String.split(target, "/"), fn part -> part != "" end)
+        shared = relative_shared(left, right, 0)
+        up = Enum.drop(left, shared)
+        down = Enum.drop(right, shared)
+        rest = Enum.join(down, "/")
+        if up == [] and not String.starts_with?(rest, "..") do rest else path end
+      end
+    end
+  end
+  defp relative_shared(left: list[string], right: list[string], count: integer): integer do
+    if left == [] or right == [] do count else
+      if hd(left) == hd(right) do relative_shared(tl(left), tl(right), count + 1) else count end
+    end
+  end
+#: safe_relative/1 needs join/2
+  def safe_relative(path: string): option[string] do
+    clean = if path == "" do "." else Path.join(path, "") end
+    if String.starts_with?(path, "/") or clean == ".." or String.starts_with?(clean, "../") do none else
+      if clean == "." do some("") else some(clean) end
+    end
+  end
+#: safe_relative/2 needs join/2 safe_relative/1
+  def safe_relative(path: string, from: string): option[string] do
+    if String.starts_with?(path, "/") do
+      base = if from == "" do "." else Path.join(from, "") end
+      target = Path.join(path, "")
+      if target == base do Path.safe_relative(".") else
+        if not String.starts_with?(base, "/") do none else
+          left = Enum.filter(String.split(base, "/"), fn part -> part != "" end)
+          right = Enum.filter(String.split(target, "/"), fn part -> part != "" end)
+          shared = safe_shared(left, right, 0)
+          up = Enum.drop(left, shared)
+          down = Enum.drop(right, shared)
+          if up == [] do Path.safe_relative(Enum.join(down, "/")) else none end
+        end
+      end
+    else
+      Path.safe_relative(path)
+    end
+  end
+  defp safe_shared(left: list[string], right: list[string], count: integer): integer do
+    if left == [] or right == [] do count else
+      if hd(left) == hd(right) do safe_shared(tl(left), tl(right), count + 1) else count end
+    end
+  end
+#: type/1
+  def type(p: string): atom do
+    if String.starts_with?(p, "/") do :absolute else :relative end
+  end
+# filepath.Abs after a leading ~ became the home directory; the path as it
+# is when the working directory cannot be told.
+#: expand/1 needs Sys.abs/1
+  def expand(p: string): string do
+    h = System.get_env("HOME", "")
+    q = if String.starts_with?(p, "~") and h != "" do h <> Sys.text(Sys.addr(p) + 1, byte_size(p) - 1) else p end
+    case Sys.abs(q) do
+      ok(a) -> a
+      error(_) -> q
+    end
+  end
+#: absname/1 needs expand/1
+  def absname(p: string): string do
+    Path.expand(p)
+  end
+# filepath.Glob, sorted.
+#: wildcard/1 needs Enum.sort/1 glob/2
+  def wildcard(p: string): list[string] do
+    r = Path.glob(p, 0)
+    if "\x00" in r do raise("malformed wildcard pattern") end
+    Enum.sort(r)
+  end
+# The paths that match p; a path of one zero byte says the pattern is
+# malformed. d counts the directories of the pattern that are patterns.
+#: glob/2 needs Enum.flat_map/2 globdir/2 match/4 Sys.stat/2 Sys.up/3
+  def glob(p: string, d: integer): list[string] do
+    a = Sys.addr(p)
+    n = byte_size(p)
+    i = Sys.up(a, n - 1, 0)
+    r = if i < 0 do "." else if i == 0 do "/" else Sys.text(a, i) end end
+    if d == 10000 or Path.match(a, a + n, a, a) < 0 do ["\x00"] else
+      if not glob_meta(p) do if Sys.stat(p, 0) < 0 do Enum.take([p], 0) else [p] end else
+        if not glob_meta(r) do Path.globdir(r, Sys.text(a + i + 1, n - i - 1)) else
+          Enum.flat_map(Path.glob(r, d + 1), fn x -> if x == "\x00" do [x] else Path.globdir(x, Sys.text(a + i + 1, n - i - 1)) end end)
+        end
+      end
+    end
+  end
+  defp glob_meta(p: string): boolean do
+    String.contains?(p, "*") or String.contains?(p, "?") or String.contains?(p, "[") or String.contains?(p, "\\")
+  end
+# The names in the directory d that match the pattern f, each joined to d.
+#: globdir/2 needs join/2 match/4 Sys.kind/0 Sys.list/2 Sys.stat/2
+  def globdir(d: string, f: string): list[string] do
+    l = if Sys.stat(d, 1) < 0 or Sys.kind() != 4 do {-1, "", [d]} else Sys.list(d, -1) end
+    if elem(l, 0) < 0 do Enum.take([d], 0) else
+      Enum.filter(Enum.map(elem(l, 2), fn x ->
+        m = Path.match(Sys.addr(f), Sys.addr(f) + byte_size(f), Sys.addr(x), Sys.addr(x) + byte_size(x))
+        if m < 0 do "\x00" else if m == 1 do Path.join(d, x) else "" end end
+      end), fn x -> x != "" end)
+    end
+  end
+# filepath.Match of the pattern from p to q against the name from s to t:
+# 1, 0, or -2 for a malformed pattern.
+#: match/4 needs chunk/5 skip/5
+  def match(p: integer, q: integer, s: integer, t: integer): integer do
+    c = match_star(p, q)
+    e = match_scan(c, q, 0)
+    r = if c < q do Path.chunk(c, e, s, t, 0) else -1 end
+    if p >= q do if s == t do 1 else 0 end else
+      if c > p and e == c do if Sys.find(s, t - s, 47) < 0 do 1 else 0 end else
+        if r >= 0 and (r == t or e < q) do Path.match(e, q, r, t) else
+          if r == -2 or c == p do if r == -2 do -2 else 0 end else Path.skip(c, e, q, s, t) end
+        end
+      end
+    end
+  end
+  defp match_star(p: integer, q: integer): integer do
+    if p < q and Sys.byte(p) == 42 do match_star(p + 1, q) else p end
+  end
+# Where the chunk that starts at i ends: at a * outside brackets.
+  defp match_scan(i: integer, q: integer, b: integer): integer do
+    c = if i < q do Sys.byte(i) else 0 end
+    if i >= q or (c == 42 and b == 0) do i else
+      if c == 92 and i + 1 < q do match_scan(i + 2, q, b) else match_scan(i + 1, q, if c == 91 do 1 else if c == 93 do 0 else b end end) end
+    end
+  end
+# After a *: the chunk from c to e is tried one byte further on at a time.
+#: skip/5 needs chunk/5 match/4
+  def skip(c: integer, e: integer, q: integer, s: integer, t: integer): integer do
+    r = if s < t and Sys.byte(s) != 47 do Path.chunk(c, e, s + 1, t, 0) else -1 end
+    if s >= t or Sys.byte(s) == 47 do 0 else
+      if r == -2 do -2 else if r >= 0 and not (e == q and r < t) do Path.match(e, q, r, t) else Path.skip(c, e, q, s + 1, t) end end
+    end
+  end
+# Whether the chunk from c to e matches at s: where the name goes on, -1
+# when it does not match, -2 when the chunk is malformed. f is 1 once the
+# match has failed and the chunk is only read on.
+#: chunk/5 needs class/4 Sys.rune/2
+  def chunk(c: integer, e: integer, s: integer, t: integer, f: integer): integer do
+    g = if f == 1 or s >= t do 1 else 0 end
+    b = if c < e do Sys.byte(c) else 0 end
+    v = if g == 1 do 2097152 else Sys.rune(s, t - s) end
+    w = if v == 0 do 1 else div(v, 2097152) end
+    n = if c + 1 < e and Sys.byte(c + 1) == 94 do 1 else 0 end
+    k = if b == 91 do Path.class(c + 1 + n, e, if v == 0 do 65533 else rem(v, 2097152) end, 0) else 0 end
+    x = if b == 92 do c + 1 else c end
+    if c >= e do if f == 1 do -1 else s end else
+      if b == 91 do
+        if k < 0 do -2 else Path.chunk(div(k, 2), e, if g == 1 do s else s + w end, t, if g == 1 or rem(k, 2) == n do 1 else 0 end) end
+      else
+        if b == 63 do Path.chunk(c + 1, e, if g == 1 do s else s + w end, t, if g == 1 or Sys.byte(s) == 47 do 1 else 0 end) else
+          if x >= e do -2 else Path.chunk(x + 1, e, if g == 1 do s else s + 1 end, t, if g == 1 or Sys.byte(x) != Sys.byte(s) do 1 else 0 end) end
+        end
+      end
+    end
+  end
+# The ranges of a class from c on against the rune r: twice the position
+# after its ], plus 1 when a range held r; -2 when it is malformed. m is 2
+# once a range was read, and 3 once one held r.
+#: class/4 needs Sys.rune/2
+  def class(c: integer, e: integer, r: integer, m: integer): integer do
+    z = c < e and Sys.byte(c) == 93 and m > 1
+    lo = if z do 0 else class_esc(c, e) end
+    d = c + div(lo, 2097152)
+    dash = lo > 0 and Sys.byte(d) == 45
+    hi = if dash do class_esc(d + 1, e) else lo end
+    if z do (c + 1) * 2 + rem(m, 2) else
+      if lo < 0 or hi < 0 do -2 else
+        Path.class(if dash do d + 1 + div(hi, 2097152) else d end, e, r, if m == 3 or (rem(lo, 2097152) <= r and r <= rem(hi, 2097152)) do 3 else 2 end)
+      end
+    end
+  end
+# A character of a class, after a \ or not: how many bytes it takes times
+# 2097152 plus its rune; -2 when there is none.
+  defp class_esc(c: integer, e: integer): integer do
+    b = if c < e do Sys.byte(c) else 45 end
+    x = if b == 92 do c + 1 else c end
+    v = if x < e do Sys.rune(x, e - x) else 0 end
+    if b == 45 or b == 93 or v == 0 or v == 2162685 or x + div(v, 2097152) >= e do -2 else (x - c) * 2097152 + v end
+  end

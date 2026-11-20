@@ -1,0 +1,18 @@
+defmodule NativeArithmeticCompiler do
+  # Empty output is the compiler entry bridge's explicit source rejection.
+  # Validation precedes evaluation; arithmetic wraps i64 just like the target.
+  def compile_expression(source: bytes): bytes do
+    if expression_error(source) != 0 do b[] else
+      value = eval_sum(source, token_start(source, 0), 0)
+      if value < 0 do b[] else
+        if value > 255 do b[] else emit_elf_exit(value) end
+      end
+    end
+  end
+
+  # Native smoke test; bootstrap replaces main with the typed stdin/stdout bridge.
+  def main() do
+    image = compile_expression(b[54, 42, 55])
+    System.halt(Enum.count(image) - 140)
+  end
+end

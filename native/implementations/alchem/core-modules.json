@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "modules": [
+    {"name":"lexer","artifact":"alchem-lexer","sources":["lexer.alc"],"helpers":["core_lex_records","core_lexer"],"entry":"core_lexer","protocol":"kind/start/end byte records, including EOF"},
+    {"name":"integer","artifact":"alchem-integer","sources":["lexer.alc","integer-format.alc"],"helpers":["core_integer_result","core_integer"],"entry":"core_integer","protocol":"signed decimal input to canonical signed decimal bytes"},
+    {"name":"expression","artifact":"alchem-expression","sources":["lexer.alc","integer-format.alc"],"helpers":["core_expression"],"entry":"core_expression","protocol":"arithmetic input to canonical signed i64 decimal bytes"},
+    {"name":"encoder","artifact":"alchem-elf-emitter","sources":["encoder.alc"],"helpers":["core_encoder"],"entry":"core_encoder","protocol":"one status byte to complete 140-byte exit ELF"},
+    {"name":"arithmetic","artifact":"alchem-arithmetic","sources":["lexer.alc","encoder.alc","compiler.alc"],"helpers":["core_arithmetic"],"entry":"core_arithmetic","protocol":"bounded arithmetic input to exit ELF"}
+  ]
+}

@@ -1,0 +1,19 @@
+defmodule NativeGraphemeOptionsDemo do
+  def first_or_empty(text: string): string do
+    case String.first(text) do
+      none -> ""
+      some(cluster) -> cluster
+    end
+  end
+  def main() do
+    text = "é👩🏽‍🚀🇺🇸"
+    valid = String.length(text) == 3 and not Enum.empty?(b[1])
+    if valid do
+      IO.puts(first_or_empty(text))
+      IO.puts(String.slice(text, 1, 1))
+      System.halt(0)
+    else
+      System.halt(1)
+    end
+  end
+end

@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "const.i64",
+              "dest": "v0",
+              "value": -6
+            },
+            {
+              "op": "const.i64",
+              "dest": "v1",
+              "value": 7
+            },
+            {
+              "op": "mul.i64",
+              "dest": "v2",
+              "lhs": "v0",
+              "rhs": "v1"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "v2"
+          }
+        }
+      ]
+    }
+  ]
+}

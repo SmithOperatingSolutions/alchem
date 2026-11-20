@@ -1,0 +1,14 @@
+defmodule ByteConstruction do
+  def join(left: bytes, right: bytes): bytes do
+    Enum.concat(left, right)
+  end
+
+  def data(): bytes do
+    join(b[20], b[22])
+  end
+
+  def main() do
+    values = data()
+    System.halt(Enum.at(values, 0, 0) + Enum.at(values, 1, 0))
+  end
+end

@@ -1,0 +1,37 @@
+# Bitwise: the functions written in Alchem, on the operators the compiler
+# has inline (&&&, |||, ^^^, <<<, >>>; they went bit by bit through
+# division, 370 times the pinned runtime's time). A shift by a negative
+# count goes the other way, one by 64 or more gives 0, or for a shift to
+# the right the sign in every bit.
+#: band/2
+  def band(a: integer, b: integer): integer do
+    a &&& b
+  end
+#: bor/2
+  def bor(a: integer, b: integer): integer do
+    a ||| b
+  end
+#: bxor/2
+  def bxor(a: integer, b: integer): integer do
+    a ^^^ b
+  end
+#: bnot/1
+  def bnot(a: integer): integer do
+    -1 - a
+  end
+#: bsl/2
+  def bsl(a: integer, by: integer): integer do
+    if by < 0 do
+      if by <= -63 do (if a < 0 do -1 else 0 end) else a >>> (0 - by) end
+    else
+      if by >= 64 do 0 else a <<< by end
+    end
+  end
+#: bsr/2
+  def bsr(a: integer, by: integer): integer do
+    if by < 0 do
+      if by <= -64 do 0 else a <<< (0 - by) end
+    else
+      if by >= 63 do (if a < 0 do -1 else 0 end) else a >>> by end
+    end
+  end

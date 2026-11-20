@@ -1,0 +1,38 @@
+{
+  "version": 9,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "const.bool",
+              "dest": "v",
+              "value": true
+            },
+            {
+              "op": "bytes.pack",
+              "dest": "b",
+              "args": [
+                "v"
+              ]
+            },
+            {
+              "op": "bytes.len",
+              "dest": "r",
+              "value": "b"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    }
+  ]
+}

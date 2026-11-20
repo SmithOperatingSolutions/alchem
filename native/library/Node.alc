@@ -1,0 +1,1769 @@
+# Node: programs as nodes whose processes exchange messages, as the pinned
+# runtime has them (compiler/actor/node/node.go and the "---- Node ----"
+# functions of compiler/library.go.txt), on the sockets of library/TCP.alc
+# and the processes of library/Process.alc (spec/alchem-nodes.md).
+#
+# g + 1024 holds the node's block n: 0 its name ("" before Node.start), 8
+# the cookie, 16 the listening socket (0: not a node), 24 set when
+# connections are encrypted, 32 the peers, 40 the processes other nodes
+# may reach (cells: the number, the process, its codec), 48 who watches a
+# node (the name, the process, the reference), 56 the connections kept
+# (the name, the keeper's process, a cell that is 1 when it is woken), 64
+# who hears of every connection (the process, the reference), 80 the
+# streams published (the name, the publication), 88 the bytes being
+# encoded, 96 how many and 104 their room, 112 where the bytes being
+# decoded stand, 120 their end, 128 set when they did not fit their type
+# and 136 the peer they came from, 144 the function a handle of another
+# node's process calls, 152 the links to such processes (the process, the
+# handle, a cell that is 1 while the link holds), 160 working memory for
+# the hashes and ciphers, 168 the codecs made for Node.serve and Node.call
+# (the two forms, the block), 176 the node's key for TLS and 184 its
+# certificate, 192 the handles given back.
+# A peer: 0 its socket, 8 its name, 16 closed, 24 those that wait for an
+# answer (cells: the request, the process, the answer: 0 none yet, -1 the
+# connection closed), 32 the last request, 40 the monitors of its
+# processes (the reference, the process that monitors, the number
+# watched), 48 the process that writes and 56 those that wait to, 64 what
+# TLS keeps for the connection (0: none).
+# A codec is two words: the node of a type (native-nodes.alc) and the
+# first node, which a node of tag 20 counts from. A form is what the
+# compiler leaves at R14-72 for a type: two bytes of length, the type's
+# text, the node.
+# The handle of another node's process is a block like a process's: 0 the
+# node's name, 8 the codec of its messages (it stands at 96), 16 the peer (0: none), 24 the
+# function of n + 144, 40 its number there, 320 the number 2.
+#: _n/0 needs Process._g/0 Process._take/2 _far/3
+  def _n(): integer do
+    g = Process._g()
+    n = Sys.peek(g + 1024)
+    if n != 0 do n else
+      m = Process._take(g, 512)
+      Sys.poke(g + 1024, m)
+      Sys.poke(m, Process.__word(""))
+      Sys.poke(m + 8, Process.__word(""))
+      f: fn[integer, integer, integer, integer] = fn(op: integer, r: integer, a: integer): integer do Node._far(op, r, a) end
+      Sys.poke(m + 144, Process.__word(f))
+      m
+    end
+  end
+#: _name/1
+  def _name(n: integer): string do
+    Process.__any(Sys.peek(n))
+  end
+#: _u16/1
+  def _u16(a: integer): integer do
+    Sys.byte(a) + 256 * Sys.byte(a + 1)
+  end
+# The i-th form the compiler left for the call that is running; 0 for none.
+#: _form/1 needs _forms/2
+  def _form(i: integer): integer do
+    a = Sys.peek(Sys.stack() - 72)
+    if a == 0 do 0 else Node._forms(a + 1, i) end
+  end
+#: _forms/2 needs _u16/1
+  def _forms(a: integer, i: integer): integer do
+    if i == 0 do a + 2 else Node._forms(a + 2 + Node._u16(a), i - 1) end
+  end
+# The text of a form's type and its codec.
+#: _kind/1 needs _u16/1
+  def _kind(f: integer): string do
+    Sys.text(f + 2, Node._u16(f))
+  end
+#: _codec/2 needs Process._g/0 Process._take/2
+  def _codec(node: integer, root: integer): integer do
+    c = Process._take(Process._g(), 16)
+    Sys.poke(c, node)
+    Sys.poke(c + 8, root)
+    c
+  end
+#: _fcodec/1 needs _codec/2 _u16/1
+  def _fcodec(f: integer): integer do
+    Node._codec(f + 2 + Node._u16(f), f + 2 + Node._u16(f))
+  end
+
+#: _hash/1 needs Crypto.run/6
+  def _hash(m: string): string do
+    Crypto.run(0, 3, "", m, 0, 0)
+  end
+#: _hmac/2 needs Crypto.run/6
+  def _hmac(key: string, m: string): string do
+    Crypto.run(1, 3, key, m, 0, 0)
+  end
+
+# The bytes being encoded (node.go: Encoder). Room for k more, with eight
+# to spare: a byte is stored as a word.
+#: _room/2
+  def _room(n: integer, k: integer): integer do
+    c = Sys.peek(n + 104)
+    l = Sys.peek(n + 96)
+    if l + k + 8 <= c do Sys.peek(n + 88) + l else
+      m = if c == 0 do Sys.call(9, 0, 65536, 3, 34, -1, 0) else Sys.call(25, Sys.peek(n + 88), c, c * 2, 1) end
+      if m < 0 do System.halt(71) end
+      Sys.poke(n + 88, m)
+      Sys.poke(n + 104, if c == 0 do 65536 else c * 2 end)
+      Node._room(n, k)
+    end
+  end
+#: _e0/1
+  def _e0(n: integer): integer do
+    Sys.poke(n + 96, 0)
+  end
+#: _et/1
+  def _et(n: integer): string do
+    Sys.text(Sys.peek(n + 88), Sys.peek(n + 96))
+  end
+#: _eb/2 needs _room/2
+  def _eb(n: integer, v: integer): integer do
+    Sys.poke(Node._room(n, 1), v)
+    Sys.poke(n + 96, Sys.peek(n + 96) + 1)
+  end
+# An integer as Go's binary.AppendVarint writes it.
+#: _ev/2 needs _eu/2
+  def _ev(n: integer, v: integer): integer do
+    Node._eu(n, Process.__xor(Process.__shl(v, 1), if v < 0 do -1 else 0 end))
+  end
+#: _eu/2 needs _eb/2
+  def _eu(n: integer, u: integer): integer do
+    if u >= 0 and u < 128 do Node._eb(n, u) else
+      Node._eb(n, Process.__and(u, 127) + 128)
+      Node._eu(n, Process.__shr(u, 7))
+    end
+  end
+#: _es/2 needs _ev/2 _room/2
+  def _es(n: integer, s: string): integer do
+    k = byte_size(s)
+    Node._ev(n, k)
+    Sys.copy(Node._room(n, k), Sys.addr(s), k)
+    Sys.poke(n + 96, Sys.peek(n + 96) + k)
+  end
+# The bytes as they are.
+#: _er/2 needs _room/2
+  def _er(n: integer, s: string): integer do
+    k = byte_size(s)
+    Sys.copy(Node._room(n, k), Sys.addr(s), k)
+    Sys.poke(n + 96, Sys.peek(n + 96) + k)
+  end
+# The eight bytes of a word, the first the highest.
+#: _e8/3 needs _eb/2
+  def _e8(n: integer, w: integer, i: integer): integer do
+    if i < 0 do 0 else
+      Node._eb(n, Process.__and(Process.__shr(w, i), 255))
+      Node._e8(n, w, i - 8)
+    end
+  end
+
+# The bytes being decoded (node.go: Decoder): those of s from the byte at
+# from, which came from peer p.
+#: _d0/4
+  def _d0(n: integer, s: string, from: integer, p: integer): integer do
+    Sys.poke(n + 112, Sys.addr(s) + from)
+    Sys.poke(n + 120, Sys.addr(s) + byte_size(s))
+    Sys.poke(n + 128, 0)
+    Sys.poke(n + 136, p)
+  end
+#: _dfail/1
+  def _dfail(n: integer): integer do
+    Sys.poke(n + 128, 1)
+    Sys.poke(n + 112, Sys.peek(n + 120))
+    0
+  end
+# A boolean: a missing byte fails and leaves the rest.
+#: _db/1
+  def _db(n: integer): integer do
+    a = Sys.peek(n + 112)
+    if a >= Sys.peek(n + 120) do Sys.poke(n + 128, 1) * 0 else
+      Sys.poke(n + 112, a + 1)
+      if Sys.byte(a) == 0 do 0 else 1 end
+    end
+  end
+#: _dv/1 needs _du/4
+  def _dv(n: integer): integer do
+    u = Node._du(n, 0, 0, 0)
+    Process.__xor(Process.__shr(u, 1), 0 - Process.__and(u, 1))
+  end
+#: _du/4 needs _dfail/1
+  def _du(n: integer, u: integer, shift: integer, i: integer): integer do
+    a = Sys.peek(n + 112)
+    if a >= Sys.peek(n + 120) or i == 10 do Node._dfail(n) else
+      b = Sys.byte(a)
+      Sys.poke(n + 112, a + 1)
+      if i == 9 and b > 1 do Node._dfail(n) else
+        v = Process.__or(u, Process.__shl(Process.__and(b, 127), shift))
+        if b < 128 do v else Node._du(n, v, shift + 7, i + 1) end
+      end
+    end
+  end
+# The length of something the rest of the bytes could hold.
+#: _dn/1 needs _dfail/1 _dv/1
+  def _dn(n: integer): integer do
+    k = Node._dv(n)
+    if k < 0 or k > Sys.peek(n + 120) - Sys.peek(n + 112) do Node._dfail(n) else k end
+  end
+#: _ds/1 needs _dn/1
+  def _ds(n: integer): string do
+    k = Node._dn(n)
+    a = Sys.peek(n + 112)
+    Sys.poke(n + 112, a + k)
+    Sys.text(a, k)
+  end
+#: _d8/3 needs _dfail/1
+  def _d8(n: integer, w: integer, i: integer): integer do
+    a = Sys.peek(n + 112)
+    if i == 0 and Sys.peek(n + 120) - a < 8 do Node._dfail(n) else
+      if i == 8 do w else
+        Sys.poke(n + 112, a + 1)
+        Node._d8(n, Process.__or(Process.__shl(w, 8), Sys.byte(a)), i + 1)
+      end
+    end
+  end
+# What is left of the bytes.
+#: _drest/1
+  def _drest(n: integer): string do
+    Sys.text(Sys.peek(n + 112), Sys.peek(n + 120) - Sys.peek(n + 112))
+  end
+
+# A value, the word w, is written by the node of its type (codec.go).
+#: _e/4 needs _e8/3 _eb/2 _ef/5 _el/5 _em/6 _epid/4 _es/2 _ev/2 _u16/1 _var/2 Sys.flat/1
+  def _e(n: integer, node: integer, root: integer, w: integer): integer do
+    t = Sys.byte(node + 2)
+    if t == 0 do Node._ev(n, w) else if t == 2 or t == 22 do Node._es(n, Process.__any(w)) else if t == 3 do Node._eb(n, if w == 0 do 0 else 1 end) else if t == 24 do Node._e8(n, w, 56) else
+      if t == 7 do
+        Node._ev(n, Sys.peek(w))
+        Node._el(n, node + 3, root, w, Sys.peek(w))
+      else if t == 5 or t == 13 do Node._ef(n, node + 4, root, w + 8, Sys.byte(node + 3)) else
+        if t == 14 do
+          v = Sys.peek(w + 8)
+          r = Node._var(node + 4, v)
+          Node._ev(n, v)
+          Node._ef(n, r + 3, root, w + 16, Sys.byte(r + 2))
+        else if t == 4 do
+          if w == 0 do Node._eb(n, 0) else
+            Node._eb(n, 2)
+            Node._e(n, node + 3, root, Sys.peek(w + 8))
+          end
+        else if t == 6 or t == 31 do
+          first = Sys.peek(w) == 1
+          Node._eb(n, if t == 31 do if first do 1 else 0 end else if first do 0 else 2 end end)
+          if first do Node._e(n, node + 3, root, Sys.peek(w + 8)) else
+            if t == 31 do Node._es(n, Process.__any(Sys.peek(w + 8))) else Node._e(n, node + 3 + Node._u16(node + 3), root, Sys.peek(w + 8)) end
+          end
+        else if t == 8 or t == 25 do
+          f = Sys.flat(w)
+          Node._ev(n, Sys.peek(f))
+          Node._em(n, node + 3, root, f + 8, Sys.peek(f), t)
+        else if t == 30 do Node._epid(n, node + 3, root, Sys.peek(w + 8)) else if t == 20 do Node._e(n, root + Node._u16(node + 3), root, w) else
+          a = Sys.peek(node + 3)
+          Node._e(n, a, a, w)
+        end end end end end end end
+      end
+    end end end end
+  end
+# Variant v of a sum type whose variants start at r.
+#: _var/2 needs _u16/1
+  def _var(r: integer, v: integer): integer do
+    if v == 0 do r else Node._var(r + Node._u16(r), v - 1) end
+  end
+#: _el/5 needs _e/4
+  def _el(n: integer, node: integer, root: integer, p: integer, k: integer): integer do
+    if k == 0 do 0 else
+      Node._e(n, node, root, Sys.peek(p + 8))
+      Node._el(n, node, root, p + 16, k - 1)
+    end
+  end
+# k fields, the first at a, by the nodes from node.
+#: _ef/5 needs _e/4 _u16/1
+  def _ef(n: integer, node: integer, root: integer, a: integer, k: integer): integer do
+    if k == 0 do 0 else
+      Node._e(n, node, root, Sys.peek(a))
+      Node._ef(n, node + Node._u16(node), root, a + 8, k - 1)
+    end
+  end
+# k entries of a map (t 8) or elements of a set, the first at a.
+#: _em/6 needs _e/4 _u16/1
+  def _em(n: integer, node: integer, root: integer, a: integer, k: integer, t: integer): integer do
+    if k == 0 do 0 else
+      Node._e(n, node, root, Sys.peek(a))
+      if t == 8 do Node._e(n, node + Node._u16(node), root, Sys.peek(a + 8)) end
+      Node._em(n, node, root, a + 16, k - 1, t)
+    end
+  end
+# A handle as its node's name and its number. A process of this node can
+# be reached from the others once it was named in a message.
+#: _epid/4 needs _es/2 _ev/2 _export/4 _name/1
+  def _epid(n: integer, node: integer, root: integer, q: integer): integer do
+    if Sys.peek(q + 320) == 2 do Node._es(n, Process.__any(Sys.peek(q))) else
+      Node._export(n, q, node, root)
+      Node._es(n, Node._name(n))
+    end
+    Node._ev(n, Sys.peek(q + 40))
+  end
+#: _export/4 needs Process._cell/4 Process._g/0 Process._has/2 Process._push/5
+  def _export(n: integer, q: integer, node: integer, root: integer): integer do
+    g = Process._g()
+    if Process._has(n + 40, Sys.peek(q + 40)) != 0 do 0 else Process._push(g, n + 40, Sys.peek(q + 40), q, Process._cell(g, node, root, 0) + 8) end
+  end
+# The process of that number is no longer reached from other nodes.
+#: _unexport/2 needs Process._drop/3 Process._free/2 Process._g/0 Process._has/2
+  def _unexport(n: integer, id: integer): integer do
+    g = Process._g()
+    x = Process._has(n + 40, id)
+    if x == 0 do 0 else
+      Process._free(g, Sys.peek(x + 24) - 8)
+      Process._drop(g, n + 40, id)
+    end
+  end
+
+# A record of k words behind its count, all zero.
+#: _rec/2 needs Process._g/0
+  def _rec(count: integer, k: integer): integer do
+    g = Process._g()
+    w = if k <= 256 do Process.__word(Sys.text(g + 2048, 8 * k)) else
+      m = Sys.call(9, 0, 8 * k, 3, 34, -1, 0)
+      if m < 0 do System.halt(71) end
+      t = Process.__word(Sys.text(m, 8 * k))
+      Sys.call(11, m, 8 * k)
+      t
+    end
+    Sys.poke(w, count)
+    w
+  end
+# The value the bytes hold, by the node of its type: its word. Once the
+# bytes did not fit, 0, which nothing may read.
+#: _d/3 needs _d8/3 _db/1 _df/5 _dfail/1 _dl/5 _dm/4 _dn/1 _dpid/3 _ds/1 _dv/1 _rec/2 _u16/1 _var/2
+  def _d(n: integer, node: integer, root: integer): integer do
+    t = Sys.byte(node + 2)
+    if Sys.peek(n + 128) == 1 do 0 else if t == 0 do Node._dv(n) else if t == 2 or t == 22 do Process.__word(Node._ds(n)) else if t == 3 do Node._db(n) else if t == 24 do Node._d8(n, 0, 0) else
+      if t == 7 do
+        empty: list[integer] = []
+        Node._dl(n, node + 3, root, Node._dn(n), empty)
+      else if t == 5 or t == 13 do
+        w = Node._rec(Sys.byte(node + 3), Sys.byte(node + 3))
+        Node._df(n, node + 4, root, w + 8, Sys.byte(node + 3))
+        w
+      else if t == 14 do
+        v = Node._dv(n)
+        if v < 0 or v >= Sys.byte(node + 3) do Node._dfail(n) else
+          r = Node._var(node + 4, v)
+          w = Node._rec(Sys.byte(r + 2) + 1, Sys.byte(r + 2) + 1)
+          Sys.poke(w + 8, v)
+          Node._df(n, r + 3, root, w + 16, Sys.byte(r + 2))
+          w
+        end
+      else if t == 4 or t == 6 do
+        v = Node._dv(n)
+        if v < 0 or v > 1 do Node._dfail(n) else if t == 4 and v == 0 do 0 else
+          w = Node._rec(if t == 4 do 1 else 1 - v end, 1)
+          Sys.poke(w + 8, Node._d(n, if t == 6 and v == 1 do node + 3 + Node._u16(node + 3) else node + 3 end, root))
+          w
+        end end
+      else if t == 31 do
+        v = Node._db(n)
+        w = Node._rec(v, 1)
+        Sys.poke(w + 8, if v == 1 do Node._d(n, node + 3, root) else Process.__word(Node._ds(n)) end)
+        w
+      else if t == 8 or t == 25 do Node._dm(n, node + 3, root, t) else if t == 30 do Node._dpid(n, node + 3, root) else if t == 20 do Node._d(n, root + Node._u16(node + 3), root) else
+        a = Sys.peek(node + 3)
+        Node._d(n, a, a)
+      end end end end end end end end
+    end end end end end
+  end
+#: _dl/5 needs Enum.reverse/1 _d/3
+  def _dl(n: integer, node: integer, root: integer, k: integer, got: list[integer]): integer do
+    if k == 0 or Sys.peek(n + 128) == 1 do Process.__word(Enum.reverse(got)) else
+      v = Node._d(n, node, root)
+      Node._dl(n, node, root, k - 1, [v | got])
+    end
+  end
+#: _df/5 needs _d/3 _u16/1
+  def _df(n: integer, node: integer, root: integer, a: integer, k: integer): integer do
+    if k == 0 do 0 else
+      Sys.poke(a, Node._d(n, node, root))
+      Node._df(n, node + Node._u16(node), root, a + 8, k - 1)
+    end
+  end
+# A map or a set: its entries in the order of their keys, a key that
+# comes twice with what came last.
+#: _dm/4 needs Enum.sort/2 _cmp/4 _dme/6 _dmw/5 _dn/1 _rec/2
+  def _dm(n: integer, node: integer, root: integer, t: integer): integer do
+    empty: list[tuple[integer, integer]] = []
+    read = Node._dme(n, node, root, Node._dn(n), t, empty)
+    if Sys.peek(n + 128) == 1 do 0 else
+      sorted = Enum.sort(read, fn a, b -> Node._cmp(node, root, elem(a, 0), elem(b, 0)) >= 0 end)
+      w = Node._rec(0, 2 * length(sorted))
+      k = Node._dmw(node, root, w, sorted, 0)
+      Sys.poke(w, k)
+      w
+    end
+  end
+# The entries as read, the last first.
+#: _dme/6 needs _d/3 _u16/1
+  def _dme(n: integer, node: integer, root: integer, k: integer, t: integer, got: list[tuple[integer, integer]]): list[tuple[integer, integer]] do
+    if k == 0 or Sys.peek(n + 128) == 1 do got else
+      key = Node._d(n, node, root)
+      v = if t == 8 do Node._d(n, node + Node._u16(node), root) else 1 end
+      Node._dme(n, node, root, k - 1, t, [{key, v} | got])
+    end
+  end
+# The entries, greatest key first and of equal keys the last read first,
+# are written from the end of the record; a key already written is passed
+# over. How many were written; they are moved to the front.
+#: _dmw/5 needs _dmk/5
+  def _dmw(node: integer, root: integer, w: integer, es: list[tuple[integer, integer]], k: integer): integer do
+    total = length(es)
+    kept = Node._dmk(node, root, w + 8 + 16 * total, es, 0)
+    if kept < total do Sys.copy(w + 8, w + 8 + 16 * (total - kept), 16 * kept) end
+    kept
+  end
+#: _dmk/5 needs _cmp/4
+  def _dmk(node: integer, root: integer, a: integer, es: list[tuple[integer, integer]], k: integer): integer do
+    case es do
+      [] -> k
+      [{key, v} | rest] ->
+        if k > 0 and Node._cmp(node, root, key, Sys.peek(a)) == 0 do Node._dmk(node, root, a, rest, k) else
+          Sys.poke(a - 16, key)
+          Sys.poke(a - 8, v)
+          Node._dmk(node, root, a - 16, rest, k + 1)
+        end
+    end
+  end
+# The order of two keys, as the map routines keep it: -1, 0 or 1.
+#: _cmp/4 needs _cmpf/5 _u16/1
+  def _cmp(node: integer, root: integer, a: integer, b: integer): integer do
+    t = Sys.byte(node + 2)
+    if t == 0 or t == 3 do if a < b do -1 else if a == b do 0 else 1 end end else
+      if t == 2 or t == 22 do
+        x: string = Process.__any(a)
+        y: string = Process.__any(b)
+        if x < y do -1 else if x == y do 0 else 1 end end
+      else if t == 24 do
+        fx: float = Process.__any(a)
+        fy: float = Process.__any(b)
+        if fx < fy do -1 else if fx == fy do 0 else 1 end end
+      else if t == 5 do Node._cmpf(node + 4, root, a + 8, b + 8, Sys.byte(node + 3)) else if t == 20 do Node._cmp(root + Node._u16(node + 3), root, a, b) else
+        Node._cmp(Sys.peek(node + 3), Sys.peek(node + 3), a, b)
+      end end end end
+    end
+  end
+#: _cmpf/5 needs _cmp/4 _u16/1
+  def _cmpf(node: integer, root: integer, a: integer, b: integer, k: integer): integer do
+    if k == 0 do 0 else
+      c = Node._cmp(node, root, Sys.peek(a), Sys.peek(b))
+      if c != 0 do c else Node._cmpf(node + Node._u16(node), root, a + 8, b + 8, k - 1) end
+    end
+  end
+# A handle: the process itself when it is one of this node whose messages
+# are of the type, else the handle of another node's process, which only
+# reaches it when that node is connected.
+#: _dpid/3 needs Process._has/2 _dfail/1 _ds/1 _dv/1 _fits/5 _handle/5 _name/1 _peer/2
+  def _dpid(n: integer, node: integer, root: integer): integer do
+    name = Node._ds(n)
+    id = Node._dv(n)
+    q = if name != Node._name(n) do Node._handle(n, Node._peer(n, name), name, id, [node, root]) else
+      x = Process._has(n + 40, id)
+      c = if x == 0 do 0 else Sys.peek(x + 24) end
+      if x != 0 and Node._fits(node, root, Sys.peek(c), Sys.peek(c + 8), 64) == 1 do Sys.peek(x + 16) else
+        Node._dfail(n)
+        Node._handle(n, 0, name, id, [0, 0])
+      end
+    end
+    h: pid[integer] = %pid{at: q, k: none}
+    Process.__word(h)
+  end
+# 1 when two nodes describe one type.
+#: _fits/5 needs _fitn/6 _u16/1
+  def _fits(a: integer, ra: integer, b: integer, rb: integer, fuel: integer): integer do
+    ta = Sys.byte(a + 2)
+    tb = Sys.byte(b + 2)
+    if fuel == 0 do 1 else if ta == 32 do Node._fits(Sys.peek(a + 3), Sys.peek(a + 3), b, rb, fuel) else if tb == 32 do Node._fits(a, ra, Sys.peek(b + 3), Sys.peek(b + 3), fuel) else
+      if ta == 20 and tb == 20 do if Node._u16(a + 3) == Node._u16(b + 3) do 1 else Node._fits(ra + Node._u16(a + 3), ra, rb + Node._u16(b + 3), rb, fuel - 1) end else
+        if ta == 20 do Node._fits(ra + Node._u16(a + 3), ra, b, rb, fuel - 1) else if tb == 20 do Node._fits(a, ra, rb + Node._u16(b + 3), rb, fuel - 1) else
+          if ta != tb do 0 else
+            if ta == 4 or ta == 7 or ta == 25 or ta == 30 or ta == 31 do Node._fits(a + 3, ra, b + 3, rb, fuel) else
+              if ta == 6 or ta == 8 do Node._fitn(a + 3, ra, b + 3, rb, 2, fuel) else
+                if ta == 5 or ta == 13 do if Sys.byte(a + 3) != Sys.byte(b + 3) do 0 else Node._fitn(a + 4, ra, b + 4, rb, Sys.byte(a + 3), fuel) end else
+                  if ta == 14 do if Node._u16(a) != Node._u16(b) do 0 else 1 end else 1 end
+                end
+              end
+            end
+          end
+        end end
+      end
+    end end end
+  end
+#: _fitn/6 needs _fits/5 _u16/1
+  def _fitn(a: integer, ra: integer, b: integer, rb: integer, k: integer, fuel: integer): integer do
+    if k == 0 do 1 else
+      if Node._fits(a, ra, b, rb, fuel) == 0 do 0 else Node._fitn(a + Node._u16(a), ra, b + Node._u16(b), rb, k - 1, fuel) end
+    end
+  end
+#: _handle/5 needs Process._g/0 Process._take/2 _clear/2
+  def _handle(n: integer, p: integer, name: string, id: integer, codec: list[integer]): integer do
+    [node, root] = codec
+    free = Sys.peek(n + 192)
+    r = if free == 0 do Process._take(Process._g(), 384) else free end
+    if free != 0 do
+      Sys.poke(n + 192, Sys.peek(free))
+      Node._clear(r, 48)
+    end
+    Sys.poke(r, Process.__word(name))
+    Sys.poke(r + 8, r + 96)
+    Sys.poke(r + 16, p)
+    Sys.poke(r + 24, Sys.peek(n + 144))
+    Sys.poke(r + 40, id)
+    Sys.poke(r + 96, node)
+    Sys.poke(r + 104, root)
+    Sys.poke(r + 320, 2)
+    r
+  end
+#: _clear/2
+  def _clear(a: integer, k: integer): integer do
+    if k == 0 do 0 else
+      Sys.poke(a, 0)
+      Node._clear(a + 8, k - 1)
+    end
+  end
+# A handle nothing holds any more is given back.
+#: _unhandle/2
+  def _unhandle(n: integer, r: integer): integer do
+    if Sys.peek(r + 320) != 2 do 0 else
+      Sys.poke(r + 320, 0)
+      Sys.poke(r, Sys.peek(n + 192))
+      Sys.poke(n + 192, r)
+    end
+  end
+# The peer of that name; 0 for none.
+#: _peer/2 needs _peer1/2
+  def _peer(n: integer, name: string): integer do
+    Node._peer1(Sys.peek(n + 32), name)
+  end
+#: _peer1/2
+  def _peer1(x: integer, name: string): integer do
+    if x == 0 do 0 else
+      s: string = Process.__any(Sys.peek(Sys.peek(x + 8) + 8))
+      if s == name do Sys.peek(x + 8) else Node._peer1(Sys.peek(x), name) end
+    end
+  end
+
+# One process at a time writes to a peer.
+#: _lock/2 needs Process._drop/3 Process._push/5 Process._wait/2
+  def _lock(g: integer, p: integer): integer do
+    c = Sys.peek(g)
+    if Sys.peek(p + 48) == 0 do Sys.poke(p + 48, c) else
+      Process._push(g, p + 56, c, 0, 0)
+      Process._wait(g, 0)
+      Process._drop(g, p + 56, c)
+      Node._lock(g, p)
+    end
+  end
+#: _unlock/2 needs Process._wake/2
+  def _unlock(g: integer, p: integer): integer do
+    Sys.poke(p + 48, 0)
+    Process._wake(g, p + 56)
+  end
+# The k bytes at a go to the socket b before the time d: 0, or the error.
+# A process asked to stop goes on writing: half a message would leave the
+# connection useless.
+#: _put/5 needs Process._fdwait/4 Process._now/1
+  def _put(g: integer, b: integer, a: integer, k: integer, d: integer): integer do
+    if k == 0 do 0 else if Sys.peek(b + 16) == 1 do -9 else
+      r = Sys.call(44, Sys.peek(b), a, k, 0x4000, 0, 0)
+      if r >= 0 do Node._put(g, b, a + r, k - r, d) else
+        if r != -11 and r != -4 do r else
+          if d != 0 and Process._now(g) >= d do -110 else
+            if r == -11 do Process._fdwait(g, Sys.peek(b), 4, d) end
+            Node._put(g, b, a, k, d)
+          end
+        end
+      end
+    end end
+  end
+# k bytes from the socket before the time d, or "" when they did not come.
+#: _get/4 needs TCP._exact/5
+  def _get(g: integer, b: integer, k: integer, d: integer): string do
+    if k == 0 do "" else TCP._exact(g, b, d, k, 0) end
+  end
+# A message with its length before it (node.go: writeFrame), straight to
+# the socket or through TLS: 0, or the error.
+#: _wf/6 needs _put/5 _tput/6
+  def _wf(g: integer, n: integer, b: integer, tls: integer, m: string, d: integer): integer do
+    k = byte_size(m)
+    h = Sys.text(g + 2048, 4)
+    Sys.poke(Sys.addr(h), rem(k, 256) * 16777216 + rem(div(k, 256), 256) * 65536 + rem(div(k, 65536), 256) * 256 + div(k, 16777216))
+    f = h <> m
+    if tls == 0 do Node._put(g, b, Sys.addr(f), k + 4, d) else Node._tput(g, n, b, tls, f, d) end
+  end
+# The next message (node.go: readFrame): 1 and its bytes, or 0.
+#: _rf/5 needs _get/4 _tget/6
+  def _rf(g: integer, n: integer, b: integer, tls: integer, d: integer): tuple[integer, string] do
+    h = if tls == 0 do Node._get(g, b, 4, d) else Node._tget(g, n, b, tls, 4, d) end
+    if byte_size(h) != 4 do {0, ""} else
+      a = Sys.addr(h)
+      k = Sys.byte(a) * 16777216 + Sys.byte(a + 1) * 65536 + Sys.byte(a + 2) * 256 + Sys.byte(a + 3)
+      if k > 67108864 do {0, ""} else
+        if k == 0 do {1, ""} else
+          m = if tls == 0 do Node._get(g, b, k, d) else Node._tget(g, n, b, tls, k, d) end
+          if byte_size(m) != k do {0, ""} else {1, m} end
+        end
+      end
+    end
+  end
+# A message for a peer (node.go: peer.write): 1, or 0 when the connection
+# is closed or closes over it.
+#: _send/3 needs Process._due/2 Process._g/0 _lock/2 _shut/2 _unlock/2 _wf/6
+  def _send(n: integer, p: integer, m: string): integer do
+    g = Process._g()
+    if Sys.peek(p + 16) == 1 do 0 else
+      Node._lock(g, p)
+      r = if Sys.peek(p + 16) == 1 do -9 else Node._wf(g, n, Sys.peek(p), Sys.peek(p + 64), m, Process._due(g, 10000)) end
+      Node._unlock(g, p)
+      if r == 0 do 1 else
+        Node._shut(n, p)
+        0
+      end
+    end
+  end
+# The connection to a peer ends (node.go: peer.shut): whoever waits for an
+# answer, monitors one of its processes or watches the node hears of it.
+#: _shut/2 needs Process._drop/3 Process._g/0 Process._ready/2 TCP._close/2 _announce/2 _gone/3 _kept/2 _peer/2 _unasked/2 _unwatch/4
+  def _shut(n: integer, p: integer): integer do
+    g = Process._g()
+    if Sys.peek(p + 16) == 1 do 0 else
+      Sys.poke(p + 16, 1)
+      Node._unasked(g, p)
+      m = Sys.peek(p + 40)
+      Sys.poke(p + 40, 0)
+      TCP._close(g, Sys.peek(p))
+      Node._gone(g, m, Process.__word("noconnection"))
+      name: string = Process.__any(Sys.peek(p + 8))
+      lost = Node._peer(n, name) == p
+      if lost do Process._drop(g, n + 32, p) end
+      Node._unwatch(g, n, n + 48, name)
+      if lost do
+        Node._announce(n, "nodedown " <> name)
+        k = Node._kept(Sys.peek(n + 56), name)
+        if k != 0 do
+          Sys.poke(Sys.peek(k + 24) + 8, 1)
+          Process._ready(g, Sys.peek(k + 16))
+        end
+      end
+      0
+    end
+  end
+# Whoever waits for an answer of the peer has none coming.
+#: _unasked/2 needs Process._ready/2
+  def _unasked(g: integer, p: integer): integer do
+    x = Sys.peek(p + 24)
+    if x == 0 do 0 else
+      Sys.poke(p + 24, Sys.peek(x))
+      Sys.poke(x + 24, -1)
+      Process._ready(g, Sys.peek(x + 16))
+      Node._unasked(g, p)
+    end
+  end
+# The monitors from cell x on get their event, with the reason r.
+#: _gone/3 needs Process._event/5 Process._free/2
+  def _gone(g: integer, x: integer, r: integer): integer do
+    if x == 0 do 0 else
+      c = Sys.peek(x + 16)
+      next = Sys.peek(x)
+      if Sys.peek(c + 376) == 0 do Process._event(g, c, Sys.peek(x + 8), Sys.peek(x + 24), r) end
+      Process._free(g, x)
+      Node._gone(g, next, r)
+    end
+  end
+# Who watches the node called name is told and watches no more.
+#: _unwatch/4 needs Process._event/5 Process._free/2
+  def _unwatch(g: integer, n: integer, h: integer, name: string): integer do
+    x = Sys.peek(h)
+    if x == 0 do 0 else
+      s: string = Process.__any(Sys.peek(x + 8))
+      if s != name do Node._unwatch(g, n, x, name) else
+        c = Sys.peek(x + 16)
+        Sys.poke(h, Sys.peek(x))
+        if Sys.peek(c + 376) == 0 do Process._event(g, c, Sys.peek(x + 24), 0, Process.__word("nodedown " <> name)) end
+        Process._free(g, x)
+        Node._unwatch(g, n, h, name)
+      end
+    end
+  end
+# The subscribers of Node.monitor_nodes hear of a connection made or lost;
+# those whose processes are over are forgotten.
+#: _announce/2 needs Process._g/0 _announce1/4
+  def _announce(n: integer, reason: string): integer do
+    Node._announce1(Process._g(), n + 64, Sys.peek(n + 64), Process.__word(reason))
+  end
+#: _announce1/4 needs Process._event/5 Process._free/2
+  def _announce1(g: integer, h: integer, x: integer, r: integer): integer do
+    if x == 0 do 0 else
+      c = Sys.peek(x + 8)
+      next = Sys.peek(x)
+      if Sys.peek(c + 376) == 0 do
+        Process._event(g, c, Sys.peek(x + 16), 0, r)
+        Node._announce1(g, x, next, r)
+      else
+        Sys.poke(h, next)
+        Process._free(g, x)
+        Node._announce1(g, h, next, r)
+      end
+    end
+  end
+# The cell of the kept connection to name; 0 for none.
+#: _kept/2
+  def _kept(x: integer, name: string): integer do
+    if x == 0 do 0 else
+      s: string = Process.__any(Sys.peek(x + 8))
+      if s == name do x else Node._kept(Sys.peek(x), name) end
+    end
+  end
+
+# The proof that an end knows the cookie (node.go: proof).
+#: _proof/4 needs _hmac/2
+  def _proof(cookie: string, binding: string, role: string, name: string): string do
+    Node._hmac(cookie, binding <> "\x00" <> role <> "\x00" <> name)
+  end
+# Both ends say whether they encrypt, the dialling end first (node.go:
+# agree): "" or why they cannot talk.
+#: _agree/4 needs Process._due/2 TCP._write/5 _get/4
+  def _agree(g: integer, n: integer, b: integer, dialling: integer): string do
+    d = Process._due(g, 10000)
+    mine = if Sys.peek(n + 24) == 1 do "T" else "P" end
+    sent = if dialling == 1 do TCP._write(g, b, Sys.addr(mine), 1, d) else "" end
+    other = if sent != "" do "" else Node._get(g, b, 1, d) end
+    if dialling == 0 and other != "" do TCP._write(g, b, Sys.addr(mine), 1, d) end
+    if sent != "" do sent else
+      if other == "" do if dialling == 1 do "the other end closed the connection before saying whether it encrypts; it may not be an Alchem node of this version" else "EOF" end else
+        if other == mine do "" else
+          if mine == "T" and other == "P" do "this node encrypts its connections and the other node does not; start both with the same encrypted: setting" else
+            if mine == "P" and other == "T" do "the other node encrypts its connections and this one does not; start both with the same encrypted: setting" else "the other end is not an Alchem node of this version" end
+          end
+        end
+      end
+    end
+  end
+# A connection is secured and the other end shown to know the cookie
+# (node.go: secure): the other node's name, what TLS keeps, and "" or why
+# not.
+#: _secure/4 needs Crypto.secure_compare/2 Crypto.strong_rand_bytes/1 Process._due/2 _agree/4 _d0/4 _ds/1 _e0/1 _es/2 _et/1 _hash/1 _name/1 _proof/4 _rf/5 _texp/2 _tls/5 _wf/6
+  def _secure(g: integer, n: integer, b: integer, dialling: integer): tuple[string, integer, string] do
+    d = Process._due(g, 10000)
+    why = Node._agree(g, n, b, dialling)
+    if why != "" do {"", 0, why} else
+      {tls, bad} = if Sys.peek(n + 24) == 1 do Node._tls(g, n, b, dialling, d) else {0, ""} end
+      own = Crypto.strong_rand_bytes(32)
+      {got, other} = if tls != 0 do {1, ""} else if Node._wf(g, n, b, 0, own, d) != 0 do {0, ""} else Node._rf(g, n, b, 0, d) end end
+      if bad != "" do {"", 0, bad} else if got == 0 or tls == 0 and byte_size(other) != 32 do {"", 0, "malformed greeting"} else
+        binding = if tls != 0 do Node._texp(n, tls) else Node._hash(if dialling == 1 do own <> other else other <> own end) end
+        me = Node._name(n)
+        cookie: string = Process.__any(Sys.peek(n + 8))
+        Node._e0(n)
+        Node._es(n, "alchem node 4")
+        Node._es(n, me)
+        Node._es(n, Node._proof(cookie, binding, if dialling == 1 do "dialling" else "accepting" end, me))
+        w = Node._wf(g, n, b, tls, Node._et(n), d)
+        {came, hello} = if w != 0 do {0, ""} else Node._rf(g, n, b, tls, d) end
+        if came == 0 do {"", 0, "the other node closed the connection; the nodes may not share a cookie"} else
+          Node._d0(n, hello, 0, 0)
+          magic = Node._ds(n)
+          name = Node._ds(n)
+          shown = Node._ds(n)
+          if magic != "alchem node 4" do {"", 0, "the other end is not an Alchem node of this version"} else
+            if Sys.peek(n + 128) == 1 or name == "" do {"", 0, "malformed greeting"} else
+              if not Crypto.secure_compare(shown, Node._proof(cookie, binding, if dialling == 1 do "accepting" else "dialling" end, name)) do {"", 0, "the nodes do not share a cookie"} else
+                if name == me do {"", 0, "both nodes are named " <> name} else {name, tls, ""} end
+              end
+            end
+          end
+        end
+      end end
+    end
+  end
+# A secured connection becomes a peer and is read from (node.go: attach).
+#: _attach/5 needs Process._go/2 Process._push/5 Process._take/2 TCP._close/2 _announce/2 _peer/2 _reader/2
+  def _attach(g: integer, n: integer, b: integer, name: string, tls: integer): integer do
+    if Node._peer(n, name) != 0 do TCP._close(g, b) else
+      p = Process._take(g, 96)
+      Sys.poke(p, b)
+      Sys.poke(p + 8, Process.__word(name))
+      Sys.poke(p + 64, tls)
+      Process._push(g, n + 32, p, 0, 0)
+      f: fn[integer] = fn(): integer do Node._reader(n, p) end
+      Process._go(g, Process.__word(f))
+      Node._announce(n, "nodeup " <> name)
+    end
+  end
+# The process that reads a peer's messages (node.go: peer.read).
+#: _reader/2 needs Process._g/0 _heard/3 _rf/5 _shut/2
+  def _reader(n: integer, p: integer): integer do
+    {got, m} = Node._rf(Process._g(), n, Sys.peek(p), Sys.peek(p + 64), 0)
+    if got == 0 or m == "" or Sys.peek(p + 16) == 1 do Node._shut(n, p) else
+      Node._heard(n, p, m)
+      Node._reader(n, p)
+    end
+  end
+# An answer to request r of the peer, whose bytes follow in the encoder.
+#: _reply/3 needs _e0/1 _eb/2 _ev/2
+  def _reply(n: integer, r: integer, found: integer): integer do
+    Node._e0(n)
+    Node._eb(n, 3)
+    Node._ev(n, r)
+    Node._eb(n, found)
+  end
+#: _down/5 needs _e0/1 _eb/2 _es/2 _et/1 _ev/2 _send/3
+  def _down(n: integer, p: integer, ref: integer, id: integer, reason: string): integer do
+    Node._e0(n)
+    Node._eb(n, 5)
+    Node._ev(n, ref)
+    Node._ev(n, id)
+    Node._es(n, reason)
+    Node._send(n, p, Node._et(n))
+  end
+#: _heard/3 needs Process._abnormal/1 Process._cancel/4 Process._event/5 Process._free/2 Process._g/0 Process._has/2 Process._lookup/2 Process._named/2 Process._onend/3 Process._put/5 Process._ready/2 Process._send/4 _d/3 _d0/4 _db/1 _down/5 _drest/1 _ds/1 _dv/1 _et/1 _ev/2 _export/4 _pub/2 _reply/3 _send/3 _unlink/2
+  def _heard(n: integer, p: integer, m: string): integer do
+    g = Process._g()
+    k = Sys.byte(Sys.addr(m))
+    Node._d0(n, m, 1, p)
+    a = Node._dv(n)
+    if k == 1 do
+      x = Process._has(n + 40, a)
+      c = if x == 0 do 0 else Sys.peek(x + 24) end
+      w = if x == 0 or Sys.peek(n + 128) == 1 do 0 else Node._d(n, Sys.peek(c), Sys.peek(c + 8)) end
+      if x != 0 and Sys.peek(n + 128) == 0 and Sys.peek(Sys.peek(x + 16) + 376) == 0 do Process._send(g, Sys.peek(x + 16), w, 5000) end
+    end
+    if k == 2 or k == 6 do
+      name = Node._ds(n)
+      kind = Node._ds(n)
+      x = if k == 2 do Process._lookup(g, name) else Node._pub(n, name) end
+      held = if k == 2 do Process._named(Sys.peek(g + 136), name) else 0 end
+      reach = if x == 0 or k == 6 or Sys.peek(x + 8) != 0 do 0 else Sys.peek(x) end
+      text: string = if k == 6 do if x == 0 do "" else Process.__any(Sys.peek(x)) end else if reach == 0 do "" else Process.__any(Sys.peek(reach)) end end
+      found = x != 0 and (k == 6 or reach != 0) and text == kind and Sys.peek(n + 128) == 0
+      if found and k == 2 do Node._export(n, Sys.peek(x + 24), Sys.peek(reach + 8), Sys.peek(reach + 16)) end
+      Node._reply(n, a, if found do 1 else 0 end)
+      if k == 2 do Node._ev(n, if held == 0 do 0 else Sys.peek(Sys.peek(held + 16) + 40) end) end
+      Node._send(n, p, Node._et(n))
+    end
+    if k == 3 do
+      x = Process._has(p + 24, a)
+      if x != 0 do
+        Node._unlink(p + 24, x)
+        Sys.poke(x + 24, Process.__word(Node._drest(n)))
+        Process._ready(g, Sys.peek(x + 16))
+      end
+    end
+    if k == 4 do
+      ref = Node._dv(n)
+      x = Process._has(n + 40, a)
+      if x == 0 or Sys.peek(n + 128) == 1 do Node._down(n, p, ref, a, "noproc") else
+        f: fn[string, integer] = fn(reason: string): integer do Node._down(n, p, ref, a, reason) end
+        Process._onend(g, Sys.peek(x + 16), Process.__word(f))
+      end
+    end
+    if k == 5 do
+      id = Node._dv(n)
+      reason = Node._ds(n)
+      x = Process._has(p + 40, a)
+      if x != 0 do
+        c = Sys.peek(x + 16)
+        Node._unlink(p + 40, x)
+        if Sys.peek(n + 128) == 0 and Sys.peek(c + 376) == 0 do Process._event(g, c, a, id, Process.__word(reason)) end
+        Process._free(g, x)
+      end
+    end
+    if k == 7 do
+      name = Node._ds(n)
+      sub = Node._dv(n)
+      finished = Node._db(n)
+      x = Node._pub(n, name)
+      if x == 0 or Sys.peek(n + 128) == 1 do
+        if finished == 0 do
+          Node._reply(n, a, 1)
+          Node._ev(n, 0)
+          Node._send(n, p, Node._et(n))
+        end
+      else
+        Process._put(g, x + 8, p, if finished == 1 do -9223372036854775807 - 1 else a end, sub)
+        Process._ready(g, Sys.peek(x + 24))
+      end
+    end
+    if k == 8 do
+      reason = Node._ds(n)
+      x = Process._has(n + 40, a)
+      q = if x == 0 do 0 else Sys.peek(x + 16) end
+      if x != 0 and Sys.peek(n + 128) == 0 and Sys.peek(q + 376) == 0 do
+        if Sys.peek(q + 312) == 1 do Process._event(g, q, 0, 0, Process.__word(reason)) else
+          if Process._abnormal(Process.__word(reason)) == 1 do Process._cancel(g, q, Process.__word("linked: " <> reason), 0) end
+        end
+      end
+    end
+    0
+  end
+# The cell at x leaves the list at h; the caller frees it.
+#: _unlink/2
+  def _unlink(h: integer, x: integer): integer do
+    y = Sys.peek(h)
+    if y == 0 do 0 else
+      if y == x do
+        Sys.poke(h, Sys.peek(x))
+        1
+      else Node._unlink(y, x) end
+    end
+  end
+# The publication of that name; 0 for none.
+#: _pub/2 needs _kept/2
+  def _pub(n: integer, name: string): integer do
+    x = Node._kept(Sys.peek(n + 80), name)
+    if x == 0 do 0 else Sys.peek(x + 16) end
+  end
+# A request of kind k to a peer, whose answer is waited for up to ms
+# milliseconds (node.go: peer.ask): 1 and the answer's bytes, or 0.
+#: _ask/5 needs Process._cell/4 Process._check/1 Process._due/2 Process._free/2 Process._g/0 _askw/4 _e0/1 _eb/2 _er/2 _et/1 _ev/2 _send/3 _unlink/2
+  def _ask(n: integer, p: integer, k: integer, ms: integer, fill: string): tuple[integer, string] do
+    g = Process._g()
+    if Sys.peek(p + 16) == 1 do {0, ""} else
+      r = Sys.poke(p + 32, Sys.peek(p + 32) + 1)
+      x = Process._cell(g, r, Sys.peek(g), 0)
+      Sys.poke(x, Sys.peek(p + 24))
+      Sys.poke(p + 24, x)
+      Node._e0(n)
+      Node._eb(n, k)
+      Node._ev(n, r)
+      Node._er(n, fill)
+      sent = Node._send(n, p, Node._et(n))
+      if sent == 1 do Node._askw(g, x, Process._due(g, if ms < 1 do 1 else ms end), 0) end
+      a = Sys.peek(x + 24)
+      Node._unlink(p + 24, x)
+      Process._free(g, x)
+      Process._check(g)
+      if a == 0 or a == -1 do {0, ""} else {1, Process.__any(a)} end
+    end
+  end
+#: _askw/4 needs Process._wait/2
+  def _askw(g: integer, x: integer, d: integer, late: integer): integer do
+    if Sys.peek(x + 24) != 0 or late == 1 or Sys.peek(Sys.peek(g) + 56) == 1 do 0 else Node._askw(g, x, d, Process._wait(g, d)) end
+  end
+
+
+# What a handle of another node's process does (compiler/actor/remote.go
+# and node.go: handle): 1 sends the word a, 2 says whether its node is
+# connected, 3 has process a monitor it, 4 ends the monitor a, 5 links
+# process a to it, 6 ends that link, 7 tells it that a process linked to
+# it ended for the reason a.
+#: _far/3 needs Process._drop/3 Process._event/5 Process._g/0 Process._push/5 Process._ref/1 _e/4 _e0/1 _eb/2 _es/2 _et/1 _ev/2 _link/3 _n/0 _send/3 _unlinked/3
+  def _far(op: integer, r: integer, a: integer): integer do
+    g = Process._g()
+    n = Node._n()
+    p = Sys.peek(r + 16)
+    c = Sys.peek(r + 8)
+    id = Sys.peek(r + 40)
+    open = p != 0 and Sys.peek(p + 16) == 0
+    if op == 1 or op == 7 do
+      if p == 0 do 0 else
+        Node._e0(n)
+        Node._eb(n, if op == 1 do 1 else 8 end)
+        Node._ev(n, id)
+        if op == 1 do Node._e(n, Sys.peek(c), Sys.peek(c + 8), a) else Node._es(n, Process.__any(a)) end
+        Node._send(n, p, Node._et(n))
+      end
+    else if op == 2 do if open do 1 else 0 end else if op == 3 do
+      ref = Process._ref(g)
+      if not open do Process._event(g, a, ref, id, Process.__word("noconnection")) else
+        Process._push(g, p + 40, ref, a, id)
+        Node._e0(n)
+        Node._eb(n, 4)
+        Node._ev(n, id)
+        Node._ev(n, ref)
+        Node._send(n, p, Node._et(n))
+      end
+      ref
+    else if op == 4 do if p == 0 do 0 else Process._drop(g, p + 40, a) end else if op == 5 do Node._link(n, a, r) else Node._unlinked(n, a, r) end end end end end
+  end
+# Process c is linked to the process of another node behind handle r
+# (remote.go: linkRemote): each is told of the other's end. The other's is
+# learned through a monitor that a helper process keeps.
+#: _link/3 needs Process._abnormal/1 Process._cell/4 Process._g/0 Process._onend/3 Process._push/5 Process._spawn/4 _far/3 _linked/3
+  def _link(n: integer, c: integer, r: integer): integer do
+    g = Process._g()
+    active = Process._cell(g, 1, 0, 0)
+    Process._push(g, n + 152, c, r, active)
+    told: fn[string, integer] = fn(reason: string): integer do
+      if Sys.peek(active + 8) == 1 and Process._abnormal(Process.__word(reason)) == 1 do Node._far(7, r, Process.__word(reason)) else 0 end
+    end
+    Process._onend(g, c, Process.__word(told))
+    helper: fn[pid[integer], integer] = fn(h: pid[integer]): integer do Node._linked(c, r, active) end
+    Process._spawn(g, Process.__word(helper), 1, 0)
+    1
+  end
+#: _linked/3 needs Process._abnormal/1 Process._cancel/4 Process._event/5 Process._free/2 Process._g/0 Process._next/3 _far/3
+  def _linked(c: integer, r: integer, active: integer): integer do
+    g = Process._g()
+    Node._far(3, r, Sys.peek(g))
+    x = Process._next(g, Sys.peek(g), 0)
+    reason = Sys.peek(x + 24)
+    Process._free(g, x)
+    if Sys.peek(active + 8) == 1 and Sys.peek(c + 376) == 0 do
+      if Sys.peek(c + 312) == 1 do Process._event(g, c, 0, Sys.peek(r + 40), reason) else
+        if Process._abnormal(reason) == 1 do
+          s: string = Process.__any(reason)
+          Process._cancel(g, c, Process.__word("linked: " <> s), 0)
+        end
+      end
+    end
+    0
+  end
+#: _unlinked/3 needs Process._g/0 _unlinked1/4
+  def _unlinked(n: integer, c: integer, r: integer): integer do
+    Node._unlinked1(Process._g(), n + 152, c, r)
+  end
+#: _unlinked1/4 needs Process._free/2
+  def _unlinked1(g: integer, h: integer, c: integer, r: integer): integer do
+    x = Sys.peek(h)
+    if x == 0 do 0 else
+      if Sys.peek(x + 8) != c or Sys.peek(x + 16) != r do Node._unlinked1(g, x, c, r) else
+        Sys.poke(Sys.peek(x + 24) + 8, 0)
+        Sys.poke(h, Sys.peek(x))
+        Process._free(g, x)
+        1
+      end
+    end
+  end
+
+# The process a node registered under a name for messages of the kind
+# (node.go: RemoteWhereis): its handle, or 0.
+#: _rwhere/6 needs _ask/5 _d0/4 _db/1 _dv/1 _e0/1 _es/2 _et/1 _handle/5 _peer/2
+  def _rwhere(n: integer, other: string, name: string, ms: integer, kind: string, c: integer): integer do
+    p = if Sys.peek(n + 16) == 0 do 0 else Node._peer(n, other) end
+    if p == 0 do 0 else
+      Node._e0(n)
+      Node._es(n, name)
+      Node._es(n, kind)
+      {got, body} = Node._ask(n, p, 2, ms, Node._et(n))
+      if got == 0 do 0 else
+        Node._d0(n, body, 0, p)
+        found = Node._db(n)
+        id = Node._dv(n)
+        if found == 1 and Sys.peek(n + 128) == 0 do Node._handle(n, p, other, id, [Sys.peek(c), Sys.peek(c + 8)]) else 0 end
+      end
+    end
+  end
+# The living process of this node registered under a name for messages of
+# the kind; 0 for none.
+#: _lwhere/2 needs Process._g/0 Process._lookup/2
+  def _lwhere(name: string, kind: string): integer do
+    x = Process._lookup(Process._g(), name)
+    if x == 0 do 0 else if Sys.peek(x + 8) != 0 or Sys.peek(x) == 0 do 0 else
+      text: string = Process.__any(Sys.peek(Sys.peek(x)))
+      if text == kind do Sys.peek(x + 24) else 0 end
+    end end
+  end
+# Process q takes a name by which other nodes find it too (node.go:
+# Register): 1 or 0.
+#: _register/5 needs Process._g/0 Process._lookup/2 Process._name/6 Process._take/2
+  def _register(q: integer, name: string, kind: string, node: integer, root: integer): integer do
+    g = Process._g()
+    if Sys.peek(q + 320) == 2 do 0 else if Process._name(g, name, q, 0, Process.__word(kind), q) == 0 do 0 else
+      reach = Process._take(g, 24)
+      Sys.poke(reach, Process.__word(kind))
+      Sys.poke(reach + 8, node)
+      Sys.poke(reach + 16, root)
+      Sys.poke(Process._lookup(g, name), reach)
+      1
+    end end
+  end
+
+#: _opts/2 needs Atom.to_string/1
+  def _opts(options: list[tuple[atom, boolean]], e: integer): tuple[integer, string] do
+    case options do
+      [] -> {e, ""}
+      [{k, v} | rest] -> if k != :encrypted do {e, Atom.to_string(k)} else Node._opts(rest, if v do 1 else 0 end) end
+    end
+  end
+#: start/4 needs _opts/2 _start/4
+  def start(name: string, address: string, cookie: string, options: list[tuple[atom, boolean]]): result[tuple[], string] do
+    {e, bad} = Node._opts(options, 1)
+    if bad != "" do error("unknown option :" <> bad <> "; Node.start takes encrypted:") else Node._start(name, address, cookie, e) end
+  end
+#: start/3 needs _start/4
+  def start(name: string, address: string, cookie: string): result[tuple[], string] do
+    Node._start(name, address, cookie, 1)
+  end
+#: start/2 needs _start/4
+  def start(name: string, address: string): result[tuple[], string] do
+    cookie = System.get_env("ALCHEM_COOKIE", "")
+    if cookie == "" do error("set the ALCHEM_COOKIE environment variable, or pass the cookie to Node.start") else Node._start(name, address, cookie, 1) end
+  end
+# node.go: Start.
+#: _start/4 needs Process._check/1 Process._g/0 Process._go/2 TCP._bind/3 _accepting/1 _identity/2 _n/0
+  def _start(name: string, address: string, cookie: string, e: integer): result[tuple[], string] do
+    g = Process._g()
+    n = Node._n()
+    Process._check(g)
+    if Sys.peek(n + 16) != 0 do error("this program is already a node") else if name == "" do error("a node needs a name") else if cookie == "" do error("a node needs a cookie: the secret every node of the cluster shares") else
+      case TCP._bind("tcp", address, 1) do
+        error(why) -> error(why)
+        ok(made) ->
+          Sys.poke(made.at + 24, 0)
+          Sys.poke(n, Process.__word(name))
+          Sys.poke(n + 8, Process.__word(cookie))
+          Sys.poke(n + 24, e)
+          if e == 1 do Node._identity(n, name) end
+          Sys.poke(n + 16, made.at)
+          f: fn[integer] = fn(): integer do Node._accepting(n) end
+          Process._go(g, Process.__word(f))
+          ok({})
+      end
+    end end end
+  end
+# The process that takes the connections other nodes make.
+#: _accepting/1 needs Process._g/0 Process._go/2 TCP._accept/3 TCP._block/3 TCP._opt/4 _accepted/2
+  def _accepting(n: integer): integer do
+    g = Process._g()
+    b = Sys.peek(n + 16)
+    Sys.poke(b + 120, 0)
+    fd = TCP._accept(g, b, 0)
+    if Sys.peek(b + 120) != 0 do 0 else
+      TCP._opt(fd, 6, 1, 1)
+      TCP._opt(fd, 1, 9, 1)
+      TCP._opt(fd, 6, 5, 15)
+      TCP._opt(fd, 6, 4, 15)
+      cb = TCP._block(g, fd, 2)
+      f: fn[integer] = fn(): integer do Node._accepted(n, cb) end
+      Process._go(g, Process.__word(f))
+      Node._accepting(n)
+    end
+  end
+#: _accepted/2 needs Process._g/0 TCP._close/2 _attach/5 _secure/4
+  def _accepted(n: integer, cb: integer): integer do
+    g = Process._g()
+    {name, tls, why} = Node._secure(g, n, cb, 0)
+    if why != "" do TCP._close(g, cb) else Node._attach(g, n, cb, name, tls) end
+  end
+# node.go: dial. The other node's name and "", or "" and why not.
+#: _connect/2 needs Process._due/2 Process._g/0 TCP._block/3 TCP._close/2 TCP._dial/3 _attach/5 _secure/4
+  def _connect(n: integer, address: string): tuple[string, string] do
+    g = Process._g()
+    {fd, bad} = TCP._dial(g, address, Process._due(g, 10000))
+    if fd < 0 do {"", if bad == "timeout" do "dial tcp " <> address <> ": i/o timeout" else bad end} else
+      cb = TCP._block(g, fd, 2)
+      {name, tls, why} = Node._secure(g, n, cb, 1)
+      if why != "" do
+        TCP._close(g, cb)
+        {"", why}
+      else
+        Node._attach(g, n, cb, name, tls)
+        {name, ""}
+      end
+    end
+  end
+# node.go: Reconnect when attempts is not -1, else Connect.
+#: _connected/2 needs Process._cell/4 Process._check/1 Process._g/0 Process._go/2 Process._push/5 _connect/2 _keep/5 _kept/2 _n/0 _peer/2
+  def _connected(address: string, attempts: integer): result[string, string] do
+    g = Process._g()
+    n = Node._n()
+    Process._check(g)
+    if Sys.peek(n + 16) == 0 do error("start this node first, with Node.start") else
+      {name, why} = Node._connect(n, address)
+      if why != "" do error(why) else
+        if attempts >= 0 and Node._kept(Sys.peek(n + 56), name) == 0 do
+          token = Process._cell(g, if Node._peer(n, name) == 0 do 1 else 0 end, 0, 0)
+          f: fn[integer] = fn(): integer do Node._keep(n, name, address, attempts, token) end
+          Process._push(g, n + 56, Process.__word(name), Process._go(g, Process.__word(f)), token)
+        end
+        ok(name)
+      end
+    end
+  end
+# The process that keeps a connection (node.go: keep): each time its loss
+# wakes it, it dials again, a second later at first and up to 30 apart.
+#: _keep/5 needs Process._g/0 Process._wait/2 _kept1/7
+  def _keep(n: integer, name: string, address: string, attempts: integer, token: integer): integer do
+    g = Process._g()
+    if Sys.peek(token + 8) == 0 do
+      Process._wait(g, 0)
+      Node._keep(n, name, address, attempts, token)
+    else
+      Sys.poke(token + 8, 0)
+      if Node._kept1(n, name, address, attempts, token, 1000, 0) == 0 do 0 else Node._keep(n, name, address, attempts, token) end
+    end
+  end
+# 1 once the node is connected again, 0 when it is given up.
+#: _kept1/7 needs Process._drop/3 Process._due/2 Process._g/0 Process._wait/2 _announce/2 _connect/2 _kept/2 _peer/2
+  def _kept1(n: integer, name: string, address: string, attempts: integer, token: integer, wait: integer, failures: integer): integer do
+    g = Process._g()
+    if Process._wait(g, Process._due(g, wait)) == 0 do
+      Sys.poke(token + 8, 0)
+      Node._kept1(n, name, address, attempts, token, wait, failures)
+    else
+      if Node._peer(n, name) != 0 do 1 else
+        {made, why} = Node._connect(n, address)
+        if why == "" do 1 else
+          if attempts > 0 and failures + 1 >= attempts do
+            x = Node._kept(Sys.peek(n + 56), name)
+            if x != 0 do Process._drop(g, n + 56, Sys.peek(x + 8)) end
+            Node._announce(n, "noreconnect " <> name)
+            0
+          else Node._kept1(n, name, address, attempts, token, if wait * 2 > 30000 do 30000 else wait * 2 end, failures + 1) end
+        end
+      end
+    end
+  end
+#: connect/1 needs _connected/2
+  def connect(address: string): result[string, string] do
+    Node._connected(address, -1)
+  end
+#: _keeps/2
+  def _keeps(options: list[tuple[atom, boolean]], keep: boolean): boolean do
+    case options do
+      [] -> keep
+      [{k, v} | rest] ->
+        if k != :reconnect do raise("Node.connect takes reconnect:") end
+        Node._keeps(rest, v)
+    end
+  end
+#: connect/2 needs _connected/2 _keeps/2
+  def connect(address: string, options: list[tuple[atom, boolean]]): result[string, string] do
+    Node._connected(address, if Node._keeps(options, false) do 0 else -1 end)
+  end
+#: _tries/2
+  def _tries(options: list[tuple[atom, integer]], attempts: integer): integer do
+    case options do
+      [] -> attempts
+      [{k, v} | rest] ->
+        if k != :reconnect do raise("Node.connect takes reconnect:") end
+        if v < 0 do raise("reconnect: takes true, false or a number of attempts, not a negative number") end
+        Node._tries(rest, v)
+    end
+  end
+#: connect/2 form 2 needs _connected/2 _tries/2
+  def connect(address: string, options: list[tuple[atom, integer]]): result[string, string] do
+    k = Node._tries(options, 0)
+    Node._connected(address, if k == 0 do -1 else k end)
+  end
+#: self/0 needs _n/0 _name/1
+  def self(): string do
+    Node._name(Node._n())
+  end
+#: address/0 needs _n/0
+  def address(): string do
+    b = Sys.peek(Node._n() + 16)
+    if b == 0 do "" else Process.__any(Sys.peek(b + 104)) end
+  end
+#: _names/1
+  def _names(x: integer): list[string] do
+    if x == 0 do [] else
+      s: string = Process.__any(Sys.peek(Sys.peek(x + 8) + 8))
+      [s | Node._names(Sys.peek(x))]
+    end
+  end
+#: list/0 needs Enum.sort/1 _n/0 _names/1
+  def list(): list[string] do
+    Enum.sort(Node._names(Sys.peek(Node._n() + 32)))
+  end
+#: disconnect/1 needs _n/0 _peer/2 _shut/2
+  def disconnect(name: string): boolean do
+    n = Node._n()
+    p = Node._peer(n, name)
+    if p == 0 do false else
+      Node._shut(n, p)
+      true
+    end
+  end
+#: monitor/1 needs Process._check/1 Process._event/5 Process._g/0 Process._push/5 Process._ref/1 _n/0 _peer/2
+  def monitor(name: string): integer do
+    g = Process._g()
+    n = Node._n()
+    Process._check(g)
+    ref = Process._ref(g)
+    if Node._peer(n, name) != 0 do Process._push(g, n + 48, Process.__word(name), Sys.peek(g), ref) else Process._event(g, Sys.peek(g), ref, 0, Process.__word("nodedown " <> name)) end
+    ref
+  end
+#: monitor_nodes/0 needs Process._check/1 Process._g/0 Process._push/5 Process._ref/1 _n/0
+  def monitor_nodes(): integer do
+    g = Process._g()
+    n = Node._n()
+    Process._check(g)
+    if Sys.peek(n + 16) == 0 do raise("Node.monitor_nodes needs this program to be a node; call Node.start first") end
+    ref = Process._ref(g)
+    Process._push(g, n + 64, Sys.peek(g), ref, 0)
+    ref
+  end
+#: _whereis/4 needs Process._check/1 Process._g/0 _fcodec/1 _kind/1 _n/0 _rwhere/6
+  def _whereis(other: string, name: string, ms: integer, f: integer): integer do
+    Process._check(Process._g())
+    Node._rwhere(Node._n(), other, name, ms, Node._kind(f), Node._fcodec(f))
+  end
+#: whereis/3 needs Atom.to_string/1 Process._some/1 _form/1 _whereis/4
+  def whereis(other: string, name: atom, ms: integer): option[pid[t]] do
+    r = Node._whereis(other, Atom.to_string(name), ms, Node._form(0))
+    if r == 0 do none else Process._some(r) end
+  end
+#: whereis/2 needs Atom.to_string/1 Process._some/1 _form/1 _whereis/4
+  def whereis(other: string, name: atom): option[pid[t]] do
+    r = Node._whereis(other, Atom.to_string(name), 5000, Node._form(0))
+    if r == 0 do none else Process._some(r) end
+  end
+# The process registered under a name here or on a connected node; 0.
+#: _global/2 needs _global1/4 _kind/1 _lwhere/2 _n/0 _names/1
+  def _global(name: string, f: integer): integer do
+    n = Node._n()
+    q = Node._lwhere(name, Node._kind(f))
+    if q != 0 do q else Node._global1(n, name, f, Node._names(Sys.peek(n + 32))) end
+  end
+#: _global1/4 needs _fcodec/1 _kind/1 _rwhere/6
+  def _global1(n: integer, name: string, f: integer, others: list[string]): integer do
+    case others do
+      [] -> 0
+      [other | rest] ->
+        r = Node._rwhere(n, other, name, 2000, Node._kind(f), Node._fcodec(f))
+        if r != 0 do r else Node._global1(n, name, f, rest) end
+    end
+  end
+#: whereis_global/1 needs Atom.to_string/1 Process._some/1 _form/1 _global/2
+  def whereis_global(name: atom): option[pid[t]] do
+    r = Node._global(Atom.to_string(name), Node._form(0))
+    if r == 0 do none else Process._some(r) end
+  end
+#: register_global/2 needs Atom.to_string/1 _form/1 _global/2 _kind/1 _register/5 _u16/1
+  def register_global(h: pid[t], name: atom): boolean do
+    f = Node._form(0)
+    s = Atom.to_string(name)
+    node = f + 2 + Node._u16(f)
+    if Node._global(s, f) != 0 do false else Node._register(h.at, s, Node._kind(f), node, node) == 1 end
+  end
+
+# The codecs of a call to a served function (library.go.txt: rpcCodecs),
+# made once for the forms of its argument and its result: at m the node
+# of {argument, pid[answer]}, at m + 18 that of the answer, ok(value) or
+# error(reason) behind one byte, and at m + 32 the codec of the first.
+#: _rpc/3 needs Process._g/0 Process._push/5 Process._take/2 _rpc1/3 _u16/1
+  def _rpc(n: integer, fa: integer, fb: integer): integer do
+    g = Process._g()
+    x = Node._rpc1(Sys.peek(n + 168), fa, fb)
+    if x != 0 do x else
+      m = Process._take(g, 56)
+      Sys.poke(m, 32 + 5 * 65536 + 2 * 16777216)
+      Sys.poke(m + 4, 11 + 32 * 65536)
+      Sys.poke(m + 7, fa + 2 + Node._u16(fa))
+      Sys.poke(m + 15, 17 + 30 * 65536)
+      Sys.poke(m + 18, 14 + 31 * 65536)
+      Sys.poke(m + 21, 11 + 32 * 65536)
+      Sys.poke(m + 24, fb + 2 + Node._u16(fb))
+      Sys.poke(m + 32, m)
+      Sys.poke(m + 40, m)
+      Process._push(g, n + 168, fa, fb, m)
+      m
+    end
+  end
+#: _rpc1/3
+  def _rpc1(x: integer, fa: integer, fb: integer): integer do
+    if x == 0 do 0 else if Sys.peek(x + 8) == fa and Sys.peek(x + 16) == fb do Sys.peek(x + 24) else Node._rpc1(Sys.peek(x), fa, fb) end end
+  end
+#: _rkind/2 needs _kind/1
+  def _rkind(fa: integer, fb: integer): string do
+    "tuple[" <> Node._kind(fa) <> ",pid[result[" <> Node._kind(fb) <> ",string]]]"
+  end
+#: serve/2 needs Atom.to_string/1 Process._g/0 Process._halt/1 Process._spawn/4 _casted/2 _form/1 _kind/1 _n/0 _register/5 _rkind/2 _rpc/3 _served/2 _u16/1
+  def serve(name: atom, f: fn[a, b]): boolean do
+    fa = Node._form(0)
+    fb = Node._form(1)
+    g = Process._g()
+    s = Atom.to_string(name)
+    m = Node._rpc(Node._n(), fa, fb)
+    calls: fn[pid[integer], integer] = fn(h: pid[integer]): integer do Node._served(h.at, f) end
+    q = Process._spawn(g, Process.__word(calls), 1024, 0)
+    if Node._register(q, "rpc:" <> s, Node._rkind(fa, fb), m, m) == 0 do Process._halt(q) and false else
+      casts: fn[pid[integer], integer] = fn(h: pid[integer]): integer do Node._casted(h.at, f) end
+      c = Process._spawn(g, Process.__word(casts), 1024, 0)
+      node = fa + 2 + Node._u16(fa)
+      if Node._register(c, "cast:" <> s, Node._kind(fa), node, node) == 0 do Process._halt(c) and false else true end
+    end
+  end
+# The process that takes the calls of a served function: each runs in a
+# process of its own.
+#: _served/2 needs Process._g/0 Process._recv/3 Process._spawn/4 _worked/3
+  def _served(p: integer, f: fn[a, b]): integer do
+    g = Process._g()
+    if Process._recv(g, p, -1) == 1 do
+      m = Sys.peek(g + 184)
+      arg = Sys.peek(m + 8)
+      to = Sys.peek(Sys.peek(m + 16) + 8)
+      work: fn[pid[integer], integer] = fn(h: pid[integer]): integer do Node._worked(f, arg, to) end
+      Process._spawn(g, Process.__word(work), 1, 0)
+    end
+    Node._served(p, f)
+  end
+#: _worked/3 needs Process._reason/1 Process.send/3 Task._start/1 Task._yield/2 _n/0 _unhandle/2
+  def _worked(f: fn[a, b], arg: integer, to: integer): integer do
+    v: a = Process.__any(arg)
+    t = Task._start(fn -> f(v) end)
+    k = Task._yield(t.at, -1)
+    r: b = Process.__any(Sys.peek(t.at + 304))
+    answer: result[b, string] = if k == 1 do ok(r) else error(Process._reason(t.at)) end
+    h: pid[result[b, string]] = %pid{at: to, k: none}
+    Process.send(h, answer, 5000)
+    Node._unhandle(Node._n(), to)
+  end
+#: _casted/2 needs Process._g/0 Process._recv/3 Task._start/1
+  def _casted(p: integer, f: fn[a, b]): integer do
+    g = Process._g()
+    if Process._recv(g, p, -1) == 1 do
+      v: a = Process.__any(Sys.peek(g + 184))
+      t = Task._start(fn -> f(v) end)
+    end
+    Node._casted(p, f)
+  end
+# library.go.txt: nodeCall. The word of the result.
+#: _call/6 needs Process._cell/4 Process._check/1 Process._due/2 Process._g/0 Process._halt/1 Process._send/4 Process._spawn/4 _answer/3 _askw/4 _far/3 _lwhere/2 _n/0 _name/1 _rkind/2 _rpc/3 _rwhere/6 _unexport/2
+  def _call(other: string, s: string, w: integer, ms: integer, fa: integer, fb: integer): integer do
+    g = Process._g()
+    n = Node._n()
+    Process._check(g)
+    m = Node._rpc(n, fa, fb)
+    kind = Node._rkind(fa, fb)
+    q = if other == Node._name(n) do Node._lwhere("rpc:" <> s, kind) else Node._rwhere(n, other, "rpc:" <> s, ms, kind, m + 32) end
+    if q == 0 do
+      e: result[integer, string] = error("nothing served as :" <> s <> " on " <> other)
+      Process.__word(e)
+    else
+      x = Process._cell(g, 0, Sys.peek(g), 0)
+      waits: fn[pid[integer], integer] = fn(h: pid[integer]): integer do Node._answer(h.at, ms, x) end
+      reply = Process._spawn(g, Process.__word(waits), 1, 0)
+      to: pid[integer] = %pid{at: reply, k: none}
+      msg: tuple[integer, pid[integer]] = {w, to}
+      sent = if Sys.peek(q + 320) == 2 do Node._far(1, q, Process.__word(msg)) else Process._send(g, q, Process.__word(msg), ms) end
+      if sent == 0 do
+        Process._halt(reply)
+        e: result[integer, string] = error("the call could not be sent")
+        Process.__word(e)
+      else
+        Node._askw(g, x, Process._due(g, if ms < 1 do 1 else ms end), 0)
+        Node._unexport(n, Sys.peek(reply + 40))
+        Process._check(g)
+        if Sys.peek(x + 24) != 0 do Sys.peek(x + 24) else
+          Process._halt(reply)
+          e: result[integer, string] = error("timeout")
+          Process.__word(e)
+        end
+      end
+    end
+  end
+#: _answer/3 needs Process._g/0 Process._ready/2 Process._recv/3
+  def _answer(p: integer, ms: integer, x: integer): integer do
+    g = Process._g()
+    if Process._recv(g, p, ms) == 1 do
+      Sys.poke(x + 24, Sys.peek(g + 184))
+      Process._ready(g, Sys.peek(x + 16))
+    end
+    0
+  end
+#: call/4 needs Atom.to_string/1 _call/6 _form/1
+  def call(other: string, name: atom, v: a, ms: integer): result[b, string] do
+    Process.__any(Node._call(other, Atom.to_string(name), Process.__word(v), ms, Node._form(0), Node._form(1)))
+  end
+#: call/3 needs Atom.to_string/1 _call/6 _form/1
+  def call(other: string, name: atom, v: a): result[b, string] do
+    Process.__any(Node._call(other, Atom.to_string(name), Process.__word(v), 5000, Node._form(0), Node._form(1)))
+  end
+#: cast/3 needs Atom.to_string/1 Process._check/1 Process._g/0 Process._send/4 Process._spawn/4 _casting/4 _form/1 _kind/1 _lwhere/2 _n/0 _name/1
+  def cast(other: string, name: atom, v: a): boolean do
+    f = Node._form(0)
+    g = Process._g()
+    s = Atom.to_string(name)
+    w = Process.__word(v)
+    Process._check(g)
+    if other == Node._name(Node._n()) do
+      q = Node._lwhere("cast:" <> s, Node._kind(f))
+      q != 0 and Process._send(g, q, w, 0) == 1
+    else
+      later: fn[pid[integer], integer] = fn(h: pid[integer]): integer do Node._casting(other, s, w, f) end
+      Process._spawn(g, Process.__word(later), 1, 0)
+      true
+    end
+  end
+#: _casting/4 needs _far/3 _fcodec/1 _kind/1 _n/0 _rwhere/6
+  def _casting(other: string, s: string, w: integer, f: integer): integer do
+    r = Node._rwhere(Node._n(), other, "cast:" <> s, 30000, Node._kind(f), Node._fcodec(f))
+    if r != 0 do Node._far(1, r, w) end
+    0
+  end
+
+# Stream.publish (node.go: PublishStream). A publication: 0 the text of
+# its elements' type, 8 and 16 the pulls that wait (cells: the peer, the
+# request or the least integer for a reader that has finished, the
+# subscription), 24 the process that serves it, 32 the streams being read
+# (cells: the peer, the subscription, a cell of the iterator and its
+# context), 40 the elements' codec.
+#: _publish/3 needs Process._check/1 Process._g/0 Process._push/5 Process._spawn/4 Process._take/2 _fcodec/1 _kind/1 _n/0 _pub/2 _pubsrv/4
+  def _publish(s: string, build: integer, f: integer): boolean do
+    g = Process._g()
+    n = Node._n()
+    Process._check(g)
+    if s == "" or Node._pub(n, s) != 0 do false else
+      pub = Process._take(g, 48)
+      Sys.poke(pub, Process.__word(Node._kind(f)))
+      Sys.poke(pub + 40, Node._fcodec(f))
+      Process._push(g, n + 80, Process.__word(s), pub, 0)
+      serves: fn[pid[integer], integer] = fn(h: pid[integer]): integer do Node._pubsrv(n, pub, build, s) end
+      Sys.poke(pub + 24, Process._spawn(g, Process.__word(serves), 1, 0))
+      true
+    end
+  end
+#: _pubsrv/4 needs Process._drop/3 Process._g/0 _publoop/3 _pubstop/3
+  def _pubsrv(n: integer, pub: integer, build: integer, s: string): integer do
+    try do
+      Node._publoop(n, pub, build)
+    after
+      Process._drop(Process._g(), n + 80, Process.__word(s))
+      Node._pubstop(Process._g(), pub + 32, 0)
+    end
+  end
+# The streams being read are read no further: all of them, or with k 1
+# those whose reader's node is gone.
+#: _pubstop/3 needs Process._free/2 _stop/1
+  def _pubstop(g: integer, h: integer, k: integer): integer do
+    x = Sys.peek(h)
+    if x == 0 do 0 else
+      if k == 1 and Sys.peek(Sys.peek(x + 8) + 16) == 0 do Node._pubstop(g, x, k) else
+        Sys.poke(h, Sys.peek(x))
+        Node._stop(Sys.peek(x + 24))
+        Process._free(g, x)
+        Node._pubstop(g, h, k)
+      end
+    end
+  end
+# The stream of that cell is read no further.
+#: _stop/1 needs Process._free/2 Process._g/0
+  def _stop(cur: integer): integer do
+    c: option[fn[integer]] = Process.__any(Sys.peek(cur + 16))
+    Process._free(Process._g(), cur)
+    over = Stream.__get(c)
+    over()
+  end
+#: _open/3
+  def _open(x: integer, p: integer, sub: integer): integer do
+    if x == 0 do 0 else if Sys.peek(x + 8) == p and Sys.peek(x + 16) == sub do x else Node._open(Sys.peek(x), p, sub) end end
+  end
+#: _publoop/3 needs Enum.reverse/1 Process._cell/4 Process._check/1 Process._free/2 Process._g/0 Process._get/1 Process._push/5 Process._wait/2 _chunk/6 _ers/2 _et/1 _ev/2 _open/3 _pubstop/3 _reply/3 _send/3 _stop/1 _unlink/2
+  def _publoop(n: integer, pub: integer, build: integer): integer do
+    g = Process._g()
+    x = Process._get(pub + 8)
+    if x == 0 do
+      Process._wait(g, 0)
+      Process._check(g)
+    else
+      p = Sys.peek(x + 8)
+      r = Sys.peek(x + 16)
+      sub = Sys.peek(x + 24)
+      Process._free(g, x)
+      Node._pubstop(g, pub + 32, 1)
+      o = Node._open(Sys.peek(pub + 32), p, sub)
+      if r == -9223372036854775807 - 1 do
+        if o != 0 do
+          Node._unlink(pub + 32, o)
+          Node._stop(Sys.peek(o + 24))
+          Process._free(g, o)
+        end
+      else
+        cur = if o != 0 do Sys.peek(o + 24) else
+          f: fn[stream[integer]] = Process.__any(build)
+          nothing: fn[integer] = fn -> 0 end
+          c: option[fn[integer]] = some(nothing)
+          it = Stream.__start(f(), c)
+          made = Process._cell(g, Process.__word(it), Process.__word(c), 0)
+          Process._push(g, pub + 32, p, sub, made)
+          made
+        end
+        next: fn[option[integer]] = Process.__any(Sys.peek(cur + 8))
+        empty: list[string] = []
+        {count, done, pieces} = Node._chunk(n, Sys.peek(pub + 40), next, 0, 0, empty)
+        if done == 1 do
+          now = Node._open(Sys.peek(pub + 32), p, sub)
+          Node._unlink(pub + 32, now)
+          Node._stop(cur)
+          Process._free(g, now)
+        end
+        Node._reply(n, r, done)
+        Node._ev(n, count)
+        Node._ers(n, Enum.reverse(pieces))
+        Node._send(n, p, Node._et(n))
+      end
+    end
+    Node._publoop(n, pub, build)
+  end
+#: _ers/2 needs _er/2
+  def _ers(n: integer, pieces: list[string]): integer do
+    case pieces do
+      [] -> 0
+      [one | rest] ->
+        Node._er(n, one)
+        Node._ers(n, rest)
+    end
+  end
+# Up to 256 elements or 64 KiB of them, each encoded: how many, 1 when
+# the stream ended, and the pieces, the last first.
+#: _chunk/6 needs _e/4 _e0/1 _et/1
+  def _chunk(n: integer, c: integer, next: fn[option[integer]], count: integer, size: integer, pieces: list[string]): tuple[integer, integer, list[string]] do
+    if count >= 256 or size >= 65536 do {count, 0, pieces} else
+      got = next()
+      case got do
+        none -> {count, 1, pieces}
+        some(v) ->
+          Node._e0(n)
+          Node._e(n, Sys.peek(c), Sys.peek(c + 8), v)
+          piece = Node._et(n)
+          Node._chunk(n, c, next, count + 1, size + byte_size(piece), [piece | pieces])
+      end
+    end
+  end
+# Node.stream (node.go: RemoteStream). What a reader keeps: 0 the elements
+# it has, 8 set when no more will come, 16 set when the other node need
+# not be told that it stops, 24 its subscription, 32 the peer, 40 the
+# stream's name, 48 the codec, 56 where the stream was asked for.
+#: stream/2 needs Atom.to_string/1 Process._check/1 Process._g/0 _ask/5 _e0/1 _es/2 _et/1 _fcodec/1 _form/1 _kind/1 _n/0 _peer/2 _reading/3
+  def stream(other: string, name: atom): result[stream[a], string] do
+    place = Stream.__where()
+    f = Node._form(0)
+    g = Process._g()
+    n = Node._n()
+    Process._check(g)
+    s = Atom.to_string(name)
+    p = if Sys.peek(n + 16) == 0 do 0 else Node._peer(n, other) end
+    if Sys.peek(n + 16) == 0 do error("start this node first, with Node.start") else if p == 0 do error("not connected to node " <> other) else
+      kind = Node._kind(f)
+      Node._e0(n)
+      Node._es(n, s)
+      Node._es(n, kind)
+      {got, body} = Node._ask(n, p, 6, 5000, Node._et(n))
+      if got == 0 do error("node " <> other <> " did not answer") else
+        if byte_size(body) < 1 or Sys.byte(Sys.addr(body)) == 0 do error("node " <> other <> " publishes no stream " <> s <> " of " <> kind) else
+          c = Node._fcodec(f)
+          made: stream[integer] = Stream.__make(fn ctx -> Node._reading(n, [p, Process.__word(s), c, place], ctx) end)
+          r: stream[a] = Process.__any(Process.__word(made))
+          ok(r)
+        end
+      end
+    end end
+  end
+#: _reading/3 needs Process._g/0 Process._take/2 _pull/2 _unread/2
+  def _reading(n: integer, of: list[integer], ctx: option[fn[integer]]): fn[option[integer]] do
+    [p, s, c, place] = of
+    st = Process._take(Process._g(), 64)
+    Sys.poke(st + 24, Sys.poke(p + 32, Sys.peek(p + 32) + 1))
+    Sys.poke(st + 32, p)
+    Sys.poke(st + 40, s)
+    Sys.poke(st + 48, c)
+    Sys.poke(st + 56, place)
+    old = Stream.__get(ctx)
+    close: fn[integer] = fn -> Node._unread(n, st) + old() end
+    v = Stream.__put(ctx, close)
+    fn -> Node._pull(n, st) end
+  end
+#: _unread/2 needs _e0/1 _eb/2 _es/2 _et/1 _ev/2 _send/3
+  def _unread(n: integer, st: integer): integer do
+    if Sys.peek(st + 8) + Sys.peek(st + 16) > 0 do 0 else
+      Sys.poke(st + 16, 1)
+      Node._e0(n)
+      Node._eb(n, 7)
+      Node._ev(n, 0)
+      Node._es(n, Process.__any(Sys.peek(st + 40)))
+      Node._ev(n, Sys.peek(st + 24))
+      Node._eb(n, 1)
+      Node._send(n, Sys.peek(st + 32), Node._et(n))
+    end
+  end
+#: _pull/2 needs _ask/5 _d0/4 _db/1 _dl/5 _dv/1 _e0/1 _eb/2 _es/2 _et/1 _ev/2
+  def _pull(n: integer, st: integer): option[integer] do
+    held: list[integer] = if Sys.peek(st) == 0 do [] else Process.__any(Sys.peek(st)) end
+    case held do
+      [v | rest] ->
+        Sys.poke(st, Process.__word(rest))
+        some(v)
+      [] ->
+        if Sys.peek(st + 8) == 1 do none else
+          c = Sys.peek(st + 48)
+          Node._e0(n)
+          Node._es(n, Process.__any(Sys.peek(st + 40)))
+          Node._ev(n, Sys.peek(st + 24))
+          Node._eb(n, 0)
+          {got, body} = Node._ask(n, Sys.peek(st + 32), 7, 30000, Node._et(n))
+          if got == 0 do
+            Sys.poke(st + 8, 1)
+            Sys.poke(st + 16, 1)
+            Stream.__fail(Sys.peek(st + 56), "the node holding the stream stopped answering")
+          else
+            Node._d0(n, body, 0, Sys.peek(st + 32))
+            done = Node._db(n)
+            count = Node._dv(n)
+            empty: list[integer] = []
+            Sys.poke(st, Node._dl(n, Sys.peek(c), Sys.peek(c + 8), if count > 65536 do 65536 else if count < 0 do 0 else count end end, empty))
+            if done == 1 or Sys.peek(n + 128) == 1 do Sys.poke(st + 8, 1) end
+            Node._pull(n, st)
+          end
+        end
+    end
+  end
+
+# TLS 1.3 for a node's connection (node.go: secure; library/TLS.alc): the
+# dialling end verifies nothing, as upstream sets InsecureSkipVerify, and
+# the accepting end shows the node's own certificate. What TLS keeps for
+# the connection, or 0 and why not.
+#: _tls/5 needs Process._take/2 TLS._accept/5 TLS._dial/5
+  def _tls(g: integer, n: integer, b: integer, dialling: integer, d: integer): tuple[integer, string] do
+    empty: list[tuple[string, string]] = []
+    none: list[string] = []
+    key: tuple[string, string, string] = Process.__any(Sys.peek(n + 176))
+    cert: string = Process.__any(Sys.peek(n + 184))
+    {t, why} = if dialling == 1 do TLS._dial(g, b, d, "", {3, empty}) else TLS._accept(g, b, d, {[cert], 3, 0, [elem(key, 0), elem(key, 1), elem(key, 2)]}, 2) end
+    if why == "" do
+      Sys.poke(t + 416, 1)
+      {t, ""}
+    else {0, "could not set up an encrypted connection: " <> why} end
+  end
+# What the proof of the cookie is tied to.
+#: _texp/2 needs TLS._export/3
+  def _texp(n: integer, tls: integer): string do
+    TLS._export(tls, "alchem node cookie proof", 32)
+  end
+# A message goes out sealed: 0, or -1.
+#: _tput/6 needs TLS._write/5 _put/5
+  def _tput(g: integer, n: integer, b: integer, t: integer, m: string, d: integer): integer do
+    if TLS._write(g, t, Sys.addr(m), byte_size(m), d) == "" do 0 else -1 end
+  end
+# k bytes of what the other end sent, or "" when they did not come.
+#: _tget/6 needs TLS._get/4
+  def _tget(g: integer, n: integer, b: integer, t: integer, k: integer, d: integer): string do
+    TLS._get(g, t, k, d)
+  end
+# The key a node shows and the certificate that holds it (node.go:
+# identity): X.509 as DER, for the name, valid from an hour ago for twenty
+# years, signed by its own key.
+#: _identity/2 needs Crypto.strong_rand_bytes/1 TLS._bs/1 TLS._der/2 TLS._edkey/1 TLS._edsign/2 TLS._now/0 _stamp/1
+  def _identity(n: integer, name: string): integer do
+    key = TLS._edkey(Crypto.strong_rand_bytes(32))
+    now = TLS._now()
+    serial = Crypto.strong_rand_bytes(15)
+    Sys.poke(Sys.addr(serial), Process.__or(Process.__and(Sys.peek(Sys.addr(serial)), -129), 1))
+    alg = TLS._der(0x30, TLS._bs([6, 3, 0x2b, 0x65, 0x70]))
+    who = TLS._der(0x30, TLS._der(0x31, TLS._der(0x30, TLS._bs([6, 3, 0x55, 4, 3]) <> TLS._der(0x0c, name))))
+    uses = TLS._der(0x30, TLS._bs([6, 3, 0x55, 0x1d, 0x0f, 1, 1, 0xff, 4, 4, 3, 2, 7, 0x80])) <> TLS._der(0x30, TLS._bs([6, 3, 0x55, 0x1d, 0x25, 4, 12, 0x30, 10, 6, 8, 0x2b, 6, 1, 5, 5, 7, 3, 1]))
+    tbs = TLS._der(0x30, TLS._bs([0xa0, 3, 2, 1, 2]) <> TLS._der(2, serial) <> alg <> who <> TLS._der(0x30, TLS._der(0x17, Node._stamp(now - 3600)) <> TLS._der(0x17, Node._stamp(now + 631152000))) <> who <> TLS._der(0x30, alg <> TLS._der(3, TLS._bs([0]) <> elem(key, 1))) <> TLS._der(0xa3, TLS._der(0x30, uses)))
+    Sys.poke(n + 176, Process.__word(key))
+    Sys.poke(n + 184, Process.__word(TLS._der(0x30, tbs <> alg <> TLS._der(3, TLS._bs([0]) <> TLS._edsign(key, tbs)))))
+  end
+# A time, seconds since 1970, as X.509 writes it before 2050: YYMMDDHHMMSSZ.
+#: _stamp/1 needs _two/1
+  def _stamp(s: integer): string do
+    z = div(s, 86400) + 719468
+    era = div(z, 146097)
+    doe = z - era * 146097
+    yoe = div(doe - div(doe, 1460) + div(doe, 36524) - div(doe, 146096), 365)
+    doy = doe - (365 * yoe + div(yoe, 4) - div(yoe, 100))
+    mp = div(5 * doy + 2, 153)
+    month = if mp < 10 do mp + 3 else mp - 9 end
+    year = yoe + era * 400 + (if month <= 2 do 1 else 0 end)
+    t = rem(s, 86400)
+    Node._two(rem(year, 100)) <> Node._two(month) <> Node._two(doy - div(153 * mp + 2, 5) + 1) <> Node._two(div(t, 3600)) <> Node._two(rem(div(t, 60), 60)) <> Node._two(rem(t, 60)) <> "Z"
+  end
+#: _two/1 needs TLS._bs/1
+  def _two(v: integer): string do
+    TLS._bs([48 + div(v, 10), 48 + rem(v, 10)])
+  end

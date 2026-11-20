@@ -1,0 +1,1421 @@
+# JSON: the JSON type, JSON.decode and decode!, and what the compiler makes
+# of JSON.encode, encode! and decode_as (native-json.alc): those go by the
+# type of a value, which the compiler passes as a description. The text
+# read and written, the errors and their wording are those of the pinned
+# runtime, which uses Go 1.27's encoding/json (the version built on
+# jsontext). spec/alchem-json.md says what is here.
+#: struct JSON
+  type JSON do
+    null
+    boolean(value: boolean)
+    integer(value: integer)
+    float(value: float)
+    string(value: string)
+    list(items: list[JSON])
+    object(fields: map[string, JSON])
+  end
+# The record a parse or a write works on, 144 bytes: 0 the text and 8 its
+# length, 16 the place in it, 24 what went wrong (the bytes of a message; 0:
+# nothing), 40 a stack of words, 48 how many it holds and 56 its room, 64
+# the open array or object (where its first word is on the stack; -1: none),
+# 72 how many are open, 80 what comes next (0 a value, 1 what follows one,
+# 2 a member's name, 3 nothing), 88 the finished value, 96 a buffer of
+# bytes, 104 how many it holds and 112 its room, 120 1 to write over
+# several lines, 128 how deep the writing is, 136 the first description,
+# 144, 152 and 160 the values null, true and false once one was read.
+#: open/1
+  def open(t: string): integer do
+    s = Sys.addr(String.duplicate("\x00", 168))
+    Sys.poke(s, Sys.addr(t))
+    Sys.poke(s + 8, byte_size(t))
+    Sys.poke(s + 64, -1)
+    s
+  end
+#: shut/1
+  def shut(s: integer): integer do
+    if Sys.peek(s + 56) > 0 do Sys.call(11, Sys.peek(s + 40), Sys.peek(s + 56) * 8) end
+    if Sys.peek(s + 112) > 0 do Sys.call(11, Sys.peek(s + 96), Sys.peek(s + 112)) end
+    0
+  end
+# Mapped memory of c bytes at m, now twice that (65536 bytes when there was none).
+#: more/2
+  def more(m: integer, c: integer): integer do
+    r = if c == 0 do Sys.call(9, 0, 65536, 3, 34, -1, 0) else Sys.call(25, m, c, c * 2, 1) end
+    if r < 0 and r > -4096 do System.halt(71) end
+    r
+  end
+#: push/2 needs more/2
+  def push(s: integer, w: integer): integer do
+    t = Sys.peek(s + 48)
+    c = Sys.peek(s + 56)
+    if t == c do
+      Sys.poke(s + 40, JSON.more(Sys.peek(s + 40), c * 8))
+      Sys.poke(s + 56, if c == 0 do 8192 else c * 2 end)
+    end
+    Sys.poke(Sys.peek(s + 40) + t * 8, w)
+    Sys.poke(s + 48, t + 1)
+    0
+  end
+# Where k more bytes of the buffer go, with eight to spare.
+#: room/2 needs more/2 room/2
+  def room(s: integer, k: integer): integer do
+    l = Sys.peek(s + 104)
+    c = Sys.peek(s + 112)
+    if l + k + 8 <= c do Sys.peek(s + 96) + l else
+      Sys.poke(s + 96, JSON.more(Sys.peek(s + 96), c))
+      Sys.poke(s + 112, if c == 0 do 65536 else c * 2 end)
+      JSON.room(s, k)
+    end
+  end
+#: put/3 needs room/2
+  def put(s: integer, a: integer, k: integer): integer do
+    Sys.copy(JSON.room(s, k), a, k)
+    Sys.poke(s + 104, Sys.peek(s + 104) + k)
+    0
+  end
+#: puts/2 needs put/3
+  def puts(s: integer, t: string): integer do
+    JSON.put(s, Sys.addr(t), byte_size(t))
+  end
+#: putc/2 needs room/2
+  def putc(s: integer, c: integer): integer do
+    Sys.poke(JSON.room(s, 1), c)
+    Sys.poke(s + 104, Sys.peek(s + 104) + 1)
+    0
+  end
+# The low k bytes (up to 8) of v: a short text without a string to hold it,
+# since a string written in the program is made anew each time it is met.
+#: putw/3 needs room/2
+  def putw(s: integer, v: integer, k: integer): integer do
+    Sys.poke(JSON.room(s, k), v)
+    Sys.poke(s + 104, Sys.peek(s + 104) + k)
+    0
+  end
+#: fail/2
+  def fail(s: integer, m: string): integer do
+    if Sys.peek(s + 24) == 0 do Sys.poke(s + 24, Sys.addr(m)) end
+    0
+  end
+# The character at a of n bytes as Go's jsonwire.QuoteRune writes it.
+#: qr/2 needs Kernel.binary_part/3 Sys.rune/2
+  def qr(a: integer, n: integer): string do
+    v = Sys.rune(a, n)
+    c = Sys.byte(a)
+    h = "0123456789abcdef"
+    if v == 0 or v == 2162685 do "'\\x" <> binary_part(h, div(c, 16), 1) <> binary_part(h, rem(c, 16), 1) <> "'" else
+      if c == 39 do "'\\''" else if c == 34 do "'\"'" else
+        q = inspect(Sys.text(a, div(v, 2097152)))
+        "'" <> binary_part(q, 1, byte_size(q) - 2) <> "'"
+      end end
+    end
+  end
+# Go's decoder reads its text in pieces of 64 bytes, then 128, 256 and so
+# on, and what it says of a character or an escape that a piece ends in
+# goes by the bytes read so far: where the piece that holds byte j ends.
+#: lim/3 needs lim/3
+  def lim(j: integer, n: integer, b: integer): integer do
+    if b > j do if b < n do b else n end else JSON.lim(j, n, b * 2) end
+  end
+#: bad/3 needs fail/2 lim/3 qr/2
+  def bad(s: integer, i: integer, w: string): integer do
+    JSON.fail(s, "invalid character " <> JSON.qr(Sys.peek(s) + i, JSON.lim(i, Sys.peek(s + 8), 64) - i) <> " " <> w)
+  end
+# Past spaces, tabs and line breaks: the byte that stands there, -1 at the end.
+#: ws/1 needs ws/1 wsk/4
+  def ws(s: integer): integer do
+    j = JSON.wsk(Sys.peek(s), Sys.peek(s + 8), Sys.peek(s + 16), 1000)
+    Sys.poke(s + 16, if j < 0 do 0 - j - 1 else j end)
+    if j < 0 do JSON.ws(s) else if j < Sys.peek(s + 8) do Sys.byte(Sys.peek(s) + j) else -1 end end
+  end
+#: wsk/4 needs wsk/4
+  def wsk(a: integer, n: integer, i: integer, k: integer): integer do
+    c = if i < n do Sys.byte(a + i) else -1 end
+    if c == 32 or c == 9 or c == 13 or c == 10 do if k == 0 do 0 - i - 1 else JSON.wsk(a, n, i + 1, k - 1) end else i end
+  end
+# The parser is jsontext's consumeValue (Go 1.27) with its stack written
+# out, a thousand steps to a level of calls, so that neither depth nor
+# length costs calls.
+#: go/1 needs go/1 run/2
+  def go(s: integer): integer do
+    JSON.run(s, 1000)
+    if Sys.peek(s + 80) == 3 or Sys.peek(s + 24) != 0 do 0 else JSON.go(s) end
+  end
+#: run/2 needs run/2 step/1
+  def run(s: integer, k: integer): integer do
+    if k == 0 or Sys.peek(s + 80) == 3 or Sys.peek(s + 24) != 0 do 0 else
+      JSON.step(s)
+      JSON.run(s, k - 1)
+    end
+  end
+#: step/1 needs after/3 fail/2 first/3 key/3 ws/1
+  def step(s: integer): integer do
+    st = Sys.peek(s + 80)
+    c = JSON.ws(s)
+    i = Sys.peek(s + 16)
+    if c < 0 do JSON.fail(s, "unexpected EOF") else
+      if st == 0 do JSON.first(s, c, i) else if st == 1 do JSON.after(s, c, i) else JSON.key(s, c, i) end end
+    end
+  end
+#: first/3 needs bad/3 enter/3 lit/4 num/2 str/1
+  def first(s: integer, c: integer, i: integer): integer do
+    if c == 91 or c == 123 do JSON.enter(s, c, i) else if c == 34 do JSON.str(s) else if c == 45 or (c >= 48 and c <= 57) do JSON.num(s, i) else
+      if c == 116 do JSON.lit(s, 1702195828, 4, 152) else if c == 102 do JSON.lit(s, 435728179558, 5, 160) else
+        if c == 110 do JSON.lit(s, 1819047278, 4, 144) else JSON.bad(s, i, "looking for beginning of value") end
+      end end
+    end end end
+  end
+#: str/1 needs got/2 text/1
+  def str(s: integer): integer do
+    t = JSON.text(s)
+    if Sys.peek(s + 24) == 0 do JSON.got(s, JSON.__word(JSON.string(t))) else 0 end
+  end
+#: got/2 needs push/2
+  def got(s: integer, w: integer): integer do
+    if Sys.peek(s + 64) < 0 do
+      Sys.poke(s + 88, w)
+      Sys.poke(s + 80, 3)
+    else
+      JSON.push(s, w)
+      Sys.poke(s + 80, 1)
+    end
+    0
+  end
+#: enter/3 needs fail/2 got/2 push/2 ws/1
+  def enter(s: integer, c: integer, i: integer): integer do
+    Sys.poke(s + 16, i + 1)
+    e = if Sys.peek(s + 72) == 10000 do 0 else JSON.ws(s) end
+    j = Sys.peek(s + 16)
+    if Sys.peek(s + 72) == 10000 do JSON.fail(s, "exceeded max depth") else if e < 0 do JSON.fail(s, "unexpected EOF") else
+      if e == c + 2 do
+        el: list[JSON] = []
+        em: map[string, JSON] = %{}
+        Sys.poke(s + 16, j + 1)
+        JSON.got(s, if c == 91 do JSON.__word(JSON.list(el)) else JSON.__word(JSON.object(em)) end)
+      else
+        h = Sys.peek(s + 48)
+        JSON.push(s, (Sys.peek(s + 64) + 1) * 2 + (if c == 91 do 0 else 1 end))
+        Sys.poke(s + 64, h)
+        Sys.poke(s + 72, Sys.peek(s + 72) + 1)
+        Sys.poke(s + 80, if c == 91 do 0 else 2 end)
+        0
+      end
+    end end
+  end
+#: after/3 needs bad/3 close/3
+  def after(s: integer, c: integer, i: integer): integer do
+    h = Sys.peek(s + 64)
+    o = rem(Sys.peek(Sys.peek(s + 40) + h * 8), 2)
+    if c == 44 do
+      Sys.poke(s + 16, i + 1)
+      Sys.poke(s + 80, if o == 1 do 2 else 0 end)
+      0
+    else
+      if c == 93 + 32 * o do
+        Sys.poke(s + 16, i + 1)
+        JSON.close(s, h, o)
+      else JSON.bad(s, i, if o == 1 do "after object key:value pair" else "after array element" end) end
+    end
+  end
+# A member is three words on the stack, 2, the name and the value: a tuple.
+#: key/3 needs bad/3 fail/2 push/2 text/1 ws/1
+  def key(s: integer, c: integer, i: integer): integer do
+    t = if c != 34 do "" else JSON.text(s) end
+    e = if c != 34 or Sys.peek(s + 24) != 0 do 0 else JSON.ws(s) end
+    j = Sys.peek(s + 16)
+    if c != 34 do JSON.bad(s, i, "looking for beginning of object key string") else if Sys.peek(s + 24) != 0 do 0 else
+      if e < 0 do JSON.fail(s, "unexpected EOF") else if e != 58 do JSON.bad(s, j, "after object key") else
+        JSON.push(s, 2)
+        JSON.push(s, JSON.__word(t))
+        Sys.poke(s + 16, j + 1)
+        Sys.poke(s + 80, 0)
+        0
+      end end
+    end end
+  end
+# The array or object whose first word is at h on the stack is complete:
+# its words become a list, or its members a map. Up to 64 members are put
+# in order where they stand, the later of two with one name staying; more
+# go through the list of tuples a map is made of.
+#: close/3 needs Map.new/1 aslist/1 fill/3 got/2 pack/3 sortm/4
+  def close(s: integer, h: integer, o: integer): integer do
+    b = Sys.peek(s + 40) + h * 8
+    t = Sys.peek(s + 48)
+    n = div(t - h - 1, 3)
+    Sys.poke(s + 64, div(Sys.peek(b), 2) - 1)
+    Sys.poke(s + 72, Sys.peek(s + 72) - 1)
+    Sys.poke(s + 48, h)
+    if o == 0 do
+      Sys.poke(b, t - h - 1)
+      l: list[JSON] = JSON.__cast(JSON.aslist(b))
+      JSON.got(s, JSON.__word(JSON.list(l)))
+    else
+      if n <= 64 do
+        m = JSON.sortm(b + 8, 0, n, 0)
+        JSON.pack(b + 8, 0, m)
+        Sys.poke(b, m)
+        f: map[string, JSON] = JSON.__cast(Sys.addr(Sys.text(b, m * 16 + 8)))
+        JSON.got(s, JSON.__word(JSON.object(f)))
+      else
+        x = Sys.addr(Sys.text(b + 8, n * 24))
+        Sys.poke(b, n)
+        JSON.fill(b + 8, x, n)
+        q: list[tuple[string, JSON]] = JSON.__cast(JSON.aslist(b))
+        JSON.got(s, JSON.__word(JSON.object(Map.new(q))))
+      end
+    end
+  end
+# The members from i on of the n at p (three words each: 2, name, value)
+# go among the m in order before them; how many there are in the end.
+#: sortm/4 needs below/3 lift/3 same/3 sortm/4
+  def sortm(p: integer, i: integer, n: integer, m: integer): integer do
+    at = p + (if i < n do i else 0 end) * 24
+    k: string = JSON.__cast(Sys.peek(at + 8))
+    v = Sys.peek(at + 16)
+    j = if i < n do JSON.below(p, m, k) else 0 end
+    if i >= n do m else
+      if j > 0 and JSON.same(p, j - 1, k) do
+        Sys.poke(p + (j - 1) * 24 + 16, v)
+        JSON.sortm(p, i + 1, n, m)
+      else
+        JSON.lift(p, m, j)
+        Sys.poke(p + j * 24 + 8, JSON.__word(k))
+        Sys.poke(p + j * 24 + 16, v)
+        JSON.sortm(p, i + 1, n, m + 1)
+      end
+    end
+  end
+# How many of the m names in order do not come after k.
+#: below/3 needs below/3
+  def below(p: integer, m: integer, k: string): integer do
+    x: string = JSON.__cast(Sys.peek(p + (if m > 0 do m - 1 else 0 end) * 24 + 8))
+    if m == 0 do 0 else if x > k do JSON.below(p, m - 1, k) else m end end
+  end
+#: same/3
+  def same(p: integer, j: integer, k: string): boolean do
+    x: string = JSON.__cast(Sys.peek(p + j * 24 + 8))
+    x == k
+  end
+#: lift/3 needs lift/3
+  def lift(p: integer, m: integer, j: integer): integer do
+    if m <= j do 0 else
+      Sys.poke(p + m * 24 + 8, Sys.peek(p + m * 24 - 16))
+      Sys.poke(p + m * 24 + 16, Sys.peek(p + m * 24 - 8))
+      JSON.lift(p, m - 1, j)
+    end
+  end
+# Name and value of each member side by side, as a map holds them.
+#: pack/3 needs pack/3
+  def pack(p: integer, t: integer, m: integer): integer do
+    if t >= m do 0 else
+      Sys.poke(p + t * 16, Sys.peek(p + t * 24 + 8))
+      Sys.poke(p + t * 16 + 8, Sys.peek(p + t * 24 + 16))
+      JSON.pack(p, t + 1, m)
+    end
+  end
+#: fill/3 needs fill/3 fillk/3
+  def fill(p: integer, x: integer, n: integer): integer do
+    k = if n > 1000 do 1000 else n end
+    JSON.fillk(p, x, k)
+    if n > k do JSON.fill(p + 8 * k, x + 24 * k, n - k) else 0 end
+  end
+#: fillk/3 needs fillk/3
+  def fillk(p: integer, x: integer, k: integer): integer do
+    if k == 0 do 0 else
+      Sys.poke(p, x)
+      JSON.fillk(p + 8, x + 24, k - 1)
+    end
+  end
+# jsonwire.ConsumeNumber: the integer part, the fraction, the exponent.
+#: num/2 needs bad/3 digs/3 fail/2 frac/3
+  def num(s: integer, i: integer): integer do
+    a = Sys.peek(s)
+    n = Sys.peek(s + 8)
+    p = if Sys.byte(a + i) == 45 do i + 1 else i end
+    c = if p < n do Sys.byte(a + p) else -1 end
+    q = if c == 48 do p + 1 else if c >= 49 and c <= 57 do JSON.digs(a, n, p + 1) else -1 end end
+    if c < 0 do JSON.fail(s, "unexpected EOF") else if q < 0 do JSON.bad(s, p, "in numeric literal") else JSON.frac(s, i, q) end end
+  end
+#: frac/3 needs bad/3 digs/3 expo/4 fail/2
+  def frac(s: integer, i: integer, q: integer): integer do
+    a = Sys.peek(s)
+    n = Sys.peek(s + 8)
+    d = if q < n and Sys.byte(a + q) == 46 do 1 else 0 end
+    c = if q + 1 < n do Sys.byte(a + q + 1) else -1 end
+    if d == 0 do JSON.expo(s, i, q, 0) else
+      if c < 0 do JSON.fail(s, "unexpected EOF") else if c < 48 or c > 57 do JSON.bad(s, q + 1, "in numeric literal") else JSON.expo(s, i, JSON.digs(a, n, q + 2), 1) end end
+    end
+  end
+#: expo/4 needs bad/3 digs/3 fail/2 numv/4
+  def expo(s: integer, i: integer, q: integer, f: integer): integer do
+    a = Sys.peek(s)
+    n = Sys.peek(s + 8)
+    e = if q < n and (Sys.byte(a + q) == 101 or Sys.byte(a + q) == 69) do 1 else 0 end
+    g = if e == 1 and q + 1 < n and (Sys.byte(a + q + 1) == 43 or Sys.byte(a + q + 1) == 45) do q + 2 else q + 1 end
+    c = if g < n do Sys.byte(a + g) else -1 end
+    if e == 0 do JSON.numv(s, i, q, f) else
+      if c < 0 do JSON.fail(s, "unexpected EOF") else if c < 48 or c > 57 do JSON.bad(s, g, "in numeric literal") else JSON.numv(s, i, JSON.digs(a, n, g + 1), 1) end end
+    end
+  end
+#: digs/3 needs digk/4 digs/3
+  def digs(a: integer, n: integer, p: integer): integer do
+    r = JSON.digk(a, n, p, 1000)
+    if r < 0 do JSON.digs(a, n, 0 - r - 1) else r end
+  end
+#: digk/4 needs digk/4
+  def digk(a: integer, n: integer, p: integer, k: integer): integer do
+    if p < n and Sys.byte(a + p) >= 48 and Sys.byte(a + p) <= 57 do if k == 0 do 0 - p - 1 else JSON.digk(a, n, p + 1, k - 1) end else p end
+  end
+# A number without fraction or exponent that fits an integer is one; any
+# other is the nearest float, an infinity when it is too large for one.
+#: numv/4 needs digits/3 flt/1 got/2
+  def numv(s: integer, i: integer, q: integer, f: integer): integer do
+    a = Sys.peek(s) + i
+    Sys.poke(s + 16, q)
+    if f == 0 and q - i <= 18 do
+      JSON.got(s, JSON.__word(JSON.integer(if Sys.byte(a) == 45 do 0 - JSON.digits(a + 1, q - i - 1, 0) else JSON.digits(a, q - i, 0) end)))
+    else
+      t = Sys.text(a, q - i)
+      w = if f == 1 do JSON.flt(t) else
+        case Integer.parse(t) do
+          ok(v) -> JSON.__word(JSON.integer(v))
+          error(_) -> JSON.flt(t)
+        end
+      end
+      JSON.got(s, w)
+    end
+  end
+#: digits/3 needs digits/3
+  def digits(a: integer, n: integer, v: integer): integer do
+    if n == 0 do v else JSON.digits(a + 1, n - 1, v * 10 + Sys.byte(a) - 48) end
+  end
+#: flt/1 needs String.starts_with?/2
+  def flt(t: string): integer do
+    far: float = JSON.__cast(if String.starts_with?(t, "-") do -4503599627370496 else 9218868437227405312 end)
+    case Float.parse(t) do
+      ok(x) -> JSON.__word(JSON.float(x))
+      error(_) -> JSON.__word(JSON.float(far))
+    end
+  end
+# true, false or null: w holds the m letters, v is where the record keeps the value.
+#: lit/4 needs Kernel.binary_part/3 bad/3 fail/2 got/2 litk/4
+  def lit(s: integer, w: integer, m: integer, v: integer): integer do
+    i = Sys.peek(s + 16)
+    j = JSON.litk(Sys.peek(s) + i, Sys.peek(s + 8) - i, w, m)
+    name = if j < 0 or j == m do "" else if v == 152 do "true" else if v == 160 do "false" else "null" end end end
+    if j < 0 do JSON.fail(s, "unexpected EOF") else if j < m do JSON.bad(s, i + j, "in literal " <> name <> " (expecting '" <> binary_part(name, j, 1) <> "')") else
+      if Sys.peek(s + v) == 0 do Sys.poke(s + v, if v == 144 do JSON.__word(JSON.null) else JSON.__word(JSON.boolean(v == 152)) end) end
+      Sys.poke(s + 16, i + j)
+      JSON.got(s, Sys.peek(s + v))
+    end end
+  end
+# How many of the m letters in w the n bytes at a start with: m, the place
+# of the first that differs, or -1 when the text ends before either.
+#: litk/4 needs litk/4
+  def litk(a: integer, n: integer, w: integer, m: integer): integer do
+    if m == 0 do 0 else if n == 0 do -1 else if Sys.byte(a) != rem(w, 256) do 0 else
+      r = JSON.litk(a + 1, n - 1, div(w, 256), m - 1)
+      if r < 0 do r else r + 1 end
+    end end end
+  end
+# The string that opens at the place: its bytes as they stand when it has
+# no escape and only ASCII, else unquoted into the buffer.
+#: text/1 needs plain/3 unq/2
+  def text(s: integer): string do
+    a = Sys.peek(s)
+    n = Sys.peek(s + 8)
+    i = Sys.peek(s + 16) + 1
+    j = JSON.plain(a, n, i)
+    Sys.poke(s + 104, 0)
+    r = if j < n and Sys.byte(a + j) == 34 do j + 1 else JSON.unq(s, i) end
+    if r < 0 do "" else
+      Sys.poke(s + 16, r)
+      if Sys.peek(s + 104) == 0 and r == j + 1 do Sys.text(a + i, j - i) else Sys.text(Sys.peek(s + 96), Sys.peek(s + 104)) end
+    end
+  end
+# The first byte from i on that a string does not hold as it is.
+#: plain/3 needs plain/3 plaink/4
+  def plain(a: integer, n: integer, i: integer): integer do
+    r = JSON.plaink(a, n, i, 1000)
+    if r < 0 do JSON.plain(a, n, 0 - r - 1) else r end
+  end
+#: plaink/4 needs plaink/4
+  def plaink(a: integer, n: integer, i: integer, k: integer): integer do
+    c = if i < n do Sys.byte(a + i) else 0 end
+    if c >= 32 and c < 128 and c != 34 and c != 92 do if k == 0 do 0 - i - 1 else JSON.plaink(a, n, i + 1, k - 1) end else i end
+  end
+# jsonwire.ConsumeString and AppendUnquote in one pass from p: the place
+# after the closing quote, or -1.
+#: unq/2 needs unq/2 unqk/3
+  def unq(s: integer, p: integer): integer do
+    r = JSON.unqk(s, p, 300)
+    if r < -1 do JSON.unq(s, 0 - r - 2) else r end
+  end
+#: unqk/3 needs bad/3 esc/3 fail/2 plain/3 put/3 wide/3
+  def unqk(s: integer, p: integer, k: integer): integer do
+    a = Sys.peek(s)
+    n = Sys.peek(s + 8)
+    j = JSON.plain(a, n, p)
+    c = if j < n do Sys.byte(a + j) else -1 end
+    JSON.put(s, a + p, j - p)
+    if c < 0 do JSON.fail(s, "unexpected EOF") - 1 else if c == 34 do j + 1 else if k == 0 do 0 - j - 2 else
+      if c == 92 do JSON.esc(s, j, k) else if c < 32 do JSON.bad(s, j, "in string") - 1 else JSON.wide(s, j, k) end end
+    end end end
+  end
+# Bytes that are no character become U+FFFD one by one.
+#: wide/3 needs Sys.rune/2 put/3 putw/3 unqk/3
+  def wide(s: integer, j: integer, k: integer): integer do
+    a = Sys.peek(s)
+    v = Sys.rune(a + j, Sys.peek(s + 8) - j)
+    w = if v == 0 or v == 2162685 do 1 else div(v, 2097152) end
+    if w == 1 do JSON.putw(s, 12435439, 3) else JSON.put(s, a + j, w) end
+    JSON.unqk(s, j + w, k - 1)
+  end
+#: esc/3 needs fail/2 putc/2 seq/3 uni/3 unqk/3
+  def esc(s: integer, j: integer, k: integer): integer do
+    a = Sys.peek(s)
+    e = if j + 1 < Sys.peek(s + 8) do Sys.byte(a + j + 1) else -1 end
+    x = if e == 34 or e == 92 or e == 47 do e else if e == 98 do 8 else if e == 102 do 12 else if e == 110 do 10 else if e == 114 do 13 else if e == 116 do 9 else -1 end end end end end end
+    if e < 0 do JSON.fail(s, "unexpected EOF") - 1 else if x >= 0 do
+      JSON.putc(s, x)
+      JSON.unqk(s, j + 2, k - 1)
+    else
+      if e == 117 do JSON.uni(s, j, k) else JSON.seq(s, j, 2) end
+    end end
+  end
+# \uXXXX: a pair of surrogates is one character, half a pair U+FFFD. An
+# escape that is wrong is named by the bytes of it that were read (cut).
+#: uni/3 needs fail/2 hex4/1 lim/3 pre/3 putw/3 seq/3 unqk/3 utf/2
+  def uni(s: integer, j: integer, k: integer): integer do
+    a = Sys.peek(s)
+    n = Sys.peek(s + 8)
+    h = if j + 6 <= n do JSON.hex4(a + j + 2) else -1 end
+    l = if h >= 55296 and h < 56320 and j + 12 <= n and Sys.byte(a + j + 6) == 92 and Sys.byte(a + j + 7) == 117 do JSON.hex4(a + j + 8) else -1 end
+    near = JSON.lim(j + 1, n, 64) - j
+    cut = if near < 6 and not JSON.pre(a + j, near, 2) do near else if j + 6 <= n do 0 else if JSON.pre(a + j, n - j, 2) do -1 else n - j end end end
+    if cut < 0 do JSON.fail(s, "unexpected EOF") - 1 else if cut > 0 do JSON.seq(s, j, cut) else if h < 0 do JSON.seq(s, j, 6) else
+      if l >= 56320 and l <= 57343 do
+        JSON.utf(s, 65536 + (h - 55296) * 1024 + l - 56320)
+        JSON.unqk(s, j + 12, k - 1)
+      else
+        if h >= 55296 and h <= 57343 do JSON.putw(s, 12435439, 3) else JSON.utf(s, h) end
+        JSON.unqk(s, j + 6, k - 1)
+      end
+    end end end
+  end
+#: pre/3 needs hex1/1 pre/3
+  def pre(a: integer, m: integer, i: integer): boolean do
+    if i >= m do true else if JSON.hex1(Sys.byte(a + i)) < 0 do false else JSON.pre(a, m, i + 1) end end
+  end
+#: hex1/1
+  def hex1(c: integer): integer do
+    if c >= 48 and c <= 57 do c - 48 else if c >= 97 and c <= 102 do c - 87 else if c >= 65 and c <= 70 do c - 55 else -1 end end end
+  end
+#: hex4/1 needs hex1/1
+  def hex4(a: integer): integer do
+    w = JSON.hex1(Sys.byte(a))
+    x = JSON.hex1(Sys.byte(a + 1))
+    y = JSON.hex1(Sys.byte(a + 2))
+    z = JSON.hex1(Sys.byte(a + 3))
+    if w < 0 or x < 0 or y < 0 or z < 0 do -1 else w * 4096 + x * 256 + y * 16 + z end
+  end
+#: utf/2 needs putc/2
+  def utf(s: integer, r: integer): integer do
+    if r < 128 do JSON.putc(s, r) else if r < 2048 do
+      JSON.putc(s, 192 + div(r, 64))
+      JSON.putc(s, 128 + rem(r, 64))
+    else if r < 65536 do
+      JSON.putc(s, 224 + div(r, 4096))
+      JSON.putc(s, 128 + rem(div(r, 64), 64))
+      JSON.putc(s, 128 + rem(r, 64))
+    else
+      JSON.putc(s, 240 + div(r, 262144))
+      JSON.putc(s, 128 + rem(div(r, 4096), 64))
+      JSON.putc(s, 128 + rem(div(r, 64), 64))
+      JSON.putc(s, 128 + rem(r, 64))
+    end end end
+  end
+# An escape the grammar does not have, as jsonwire.InvalidTextError names
+# it: between backquotes unless it holds a backquote, a space or what
+# strconv would not print as it is.
+#: seq/3 needs String.contains?/2 String.replace/3 fail/2
+  def seq(s: integer, j: integer, m: integer): integer do
+    w = Sys.text(Sys.peek(s) + j, m)
+    x = String.replace(String.replace(w, "\\", "x"), "\"", "x")
+    odd = String.contains?(w, "`") or String.contains?(w, " ") or String.contains?(w, "\xEF\xBF\xBD") or inspect(x) != "\"" <> x <> "\""
+    JSON.fail(s, "invalid escape sequence " <> (if odd do inspect(w) else "`" <> w <> "`" end) <> " in string") - 1
+  end
+# The text as a JSON value: 0, or the bytes of what is wrong with it.
+#: parse/1 needs fail/2 go/1 shut/1 ws/1
+  def parse(s: integer): integer do
+    c = JSON.ws(s)
+    if c < 0 do JSON.fail(s, "EOF") else JSON.go(s) end
+    d = if Sys.peek(s + 24) != 0 do -1 else JSON.ws(s) end
+    if d >= 0 and d != 93 and d != 125 do JSON.fail(s, "unexpected text after the JSON value") end
+    JSON.shut(s)
+    Sys.peek(s + 24)
+  end
+#: decode/1 needs open/1 parse/1
+  def decode(t: string): result[JSON, string] do
+    s = JSON.open(t)
+    e = JSON.parse(s)
+    v: JSON = JSON.__cast(if e != 0 do JSON.__word(JSON.null) else Sys.peek(s + 88) end)
+    if e != 0 do error(Sys.text(e, Sys.peek(e - 8))) else ok(v) end
+  end
+#: decode!/1 needs open/1 parse/1
+  def decode!(t: string): JSON do
+    s = JSON.open(t)
+    e = JSON.parse(s)
+    if e != 0 do raise("invalid JSON: " <> Sys.text(e, Sys.peek(e - 8))) end
+    v: JSON = JSON.__cast(Sys.peek(s + 88))
+    v
+  end
+
+# Writing. A nil (an option that is 0x400000, a result or a sum type whose
+# discriminant is -1: zf_zero) is null. A value is written by the description of its type, the one
+# inspect walks (spec/integer-parse-x86_64.s): w is the word the value is
+# held in and k where the node of its type stands. Each function gives 0,
+# or the bytes of the message about a value JSON has no form for. Lists and
+# maps are halved, so that a long one costs few levels of calls.
+#: err/1
+  def err(m: string): integer do Sys.addr(m) end
+#: enc/3 needs dec/2 enc/3 encs/3 encv/3 fnum/3 items/4 outcome/3 pairs/3 putw/3 quote/3 record/3 tuple/3 variant/3 Sys.flat/1
+  def enc(s: integer, w: integer, k: integer): integer do
+    t = Sys.byte(k + 2)
+    if t == 20 do JSON.enc(s, w, Sys.peek(s + 136) + (Sys.byte(k + 3) + 256 * Sys.byte(k + 3 + 1))) else if t == 35 do JSON.encv(s, w, Sys.peek(k + 8)) else if t == 0 do JSON.dec(s, w) else if t == 2 or t == 22 do JSON.quote(s, w + 8, Sys.peek(w)) else
+      if t == 3 do if w != 0 do JSON.putw(s, 1702195828, 4) else JSON.putw(s, 435728179558, 5) end else if t == 24 do JSON.fnum(s, w, 1) else if t == 4 or t == 34 do if w == 0 or w == 4194304 do JSON.putw(s, 1819047278, 4) else JSON.enc(s, Sys.peek(w + 8), k + 3) end else
+        if t == 7 or t == 25 do JSON.items(s, if t == 25 do Sys.flat(w) else w end, k + 3, 16) else if t == 5 do JSON.tuple(s, w, k) else if t == 8 do JSON.pairs(s, Sys.flat(w), k + 3) else
+          if t == 13 do JSON.record(s, w, k + 3) else if t == 14 do if Sys.peek(w + 8) == -1 do JSON.putw(s, 1819047278, 4) else JSON.variant(s, w, k + 3) end else if t == 6 do if Sys.peek(w) == -1 do JSON.putw(s, 1819047278, 4) else JSON.outcome(s, w, k + 3) end else JSON.encs(s, w, t) end end end
+        end end end
+      end end end
+    end end end end
+  end
+# Node 35 holds where another description starts: the type a type variable
+# stands for (native-described.alc). A node 20 inside it counts from there.
+#: encv/3 needs enc/3
+  def encv(s: integer, w: integer, k: integer): integer do
+    b = Sys.peek(s + 136)
+    Sys.poke(s + 136, k)
+    e = JSON.enc(s, w, k)
+    Sys.poke(s + 136, b)
+    e
+  end
+#: encs/3 needs colon/1 err/1 ints/5 puts/2 quote/3 sep/2
+  def encs(s: integer, w: integer, t: integer): integer do
+    p = w + 8
+    if t == 23 do JSON.ints(s, w + Sys.peek(w) * 16 + 8, ["first", "last", "step"], 1, 125) else if t == 30 do JSON.ints(s, p, ["year", "month", "day"], 1, 125) else
+      if t == 31 do JSON.ints(s, p, ["hour", "minute", "second", "microsecond"], 1, 125) else if t == 32 do JSON.ints(s, p, ["year", "month", "day", "hour", "minute", "second", "microsecond"], 1, 125) else
+        if t == 33 do
+          JSON.ints(s, p, ["year", "month", "day", "hour", "minute", "second", "microsecond"], 1, 0)
+          JSON.sep(s, 0)
+          JSON.puts(s, "\"time_zone\"")
+          JSON.colon(s)
+          JSON.quote(s, Sys.peek(w + 64) + 8, Sys.peek(Sys.peek(w + 64)))
+          JSON.ints(s, w + 72, ["utc_offset"], 0, 125)
+        else JSON.err(if t == 29 do "#Regexp<> cannot be written as JSON" else if t == 36 do "a type of 255 or more parts cannot be written as JSON" else "#Function<> cannot be written as JSON" end end) end
+      end end
+    end end
+  end
+# Over several lines each member starts a line of its own, two spaces in
+# for each array or object it stands in.
+#: nl/1 needs pad/2 putc/2
+  def nl(s: integer): integer do
+    if Sys.peek(s + 120) == 1 do
+      JSON.putc(s, 10)
+      JSON.pad(s, Sys.peek(s + 128) * 2)
+    end
+    0
+  end
+#: pad/2 needs pad/2 putw/3
+  def pad(s: integer, k: integer): integer do
+    if k <= 0 do 0 else
+      JSON.putw(s, 2314885530818453536, if k > 8 do 8 else k end)
+      JSON.pad(s, k - 8)
+    end
+  end
+#: into/2 needs putc/2
+  def into(s: integer, c: integer): integer do
+    Sys.poke(s + 128, Sys.peek(s + 128) + 1)
+    JSON.putc(s, c)
+  end
+#: sep/2 needs nl/1 putc/2
+  def sep(s: integer, f: integer): integer do
+    if f != 1 do JSON.putc(s, 44) end
+    JSON.nl(s)
+  end
+#: out/3 needs nl/1 putc/2
+  def out(s: integer, c: integer, n: integer): integer do
+    Sys.poke(s + 128, Sys.peek(s + 128) - 1)
+    if n > 0 do JSON.nl(s) end
+    JSON.putc(s, c)
+  end
+#: colon/1 needs putc/2 putw/3
+  def colon(s: integer): integer do
+    if Sys.peek(s + 120) == 1 do JSON.putw(s, 8250, 2) else JSON.putc(s, 58) end
+  end
+# The members of the object a record of integers is, from p on; f 1 opens
+# the object and c, unless it is 0, closes it.
+#: ints/5 needs intk/5 into/2 out/3
+  def ints(s: integer, p: integer, names: list[string], f: integer, c: integer): integer do
+    if f == 1 do JSON.into(s, 123) end
+    JSON.intk(s, p, names, 0, f)
+    if c != 0 do JSON.out(s, c, 1) else 0 end
+  end
+#: intk/5 needs Enum.at/3 colon/1 dec/2 intk/5 puts/2 sep/2
+  def intk(s: integer, p: integer, names: list[string], i: integer, f: integer): integer do
+    if i >= length(names) do 0 else
+      JSON.sep(s, if i == 0 do f else 0 end)
+      JSON.puts(s, "\"" <> Enum.at(names, i, "") <> "\"")
+      JSON.colon(s)
+      JSON.dec(s, Sys.peek(p + 8 * i))
+      JSON.intk(s, p, names, i + 1, f)
+    end
+  end
+# A list or the elements of a set (a map's keys): a word in every two.
+#: items/4 needs into/2 item/6 out/3
+  def items(s: integer, w: integer, k: integer, z: integer): integer do
+    n = Sys.peek(w)
+    JSON.into(s, 91)
+    e = JSON.item(s, w + 8, k, z, 0, n)
+    JSON.out(s, 93, n)
+    e
+  end
+#: item/6 needs enc/3 item/6 sep/2
+  def item(s: integer, p: integer, k: integer, z: integer, lo: integer, hi: integer): integer do
+    m = lo + div(hi - lo, 2)
+    if hi <= lo do 0 else if hi - lo == 1 do
+      JSON.sep(s, if lo == 0 do 1 else 0 end)
+      JSON.enc(s, Sys.peek(p + lo * z), k)
+    else
+      e = JSON.item(s, p, k, z, lo, m)
+      if e != 0 do e else JSON.item(s, p, k, z, m, hi) end
+    end end
+  end
+#: tuple/3 needs into/2 out/3 parts/5
+  def tuple(s: integer, w: integer, k: integer): integer do
+    c = Sys.byte(k + 3)
+    JSON.into(s, 91)
+    e = JSON.parts(s, w + 8, c, k + 4, 1)
+    JSON.out(s, 93, c)
+    e
+  end
+# c values from p on, each by the next node from q on.
+#: parts/5 needs enc/3 parts/5 sep/2
+  def parts(s: integer, p: integer, c: integer, q: integer, f: integer): integer do
+    if c == 0 do 0 else
+      JSON.sep(s, f)
+      e = JSON.enc(s, Sys.peek(p), q)
+      if e != 0 do e else JSON.parts(s, p + 8, c - 1, q + (Sys.byte(q) + 256 * Sys.byte(q + 1)), 0) end
+    end
+  end
+# A map is an object. A key that is no string or atom is written as inspect
+# writes it.
+#: pairs/3 needs into/2 out/3 pair/5
+  def pairs(s: integer, w: integer, k: integer): integer do
+    n = Sys.peek(w)
+    JSON.into(s, 123)
+    e = JSON.pair(s, w + 8, k, 0, n)
+    JSON.out(s, 125, n)
+    e
+  end
+#: pair/5 needs colon/1 enc/3 pair/5 quote/3 sep/2
+  def pair(s: integer, p: integer, k: integer, lo: integer, hi: integer): integer do
+    m = lo + div(hi - lo, 2)
+    if hi <= lo do 0 else if hi - lo == 1 do
+      x = Sys.peek(p + lo * 16)
+      t = if Sys.byte(k + 2) == 2 or Sys.byte(k + 2) == 22 do "" else JSON.__show(x, k) end
+      JSON.sep(s, if lo == 0 do 1 else 0 end)
+      if Sys.byte(k + 2) == 2 or Sys.byte(k + 2) == 22 do JSON.quote(s, x + 8, Sys.peek(x)) else JSON.quote(s, Sys.addr(t), byte_size(t)) end
+      JSON.colon(s)
+      JSON.enc(s, Sys.peek(p + lo * 16 + 8), k + (Sys.byte(k) + 256 * Sys.byte(k + 1)))
+    else
+      e = JSON.pair(s, p, k, lo, m)
+      if e != 0 do e else JSON.pair(s, p, k, m, hi) end
+    end end
+  end
+# A struct is an object of its fields by name; q is at the length of the
+# type's name.
+#: record/3 needs err/1 fields/5 into/2 out/3
+  def record(s: integer, w: integer, q: integer): integer do
+    l = Sys.byte(q)
+    c = Sys.byte(q + 1 + l)
+    if Sys.byte(q + 1) == 35 do JSON.err(Sys.text(q + 1, l) <> " cannot be written as JSON") else
+      JSON.into(s, 123)
+      e = JSON.fields(s, w + 8, c, q + 2 + l, 1)
+      JSON.out(s, 125, c)
+      e
+    end
+  end
+#: fields/5 needs colon/1 enc/3 fields/5 quote/3 sep/2
+  def fields(s: integer, p: integer, c: integer, q: integer, f: integer): integer do
+    l = if c == 0 do 0 else Sys.byte(q) end
+    if c == 0 do 0 else
+      JSON.sep(s, f)
+      JSON.quote(s, q + 1, l)
+      JSON.colon(s)
+      e = JSON.enc(s, Sys.peek(p), q + 1 + l)
+      if e != 0 do e else JSON.fields(s, p + 8, c - 1, q + 1 + l + (Sys.byte(q + 1 + l) + 256 * Sys.byte(q + 1 + l + 1)), 0) end
+    end
+  end
+# A variant without fields is its name, one with fields {"name": [fields]};
+# a JSON value is the JSON it stands for.
+#: variant/3 needs enc/3 fnum/3 named/6 putw/3 quote/3 skip/2
+  def variant(s: integer, w: integer, q: integer): integer do
+    l = Sys.byte(q)
+    v = JSON.skip(q + 2 + l, Sys.peek(w + 8))
+    n = Sys.byte(v + 2)
+    c = Sys.byte(v + 3 + n)
+    if l == 4 and rem(Sys.peek(q + 1), 4294967296) == 1313821514 do if c == 0 do JSON.putw(s, 1819047278, 4) else if Sys.peek(w + 8) == 3 do JSON.fnum(s, Sys.peek(w + 16), 0) else JSON.enc(s, Sys.peek(w + 16), v + 4 + n) end end else
+      if c == 0 do JSON.quote(s, v + 3, n) else JSON.named(s, v + 3, n, w + 16, c, v + 4 + n) end
+    end
+  end
+#: skip/2 needs skip/2
+  def skip(v: integer, i: integer): integer do
+    if i == 0 do v else JSON.skip(v + (Sys.byte(v) + 256 * Sys.byte(v + 1)), i - 1) end
+  end
+#: named/6 needs colon/1 into/2 out/3 parts/5 quote/3 sep/2
+  def named(s: integer, a: integer, n: integer, p: integer, c: integer, q: integer): integer do
+    JSON.into(s, 123)
+    JSON.sep(s, 1)
+    JSON.quote(s, a, n)
+    JSON.colon(s)
+    JSON.into(s, 91)
+    e = JSON.parts(s, p, c, q, 1)
+    JSON.out(s, 93, c)
+    JSON.out(s, 125, 1)
+    e
+  end
+#: outcome/3 needs named/6
+  def outcome(s: integer, w: integer, k: integer): integer do
+    if Sys.peek(w) != 0 do JSON.named(s, Sys.addr("ok"), 2, w + 8, 1, k) else JSON.named(s, Sys.addr("error"), 5, w + 8, 1, k + (Sys.byte(k) + 256 * Sys.byte(k + 1))) end
+  end
+# A float as Go's strconv writes it with 'g' and the fewest digits that
+# give it back: with an exponent below -4 or from 6 up in the form d.ddde+XX.
+# An infinity or NaN has no JSON (strict 1), but in a JSON value is written
+# as Go names it, as the pinned runtime does (88 of the record notes it).
+#: fnum/3 needs err/1 gnum/2 puts/2
+  def fnum(s: integer, w: integer, strict: integer): integer do
+    m = if w < 0 do w + 9223372036854775807 + 1 else w end
+    x: float = JSON.__cast(w)
+    odd = if rem(m, 4503599627370496) != 0 do "NaN" else if w < 0 do "-Inf" else "+Inf" end end
+    if div(m, 4503599627370496) != 2047 do JSON.gnum(s, Float.to_string(x)) else if strict == 1 do JSON.err(odd <> " cannot be written as JSON") else
+      Sys.poke(s + 88, 1)
+      JSON.puts(s, odd)
+    end end
+  end
+# The text t of a float as the library writes it (digits, a point, an
+# exponent) becomes Go's: the digits are gathered 32 bytes past the end of
+# the buffer, where what is written does not reach.
+#: gnum/2 needs digits/3 gexp/4 gfix/4 putc/2 room/2 zeros/4
+  def gnum(s: integer, t: string): integer do
+    a = Sys.addr(t)
+    n = byte_size(t)
+    g = if Sys.byte(a) == 45 do 1 else 0 end
+    e = Sys.find(a, n, 101)
+    me = if e < 0 do n else e end
+    d = Sys.find(a, me, 46)
+    pd = if d < 0 do me else d end
+    r = JSON.room(s, 64) + 32
+    l = pd - g + (if d < 0 do 0 else me - pd - 1 end)
+    Sys.copy(r, a + g, pd - g)
+    if d >= 0 do Sys.copy(r + pd - g, a + pd + 1, me - pd - 1) end
+    z = JSON.zeros(r, l, 0, 1)
+    nd = l - z - (if z == l do 0 else JSON.zeros(r, l, 0, -1) end)
+    x = pd - g + (if e < 0 do 0 else if Sys.byte(a + e + 1) == 45 do 0 - JSON.digits(a + e + 2, n - e - 2, 0) else JSON.digits(a + e + 1, n - e - 1, 0) end end) - z - 1
+    if g == 1 do JSON.putc(s, 45) end
+    if nd == 0 do JSON.putc(s, 48) else if x < -4 or x >= 6 do JSON.gexp(s, r + z, nd, x) else JSON.gfix(s, r + z, nd, x + 1) end end
+  end
+#: gexp/4 needs put/3 putc/2
+  def gexp(s: integer, p: integer, nd: integer, x: integer): integer do
+    ax = if x < 0 do 0 - x else x end
+    JSON.putc(s, Sys.byte(p))
+    if nd > 1 do
+      JSON.putc(s, 46)
+      JSON.put(s, p + 1, nd - 1)
+    end
+    JSON.putc(s, 101)
+    JSON.putc(s, if x < 0 do 45 else 43 end)
+    if ax >= 100 do JSON.putc(s, 48 + div(ax, 100)) end
+    JSON.putc(s, 48 + rem(div(ax, 10), 10))
+    JSON.putc(s, 48 + rem(ax, 10))
+  end
+# nd digits with the point after the first dp of them.
+#: gfix/4 needs Kernel.binary_part/3 put/3 putc/2 puts/2
+  def gfix(s: integer, p: integer, nd: integer, dp: integer): integer do
+    if dp <= 0 do
+      JSON.puts(s, binary_part("0.00000", 0, 2 - dp))
+      JSON.put(s, p, nd)
+    else if dp >= nd do
+      JSON.put(s, p, nd)
+      JSON.puts(s, binary_part("00000", 0, dp - nd))
+    else
+      JSON.put(s, p, dp)
+      JSON.putc(s, 46)
+      JSON.put(s, p + dp, nd - dp)
+    end end
+  end
+# An integer in decimal.
+#: dec/2 needs decp/2 putc/2 puts/2
+  def dec(s: integer, w: integer): integer do
+    if w < 0 do
+      JSON.putc(s, 45)
+      if w == -9223372036854775807 - 1 do JSON.puts(s, "9223372036854775808") else JSON.decp(s, 0 - w) end
+    else JSON.decp(s, w) end
+  end
+#: decp/2 needs decp/2 putc/2
+  def decp(s: integer, w: integer): integer do
+    if w >= 10 do JSON.decp(s, div(w, 10)) end
+    JSON.putc(s, 48 + rem(w, 10))
+  end
+# How many zeros stand at the start (step 1) or the end (step -1) of the n bytes at a.
+#: zeros/4 needs zeros/4
+  def zeros(a: integer, n: integer, i: integer, step: integer): integer do
+    if i < n and Sys.byte(if step == 1 do a + i else a + n - 1 - i end) == 48 do JSON.zeros(a, n, i + 1, step) else i end
+  end
+# A string as Go's json.Marshal writes it: <, > and & as \u00XX, U+2028
+# and U+2029 escaped, bytes that are no character as U+FFFD.
+#: quote/3 needs putc/2 qs/3
+  def quote(s: integer, a: integer, n: integer): integer do
+    JSON.putc(s, 34)
+    JSON.qs(s, a, n)
+    JSON.putc(s, 34)
+  end
+#: qs/3 needs qs/3 qsk/5
+  def qs(s: integer, a: integer, n: integer): integer do
+    u = JSON.qsk(s, a, n, 0, 300)
+    if u < n do JSON.qs(s, a + u, n - u) else 0 end
+  end
+#: qsk/5 needs Sys.rune/2 put/3 putw/3 qc/2 qsk/5 safe/3
+  def qsk(s: integer, a: integer, n: integer, i: integer, k: integer): integer do
+    j = JSON.safe(a, n, i)
+    c = if j < n do Sys.byte(a + j) else 0 end
+    v = if c >= 128 do Sys.rune(a + j, n - j) else 0 end
+    w = if v == 0 or v == 2162685 do 1 else div(v, 2097152) end
+    r = rem(v, 2097152)
+    JSON.put(s, a + i, j - i)
+    if j >= n or k == 0 do j else
+      if c < 128 do JSON.qc(s, c) else if w == 1 do JSON.putw(s, 12435439, 3) else if r == 8232 or r == 8233 do JSON.putw(s, 61788208133468 + (r - 8232) * 1099511627776, 6) else JSON.put(s, a + j, w) end end end
+      JSON.qsk(s, a, n, j + w, k - 1)
+    end
+  end
+#: safe/3 needs safe/3 safek/4
+  def safe(a: integer, n: integer, i: integer): integer do
+    r = JSON.safek(a, n, i, 1000)
+    if r < 0 do JSON.safe(a, n, 0 - r - 1) else r end
+  end
+#: safek/4 needs safek/4
+  def safek(a: integer, n: integer, i: integer, k: integer): integer do
+    c = if i < n do Sys.byte(a + i) else 0 end
+    if c >= 32 and c < 128 and c != 34 and c != 92 and c != 60 and c != 62 and c != 38 do if k == 0 do 0 - i - 1 else JSON.safek(a, n, i + 1, k - 1) end else i end
+  end
+#: qc/2 needs hexd/1 putw/3
+  def qc(s: integer, c: integer): integer do
+    x = if c == 34 or c == 92 do c else if c == 8 do 98 else if c == 12 do 102 else if c == 10 do 110 else if c == 13 do 114 else if c == 9 do 116 else 0 end end end end end end
+    if x != 0 do JSON.putw(s, 92 + 256 * x, 2) else
+      JSON.putw(s, 808482140, 4)
+      JSON.putw(s, JSON.hexd(div(c, 16)) + 256 * JSON.hexd(rem(c, 16)), 2)
+    end
+  end
+#: hexd/1
+  def hexd(v: integer): integer do
+    if v < 10 do 48 + v else 87 + v end
+  end
+# The text of the value in w by the description at k, over several lines
+# when p is 1: the record, with what is wrong at 24 when it has no JSON.
+#: write/3 needs enc/3 open/1
+  def write(w: integer, k: integer, p: integer): integer do
+    s = JSON.open("")
+    Sys.poke(s + 120, p)
+    Sys.poke(s + 136, k)
+    Sys.poke(s + 24, JSON.enc(s, w, k))
+    s
+  end
+#: written/1 needs shut/1
+  def written(s: integer): string do
+    e = Sys.peek(s + 24)
+    r = if e != 0 do Sys.text(e, Sys.peek(e - 8)) else Sys.text(Sys.peek(s + 96), Sys.peek(s + 104)) end
+    JSON.shut(s)
+    r
+  end
+# JSON.encode(value), JSON.encode!(value) and JSON.encode!(value, options)
+# as the compiler passes them (native-json.alc).
+#: encode/2 needs write/3 written/1
+  def encode(w: integer, k: integer): result[string, string] do
+    s = JSON.write(w, k, 0)
+    r = JSON.written(s)
+    if Sys.peek(s + 24) != 0 do error(r) else ok(r) end
+  end
+#: encode!/2 needs write/3 written/1
+  def encode!(w: integer, k: integer): string do
+    s = JSON.write(w, k, 0)
+    r = JSON.written(s)
+    if Sys.peek(s + 24) != 0 do raise(r) end
+    r
+  end
+#: encode!/3 needs Enum.any?/2 write/3 written/1
+  def encode!(w: integer, o: list[tuple[atom, boolean]], k: integer): string do
+    s = JSON.write(w, k, 0)
+    r = JSON.written(s)
+    if Sys.peek(s + 24) != 0 do raise(r) end
+    if Enum.any?(o, fn x -> elem(x, 0) != :pretty end) do raise("JSON.encode! takes pretty:") end
+    # Go's json.Indent, which the pinned runtime lays the text out with,
+    # refuses +Inf, -Inf and NaN, and the runtime then has no text at all.
+    if Enum.any?(o, fn x -> elem(x, 1) end) do if Sys.peek(s + 88) == 1 do "" else JSON.written(JSON.write(w, k, 1)) end else r end
+  end
+
+# Reading a JSON value as a type, by the description of the type: the word
+# of the value read. What does not fit is noted in the record e, 0 the
+# bytes of the message and 8 those of the path to the value, which each
+# level puts its own step before (".name" or "[index]") only once
+# something is wrong, so that reading costs no text; 16 is the first
+# description. The messages are those of the pinned runtime's readers.
+#: wrong/2
+  def wrong(e: integer, m: string): integer do
+    if Sys.peek(e) == 0 do
+      Sys.poke(e, Sys.addr(m))
+      Sys.poke(e + 8, Sys.addr(""))
+    end
+    0
+  end
+#: under/2
+  def under(e: integer, step: string): integer do
+    p = Sys.peek(e + 8)
+    Sys.poke(e + 8, Sys.addr(step <> Sys.text(p, Sys.peek(p - 8))))
+    0
+  end
+#: kind/1
+  def kind(v: JSON): string do
+    case v do
+      JSON.null -> "null"
+      JSON.boolean(_) -> "a boolean"
+      JSON.integer(_) -> "an integer"
+      JSON.float(_) -> "a float"
+      JSON.string(_) -> "a string"
+      JSON.list(_) -> "a list"
+      JSON.object(_) -> "an object"
+    end
+  end
+#: unfit/3 needs kind/1 wrong/2
+  def unfit(e: integer, wanted: string, v: JSON): integer do
+    JSON.wrong(e, "expected " <> wanted <> ", found " <> JSON.kind(v))
+  end
+# A record of n words behind its count.
+#: rec/1
+  def rec(n: integer): integer do
+    r = Sys.addr(String.duplicate("\x00", 8 + 8 * n))
+    Sys.poke(r, n)
+    r
+  end
+# The list of the words a record holds (spec/alchem-lists.md): a block of
+# -2, a word of padding, a pair of count and element for each, and 0.
+#: aslist/1 needs spread/4
+  def aslist(r: integer): integer do
+    n = Sys.peek(r)
+    o = Sys.addr(String.duplicate("\x00", 24 + 16 * n))
+    Sys.poke(o, -2)
+    JSON.spread(r, o, 0, n)
+    o + 16
+  end
+#: spread/4 needs spread/4
+  def spread(r: integer, o: integer, lo: integer, hi: integer): integer do
+    m = lo + div(hi - lo, 2)
+    if hi <= lo do 0 else if hi - lo == 1 do
+      Sys.poke(o + 16 + 16 * lo, Sys.peek(r) - lo)
+      Sys.poke(o + 24 + 16 * lo, Sys.peek(r + 8 + 8 * lo))
+    else
+      JSON.spread(r, o, lo, m)
+      JSON.spread(r, o, m, hi)
+    end end
+  end
+#: fit/3 needs fit/3 fitv/3 fixed/3 listed/4 wrong/2 mapped/3 maybe/3 scalar/3 shaped/3 variantof/4
+  def fit(e: integer, v: JSON, k: integer): integer do
+    t = Sys.byte(k + 2)
+    if t == 20 do JSON.fit(e, v, Sys.peek(e + 16) + (Sys.byte(k + 3) + 256 * Sys.byte(k + 3 + 1))) else if t == 35 do JSON.fitv(e, v, Sys.peek(k + 8)) else if t == 36 do JSON.wrong(e, "a type of 255 or more parts cannot be read from JSON") else if t == 0 or t == 24 or t == 3 or t == 2 or t == 22 do JSON.scalar(e, v, t) else
+      if t == 4 or t == 34 do JSON.maybe(e, v, k + 3) else if t == 7 or t == 25 or t == 5 do JSON.listed(e, v, k, t) else if t == 8 do JSON.mapped(e, v, k + 3) else
+        if t == 13 do JSON.shaped(e, v, k + 3) else if t == 14 or t == 6 do JSON.variantof(e, v, k, t) else JSON.fixed(e, v, t) end end
+      end end end
+    end end end end
+  end
+#: fitv/3 needs fit/3
+  def fitv(e: integer, v: JSON, k: integer): integer do
+    b = Sys.peek(e + 16)
+    Sys.poke(e + 16, k)
+    r = JSON.fit(e, v, k)
+    Sys.poke(e + 16, b)
+    r
+  end
+#: scalar/3 needs unfit/3
+  def scalar(e: integer, v: JSON, t: integer): integer do
+    case v do
+      JSON.integer(n) -> if t == 0 do n else if t == 24 do JSON.__word(Float.from_integer(n)) else JSON.unfit(e, if t == 3 do "a boolean" else "a string" end, v) end end
+      JSON.float(x) -> if t == 24 do JSON.__word(x) else JSON.unfit(e, if t == 0 do "an integer" else if t == 3 do "a boolean" else "a string" end end, v) end
+      JSON.boolean(b) -> if t == 3 do JSON.__word(b) else JSON.unfit(e, if t == 0 do "an integer" else if t == 24 do "a float" else "a string" end end, v) end
+      JSON.string(x) -> if t == 2 or t == 22 do JSON.__word(x) else JSON.unfit(e, if t == 0 do "an integer" else if t == 24 do "a float" else "a boolean" end end, v) end
+      _ -> JSON.unfit(e, if t == 0 do "an integer" else if t == 24 do "a float" else if t == 3 do "a boolean" else "a string" end end end, v)
+    end
+  end
+#: maybe/3 needs fit/3
+  def maybe(e: integer, v: JSON, k: integer): integer do
+    case v do
+      JSON.null -> 0
+      _ ->
+        o: option[integer] = some(JSON.fit(e, v, k))
+        JSON.__word(o)
+    end
+  end
+# A list, a set (25) or a tuple (5) from an array.
+#: listed/4 needs aslist/1 each/6 rec/1 set/2 tupled/5 unfit/3 wrong/2
+  def listed(e: integer, v: JSON, k: integer, t: integer): integer do
+    case v do
+      JSON.list(l) ->
+        n = length(l)
+        c = Sys.byte(k + 3)
+        r = if t == 5 and n != c do 0 else JSON.rec(n) end
+        if t == 5 and n != c do JSON.wrong(e, "expected a list of " <> Integer.to_string(c) <> ", found one of " <> Integer.to_string(n)) else
+          if t == 5 do JSON.tupled(e, JSON.__word(l), r, 0, k + 4) else JSON.each(e, JSON.__word(l), r, k + 3, 0, n) end
+          if t == 25 and Sys.peek(e) == 0 do JSON.set(r, k + 3) else if t == 5 or Sys.peek(e) != 0 do r else JSON.aslist(r) end end
+        end
+      _ -> JSON.unfit(e, "a list", v)
+    end
+  end
+#: each/6 needs each/6 fit/3 under/2
+  def each(e: integer, l: integer, r: integer, k: integer, lo: integer, hi: integer): integer do
+    m = lo + div(hi - lo, 2)
+    if hi <= lo or Sys.peek(e) != 0 do 0 else if hi - lo == 1 do
+      x: JSON = JSON.__cast(Sys.peek(l + 8 + lo * 16))
+      Sys.poke(r + 8 + lo * 8, JSON.fit(e, x, k))
+      if Sys.peek(e) != 0 do JSON.under(e, "[" <> Integer.to_string(lo) <> "]") else 0 end
+    else
+      JSON.each(e, l, r, k, lo, m)
+      JSON.each(e, l, r, k, m, hi)
+    end end
+  end
+# The items from i on of the list l, each by the next node from q on.
+#: tupled/5 needs fit/3 tupled/5 under/2
+  def tupled(e: integer, l: integer, r: integer, i: integer, q: integer): integer do
+    x: JSON = JSON.__cast(if i < Sys.peek(l) do Sys.peek(l + 8 + i * 16) else JSON.__word(JSON.null) end)
+    if i >= Sys.peek(l) do 0 else
+      Sys.poke(r + 8 + i * 8, JSON.fit(e, x, q))
+      if Sys.peek(e) != 0 do JSON.under(e, "[" <> Integer.to_string(i) <> "]") else JSON.tupled(e, l, r, i + 1, q + (Sys.byte(q) + 256 * Sys.byte(q + 1))) end
+    end
+  end
+# The set of the n values in the record r: a map from each to true. A map
+# is made for a list of pairs of one key type; elements that are tuples are
+# put in order here.
+#: set/2 needs keyed/2 pour/4 ranked/3
+  def set(r: integer, k: integer): integer do
+    t = Sys.byte(k + 2)
+    n = Sys.peek(r)
+    x = Sys.addr(String.duplicate("\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00", n))
+    if t == 5 do JSON.ranked(r, k, n) else
+      JSON.pour(r + 8, x, 0, n)
+      JSON.keyed(r, t)
+    end
+  end
+# The tuples of two words at x get the words from p on as their first, and
+# those words become the tuples' addresses.
+#: pour/4 needs pour/4
+  def pour(p: integer, x: integer, lo: integer, hi: integer): integer do
+    m = lo + div(hi - lo, 2)
+    if hi <= lo do 0 else if hi - lo == 1 do
+      Sys.poke(x + lo * 24 + 8, Sys.peek(p + lo * 8))
+      Sys.poke(p + lo * 8, x + lo * 24)
+    else
+      JSON.pour(p, x, lo, m)
+      JSON.pour(p, x, m, hi)
+    end end
+  end
+# The map of the pairs the record r lists, whose keys are of the type t.
+#: keyed/2 needs Map.new/1 aslist/1 rec/1
+  def keyed(r: integer, t: integer): integer do
+    l = JSON.aslist(r)
+    z = JSON.aslist(JSON.rec(0))
+    a: list[tuple[integer, integer]] = JSON.__cast(if t == 0 or t == 3 do l else z end)
+    b: list[tuple[float, integer]] = JSON.__cast(if t == 24 do l else z end)
+    c: list[tuple[string, integer]] = JSON.__cast(if t == 2 or t == 22 do l else z end)
+    if t == 0 or t == 3 do JSON.__word(Map.new(a)) else if t == 24 do JSON.__word(Map.new(b)) else JSON.__word(Map.new(c)) end end
+  end
+# n tuples in order without repeats: each that no earlier one equals goes
+# where the count of the smaller ones puts it.
+#: ranked/3 needs place/6 rec/1
+  def ranked(r: integer, k: integer, n: integer): integer do
+    o = JSON.rec(2 * n)
+    c = JSON.place(r, o, k, 0, n, 0)
+    Sys.poke(o, c)
+    o
+  end
+#: place/6 needs count/6 place/6
+  def place(r: integer, o: integer, k: integer, i: integer, n: integer, c: integer): integer do
+    x = if i < n do Sys.peek(r + 8 + i * 8) else 0 end
+    if i >= n do c else
+      if JSON.count(r, k, x, 0, i, 0) > 0 do JSON.place(r, o, k, i + 1, n, c) else
+        j = JSON.count(r, k, x, 0, n, -1)
+        Sys.poke(o + 8 + j * 16, x)
+        Sys.poke(o + 16 + j * 16, 1)
+        JSON.place(r, o, k, i + 1, n, c + 1)
+      end
+    end
+  end
+# How many of the values lo to hi of r compare to x as d says (0 equal, -1
+# smaller), each value counted once: one that an earlier value equals is not.
+#: count/6 needs count/6 order/3
+  def count(r: integer, k: integer, x: integer, lo: integer, hi: integer, d: integer): integer do
+    m = lo + div(hi - lo, 2)
+    y = if hi - lo == 1 do Sys.peek(r + 8 + lo * 8) else 0 end
+    if hi <= lo do 0 else if hi - lo == 1 do
+      if JSON.order(y, x, k) != d do 0 else if d == 0 do 1 else if JSON.count(r, k, y, 0, lo, 0) > 0 do 0 else 1 end end end
+    else JSON.count(r, k, x, lo, m, d) + JSON.count(r, k, x, m, hi, d) end end
+  end
+# -1, 0 or 1 as the value x stands before, with or after y in a map's order.
+#: order/3 needs orders/4
+  def order(x: integer, y: integer, k: integer): integer do
+    t = Sys.byte(k + 2)
+    a: string = JSON.__cast(if t == 2 or t == 22 do x else JSON.__word("") end)
+    b: string = JSON.__cast(if t == 2 or t == 22 do y else JSON.__word("") end)
+    f: float = JSON.__cast(if t == 24 do x else 0 end)
+    g: float = JSON.__cast(if t == 24 do y else 0 end)
+    if t == 5 do JSON.orders(x + 8, y + 8, Sys.byte(k + 3), k + 4) else
+      if t == 2 or t == 22 do if a < b do -1 else if a == b do 0 else 1 end end else
+        if t == 24 do if f < g do -1 else if f == g do 0 else 1 end end else if x < y do -1 else if x == y do 0 else 1 end end end
+      end
+    end
+  end
+#: orders/4 needs order/3 orders/4
+  def orders(p: integer, q: integer, c: integer, k: integer): integer do
+    d = if c == 0 do 0 else JSON.order(Sys.peek(p), Sys.peek(q), k) end
+    if c == 0 or d != 0 do d else JSON.orders(p + 8, q + 8, c - 1, k + (Sys.byte(k) + 256 * Sys.byte(k + 1))) end
+  end
+# A map from an object; k is the node of the key type. Text keys stand in
+# the object's order already.
+#: mapped/3 needs fill/3 keyed/2 member/7 rec/1 unfit/3
+  def mapped(e: integer, v: JSON, k: integer): integer do
+    case v do
+      JSON.object(m) ->
+        w = JSON.__word(m)
+        n = Sys.peek(w)
+        t = Sys.byte(k + 2)
+        r = JSON.rec(if t == 2 or t == 22 do 2 * n else n end)
+        x = if t == 2 or t == 22 do r + 8 else Sys.addr(String.duplicate("\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00", n)) + 8 end
+        z = if t == 2 or t == 22 do 16 else 24 end
+        JSON.member(e, w, x, z, k, 0, n)
+        if t == 2 or t == 22 do
+          Sys.poke(r, n)
+          r
+        else
+          if Sys.peek(e) == 0 do
+            JSON.fill(r + 8, x - 8, n)
+            JSON.keyed(r, t)
+          else 0 end
+        end
+      _ -> JSON.unfit(e, "an object", v)
+    end
+  end
+# The members lo to hi of the object at w: key and value go to x, z bytes apart.
+#: member/7 needs fit/3 keyof/3 member/7 under/2
+  def member(e: integer, w: integer, x: integer, z: integer, k: integer, lo: integer, hi: integer): integer do
+    m = lo + div(hi - lo, 2)
+    if hi <= lo or Sys.peek(e) != 0 do 0 else if hi - lo == 1 do
+      name: string = JSON.__cast(Sys.peek(w + 8 + lo * 16))
+      y: JSON = JSON.__cast(Sys.peek(w + 16 + lo * 16))
+      Sys.poke(x + lo * z, if Sys.byte(k + 2) == 2 or Sys.byte(k + 2) == 22 do Sys.peek(w + 8 + lo * 16) else JSON.keyof(e, name, Sys.byte(k + 2)) end)
+      if Sys.peek(e) == 0 do Sys.poke(x + lo * z + 8, JSON.fit(e, y, k + (Sys.byte(k) + 256 * Sys.byte(k + 1)))) end
+      if Sys.peek(e) != 0 do JSON.under(e, "." <> name) else 0 end
+    else
+      JSON.member(e, w, x, z, k, lo, m)
+      JSON.member(e, w, x, z, k, m, hi)
+    end end
+  end
+# A member's name as a key of the type t, as Go's strconv reads a number.
+#: keyof/3 needs Kernel.binary_part/3 String.contains?/2 String.starts_with?/2 wrong/2
+  def keyof(e: integer, name: string, t: integer): integer do
+    low = String.downcase(name)
+    bare = if String.starts_with?(low, "+") or String.starts_with?(low, "-") do binary_part(low, 1, byte_size(low) - 1) else low end
+    far: float = JSON.__cast(if String.starts_with?(low, "-") do -4503599627370496 else 9218868437227405312 end)
+    nan: float = JSON.__cast(9221120237041090561)
+    if t == 3 do
+      if name == "true" do 1 else if name == "false" do 0 else JSON.wrong(e, "expected true or false as the key, found " <> inspect(name)) end end
+    else if t == 0 do
+      case Integer.parse(name) do
+        ok(n) -> n
+        error(_) -> JSON.wrong(e, "expected an integer as the key, found " <> inspect(name))
+      end
+    else
+      if bare == "inf" or bare == "infinity" do JSON.__word(far) else if low == "nan" do JSON.__word(nan) else
+        case (if String.contains?(name, "_") do error("") else Float.parse(name) end) do
+          ok(x) -> JSON.__word(x)
+          error(_) -> JSON.wrong(e, "expected a float as the key, found " <> inspect(name))
+        end
+      end end
+    end end
+  end
+# A struct from an object by field name; q is at the length of its name. A
+# field declared an option may be left out; one that is an option only
+# through a type variable (node 34, or node 35 inside a generic function)
+# may not, as upstream has it.
+#: shaped/3 needs field/5 rec/1 unfit/3
+  def shaped(e: integer, v: JSON, q: integer): integer do
+    l = Sys.byte(q)
+    c = Sys.byte(q + 1 + l)
+    case v do
+      JSON.object(m) ->
+        r = JSON.rec(c)
+        JSON.field(e, JSON.__word(m), r + 8, c, q + 2 + l)
+        r
+      _ -> JSON.unfit(e, "an object for " <> Sys.text(q + 1, l), v)
+    end
+  end
+#: field/5 needs field/5 fit/3 look/4 under/2 wrong/2
+  def field(e: integer, m: integer, p: integer, c: integer, q: integer): integer do
+    l = if c == 0 do 0 else Sys.byte(q) end
+    i = if c == 0 do -1 else JSON.look(m + 8, Sys.peek(m), q + 1, l) end
+    v: JSON = JSON.__cast(if i < 0 do JSON.__word(JSON.null) else Sys.peek(m + 16 + i * 16) end)
+    if c == 0 do 0 else
+      if i >= 0 do Sys.poke(p, JSON.fit(e, v, q + 1 + l)) else if Sys.byte(q + 3 + l) == 4 do Sys.poke(p, 0) else JSON.wrong(e, "missing") end end
+      if Sys.peek(e) != 0 do JSON.under(e, "." <> Sys.text(q + 1, l)) else JSON.field(e, m, p + 8, c - 1, q + 1 + l + (Sys.byte(q + 1 + l) + 256 * Sys.byte(q + 1 + l + 1))) end
+    end
+  end
+# Which of the n members from p on has the l bytes at a as its name; -1: none.
+#: look/4 needs look/4
+  def look(p: integer, n: integer, a: integer, l: integer): integer do
+    k = Sys.peek(p + (if n > 0 do n - 1 else 0 end) * 16)
+    if n == 0 do -1 else if Sys.peek(k) == l and Sys.same(k + 8, a, l) == 1 do n - 1 else JSON.look(p, n - 1, a, l) end end
+  end
+# A variant from its name, or from {"name": [fields]}. A result (t 6) is
+# the variants ok and error of one field each.
+#: variantof/4 needs names/2 pick/5 under/2 unfit/3
+  def variantof(e: integer, v: JSON, k: integer, t: integer): integer do
+    l = Sys.byte(k + 3)
+    if t == 14 and l == 4 and rem(Sys.peek(k + 4), 4294967296) == 1313821514 do JSON.__word(v) else
+      case v do
+        JSON.string(name) ->
+          el: list[JSON] = []
+          JSON.pick(e, name, JSON.__word(JSON.list(el)), k, t)
+        JSON.object(m) ->
+          w = JSON.__word(m)
+          name: string = JSON.__cast(if Sys.peek(w) == 1 do Sys.peek(w + 8) else JSON.__word("") end)
+          items: JSON = JSON.__cast(if Sys.peek(w) == 1 do Sys.peek(w + 16) else JSON.__word(JSON.null) end)
+          if Sys.peek(w) != 1 do JSON.unfit(e, "one of " <> JSON.names(k, t), v) else
+            case items do
+              JSON.list(_) -> JSON.pick(e, name, JSON.__word(items), k, t)
+              _ ->
+                JSON.unfit(e, "a list", items)
+                JSON.under(e, "." <> name)
+            end
+          end
+        _ -> JSON.unfit(e, "one of " <> JSON.names(k, t), v)
+      end
+    end
+  end
+#: names/2 needs listing/2
+  def names(k: integer, t: integer): string do
+    l = Sys.byte(k + 3)
+    if t == 6 do "ok, error" else JSON.listing(k + 5 + l, Sys.byte(k + 4 + l)) end
+  end
+#: listing/2 needs listing/2
+  def listing(v: integer, c: integer): string do
+    if c == 0 do "" else Sys.text(v + 3, Sys.byte(v + 2)) <> (if c > 1 do ", " else "" end) <> JSON.listing(v + (Sys.byte(v) + 256 * Sys.byte(v + 1)), c - 1) end
+  end
+# The variant called name with the fields the JSON list w holds.
+#: pick/5 needs find/4 names/2 rec/1 skip/2 tupled/5 under/2 wrong/2
+  def pick(e: integer, name: string, w: integer, k: integer, t: integer): integer do
+    l = Sys.byte(k + 3)
+    i = if t == 6 do if name == "ok" do 0 else if name == "error" do 1 else -1 end end else JSON.find(k + 5 + l, Sys.byte(k + 4 + l), name, 0) end
+    v = if t == 6 or i < 0 do 0 else JSON.skip(k + 5 + l, i) end
+    c = if t == 6 do 1 else if i < 0 do 0 else Sys.byte(v + 3 + Sys.byte(v + 2)) end end
+    q = if t == 6 do if i == 0 do k + 3 else k + 3 + (Sys.byte(k + 3) + 256 * Sys.byte(k + 3 + 1)) end else if i < 0 do 0 else v + 4 + Sys.byte(v + 2) end end
+    items = Sys.peek(w + 16)
+    r = if i < 0 or Sys.peek(items) != c do 0 else JSON.rec(c + 1) end
+    if i < 0 do JSON.wrong(e, "expected one of " <> JSON.names(k, t) <> ", found " <> name) else
+      if Sys.peek(items) != c do
+        JSON.wrong(e, "expected " <> Integer.to_string(c) <> " fields, found " <> Integer.to_string(Sys.peek(items)))
+        JSON.under(e, "." <> name)
+      else
+        Sys.poke(r + 8, i)
+        JSON.tupled(e, items, r + 8, 0, q)
+        if Sys.peek(e) != 0 do JSON.under(e, "." <> name) else
+          if t == 6 do
+            Sys.poke(r, 1 - i)
+            Sys.poke(r + 8, Sys.peek(r + 16))
+          end
+          r
+        end
+      end
+    end
+  end
+#: find/4 needs find/4
+  def find(v: integer, c: integer, name: string, i: integer): integer do
+    if c == 0 do -1 else if Sys.byte(v + 2) == byte_size(name) and Sys.same(v + 3, Sys.addr(name), byte_size(name)) == 1 do i else JSON.find(v + (Sys.byte(v) + 256 * Sys.byte(v + 1)), c - 1, name, i + 1) end end
+  end
+# The structs of the library that a description names by a number only:
+# a range and the four of the calendar.
+#: fixed/3 needs rec/1 under/2 unfit/3 whole/5 wrong/2
+  def fixed(e: integer, v: JSON, t: integer): integer do
+    names = if t == 23 do ["first", "last", "step"] else if t == 30 do ["year", "month", "day"] else if t == 31 do ["hour", "minute", "second", "microsecond"] else ["year", "month", "day", "hour", "minute", "second", "microsecond"] end end end
+    case v do
+      JSON.object(m) ->
+        r = JSON.rec(if t == 33 do 9 else length(names) end)
+        JSON.whole(e, m, names, r + 8, 0)
+        if t == 23 do Sys.poke(r, 0) end
+        if t == 33 and Sys.peek(e) == 0 do
+          case Map.get(m, "time_zone") do
+            some(JSON.string(z)) -> Sys.poke(r + 64, JSON.__word(z))
+            some(other) ->
+              JSON.unfit(e, "a string", other)
+              JSON.under(e, ".time_zone")
+            none ->
+              JSON.wrong(e, "missing")
+              JSON.under(e, ".time_zone")
+          end
+          if Sys.peek(e) == 0 do JSON.whole(e, m, ["utc_offset"], r + 72, 0) end
+        end
+        r
+      _ -> JSON.unfit(e, "an object for " <> (if t == 23 do "Range" else if t == 30 do "Date" else if t == 31 do "Time" else if t == 32 do "NaiveDateTime" else "DateTime" end end end end), v)
+    end
+  end
+#: whole/5 needs Enum.at/3 under/2 unfit/3 whole/5 wrong/2
+  def whole(e: integer, m: map[string, JSON], names: list[string], p: integer, i: integer): integer do
+    name = Enum.at(names, i, "")
+    if i >= length(names) do 0 else
+      case Map.get(m, name) do
+        some(JSON.integer(n)) -> Sys.poke(p + 8 * i, n)
+        some(other) -> JSON.unfit(e, "an integer", other)
+        none -> JSON.wrong(e, "missing")
+      end
+      if Sys.peek(e) != 0 do JSON.under(e, "." <> name) else JSON.whole(e, m, names, p, i + 1) end
+    end
+  end
+# The word of result[a, string]: ok of the value, or error of what did not
+# fit with the path before it.
+#: read/2 needs failed/1 fit/3 told/1
+  def read(v: JSON, k: integer): integer do
+    e = Sys.addr(String.duplicate("\x00", 24))
+    Sys.poke(e + 16, k)
+    good: result[integer, string] = ok(JSON.fit(e, v, k))
+    if Sys.peek(e) == 0 do JSON.__word(good) else JSON.failed(JSON.told(e)) end
+  end
+#: told/1 needs Kernel.binary_part/3 String.starts_with?/2
+  def told(e: integer): string do
+    m = Sys.peek(e)
+    p = Sys.peek(e + 8)
+    path = Sys.text(p, Sys.peek(p - 8))
+    shown = if String.starts_with?(path, ".") do binary_part(path, 1, byte_size(path) - 1) else path end
+    (if shown == "" do "" else shown <> ": " end) <> Sys.text(m, Sys.peek(m - 8))
+  end
+#: failed/1
+  def failed(m: string): integer do
+    bad: result[integer, string] = error(m)
+    JSON.__word(bad)
+  end
+# JSON.decode_as(text) and JSON.decode_as(value) as the compiler passes
+# them: k is the description of the type the context expects.
+#: decode_as/2 needs failed/1 open/1 parse/1 read/2
+  def decode_as(t: string, k: integer): integer do
+    s = JSON.open(t)
+    e = JSON.parse(s)
+    v: JSON = JSON.__cast(if e != 0 do JSON.__word(JSON.null) else Sys.peek(s + 88) end)
+    if e != 0 do JSON.failed("invalid JSON: " <> Sys.text(e, Sys.peek(e - 8))) else JSON.read(v, k) end
+  end
+#: decode_as/2 form 2 needs read/2
+  def decode_as(v: JSON, k: integer): integer do
+    JSON.read(v, k)
+  end
+

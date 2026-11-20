@@ -1,0 +1,246 @@
+defmodule NativeCollections do
+  # 1 when b[ at pos is a byte literal: the bracket stands against the b,
+  # and no binding called b holds a list, a map or a tuple, which b[0] reads.
+  def nl_bytes(source: bytes, pos: integer, env: bytes): integer do
+    start = nc_start(source,pos)
+    local = nc_lookup(source,start,env,2)
+    held = if local < 0 do 0 else nt_tag(nt_read(env,nc_env_offset(env,local)+7)) end
+    if nc_word(source,pos,b[98]) == 0 do 0 else if byte_at(source,start+1) != 91 do 0 else if (held-7)*(held-8)*(held-5) == 0 do 0 else 1 end end end
+  end
+  # b"..." is a byte literal written in base64 (RFC 4648, with = padding),
+  # the compiler's own dialect as b[...] is: it holds the library's packed
+  # text (scripts/generate-prelude.py) in a third of the bytes decimal does.
+  # Text of up to 4096 characters, so the closing quote is found in few
+  # steps by a seed-built compiler too.
+  def nl_coded(source: bytes, pos: integer): integer do
+    start = nc_start(source,pos)
+    if nc_word(source,pos,b[98]) == 0 do 0 else if byte_at(source,start+1) != 34 do 0 else 1 end end
+  end
+  def nl_coded_value(source: bytes, pos: integer): bytes do
+    open = nc_start(source,pos)+2
+    close = ns_quoted_end(source,open)-1
+    size = close-open
+    groups = nc_units(size,4)
+    data = if close < open do b[] else if size > 4096 do b[] else if groups*4 != size do b[] else if size == 0 do b[] else nl_groups(source,open,0,groups,groups) end end end end
+    if size == 0 do nc_value(close+1,nc_literal_emit(b[]),b[1]) else if Enum.count(data) == 0 do b[] else nc_value(close+1,nc_literal_emit(data),b[1]) end end
+  end
+  def nl_groups(source: bytes, at: integer, first: integer, stop: integer, count: integer): bytes do
+    if stop-first == 1 do nl_group(source,at+first*4,if stop == count do 1 else 0 end) else
+      middle = first+nc_half(stop-first)
+      left = nl_groups(source,at,first,middle,count)
+      right = nl_groups(source,at,middle,stop,count)
+      if Enum.count(left) == 0 do b[] else if Enum.count(right) == 0 do b[] else Enum.concat(left,right) end end
+    end
+  end
+  def nl_sextet(c: integer): integer do
+    if (c-97)*(122-c) >= 0 do c-71 else if (c-65)*(90-c) >= 0 do c-65 else if (c-48)*(57-c) >= 0 do c+4 else if c == 43 do 62 else if c == 47 do 63 else -1 end end end end end
+  end
+  # Four characters: three bytes, or two or one before = in the last group.
+  def nl_group(source: bytes, p: integer, last: integer): bytes do
+    third = byte_at(source,p+2)
+    fourth = byte_at(source,p+3)
+    pad = if fourth != 61 do 0 else if third == 61 do 2 else 1 end end
+    a = nl_sextet(byte_at(source,p))
+    c = nl_sextet(byte_at(source,p+1))
+    d = if pad == 2 do 0 else nl_sextet(third) end
+    e = if pad > 0 do 0 else nl_sextet(fourth) end
+    word = a*262144+c*4096+d*64+e
+    high = nc_upper(word)
+    middle = nc_hi(word-high*65536)
+    low = word-high*65536-middle*256
+    bad = if a < 0 do 1 else if c < 0 do 1 else if d < 0 do 1 else if e < 0 do 1 else if pad*(1-last) > 0 do 1 else 0 end end end end end
+    if bad == 1 do b[] else if pad == 2 do b[high] else if pad == 1 do b[high,middle] else b[high,middle,low] end end end
+  end
+  def nl_unary(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    if nl_coded(source,pos) == 1 do nl_coded_value(source,pos) else if nl_bytes(source,pos,env) == 1 do nc_list(source,nc_end(source,nc_end(source,pos)),env,table,depth+1) else
+      if nc_word(source,pos,b[38]) == 1 do nf_ampersand(source,nc_start(source,pos),env,table,depth) else if nc_word(source,pos,b[126,126,126]) == 1 do nk_bnot(source,nc_start(source,pos),env,table,depth) else if byte_at(source,nc_start(source,pos)) == 126 do sg_sigil(source,nc_start(source,pos),env,table,depth) else nb_scalar(source,pos,env,table,depth) end end end
+    end end
+  end
+  # []: the address of a count of 0 that lies in the code, behind the word
+  # -2 and one of padding, as every list lies behind them (alchem-lists.md).
+  # Nothing is allocated, and nothing is ever written there.
+  def nl_empty(): bytes do
+    Enum.concat(xa_mark_back(24,16,b[72,141,5,18,0,0,0]),b[235,24,254,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0])
+  end
+  def nl_list(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    if nc_word(source,pos,b[93]) == 1 do nc_value(nc_end(source,pos),nl_empty(),b[7,9]) else
+      state = nc_list_collect(source,pos,b[],0,93)
+      scope = nf_inward(source,pos-1,env)
+      plain = if nc_pos(state) < 0 do b[] else nl_built(source,state,scope,table,depth) end
+      if nc_pos(state) < 0 do b[] else if nc_pos(plain) >= 0 do plain else
+        # Elements after the first are expected to have its type.
+        led = nl_led(source,nc_code(state),scope,table,depth)
+        if Enum.count(led) == 0 do b[] else nl_built(source,state,led,table,depth) end
+      end end
+    end
+  end
+  def nl_built(source: bytes, state: bytes, env: bytes, table: bytes, depth: integer): bytes do
+    spans = nc_code(state)
+    count = nc_units(Enum.count(spans),6)
+    items = nl_items(source,spans,env,table,depth,nc_join(nc_u24(0),nc_u24(count),if nf_parted(source,env,table) == 1 do b[1] else b[] end))
+    kind = nt_unary(7,nc_kind(items))
+    if nc_pos(items) < 0 do wc_cons(source,state,env,table,depth) else if nt_tag(kind) < 0 do b[] else
+      nw_keep(nc_value(nc_pos(state),nc_join(nc_code(items),Enum.concat(b[185],nc_u32(count)),nl_pack_blob()),kind),items,b[])
+    end end
+  end
+  # env with the type of the first element expected of the list, when that
+  # type holds a function and a later element is written as a lambda; b[]
+  # otherwise.
+  def nl_led(source: bytes, spans: bytes, env: bytes, table: bytes, depth: integer): bytes do
+    count = nc_units(Enum.count(spans),6)
+    later = if count < 2 do 0 else ny_has(source,nc_cursor(spans,6),nc_cursor(spans,count*6-3),b[102,110])+ny_has(source,nc_cursor(spans,6),nc_cursor(spans,count*6-3),b[38]) end
+    first = if later == 0 do b[] else nl_items(source,spans,env,table,depth,Enum.concat(nc_u24(0),nc_u24(1))) end
+    if nc_pos(first) < 0 do b[] else if nu_has(nc_kind(first),10,0,Enum.count(nc_kind(first))) == 0 do b[] else nw_expect(env,0,Enum.concat(b[7],nc_kind(first))) end end
+  end
+  # Elements first up to stop of a list literal: bounds holds both, 24 bits each.
+  def nl_items(source: bytes, spans: bytes, env: bytes, table: bytes, depth: integer, bounds: bytes): bytes do
+    first = nc_cursor(bounds,0)
+    stop = nc_cursor(bounds,3)
+    if stop-first == 1 do nl_item(source,spans,if Enum.at(bounds,6,0) < 2 do env else ev_part(source,env,nc_cursor(spans,first*6),nc_cursor(spans,first*6+3)) end,table,nc_join(b[depth],nc_u24(first),if Enum.at(bounds,6,0)*(Enum.at(bounds,6,0)-2) == 0 do b[] else b[1] end)) else
+    # Sixty-four elements or more in a long environment: its records go
+    # into a store once, and each element is compiled in the window of
+    # its own text (native-scope.alc). The seventh byte of bounds is then
+    # 2, or 3 where it was 1.
+    if ev_wide(env,bounds,stop-first) == 1 do nl_items(source,spans,ev_stored(source,env),table,depth,nc_join(nc_slice(bounds,0,6),b[2+Enum.at(bounds,6,0)],b[])) else
+      middle = first+nc_half(stop-first)
+      left = nl_items(source,spans,env,table,depth,nc_join(nc_u24(first),nc_u24(middle),nc_slice(bounds,6,7)))
+      if nc_pos(left) < 0 do b[] else
+        right = nl_items(source,spans,env,table,depth,nc_join(nc_u24(middle),nc_u24(stop),nc_slice(bounds,6,7)))
+        kind = nt_merge(nc_kind(left),nc_kind(right))
+        if nc_pos(right) < 0 do b[] else if nt_tag(kind) < 0 do b[] else nw_keep(nc_value(nc_pos(right),Enum.concat(nc_code(left),nc_code(right)),kind),left,b[]) end end
+      end
+    end end
+  end
+  # One element. plan: the depth, its index, and a byte when the list's
+  # parts are expected to have the type the context gives.
+  def nl_item(source: bytes, spans: bytes, env: bytes, table: bytes, plan: bytes): bytes do
+    first = nc_cursor(plan,1)
+    depth = Enum.at(plan,0,0)
+    keyed = nk_keyword(source,nc_start(source,nc_cursor(spans,first*6)),env,table,depth)
+    value = if nc_pos(keyed) >= 0 do keyed else nc_expression(source,nc_cursor(spans,first*6),if Enum.count(plan) == 4 do env else nf_expecting(source,env,nc_cursor(spans,first*6),nf_part(source,env,table,0)) end,table,depth) end
+    if nc_pos(value) < 0 do b[] else
+      # A first element whose type is open needs the list's type from its context.
+      if nc_start(source,nc_pos(value)) != nc_cursor(spans,first*6+3) do b[] else nw_open(nc_value(nc_pos(value),Enum.concat(nc_code(value),b[80]),nc_kind(value)),value) end
+    end
+  end
+  def nl_parameter_words(source: bytes, pos: integer, count: integer, table: bytes, owner: integer): bytes do
+    if count == 0 do b[] else
+      item = nc_parameter_type(source,pos)
+      Enum.concat(nt_cell(nd_resolve(source,table,owner,nc_kind(item))),nl_parameter_words(source,nj_after(source,nc_pos(item)),count-1,table,owner))
+    end
+  end
+  def nl_op(source: bytes, pos: integer): integer do
+    if nc_word(source,pos,b[109,97,112]) == 1 do 11 else if nc_word(source,pos,b[114,101,100,117,99,101]) == 1 do 12 else
+      if nc_word(source,pos,b[102,105,108,116,101,114]) == 1 do 13 else if nc_word(source,pos,b[106,111,105,110]) == 1 do 14 else
+        if nc_word(source,pos,b[101,97,99,104]) == 1 do 15 else 0 end
+      end end
+    end end
+  end
+  # What Enum.each passes its function: an element, or a map entry as a tuple.
+  def nl_each_item(items: bytes): bytes do
+    if nt_tag(items) == 7 do nt_child(items,0) else
+      if nt_tag(items) != 8 do b[] else nt_tuple(Enum.concat(nt_cell(nt_child(items,0)),nt_cell(nt_child(items,1))),2) end
+    end
+  end
+  # Enum.each(items, function): the function is called with each element in
+  # turn, whatever it returns; the call itself leaves no value. A map is
+  # walked as its entries, in key order.
+  def nl_each(args: bytes): bytes do
+    callback = nc_arg_kind(args,1)
+    item = nl_each_item(nc_arg_kind(args,0))
+    entries = if nt_tag(nc_arg_kind(args,0)) != 8 do b[] else nc_join(b[88,90,80,82,65,186,2,0,0,0],nm_entries_emit(),b[65,90,80,65,82]) end
+    loop = b[65,90,94,72,139,14,72,133,201,116,24,65,82,86,81,72,139,126,8,65,255,18,89,94,65,90,72,131,198,16,72,255,201,235,227]
+    if nc_arg_count(args) != 2 do b[] else if Enum.count(item) == 0 do b[] else if nt_tag(callback) != 10 do b[] else
+      if nt_count(callback) != 1 do b[] else if no_compatible(nt_child(callback,0),item) == 0 do b[] else
+        nc_value(nc_pos(args),nc_join(nc_arg_code(args),entries,loop),b[12])
+      end end
+    end end end
+  end
+  def nl_builtin(args: bytes, op: integer): bytes do
+    if op > 12 do na_enum(args,op) else
+    if op == 11 do nl_callback(args,op) else if op == 12 do nl_callback(args,op) else
+      count = nc_arg_count(args)
+      kind = nc_arg_kind(args,0)
+      if op == 2 do nl_at(args) else if op == 10 do if count == 2 do nl_at(args) else b[] end else
+        if op == 3 do
+          merged = nt_merge(kind,nc_arg_kind(args,1))
+          if count != 2 do b[] else if nt_tag(merged) < 0 do b[] else nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),nl_concat_emit()),merged) end end
+        else nl_plain(args,op) end
+      end end
+    end end end
+  end
+  def nl_plain(args: bytes, op: integer): bytes do
+    count = nc_arg_count(args)
+    kind = nc_arg_kind(args,0)
+    valid = if op == 4 do if count == 3 do nc_three_types(args) else 0 end else
+      if op == 7 do if count == 2 do if nt_tag(nc_arg_kind(args,1)) == 0 do 1 else 0 end else 0 end else
+        if op == 8 do if count == 2 do if nt_tag(nc_arg_kind(args,1)) == 0 do 1 else 0 end else 0 end else
+          if op == 1 do if count == 1 do 1 else 0 end else
+            if op == 5 do if count == 1 do no_compatible(b[7,0],kind) else 0 end else
+              if op == 6 do if count == 1 do 1 else 0 end else if op == 9 do if count == 1 do 1 else 0 end else 0 end end
+            end
+          end
+        end
+      end
+    end
+    if valid == 0 do b[] else
+      code = if op == 4 do nl_slice_emit() else
+        if op == 5 do nl_sum_emit() else if op == 6 do nl_reverse_emit() else
+          if op == 7 do Enum.concat(b[90,95,72,139,15,49,246,72,133,210,121,16,72,1,202,121,2,49,210,72,137,214,72,137,202,72,41,242,87,86,82],nl_slice_emit()) else
+            if op == 8 do Enum.concat(b[94,95,72,139,15,72,137,202,72,133,246,121,12,72,1,206,121,2,49,246,72,137,242,49,246,87,86,82],nl_slice_emit()) else nc_builtin_code(op) end
+          end
+        end end
+      end
+      result = if op == 1 do b[0] else if op == 5 do b[0] else if op == 9 do b[3] else kind end end end
+      nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),code),result)
+    end
+  end
+  def nl_at(args: bytes): bytes do
+    count = nc_arg_count(args)
+    if count < 2 do b[] else if count > 3 do b[] else if nt_tag(nc_arg_kind(args,1)) != 0 do b[] else
+      element = nt_child(nc_arg_kind(args,0),0)
+      result = if count == 2 do nt_unary(4,element) else nt_merge(element,nc_arg_kind(args,2)) end
+      if nt_tag(result) < 0 do b[] else
+        pushes = if count == 2 do b[106,0] else b[] end
+        code = nc_join(pushes,b[65,186,if count == 2 do 1 else 0 end,0,0,0],nl_at_emit())
+        nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),code),result)
+      end
+    end end end
+  end
+  def nl_callback(args: bytes, op: integer): bytes do
+    count = nc_arg_count(args)
+    callback = nc_arg_kind(args,count-1)
+    if nt_tag(callback) != 10 do b[] else
+      needed = if op == 11 do 1 else 2 end
+      if count != needed+1 do b[] else if nt_count(callback) != needed do b[] else
+        element = nt_child(nc_arg_kind(args,0),0)
+        if no_compatible(nt_child(callback,0),element) == 0 do b[] else
+          if op == 11 do
+            kind = nt_unary(7,nt_child(callback,1))
+            if nt_tag(kind) < 0 do b[] else nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),nl_map_emit()),kind) end
+          else
+            accumulator = nt_child(callback,1)
+            if no_compatible(accumulator,nc_arg_kind(args,1)) == 0 do b[] else
+              if nt_same(accumulator,nt_child(callback,2)) == 0 do b[] else nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),nl_reduce_emit()),accumulator) end
+            end
+          end
+        end
+      end end
+    end
+  end
+  def nl_first_last(args: bytes, last: integer): bytes do
+    count = nc_arg_count(args)
+    if count < 1 do b[] else if count > 2 do b[] else
+      element = nt_child(nc_arg_kind(args,0),0)
+      result = if count == 1 do nt_unary(4,element) else nt_merge(element,nc_arg_kind(args,1)) end
+      if nt_tag(result) < 0 do b[] else
+        index = if last == 1 do 255 else 0 end
+        prepare = if count == 1 do b[106,index,106,0] else b[88,106,index,80] end
+        code = nc_join(prepare,b[65,186,if count == 1 do 1 else 0 end,0,0,0],nl_at_emit())
+        nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),code),result)
+      end
+    end end
+  end
+  # Native smoke test; assembled with the compiler.
+  def main() do System.halt(0) end
+end

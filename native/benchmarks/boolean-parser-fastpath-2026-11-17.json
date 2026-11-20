@@ -1,0 +1,186 @@
+{
+  "before_commit": "43b62f599b0a4e81a31d4419c25539a83468eaa4",
+  "child_environment": {
+    "PATH": ""
+  },
+  "compiler_sha256": {
+    "after": "76a1011ec3cac1f2bbf18d00e48d54f48540c5eff7b2ddc4557582ee6402efb7",
+    "before": "968fd10452b14c891357891a32df53b3463629850a7a494d9e9826683bdc1272"
+  },
+  "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+  "expected_elf_sha256": "76a1011ec3cac1f2bbf18d00e48d54f48540c5eff7b2ddc4557582ee6402efb7",
+  "includes": "Python launch/wait, native startup, stdin read, compile and stdout write; equality comparison outside timing",
+  "kernel": "6.18.57",
+  "kind": "alternating native compiler processes on identical source and expected ELF",
+  "limits": "single shared cloud session; alternating order but no CPU isolation; no Go/Rust comparison",
+  "load_after": [
+    0.52685546875,
+    0.6875,
+    0.39990234375
+  ],
+  "load_before": [
+    0.4853515625,
+    0.68212890625,
+    0.396484375
+  ],
+  "machine": "x86_64",
+  "median_wall_ns": {
+    "after": 98534049.5,
+    "before": 101975342.5
+  },
+  "os": "Linux",
+  "pairs": [
+    {
+      "after": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 100800009
+      },
+      "before": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 106489107
+      },
+      "order": [
+        "before",
+        "after"
+      ]
+    },
+    {
+      "after": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 130419679
+      },
+      "before": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 98519559
+      },
+      "order": [
+        "after",
+        "before"
+      ]
+    },
+    {
+      "after": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 97099984
+      },
+      "before": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 102306142
+      },
+      "order": [
+        "before",
+        "after"
+      ]
+    },
+    {
+      "after": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 98509099
+      },
+      "before": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 101644543
+      },
+      "order": [
+        "after",
+        "before"
+      ]
+    },
+    {
+      "after": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 108098784
+      },
+      "before": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 106748864
+      },
+      "order": [
+        "before",
+        "after"
+      ]
+    },
+    {
+      "after": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 98559000
+      },
+      "before": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 114877780
+      },
+      "order": [
+        "after",
+        "before"
+      ]
+    },
+    {
+      "after": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 103434937
+      },
+      "before": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 98633967
+      },
+      "order": [
+        "before",
+        "after"
+      ]
+    },
+    {
+      "after": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 96063434
+      },
+      "before": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 109652317
+      },
+      "order": [
+        "after",
+        "before"
+      ]
+    },
+    {
+      "after": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 98233279
+      },
+      "before": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 96416039
+      },
+      "order": [
+        "before",
+        "after"
+      ]
+    },
+    {
+      "after": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 95787909
+      },
+      "before": {
+        "peak_rss_kib": 13820,
+        "wall_ns": 99369900
+      },
+      "order": [
+        "after",
+        "before"
+      ]
+    }
+  ],
+  "recorded_utc": "2026-11-17T12:41:16.259170+00:00",
+  "rss_unit": "Linux wait4 KiB high-water mark, not traced arena charge",
+  "schema_version": 1,
+  "source_bytes": 58542,
+  "source_sha256": "ffb753870d24f2b153c7f592a9d2c3b5b53846110cbce8ad324f203a87f77153",
+  "traced_arena_bytes": {
+    "after": 12628824,
+    "before": 13019736
+  },
+  "tracing": "after all timed runs; not included in wall samples",
+  "visible_cpu_count": 5,
+  "warmup_pairs": 2
+}

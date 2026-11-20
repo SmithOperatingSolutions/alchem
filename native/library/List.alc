@@ -1,0 +1,299 @@
+# List: the functions written in Alchem.
+#: contains/2
+  def contains(items: list[a], value: a): boolean do
+    value in items
+  end
+#: delete/2
+  def delete(items: list[a], value: a): list[a] do
+    items -- [value]
+  end
+#: delete_at/2
+  def delete_at(items: list[a], index: integer): list[a] do
+    at = if index < 0 do length(items) + index else index end
+    if at < 0 or at >= length(items) do items else Enum.take(items, at) ++ Enum.drop(items, at + 1) end
+  end
+#: drop/2
+  def drop(items: list[a], count: integer): list[a] do
+    if count < 0 do raise("count must be nonnegative") end
+    Enum.drop(items, count)
+  end
+#: take/2
+  def take(items: list[a], count: integer): list[a] do
+    if count < 0 do raise("count must be nonnegative") end
+    Enum.take(items, count)
+  end
+#: reverse/1
+  def reverse(items: list[a]): list[a] do
+    Enum.reverse(items)
+  end
+#: duplicate/2
+  def duplicate(value: a, count: integer): list[a] do
+    if count < 0 or count > 67108864 do raise("duplicate needs a count between 0 and 67108864") end
+    start: list[a] = Enum.o_room(count)
+    copies(value, count, start)
+  end
+  defp copies(value: a, count: integer, done: list[a]): list[a] do
+    if count >= 8 do copies(value, count - 8, [value, value, value, value, value, value, value, value | done]) else
+      if count <= 0 do done else copies(value, count - 1, [value | done]) end
+    end
+  end
+#: starts_with?/2
+  def starts_with?(items: list[a], prefix: list[a]): boolean do
+    Enum.take(items, length(prefix)) == prefix
+  end
+#: ends_with?/2
+  def ends_with?(items: list[a], suffix: list[a]): boolean do
+    if length(suffix) > length(items) do false else Enum.drop(items, length(items) - length(suffix)) == suffix end
+  end
+#: first/2
+  def first(items: list[a], default: a): a do
+    Enum.at(items, 0, default)
+  end
+#: last/2
+  def last(items: list[a], default: a): a do
+    Enum.at(items, -1, default)
+  end
+#: first!/1
+  def first!(items: list[a]): a do
+    hd(items)
+  end
+#: last!/1
+  def last!(items: list[a]): a do
+    hd(Enum.take(items, -1))
+  end
+#: flatten/1
+  def flatten(lists: list[list[a]]): list[a] do
+    start: list[a] = Enum.o_room(Enum.reduce(lists, 0, fn x, n -> n + length(x) end))
+    before: fn[a, list[a], list[a]] = fn y, all -> [y | all] end
+    Enum.o_turn(Enum.reduce(lists, start, fn x, acc -> Enum.reduce(x, acc, before) end))
+  end
+#: foldl/3
+  def foldl(items: list[a], start: b, f: fn[a, b, b]): b do
+    Enum.reduce(items, start, f)
+  end
+#: foldr/3
+  def foldr(items: list[a], start: b, f: fn[a, b, b]): b do
+    Enum.reduce(Enum.reverse(items), start, f)
+  end
+#: insert_at/3
+  def insert_at(items: list[a], index: integer, value: a): list[a] do
+    at = if index < 0 do max(length(items) + index + 1, 0) else index end
+    Enum.take(items, at) ++ [value] ++ Enum.drop(items, at)
+  end
+#: replace_at/3
+  def replace_at(items: list[a], index: integer, value: a): list[a] do
+    at = if index < 0 do length(items) + index else index end
+    if at < 0 or at >= length(items) do items else Enum.take(items, at) ++ [value] ++ Enum.drop(items, at + 1) end
+  end
+#: update_at/3
+  def update_at(items: list[a], index: integer, f: fn[a, a]): list[a] do
+    at = if index < 0 do length(items) + index else index end
+    if at < 0 or at >= length(items) do items else Enum.take(items, at) ++ [f(hd(Enum.drop(items, at)))] ++ Enum.drop(items, at + 1) end
+  end
+#: pop_at/2
+  def pop_at(items: list[a], index: integer): tuple[option[a], list[a]] do
+    at = if index < 0 do length(items) + index else index end
+    if at < 0 or at >= length(items) do {none, items} else {Enum.at(items, at), Enum.take(items, at) ++ Enum.drop(items, at + 1)} end
+  end
+#: range/2
+  def range(first: integer, last: integer): list[integer] do
+    if last >= first and ((first < 0 and last > 9223372036854775807 + first) or last - first >= 1000000) do raise("range exceeds 1000000 elements") end
+    count = if last < first do 0 else last - first + 1 end
+    start: list[integer] = Enum.o_room(count)
+    counted(first, count, start)
+  end
+  # The count integers from first on, the last put first.
+  defp counted(first: integer, count: integer, done: list[integer]): list[integer] do
+    if count <= 0 do done else counted(first, count - 1, [first + count - 1 | done]) end
+  end
+#: zip/2
+  def zip(left: list[a], right: list[b]): list[tuple[a, b]] do
+    start: list[tuple[a, b]] = Enum.o_room(if length(left) < length(right) do length(left) else length(right) end)
+    Enum.o_turn(Enum.reduce(left, start, fn x, acc ->
+      if length(acc) < length(right) do [{x, hd(Enum.drop(right, length(acc)))} | acc] else acc end
+    end))
+  end
+#: keyfind/2
+  def keyfind(pairs: list[tuple[k, v]], key: k): option[tuple[k, v]] do
+    Enum.at(Enum.filter(pairs, fn pair -> elem(pair, 0) == key end), 0)
+  end
+#: keymember?/2
+  def keymember?(pairs: list[tuple[k, v]], key: k): boolean do
+    Enum.count(Enum.filter(pairs, fn pair -> elem(pair, 0) == key end)) > 0
+  end
+#: keydelete/2
+  def keydelete(pairs: list[tuple[k, v]], key: k): list[tuple[k, v]] do
+    at = found(pairs, key, 0)
+    if at < 0 do pairs else Enum.take(pairs, at) ++ Enum.drop(pairs, at + 1) end
+  end
+  defp found(pairs: list[tuple[k, v]], key: k, index: integer): integer do
+    if index >= length(pairs) do -1 else
+      if elem(hd(Enum.drop(pairs, index)), 0) == key do index else found(pairs, key, index + 1) end
+    end
+  end
+#: keyreplace/3
+  def keyreplace(pairs: list[tuple[k, v]], key: k, pair: tuple[k, v]): list[tuple[k, v]] do
+    at = placed(pairs, key, 0)
+    if at < 0 do pairs else Enum.take(pairs, at) ++ [pair] ++ Enum.drop(pairs, at + 1) end
+  end
+  defp placed(pairs: list[tuple[k, v]], key: k, index: integer): integer do
+    if index >= length(pairs) do -1 else
+      if elem(hd(Enum.drop(pairs, index)), 0) == key do index else placed(pairs, key, index + 1) end
+    end
+  end
+#: keystore/3
+  def keystore(pairs: list[tuple[k, v]], key: k, pair: tuple[k, v]): list[tuple[k, v]] do
+    at = stored(pairs, key, 0)
+    if at < 0 do pairs ++ [pair] else Enum.take(pairs, at) ++ [pair] ++ Enum.drop(pairs, at + 1) end
+  end
+  defp stored(pairs: list[tuple[k, v]], key: k, index: integer): integer do
+    if index >= length(pairs) do -1 else
+      if elem(hd(Enum.drop(pairs, index)), 0) == key do index else stored(pairs, key, index + 1) end
+    end
+  end
+#: keytake/2
+  def keytake(pairs: list[tuple[k, v]], key: k): option[tuple[tuple[k, v], list[tuple[k, v]]]] do
+    at = taken(pairs, key, 0)
+    if at < 0 do none else some({hd(Enum.drop(pairs, at)), Enum.take(pairs, at) ++ Enum.drop(pairs, at + 1)}) end
+  end
+  defp taken(pairs: list[tuple[k, v]], key: k, index: integer): integer do
+    if index >= length(pairs) do -1 else
+      if elem(hd(Enum.drop(pairs, index)), 0) == key do index else taken(pairs, key, index + 1) end
+    end
+  end
+#: zip/1
+  def zip(lists: list[list[a]]): list[list[a]] do
+    start: list[list[a]] = []
+    if length(lists) == 0 do start else rows(lists, 0, Enum.reduce(lists, length(hd(lists)), fn x, acc -> min(acc, length(x)) end), start) end
+  end
+  defp rows(lists: list[list[a]], index: integer, count: integer, done: list[list[a]]): list[list[a]] do
+    if index >= count do Enum.o_turn(done) else rows(lists, index + 1, count, [Enum.map(lists, fn x -> Enum.at(x, index, hd(x)) end) | done]) end
+  end
+#: delete/2 form 2 needs delete/2
+  def delete(items: map[k, v], value: tuple[k, v]): list[tuple[k, v]] do
+    List.delete(Map.to_list(items), value)
+  end
+#: delete_at/2 form 2 needs delete_at/2
+  def delete_at(items: map[k, v], index: integer): list[tuple[k, v]] do
+    List.delete_at(Map.to_list(items), index)
+  end
+#: starts_with?/2 form 2 needs starts_with?/2
+  def starts_with?(items: map[k, v], prefix: list[tuple[k, v]]): boolean do
+    List.starts_with?(Map.to_list(items), prefix)
+  end
+#: ends_with?/2 form 2 needs ends_with?/2
+  def ends_with?(items: map[k, v], suffix: list[tuple[k, v]]): boolean do
+    List.ends_with?(Map.to_list(items), suffix)
+  end
+#: foldl/3 form 2 needs foldl/3
+  def foldl(items: map[k, v], start: b, f: fn[tuple[k, v], b, b]): b do
+    List.foldl(Map.to_list(items), start, f)
+  end
+#: foldr/3 form 2 needs foldr/3
+  def foldr(items: map[k, v], start: b, f: fn[tuple[k, v], b, b]): b do
+    List.foldr(Map.to_list(items), start, f)
+  end
+#: insert_at/3 form 2 needs insert_at/3
+  def insert_at(items: map[k, v], index: integer, value: tuple[k, v]): list[tuple[k, v]] do
+    List.insert_at(Map.to_list(items), index, value)
+  end
+#: replace_at/3 form 2 needs replace_at/3
+  def replace_at(items: map[k, v], index: integer, value: tuple[k, v]): list[tuple[k, v]] do
+    List.replace_at(Map.to_list(items), index, value)
+  end
+#: update_at/3 form 2 needs update_at/3
+  def update_at(items: map[k, v], index: integer, f: fn[tuple[k, v], tuple[k, v]]): list[tuple[k, v]] do
+    List.update_at(Map.to_list(items), index, f)
+  end
+#: pop_at/2 form 2 needs pop_at/2
+  def pop_at(items: map[k, v], index: integer): tuple[option[tuple[k, v]], list[tuple[k, v]]] do
+    List.pop_at(Map.to_list(items), index)
+  end
+#: myers_difference/2
+  def myers_difference(l: list[a], r: list[a]): list[tuple[atom, list[a]]] do
+    s: list[tuple[atom, list[a]]] = []
+    Enum.reduce(Enum.reverse(mwalk(l, r, mrows(l, r, 0, []), s)), s, fn x, acc ->
+      case Enum.at(acc, -1) do
+        some(u) -> if elem(u, 0) == elem(x, 0) do Enum.take(acc, length(acc) - 1) ++ [{elem(u, 0), elem(u, 1) ++ elem(x, 1)}] else acc ++ [x] end
+        none -> [x]
+      end
+    end)
+  end
+  defp mwalk(l: list[a], r: list[a], t: list[list[integer]], s: list[tuple[atom, list[a]]]): list[tuple[atom, list[a]]] do
+    mback(l, r, t, {length(l), length(r), length(t)}, s)
+  end
+  defp mrows(l: list[a], r: list[a], d: integer, t: list[list[integer]]): list[list[integer]] do
+    p: list[integer] = if d == 0 do [] else hd(Enum.drop(t, d - 1)) end
+    row = Enum.map(0..d, fn i ->
+      x = if i == 0 or (i != d and Enum.at(p, i - 1, 0) < Enum.at(p, i, 0)) do Enum.at(p, i, 0) else Enum.at(p, i - 1, 0) + 1 end
+      msnake(l, r, x, x - 2 * i + d)
+    end)
+    i = length(l) - length(r) + d
+    if i >= 0 and rem(i, 2) == 0 and Enum.at(row, i / 2, -1) >= length(l) do t else mrows(l, r, d + 1, t ++ [row]) end
+  end
+  defp msnake(l: list[a], r: list[a], x: integer, y: integer): integer do
+    if x < length(l) and y < length(r) and Enum.at(l, x, hd(l)) == Enum.at(r, y, hd(r)) do msnake(l, r, x + 1, y + 1) else x end
+  end
+  defp mback(l: list[a], r: list[a], t: list[list[integer]], at: tuple[integer, integer, integer], s: list[tuple[atom, list[a]]]): list[tuple[atom, list[a]]] do
+    d = elem(at, 2)
+    x = elem(at, 0)
+    y = elem(at, 1)
+    if x <= 0 and y <= 0 do s else
+      p: list[integer] = if d == 0 do [] else hd(Enum.drop(t, d - 1)) end
+      i = (x - y + d) / 2
+      down = i == 0 or (i != d and Enum.at(p, i - 1, 0) < Enum.at(p, i, 0))
+      px = if down do Enum.at(p, i, 0) else Enum.at(p, i - 1, 0) end
+      py = if down do px - (x - y) - 1 else px - (x - y) + 1 end
+      c = min(x - px, y - py)
+      s1 = if c > 0 do s ++ [{:eq, Enum.slice(l, x - c, c)}] else s end
+      s2 = if d == 0 do s1 else
+        if x - c == px do s1 ++ [{:ins, Enum.slice(r, y - c - 1, 1)}] else s1 ++ [{:del, Enum.slice(l, x - c - 1, 1)}] end
+      end
+      if d == 0 do s2 else mback(l, r, t, {px, py, d - 1}, s2) end
+    end
+  end
+#: myers_difference/2 form 2
+  def myers_difference(a: list[t], b: list[t]): list[tuple[atom, list[t]]] do
+    v: map[integer, integer] = %{}
+    tr = fwd(a, b, 0, 0, v, [v])
+    back(a, b, tr, length(tr) - 1, {length(a), length(b)}, [])
+  end
+  defp fwd(a: list[t], b: list[t], d: integer, k: integer, v: map[integer, integer], tr: list[map[integer, integer]]): list[map[integer, integer]] do
+    if k > d do fwd(a, b, d + 1, -d - 1, v, tr ++ [v]) else
+      x = snake(a, b, k, if k == -d or (k != d and Map.get(v, k - 1, 0) < Map.get(v, k + 1, 0)) do Map.get(v, k + 1, 0) else Map.get(v, k - 1, 0) + 1 end)
+      if x >= length(a) and x - k >= length(b) do tr else fwd(a, b, d, k + 2, Map.put(v, k, x), tr) end
+    end
+  end
+  defp snake(a: list[t], b: list[t], k: integer, x: integer): integer do
+    if x < length(a) and x - k < length(b) and Enum.slice(a, x, 1) == Enum.slice(b, x - k, 1) do snake(a, b, k, x + 1) else x end
+  end
+  defp back(a: list[t], b: list[t], tr: list[map[integer, integer]], d: integer, at: tuple[integer, integer], o: list[tuple[atom, list[t]]]): list[tuple[atom, list[t]]] do
+    x = elem(at, 0)
+    y = elem(at, 1)
+    if d < 0 or (x <= 0 and y <= 0) do o else
+      v = hd(Enum.drop(tr, d))
+      k = x - y
+      pk = if k == -d or (k != d and Map.get(v, k - 1, 0) < Map.get(v, k + 1, 0)) do k + 1 else k - 1 end
+      px = Map.get(v, pk, 0)
+      e = max(min(x - px, y - px + pk), 0)
+      q = add(o, :eq, Enum.slice(a, x - e, e))
+      back(a, b, tr, d - 1, {px, px - pk}, if d == 0 do q else if x - e == px do add(q, :ins, Enum.slice(b, y - e - 1, 1)) else add(q, :del, Enum.slice(a, x - e - 1, 1)) end end)
+    end
+  end
+  defp add(o: list[tuple[atom, list[t]]], k: atom, i: list[t]): list[tuple[atom, list[t]]] do
+    case Enum.at(o, 0) do
+      some(h) -> if i == [] do o else if elem(h, 0) == k do [{k, i ++ elem(h, 1)}] ++ tl(o) else [{k, i}] ++ o end end
+      none -> if i == [] do o else [{k, i}] end
+    end
+  end
+#: keysort/1 needs Enum.o_keys/3
+  def keysort(i: list[tuple[ord, v]]): list[tuple[ord, v]] do Enum.o_keys(i, Enum.map(i, fn x -> elem(x, 0) end), fn x, y -> x < y end) end
+# List.sort is the pinned runtime's sort.Slice over the list as it holds it,
+# the last element first, by "greater": an unstable sort, which for floats
+# with NaN leaves what Go's pdqsort leaves.
+#: sort/1 needs Enum.o_pdq/1
+  def sort(i: list[integer]): list[integer] do Enum.o_pdq(i) end
+#: sort/1 form 2 needs Enum.o_pdq/1
+  def sort(i: list[string]): list[string] do Enum.o_pdq(i) end
+#: sort/1 form 3 needs Enum.o_pdq/1
+  def sort(i: list[float]): list[float] do Enum.o_pdq(i) end

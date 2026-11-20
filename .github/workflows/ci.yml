@@ -275,10 +275,23 @@ jobs:
             coverage.out
             coverage.txt
 
+  runners:
+    name: Standard runners only
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+      # Standard GitHub-hosted runners are free for this public repository;
+      # larger runners are billed and are not used.
+      - name: Check every workflow's runners
+        run: python3 .github/scripts/standard-runners.py
+
   test:
     name: test
     if: always()
-    needs: [verified, native, cross, coverage]
+    needs: [verified, runners, native, cross, coverage]
     runs-on: ubuntu-latest
     steps:
       - name: Require every platform check to pass
@@ -288,7 +301,9 @@ jobs:
           NATIVE_RESULT: ${{ needs.native.result }}
           CROSS_RESULT: ${{ needs.cross.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
+          RUNNERS_RESULT: ${{ needs.runners.result }}
         run: |
+          test "$RUNNERS_RESULT" = success
           if [[ "$VERIFIED_RESULT" == success && "$ALREADY_VERIFIED" == true ]]; then
             echo "the pull request's checks passed on this exact tree"
             exit 0
