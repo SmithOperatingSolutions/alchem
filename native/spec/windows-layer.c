@@ -84,6 +84,8 @@ extern W u32 (*imp_GetCurrentProcessId)(void);
 extern W i32 (*imp_DuplicateHandle)(u64, u64, u64, u64 *, u32, i32, u32);
 extern W u64 (*imp_GetCurrentProcess)(void);
 extern W i32 (*imp_CloseHandle)(u64);
+extern W u32 (*imp_FormatMessageW)(u32, const void *, u32, u32, u16 *, u32, void *);
+extern W u32 (*imp_GetFullPathNameW)(const u16 *, u32, u16 *, u16 **);
 extern W u64 (*imp_CreateFileW)(const u16 *, u32, u32, void *, u32, u32, u64);
 
 /* gcc may call these even in freestanding code. */
@@ -101,6 +103,11 @@ void *memset(void *to, int c, u64 n) {
 /* The arguments of the Linux call in the CONTEXT: RDI, RSI, RDX, R10, R8,
    R9. */
 #define ARG(c, i) (*(i64 *)((c) + (u64[]){0xB0, 0xA8, 0x88, 0xC8, 0xB8, 0xC0}[i]))
+
+/* The Windows error behind each errno the layer last gave (0: none, the
+   errno was the layer's own). Sys.errno's text is Windows' for it, as Go's
+   syscall.Errno.Error gives it (pseudo call 1000101). */
+static u32 kept[4096];
 
 /* --- Descriptors that are sockets ---------------------------------- */
 
@@ -355,7 +362,12 @@ static i64 sys_getsockopt(i64 fd, i64 level, i64 name, i64 value, i64 room) {
   i32 v[4] = {0};
   i32 n = sizeof v;
   if (imp_getsockopt(handles[fd], wl, wn, v, &n) != 0) return wsa_fail();
-  if (wl == 0xFFFF && wn == 0x1007 && v[0]) v[0] = (i32)wsa_errno(v[0]);
+  if (wl == 0xFFFF && wn == 0x1007 && v[0]) {
+    /* The error of a connect that did not wait: its text is Windows'. */
+    i64 n = wsa_errno(v[0]);
+    kept[n] = (u32)v[0];
+    v[0] = (i32)n;
+  }
   u32 r = *(u32 *)room;
   memcpy((void *)value, v, r < 4 ? r : 4);
   *(u32 *)room = 4;
@@ -587,7 +599,9 @@ static i64 at_call(unsigned char *c, int a) {
   return NOT_MINE;
 }
 
-void layer_restore(unsigned char *c) {
+void layer_restore(unsigned char *c, i64 result) {
+  /* The Windows error behind an errno the call gave, or none. */
+  if (result < 0 && result > -4096) kept[-result] = last_error;
   if (restore_slot < 0) return;
   ARG(c, restore_slot) = restore_fd;
   ARG(c, restore_slot + 1) = restore_path;
@@ -695,6 +709,67 @@ static i64 sys_fcntl(i64 fd, i64 command, i64 value) {
   return -EINVAL;
 }
 
+/* --- The library's view of Windows ---------------------------------- */
+
+
+/* UTF-16 at w (n units, or up to its zero when n < 0) as UTF-8 at out, with
+   room bytes and a zero after; the length, or -1. */
+static i32 utf8(const u16 *w, i32 n, char *out, i32 room) {
+  i32 m = imp_WideCharToMultiByte(65001, 0, w, n, out, room - 1, 0, 0);
+  if (m <= 0 && n != 0) return -1;
+  if (n < 0 && m > 0) m--;                     /* the zero it counted */
+  out[m] = 0;
+  return m;
+}
+
+static char text[2048];
+
+/* The text of errno n: FormatMessage of the Windows error kept for it, in
+   US English if Windows has it, else in the user's language, without the
+   line end; "winapi error #N" when Windows has none (as Go). */
+static i64 error_text(i64 n) {
+  if (n <= 0 || n >= 4096) return -ENOENT;
+  /* An errno with no Windows error behind it (the library's or the
+     layer's own) has Go's invented text, but ENOENT and ENOTDIR, which Go's
+     syscall names for ERROR_FILE_NOT_FOUND and ERROR_PATH_NOT_FOUND. */
+  u32 e = kept[n] ? kept[n] : n == ENOENT ? 2 : n == 20 ? 3 : 0;
+  if (!e) return -ENOENT;
+  /* FROM_SYSTEM | ARGUMENT_ARRAY | IGNORE_INSERTS */
+  u32 flags = 0x1000 | 0x2000 | 0x200;
+  u32 m = imp_FormatMessageW(flags, 0, e, 0x0409, wpath2, 300, 0);
+  if (!m) m = imp_FormatMessageW(flags, 0, e, 0, wpath2, 300, 0);
+  if (!m) {
+    const char *head = "winapi error #";
+    i32 k = 0;
+    for (; head[k]; k++) text[k] = head[k];
+    char digits[12];
+    i32 d = 0;
+    do { digits[d++] = (char)('0' + e % 10); e /= 10; } while (e);
+    while (d) text[k++] = digits[--d];
+    text[k] = 0;
+    return (i64)text;
+  }
+  while (m && (wpath2[m - 1] == '\n' || wpath2[m - 1] == '\r')) m--;
+  return utf8(wpath2, (i32)m, text, sizeof text) < 0 ? -EINVAL : (i64)text;
+}
+
+/* syscall.FullPath (GetFullPathNameW) of the UTF-8 path at p, in UTF-8. */
+static i64 full_path(i64 p) {
+  if (!wide((const char *)p, wpath1)) return -ENOENT;
+  u32 n = imp_GetFullPathNameW(wpath1, 32768, wpath2, 0);
+  if (!n || n >= 32768) return fail();
+  if (!joined && !(joined = imp_VirtualAlloc(0, JOINED, 0x3000, 4))) return -ENOMEM;
+  return utf8(wpath2, (i32)n, joined, JOINED) < 0 ? -EINVAL : (i64)joined;
+}
+
+/* os.TempDir: GetTempPathW, its last \ taken off unless it is C:\. */
+static i64 temp_dir(void) {
+  u32 n = imp_GetTempPathW(32768, wpath2);
+  if (!n || n >= 32768) return -ENOENT;
+  if (!(n == 3 && wpath2[1] == ':' && wpath2[2] == '\\') && wpath2[n - 1] == '\\') n--;
+  return utf8(wpath2, (i32)n, text, sizeof text) < 0 ? -EINVAL : (i64)text;
+}
+
 /* --- Calls on a descriptor that is a socket ------------------------- */
 
 static i64 socket_call(i64 nr, unsigned char *c) {
@@ -747,7 +822,11 @@ static i64 socket_call(i64 nr, unsigned char *c) {
    NOT_MINE for the assembly to make. */
 i64 layer_call(unsigned char *c) {
   i64 nr = *(i64 *)(c + 0x78);
+  last_error = 0;
   switch (nr) {
+  case 1000101: return error_text(ARG(c, 0));
+  case 1000102: return full_path(ARG(c, 0));
+  case 1000103: return temp_dir();
   case 41: return sys_socket(ARG(c, 0), ARG(c, 1), ARG(c, 2));
   case 271: return sys_ppoll(ARG(c, 0), ARG(c, 1), ARG(c, 2));
   case 0: case 1: case 3: case 5: case 16:
@@ -771,7 +850,7 @@ i64 layer_call(unsigned char *c) {
     i64 r = at_call(c, 0);
     if (r != NOT_MINE) return r;
     i64 path = ARG(c, 1), mode = ARG(c, 2);
-    layer_restore(c);
+    layer_restore(c, 0);
     return sys_chmod(path, mode);
   }
   case 319: return sys_memfd();

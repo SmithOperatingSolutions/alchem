@@ -32,7 +32,8 @@ and results are integers except where said.
 | `Sys.same(a, b, count)` | 1 when the two runs of bytes are equal |
 | `Sys.stack()` | The initial stack pointer (R14): argc, argv, 0, envp, 0 |
 | `Sys.top()`, `Sys.limit()` | Where the free part of the arena starts and ends (R12, R13) |
-| `Sys.errno(number)` | Go's text for an error number, from the file runtime (`spec/file-read-x86_64.s`, entry 4) |
+| `Sys.errno(number)` | Go's text for an error number, from the file runtime (`spec/file-read-x86_64.s`, entry 4); on Windows Windows' text for the error behind it (`spec/windows.md`) |
+| `Sys.windows()` | 1 in a program for Windows, else 0: a constant of the compiler (`nc_win()`, `spec/windows.md`) |
 
 `library/Sys.alc` holds what the library shares, written on these: system
 calls on paths (a path with a zero byte is `invalid argument`, as Go has

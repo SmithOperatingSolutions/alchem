@@ -162,8 +162,20 @@
   end
 # os.Getwd: $PWD when it names the working directory, else what the kernel
 # calls it.
-#: cwd/0 needs Sys.fail/3 Sys.stat/2 Sys.state/0
+#: cwd/0 needs _wcwd/0 _cwd/0
   def cwd(): result[string, string] do
+    if Sys.windows() == 1 do File._wcwd() else File._cwd() end
+  end
+# os.Getwd on Windows: GetCurrentDirectory, with / for \; there is no PWD
+# to prefer.
+#: _wcwd/0 needs Sys.state/0 Path._wslash/1
+  def _wcwd(): result[string, string] do
+    a = Sys.state() + 1024
+    n = Sys.call(79, a + 3072, 4096)
+    if n < 0 do error("getwd: " <> Sys.errno(0 - n)) else ok(Path._wslash(Sys.text(a + 3072, n - 1))) end
+  end
+#: _cwd/0 needs Sys.fail/3 Sys.stat/2 Sys.state/0
+  def _cwd(): result[string, string] do
     a = Sys.state() + 1024
     w = System.get_env("PWD", "")
     r = Sys.stat(".", 1)

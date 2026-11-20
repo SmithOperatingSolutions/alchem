@@ -30,11 +30,12 @@ SKIPPED = {
     # as programs; the pinned compiler's Windows programs fail too.
     'lib/System/System.cmd/1', 'lib/Port/Port.close/1', 'lib/Port/Port.command/1', 'lib/Port/Port.info/1',
     'lib/Port/Port.kill/1', 'lib/Port/Port.monitor/1', 'lib/Port/Port.open/1', 'lib/Port/Port.os_pid/1',
-    # The library's view of Windows (paths, the home directory, the
-    # temporary directory) and processes, still to do (spec/windows.md).
-    'lib/File/File.cwd/1', 'lib/File/File.cwd!/1', 'lib/File/File.ln/1', 'lib/File/File.ln_s/1',
-    'lib/Path/Path.absname/1', 'lib/Path/Path.expand/1', 'lib/Path/Path.type/1', 'lib/System/System.cwd!/1',
-    'lib/System/System.user_home/1', 'lib/Process/Process.report/1',
+    # Under Wine a symbolic link Windows makes does not resolve, for the
+    # pinned compiler's program too.
+    'lib/File/File.ln_s/1',
+    # A copy of the program fails in earnest (fork), still to do
+    # (spec/windows.md).
+    'lib/Process/Process.report/1',
 }
 
 

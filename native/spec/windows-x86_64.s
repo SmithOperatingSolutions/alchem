@@ -1254,6 +1254,7 @@ emulate:
         # Arguments the C part changed for the assembly are the program's again.
         mov rbx, rax
         mov rdi, r12
+        mov rsi, rax
         call layer_restore
         mov rax, rbx
         add rsp, 128

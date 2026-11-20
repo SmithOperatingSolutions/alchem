@@ -556,12 +556,28 @@
     end
   end
 # The text of a failed system call on a socket, as Go's net.OpError has it.
-#: _fail/3
+#: _fail/3 needs _sysop/1
   def _fail(b: integer, op: string, r: integer): string do
     here: string = Process.__any(Sys.peek(b + 104))
     there: string = if Sys.peek(b + 112) == 0 do "" else Process.__any(Sys.peek(b + 112)) end
     net = if Sys.peek(b + 8) == 3 do "udp" else "tcp" end
-    op <> " " <> net <> " " <> here <> (if there == "" do "" else "->" <> there end) <> ": " <> op <> ": " <> Sys.errno(0 - r)
+    op <> " " <> net <> " " <> here <> (if there == "" do "" else "->" <> there end) <> ": " <> TCP._sysop(op) <> ": " <> Sys.errno(0 - r)
+  end
+# The system call a socket error names: on Windows the one Go's net makes
+# there (WSARecv, WSASend, ConnectEx, AcceptEx, WSASendTo, WSARecvFrom).
+#: _sysop/1
+  def _sysop(op: string): string do
+    if Sys.windows() == 0 do op else
+      cond do
+        op == "read" -> "wsarecv"
+        op == "write" -> "wsasend"
+        op == "connect" -> "connectex"
+        op == "accept4" -> "acceptex"
+        op == "sendto" -> "wsasendto"
+        op == "recvfrom" -> "wsarecvfrom"
+        true -> op
+      end
+    end
   end
 # Why a read gave nothing is kept; "".
 #: _why/2
@@ -667,14 +683,14 @@
     {found, why} = if a == "" do {[], "missing address"} else TCP._addrs("tcp", a) end
     if why != "" do {-1, "dial tcp: " <> why} else TCP._dialn(g, a, found, d, "") end
   end
-#: _dialn/5 needs _dial1/3 _named/2
+#: _dialn/5 needs _dial1/3 _named/2 _sysop/1
   def _dialn(g: integer, a: string, found: list[string], d: integer, first: string): tuple[integer, string] do
     case found do
       [] -> {-1, first}
       [x | rest] ->
         fd = TCP._dial1(g, x, d)
         if fd >= 0 do {fd, ""} else
-          why = if fd == -110 do "timeout" else "dial tcp " <> TCP._named(a, x) <> ": connect: " <> Sys.errno(0 - fd) end
+          why = if fd == -110 do "timeout" else "dial tcp " <> TCP._named(a, x) <> ": " <> TCP._sysop("connect") <> ": " <> Sys.errno(0 - fd) end
           TCP._dialn(g, a, rest, d, if first == "" do why else first end)
         end
     end
@@ -1027,7 +1043,7 @@
   end
 # A connection that waits at a listening socket, awaited until the time d:
 # the descriptor, or 0 with the reason at b + 120.
-#: _accept/3 needs Process._check/1 Process._fdwait/4 Process._now/1 _why/2
+#: _accept/3 needs Process._check/1 Process._fdwait/4 Process._now/1 _why/2 _sysop/1
   def _accept(g: integer, b: integer, d: integer): integer do
     Process._check(g)
     fd = Sys.peek(b)
@@ -1040,7 +1056,7 @@
             TCP._accept(g, b, d)
           else
             here: string = Process.__any(Sys.peek(b + 104))
-            byte_size(TCP._why(b, "accept tcp " <> here <> ": accept4: " <> Sys.errno(0 - n)))
+            byte_size(TCP._why(b, "accept tcp " <> here <> ": " <> TCP._sysop("accept4") <> ": " <> Sys.errno(0 - n)))
           end
         end
       end

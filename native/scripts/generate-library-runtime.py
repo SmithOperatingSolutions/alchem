@@ -16,20 +16,31 @@ def generate():
         root=Path(d);obj=root/'runtime.o'
         command=['as','--64','-o',str(obj),str(ROOT/'spec/library-x86_64.s')]
         subprocess.run(command,check=True)
-        windows=windows_sites.assemble(command)
+        # With WINDOWS defined: the code of the Windows compiler where it
+        # differs (spec/windows.md), and the system calls in that code.
+        win_obj=root/'windows.o'
+        win_command=['as','--64','--defsym','WINDOWS=1','-o',str(win_obj),str(ROOT/'spec/library-x86_64.s')]
+        subprocess.run(win_command,check=True)
+        windows=windows_sites.assemble(win_command)
+        def section(source,name,suffix):
+            binary=root/(name+suffix)
+            subprocess.run(['objcopy','-O','binary','--only-section=.text.'+name,str(source),str(binary)],check=True)
+            return binary.read_bytes()
         pieces=['defmodule NativeLibraryData do\n']
         for name in NAMES:
-            binary=root/(name+'.bin')
-            subprocess.run(['objcopy','-O','binary','--only-section=.text.'+name,str(obj),str(binary)],check=True)
-            data=binary.read_bytes()
-            subprocess.run(['objcopy','-O','binary','--only-section=.text.'+name,str(windows),str(binary)+'.win'],check=True)
-            found=windows_sites.sites(data,Path(str(binary)+'.win').read_bytes())
+            data=section(obj,name,'.bin')
+            own=section(win_obj,name,'.own')
+            found=windows_sites.sites(own,section(windows,name,'.win'))
             assert 0<len(data)<=1024,(name,len(data))
             method=name+('_blob' if name=='nl_pack' else '_emit')
             def literal(raw):
                 if len(raw)<=128:return 'b['+','.join(map(str,raw))+']'
                 middle=len(raw)//2
                 return 'Enum.concat('+literal(raw[:middle])+','+literal(raw[middle:])+')'
+            if own!=data:
+                assert len(own)<=448 and len(data)<=448 and name!='na_pad',name
+                pieces.append(f'  def {method}(): bytes do if nc_win() == 1 do '+windows_sites.wrap(literal(own),found)+' else '+literal(data)+' end end\n')
+                continue
             # A body holds at most 1024 tokens, about 500 literal bytes; longer
             # routines are joined from separate part functions.
             # na_pad holds data among its code: the ARM64 compiler emits the
