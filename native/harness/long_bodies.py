@@ -22,7 +22,9 @@ def verify(compiler):
     with tempfile.TemporaryDirectory(prefix='alchem-long-') as d:
         root=Path(d)
         def built(source):
-            result=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
+            # A program of 20000 statements takes 21 s to compile on macOS
+            # (signing is slow there) and several times that on a small runner.
+            result=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=600)
             assert (result.returncode,result.stderr)==(0,b''),(source[:120],result.returncode,result.stderr)
             out=root/'out';out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
             return subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=120)

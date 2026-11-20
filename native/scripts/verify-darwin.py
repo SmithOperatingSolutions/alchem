@@ -6,9 +6,12 @@ macOS on ARM64 with that compiler, a Mach-O made on Linux:
       --output build/dev/alchem-compiler-darwin
   build/dev/alchem-compiler-darwin < <source> > alchem-compiler-macos
 
-usage: verify-darwin.py COMPILER [--skip-corpus] [GATE...]
+usage: verify-darwin.py COMPILER [--skip-corpus] [--shard K/N] [GATE...]
 
-ALCHEM_VERIFY_JOBS gates run at a time (3).
+ALCHEM_VERIFY_JOBS gates run at a time (3). With --shard K/N this runs the
+K-th of N parts, which runners run side by side: the first part checks the
+self-build and the corpus, and the gates are shared out by their time
+(SECONDS).
 
 - the compiler compiles its own source to itself, byte for byte;
 - every example of scripts/upstream-examples.py prints what the pinned
@@ -44,6 +47,29 @@ GATES = ['atoms', 'boolean_library', 'clauses', 'closures', 'comprehensions', 'c
          'nil_forms', 'nodes', 'operators', 'options', 'ordering', 'packages', 'parsing', 'patterns', 'pipes', 'processes',
          'protocols', 'ranges', 'regex', 'sets', 'sigils', 'speed', 'statements', 'streams', 'string_case',
          'templates', 'testing', 'traces', 'type_words', 'wide']
+
+
+# What each gate took, in seconds, on a runner of macos-15 running three at a
+# time; a gate not named takes about 30. SECONDS['corpus'] is the self-build
+# and the corpus.
+SECONDS = {'corpus': 840, 'core_modules': 2293, 'ordering': 1199, 'graphemes': 905, 'lists': 878, 'maps': 640,
+           'type_words': 492, 'nodes': 400, 'boolean_library': 381, 'library': 267, 'long_bodies': 250,
+           'described': 177, 'nil_forms': 168, 'string_case': 163, 'processes': 152, 'testing': 150,
+           'failures': 143, 'macros': 140, 'regex': 139, 'crypto': 110, 'streams': 110, 'floats': 104, 'gen': 101,
+           'options': 92, 'comprehensions': 87, 'clauses': 68, 'speed': 64, 'json_library': 60, 'sets': 47}
+
+
+def shard(names, k, n):
+    """The gates of the k-th of n parts (from 1): each gate, the longest first,
+    goes to the part with the least time so far, the first starting with the
+    corpus."""
+    load = [SECONDS['corpus']] + [0] * (n - 1)
+    parts = [[] for _ in range(n)]
+    for name in sorted(names, key=lambda g: (-SECONDS.get(g, 30), g)):
+        i = load.index(min(load))
+        parts[i].append(name)
+        load[i] += SECONDS.get(name, 30)
+    return [g for g in names if g in parts[k - 1]]
 
 
 def load(path, name):
@@ -127,20 +153,27 @@ def gate(compiler, name):
     load(ROOT / 'harness' / f'{name}.py', name).verify(compiler)
 
 
+# Gates with timeouts of their own, too short on a runner of three cores busy
+# with two other gates (a node waits two seconds for another's answer): they
+# run after the others, one at a time.
+ALONE = {'long_bodies', 'nodes'}
+
+
 def gates(compiler, names, jobs):
-    """The gates, each in a process of its own, jobs at a time."""
+    """The gates, each in a process of its own, jobs at a time, then those of ALONE."""
     def run(name):
         start = time.time()
         done = subprocess.run([sys.executable, __file__, str(compiler), '--gate', name], capture_output=True, text=True)
         return name, done.returncode, time.time() - start, (done.stdout + done.stderr).strip()
     failed = []
-    with ThreadPoolExecutor(jobs) as pool:
-        for name, status, seconds, said in pool.map(run, names):
-            if status:
-                failed.append(name)
-                print(f'FAIL {name} ({seconds:.0f} s)\n{said[-3000:]}', flush=True)
-            else:
-                print(f'PASS {name} ({seconds:.0f} s)', flush=True)
+    for batch, width in [([n for n in names if n not in ALONE], jobs), ([n for n in names if n in ALONE], 1)]:
+        with ThreadPoolExecutor(width) as pool:
+            for name, status, seconds, said in pool.map(run, batch):
+                if status:
+                    failed.append(name)
+                    print(f'FAIL {name} ({seconds:.0f} s)\n{said[-3000:]}', flush=True)
+                else:
+                    print(f'PASS {name} ({seconds:.0f} s)', flush=True)
     assert not failed, f'gates failed: {" ".join(failed)}'
 
 
@@ -151,12 +184,20 @@ def main():
         gate(compiler, args[1])
         return
     skip = '--skip-corpus' in args
+    k, n = 1, 1
+    if '--shard' in args:
+        at = args.index('--shard')
+        k, n = map(int, args[at + 1].split('/'))
+        assert 1 <= k <= n, args[at + 1]
+        del args[at:at + 2]
     jobs = int(os.environ.get('ALCHEM_VERIFY_JOBS', '3'))
     names = [a for a in args if a != '--skip-corpus'] or GATES
-    assert all(n in GATES for n in names), [n for n in names if n not in GATES]
-    self_build(compiler)
-    if not skip:
-        corpus(compiler)
+    assert all(g in GATES for g in names), [g for g in names if g not in GATES]
+    names = shard(names, k, n)
+    if k == 1:
+        self_build(compiler)
+        if not skip:
+            corpus(compiler)
     gates(compiler, names, jobs)
 
 

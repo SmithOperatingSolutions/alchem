@@ -113,10 +113,14 @@ jobs:
           retention-days: 7
 
   macos:
-    name: macOS ARM64
+    name: macOS ARM64 (${{ matrix.shard }}/4)
     needs: native
     runs-on: macos-15
-    timeout-minutes: 150
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     defaults:
       run:
         shell: bash
@@ -133,7 +137,7 @@ jobs:
         with:
           name: alchem-compiler-macos
           path: native/build/dev
-      - name: Self-build, corpus and gates on macOS
+      - name: Gates on macOS, part ${{ matrix.shard }} of 4
         run: |
           chmod 700 build/dev/alchem-compiler-macos
-          python3 scripts/verify-darwin.py build/dev/alchem-compiler-macos
+          python3 scripts/verify-darwin.py build/dev/alchem-compiler-macos --shard ${{ matrix.shard }}/4

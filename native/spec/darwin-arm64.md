@@ -114,7 +114,7 @@ corpus of scripts/upstream-examples.py (871 examples) passes on macOS with
 the compiler built for macOS, and that compiler compiles its own source on
 macOS to itself, byte for byte. scripts/verify-darwin.py checks that on
 macOS, with the gates of harness/ that run there; the native workflow's
-macOS job runs it with the compiler the x86-64 job makes
+macOS job runs it in four parts side by side (`--shard`), with the compiler the x86-64 job makes
 (`build-arm64.py --darwin --macos`).
 
 Coverage works as on Linux: a position-independent program's coverage
