@@ -106,6 +106,8 @@ jobs:
           mkdir -p build/windows
           python3 scripts/build-windows.py --source build/windows/compiler-source.alc --output build/windows/alchem-compiler-windows.exe
           cp examples/hello-native.alc build/windows/hello.alc
+          cp scripts/windows-examples.py build/windows/
+          python3 scripts/windows-examples.py prepare build/windows/examples
       - name: Keep the Windows compiler
         if: matrix.gates == ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -182,7 +184,7 @@ jobs:
     name: Windows x64
     needs: native
     runs-on: windows-2025
-    timeout-minutes: 20
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -201,3 +203,6 @@ jobs:
           ./alchem-compiler-windows.exe < hello.alc > hello.exe
           out="$(./hello.exe)"
           test "$out" = 'Hello from native Alchem!'
+      - name: The upstream examples
+        # Each prints on Windows what it prints on Linux (spec/windows.md).
+        run: python windows-examples.py check examples ./alchem-compiler-windows.exe --jobs 4

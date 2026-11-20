@@ -360,6 +360,7 @@ region_of:
 
 # Commit the reserved memory in [rcx, rcx+rdx) within one region: Windows
 # does not commit it when the kernel reads or writes it, as Linux does.
+        .globl commit_range
 commit_range:
         push rbx
         push rsi
@@ -447,6 +448,7 @@ wait_for:
 
 # The Windows handle of Linux descriptor rcx, in rax; 0 for none.
 # Descriptors 0 to 2 are the standard handles until a handle is set there.
+        .globl handle_of
 handle_of:
         cmp rcx, FDS
         jae .Lho_none
@@ -466,6 +468,7 @@ handle_of:
 
 # A new descriptor, the lowest free from 3, for the handle in rcx; or
 # -EMFILE, the handle closed.
+        .globl new_fd
 new_fd:
         lea rdx, [rip+handles]
         mov eax, 3
@@ -485,6 +488,7 @@ new_fd:
         ret
 
 # -errno for the last Windows error, which is kept (last_error).
+        .globl fail
 fail:
         sub rsp, 40
         call [rip+imp_GetLastError]
@@ -510,6 +514,7 @@ fail:
 
 # The UTF-8 path at rcx in UTF-16 at rdx (32768 units); eax 0 if it does
 # not convert. /dev/null is NUL.
+        .globl wide
 wide:
         sub rsp, 56
         mov r8, rcx
@@ -599,6 +604,12 @@ fill_stat:
 emulate:
         push rbx
         sub rsp, 128
+        # The calls written in C (spec/windows-layer.c) first.
+        mov rdi, r12
+        call layer_call
+        movabs rcx, 0x7FFFFFFFFFFFFFFF
+        cmp rax, rcx
+        jne .Lret
         mov rax, [r12+0x78]
         cmp rax, 0
         je .Lread
@@ -1240,6 +1251,11 @@ emulate:
         call [rip+imp_VirtualFree]
         xor eax, eax
 .Lret:
+        # Arguments the C part changed for the assembly are the program's again.
+        mov rbx, rax
+        mov rdi, r12
+        call layer_restore
+        mov rax, rbx
         add rsp, 128
         pop rbx
         ret
@@ -1271,217 +1287,8 @@ errno_map:
         .short 267, 20          # ERROR_DIRECTORY: ENOTDIR
         .short 0
 
-# The import directory: kernel32 and bcryptprimitives.
-        .balign 4
-        .globl imports
-imports:
-        .long kernel32_names - IMAGE_BASE, 0, 0, kernel32 - IMAGE_BASE, iat - IMAGE_BASE
-        .long bcrypt_names - IMAGE_BASE, 0, 0, bcrypt - IMAGE_BASE, iat_bcrypt - IMAGE_BASE
-        .long 0, 0, 0, 0, 0
-        .globl imports_end
-imports_end:
-        .balign 8
-kernel32_names:
-        .quad n_AddVectoredExceptionHandler - IMAGE_BASE
-        .quad n_CloseHandle - IMAGE_BASE
-        .quad n_CreateDirectoryW - IMAGE_BASE
-        .quad n_CreateFileW - IMAGE_BASE
-        .quad n_CreateWaitableTimerExW - IMAGE_BASE
-        .quad n_DeleteFileW - IMAGE_BASE
-        .quad n_ExitProcess - IMAGE_BASE
-        .quad n_FreeEnvironmentStringsW - IMAGE_BASE
-        .quad n_GetCommandLineW - IMAGE_BASE
-        .quad n_GetCurrentDirectoryW - IMAGE_BASE
-        .quad n_GetCurrentProcess - IMAGE_BASE
-        .quad n_GetCurrentProcessId - IMAGE_BASE
-        .quad n_GetCurrentThread - IMAGE_BASE
-        .quad n_GetEnvironmentStringsW - IMAGE_BASE
-        .quad n_GetFileAttributesExW - IMAGE_BASE
-        .quad n_GetFileInformationByHandle - IMAGE_BASE
-        .quad n_GetFileType - IMAGE_BASE
-        .quad n_GetLastError - IMAGE_BASE
-        .quad n_GetProcessTimes - IMAGE_BASE
-        .quad n_GetStdHandle - IMAGE_BASE
-        .quad n_GetSystemTimePreciseAsFileTime - IMAGE_BASE
-        .quad n_GetThreadTimes - IMAGE_BASE
-        .quad n_MoveFileExW - IMAGE_BASE
-        .quad n_MultiByteToWideChar - IMAGE_BASE
-        .quad n_QueryPerformanceCounter - IMAGE_BASE
-        .quad n_QueryPerformanceFrequency - IMAGE_BASE
-        .quad n_ReadFile - IMAGE_BASE
-        .quad n_RemoveDirectoryW - IMAGE_BASE
-        .quad n_SetCurrentDirectoryW - IMAGE_BASE
-        .quad n_SetFilePointerEx - IMAGE_BASE
-        .quad n_SetWaitableTimer - IMAGE_BASE
-        .quad n_VirtualAlloc - IMAGE_BASE
-        .quad n_VirtualFree - IMAGE_BASE
-        .quad n_WaitForSingleObject - IMAGE_BASE
-        .quad n_WideCharToMultiByte - IMAGE_BASE
-        .quad n_WriteFile - IMAGE_BASE
-        .quad 0
-        .balign 2
-n_AddVectoredExceptionHandler: .short 0
-        .asciz "AddVectoredExceptionHandler"
-        .balign 2
-n_CloseHandle: .short 0
-        .asciz "CloseHandle"
-        .balign 2
-n_CreateDirectoryW: .short 0
-        .asciz "CreateDirectoryW"
-        .balign 2
-n_CreateFileW: .short 0
-        .asciz "CreateFileW"
-        .balign 2
-n_CreateWaitableTimerExW: .short 0
-        .asciz "CreateWaitableTimerExW"
-        .balign 2
-n_DeleteFileW: .short 0
-        .asciz "DeleteFileW"
-        .balign 2
-n_ExitProcess: .short 0
-        .asciz "ExitProcess"
-        .balign 2
-n_FreeEnvironmentStringsW: .short 0
-        .asciz "FreeEnvironmentStringsW"
-        .balign 2
-n_GetCommandLineW: .short 0
-        .asciz "GetCommandLineW"
-        .balign 2
-n_GetCurrentDirectoryW: .short 0
-        .asciz "GetCurrentDirectoryW"
-        .balign 2
-n_GetCurrentProcess: .short 0
-        .asciz "GetCurrentProcess"
-        .balign 2
-n_GetCurrentProcessId: .short 0
-        .asciz "GetCurrentProcessId"
-        .balign 2
-n_GetCurrentThread: .short 0
-        .asciz "GetCurrentThread"
-        .balign 2
-n_GetEnvironmentStringsW: .short 0
-        .asciz "GetEnvironmentStringsW"
-        .balign 2
-n_GetFileAttributesExW: .short 0
-        .asciz "GetFileAttributesExW"
-        .balign 2
-n_GetFileInformationByHandle: .short 0
-        .asciz "GetFileInformationByHandle"
-        .balign 2
-n_GetFileType: .short 0
-        .asciz "GetFileType"
-        .balign 2
-n_GetLastError: .short 0
-        .asciz "GetLastError"
-        .balign 2
-n_GetProcessTimes: .short 0
-        .asciz "GetProcessTimes"
-        .balign 2
-n_GetStdHandle: .short 0
-        .asciz "GetStdHandle"
-        .balign 2
-n_GetSystemTimePreciseAsFileTime: .short 0
-        .asciz "GetSystemTimePreciseAsFileTime"
-        .balign 2
-n_GetThreadTimes: .short 0
-        .asciz "GetThreadTimes"
-        .balign 2
-n_MoveFileExW: .short 0
-        .asciz "MoveFileExW"
-        .balign 2
-n_MultiByteToWideChar: .short 0
-        .asciz "MultiByteToWideChar"
-        .balign 2
-n_QueryPerformanceCounter: .short 0
-        .asciz "QueryPerformanceCounter"
-        .balign 2
-n_QueryPerformanceFrequency: .short 0
-        .asciz "QueryPerformanceFrequency"
-        .balign 2
-n_ReadFile: .short 0
-        .asciz "ReadFile"
-        .balign 2
-n_RemoveDirectoryW: .short 0
-        .asciz "RemoveDirectoryW"
-        .balign 2
-n_SetCurrentDirectoryW: .short 0
-        .asciz "SetCurrentDirectoryW"
-        .balign 2
-n_SetFilePointerEx: .short 0
-        .asciz "SetFilePointerEx"
-        .balign 2
-n_SetWaitableTimer: .short 0
-        .asciz "SetWaitableTimer"
-        .balign 2
-n_VirtualAlloc: .short 0
-        .asciz "VirtualAlloc"
-        .balign 2
-n_VirtualFree: .short 0
-        .asciz "VirtualFree"
-        .balign 2
-n_WaitForSingleObject: .short 0
-        .asciz "WaitForSingleObject"
-        .balign 2
-n_WideCharToMultiByte: .short 0
-        .asciz "WideCharToMultiByte"
-        .balign 2
-n_WriteFile: .short 0
-        .asciz "WriteFile"
-        .balign 8
-bcrypt_names:
-        .quad n_ProcessPrng - IMAGE_BASE
-        .quad 0
-        .balign 2
-n_ProcessPrng: .short 0
-        .asciz "ProcessPrng"
-kernel32: .asciz "KERNEL32.dll"
-bcrypt: .asciz "bcryptprimitives.dll"
 
         .data
-        .globl iat
-iat:
-imp_AddVectoredExceptionHandler: .quad n_AddVectoredExceptionHandler - IMAGE_BASE
-imp_CloseHandle: .quad n_CloseHandle - IMAGE_BASE
-imp_CreateDirectoryW: .quad n_CreateDirectoryW - IMAGE_BASE
-imp_CreateFileW: .quad n_CreateFileW - IMAGE_BASE
-imp_CreateWaitableTimerExW: .quad n_CreateWaitableTimerExW - IMAGE_BASE
-imp_DeleteFileW: .quad n_DeleteFileW - IMAGE_BASE
-imp_ExitProcess: .quad n_ExitProcess - IMAGE_BASE
-imp_FreeEnvironmentStringsW: .quad n_FreeEnvironmentStringsW - IMAGE_BASE
-imp_GetCommandLineW: .quad n_GetCommandLineW - IMAGE_BASE
-imp_GetCurrentDirectoryW: .quad n_GetCurrentDirectoryW - IMAGE_BASE
-imp_GetCurrentProcess: .quad n_GetCurrentProcess - IMAGE_BASE
-imp_GetCurrentProcessId: .quad n_GetCurrentProcessId - IMAGE_BASE
-imp_GetCurrentThread: .quad n_GetCurrentThread - IMAGE_BASE
-imp_GetEnvironmentStringsW: .quad n_GetEnvironmentStringsW - IMAGE_BASE
-imp_GetFileAttributesExW: .quad n_GetFileAttributesExW - IMAGE_BASE
-imp_GetFileInformationByHandle: .quad n_GetFileInformationByHandle - IMAGE_BASE
-imp_GetFileType: .quad n_GetFileType - IMAGE_BASE
-imp_GetLastError: .quad n_GetLastError - IMAGE_BASE
-imp_GetProcessTimes: .quad n_GetProcessTimes - IMAGE_BASE
-imp_GetStdHandle: .quad n_GetStdHandle - IMAGE_BASE
-imp_GetSystemTimePreciseAsFileTime: .quad n_GetSystemTimePreciseAsFileTime - IMAGE_BASE
-imp_GetThreadTimes: .quad n_GetThreadTimes - IMAGE_BASE
-imp_MoveFileExW: .quad n_MoveFileExW - IMAGE_BASE
-imp_MultiByteToWideChar: .quad n_MultiByteToWideChar - IMAGE_BASE
-imp_QueryPerformanceCounter: .quad n_QueryPerformanceCounter - IMAGE_BASE
-imp_QueryPerformanceFrequency: .quad n_QueryPerformanceFrequency - IMAGE_BASE
-imp_ReadFile: .quad n_ReadFile - IMAGE_BASE
-imp_RemoveDirectoryW: .quad n_RemoveDirectoryW - IMAGE_BASE
-imp_SetCurrentDirectoryW: .quad n_SetCurrentDirectoryW - IMAGE_BASE
-imp_SetFilePointerEx: .quad n_SetFilePointerEx - IMAGE_BASE
-imp_SetWaitableTimer: .quad n_SetWaitableTimer - IMAGE_BASE
-imp_VirtualAlloc: .quad n_VirtualAlloc - IMAGE_BASE
-imp_VirtualFree: .quad n_VirtualFree - IMAGE_BASE
-imp_WaitForSingleObject: .quad n_WaitForSingleObject - IMAGE_BASE
-imp_WideCharToMultiByte: .quad n_WideCharToMultiByte - IMAGE_BASE
-imp_WriteFile: .quad n_WriteFile - IMAGE_BASE
-        .quad 0
-iat_bcrypt:
-imp_ProcessPrng: .quad n_ProcessPrng - IMAGE_BASE
-        .quad 0
-        .globl iat_end
-iat_end:
 # The message for a system call the layer does not make; its digits are
 # filled in.
 unknown: .ascii "E_RUNTIME_WINDOWS: unsupported system call 0x"
@@ -1492,15 +1299,22 @@ win_rsp: .quad 0
 segv_handler: .quad 0
 sleep_timer: .quad 0
 region_count: .long 0
+        .globl last_error
 last_error: .long 0
 busy:   .byte 0
+
+# The rest starts as zeros, which the file does not hold.
+        .bss
         .balign 16
 siginfo: .space 128
 ucontext: .space 1024
 regions: .space REGIONS*16
+        .globl handles
 handles: .space FDS*8
         .balign 2
+        .globl wpath1
 wpath1: .space 65536
+        .globl wpath2
 wpath2: .space 65536
-        .globl data_end
-data_end:
+
+        .section .note.GNU-stack, "", @progbits
