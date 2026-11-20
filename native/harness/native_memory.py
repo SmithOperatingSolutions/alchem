@@ -4,6 +4,7 @@ import os
 import resource
 import signal
 import subprocess
+import sys
 import tempfile
 
 
@@ -39,6 +40,8 @@ def profile(executable,source,arena_bytes=None,limit=None):
     the first stop at which R12 is set: it is still the arena's start then,
     R13 its end, and their distance must be a size nc_arena_init can reserve.
     The charge is what R12 has advanced by, whatever was reserved."""
+    # The requests and registers here are Linux's x86-64 ones.
+    if sys.platform != 'linux':raise TraceUnavailable('ptrace of Linux only')
     libc=ctypes.CDLL(None,use_errno=True)
     libc.ptrace.argtypes=[ctypes.c_ulong,ctypes.c_ulong,ctypes.c_void_p,ctypes.c_void_p]
     libc.ptrace.restype=ctypes.c_long

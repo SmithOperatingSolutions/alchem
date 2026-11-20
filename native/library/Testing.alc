@@ -208,9 +208,15 @@
     b = Sys.cover()
     if path != "" and b != 0 do
       d = b + Testing._cu(b + 4)
-      t = Sys.peek(Testing._cu(d)) + Testing._cu(d + 4)
+      # A program loaded above 4 GiB (position-independent) has, at d and
+      # d + 12, where the trace runtime and the routine stand from the start
+      # of the code; any other, the trace runtime's table entry and where the
+      # code starts.
+      pic = b > 4294967295
+      t = (if pic do b - Testing._cu(d + 12) + Testing._cu(d) else Sys.peek(Testing._cu(d)) end) + Testing._cu(d + 4)
       n = Testing._cu(d + 8)
-      listed = Testing._cordered(Testing._centries(d + 16 + 8 * n, n, b - Testing._cu(d + 12) - 9, Sys.peek(Sys.state() + 80), []))
+      r = if pic do Testing._cu(d + 12) - 9 else b - Testing._cu(d + 12) - 9 end
+      listed = Testing._cordered(Testing._centries(d + 16 + 8 * n, n, r, Sys.peek(Sys.state() + 80), []))
       text = Enum.join(Enum.map(listed, fn e -> Testing._cline(t, elem(e, 0), elem(e, 1)) end))
       fd = Sys.call(2, Sys.addr(path <> "\x00"), 577, 384)
       if fd >= 0 do

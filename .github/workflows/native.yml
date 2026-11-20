@@ -3,7 +3,9 @@ name: Native compiler
 # (A1 = A2) and every gate compares its programs with those of the Go
 # compiler this native/ is pinned to. On x86-64 the ARM64 programs run under
 # QEMU; the ARM64 job runs them on an ARM64 machine, and the x86-64 seed and
-# compiler stages under QEMU instead. The complete suite
+# compiler stages under QEMU instead. A job of its own builds the compiler
+# for macOS as a macOS program, which four macOS jobs check side by side
+# (scripts/verify-darwin.py --shard). The complete suite
 # (scripts/verify-local.sh --with-source) runs nightly and on request.
 on:
   pull_request:
@@ -95,3 +97,67 @@ jobs:
         env:
           ALCHEM_VERIFY_MEMORY: 14G
         run: bash scripts/verify-local.sh --with-source
+
+  macos-compiler:
+    # spec/darwin-arm64.md: the compiler that makes macOS programs, which
+    # compiles its own source into the compiler as a macOS program. Its stages
+    # are Linux x86-64 programs, so it is built here, beside the gates.
+    name: Compiler for macOS
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: native
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          working_directory: native
+          cache: false
+      - name: Dependencies
+        run: mise run fetch
+      - name: Build
+        # One build at a time: no memory ceiling (scripts/limited would cap
+        # address space here, with no systemd user manager).
+        env:
+          ALCHEM_VERIFY_LIMITED: '1'
+        run: |
+          python3 scripts/verify-quick.py --build-only
+          python3 scripts/build-arm64.py --darwin --compiler build/dev/A2 \
+            --output build/dev/alchem-compiler-darwin --macos build/dev/alchem-compiler-macos
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: alchem-compiler-macos
+          path: native/build/dev/alchem-compiler-macos
+          retention-days: 7
+
+  macos:
+    name: macOS ARM64 (${{ matrix.shard }}/4)
+    needs: macos-compiler
+    runs-on: macos-15
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    defaults:
+      run:
+        shell: bash
+        working-directory: native
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          working_directory: native
+          cache: false
+      - name: Dependencies
+        run: mise run fetch
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: alchem-compiler-macos
+          path: native/build/dev
+      - name: Gates on macOS, part ${{ matrix.shard }} of 4
+        run: |
+          chmod 700 build/dev/alchem-compiler-macos
+          python3 scripts/verify-darwin.py build/dev/alchem-compiler-macos --shard ${{ matrix.shard }}/4

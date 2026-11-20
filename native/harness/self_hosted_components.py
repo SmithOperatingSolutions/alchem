@@ -21,7 +21,8 @@ def literal(values):
 def verify_program(source,compiler,root,label,status=0):
     result=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
     assert result.returncode==0 and not result.stderr,(label,'self-host compile',result.returncode,result.stderr)
-    assert result.stdout[:4]==b'\x7fELF',(label,'not ELF')
+    # ELF, or Mach-O from a compiler built for macOS (spec/darwin-arm64.md).
+    assert result.stdout[:4] in (b'\x7fELF',b'\xcf\xfa\xed\xfe'),(label,'not an executable')
     repeated=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
     assert (repeated.returncode,repeated.stdout,repeated.stderr)==(0,result.stdout,b''),(label,'self-host determinism')
     output=Path(root)/'self-hosted-component';output.unlink(missing_ok=True);output.write_bytes(result.stdout);output.chmod(0o700)

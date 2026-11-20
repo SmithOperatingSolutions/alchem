@@ -102,7 +102,7 @@ defmodule NativeProcesses do
       ended = nc_join(Enum.concat(nc_call(id),b[65,143,70,240,72,131,196,24,80,49,255]),Enum.concat(nc_call(close),b[89,72,133,192,72,15,68,193]),check)
       failed = nc_join(Enum.concat(b[72,137,224,80,191,1,0,0,0],nc_call(close)),b[90,190,12,0,0,0],nc_call(nz_slot(table)))
       entry = nc_join(before,ended,failed)
-      if nc_arm() == 1 do a_entry(nc_join(frame,ended,failed)) else Enum.concat(entry,nc_zeros(1024-Enum.count(entry))) end
+      if nc_a64() == 1 do a_entry(nc_join(frame,ended,failed)) else Enum.concat(entry,nc_zeros(1024-Enum.count(entry))) end
     end end
   end
   # Some functions of the process library need to know a type the program
@@ -142,7 +142,7 @@ defmodule NativeProcesses do
     if Enum.count(kind) == 0 do b[73,199,70,208,0,0,0,0] else if nn_open(kind) == 1 do b[73,199,70,208,0,0,0,0] else
       # The ARM64 compiler's translation finds data ahead of what names it:
       # there the address is taken first (xa_mark).
-      if nc_arm() == 1 do nc_join(Enum.concat(xa_mark(size,b[72,141,5,5,0,0,0]),b[233]),Enum.concat(nc_u32(size),ty_type(kind)),b[73,137,70,208]) else
+      if nc_a64() == 1 do nc_join(Enum.concat(xa_mark(size,b[72,141,5,5,0,0,0]),b[233]),Enum.concat(nc_u32(size),ty_type(kind)),b[73,137,70,208]) else
         nc_join(Enum.concat(b[233],nc_u32(size)),ty_type(kind),nc_join(b[72,141,5],nq_rel(0-size-7),b[73,137,70,208]))
       end
     end end

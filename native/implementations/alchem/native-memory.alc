@@ -24,15 +24,15 @@ defmodule NativeMemory do
     words = nc_join(Enum.concat(gm_word(address+gm_off(20)),gm_word(address+gm_off(start))),Enum.concat(gm_word(address+gm_off(10)),gm_word(address+gm_off(5))),gm_word(address))
     # On ARM64 the word at 0x400420 is the collector's x86-64 system call
     # routine, which translated functions call (spec/arm64.md).
-    head = if nc_arm() == 1 do Enum.concat(nc_slice(entry,0,928),gm_word(address+ga_syscall())) else nc_slice(entry,0,936) end
+    head = if nc_a64() == 1 do Enum.concat(nc_slice(entry,0,928),gm_word(address+if nc_darwin() == 1 do gd_syscall() else ga_syscall() end)) else nc_slice(entry,0,936) end
     nc_join(head,maps,words)
   end
   # Where a routine's jump stands in the blob: 5 bytes apart, 4 on ARM64.
-  def gm_off(offset: integer): integer do if nc_arm() == 1 do a_div(offset*4,5) else offset end end
+  def gm_off(offset: integer): integer do if nc_a64() == 1 do a_div(offset*4,5) else offset end end
   # The image: the entry, the table of addresses and the code, with the
   # collector behind the code.
   def gm_image(entry: bytes, addresses: bytes, code: bytes): bytes do
-    nc_join(gm_entry(entry,4194304+128+1024+Enum.count(addresses)+Enum.count(code)),addresses,Enum.concat(code,if nc_arm() == 1 do ga_blob() else gm_blob() end))
+    nc_join(gm_entry(entry,4194304+128+1024+Enum.count(addresses)+Enum.count(code)),addresses,Enum.concat(code,if nc_darwin() == 1 do gd_blob() else if nc_a64() == 1 do ga_blob() else gm_blob() end end))
   end
   # The slots a function value copies into its record (nf_code, nf_stores),
   # three bytes each, with 16777215 for an environment record that stands

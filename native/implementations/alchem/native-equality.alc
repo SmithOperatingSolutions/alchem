@@ -4,6 +4,16 @@ defmodule NativeEquality do
   # values in RDI and RSI, leaves 1 or 0 in AL and may use RAX, RCX, RDX, R8 and
   # R11. A struct or sum type is compared by a function in its table slot, so a
   # type that refers to itself compares by recursion.
+  # A call of the comparator in R10: a function's code where it is below
+  # 4 GiB, else a function value, whose first word is the code. The code of a
+  # position-independent program stands above 4 GiB, less than 1 GiB and the
+  # head below the copy of the entry's words (X26, 0x400420 in the program):
+  # code is what stands there (spec/darwin-arm64.md).
+  def nq_call(): bytes do
+    if nc_pic() == 1 do b[76,141,28,37,32,4,64,0,77,41,211,73,129,251,0,16,0,64,115,5,65,255,210,235,3,65,255,18] else b[77,137,211,73,193,235,32,117,5,65,255,210,235,3,65,255,18] end
+  end
+  # How much longer nq_call is in a position-independent program.
+  def nq_grown(): integer do if nc_pic() == 1 do 11 else 0 end end
   def nq_jz(distance: integer): bytes do Enum.concat(b[15,132],nq_rel(distance)) end
   def nq_jnz(distance: integer): bytes do Enum.concat(b[15,133],nq_rel(distance)) end
   def nq_jmp(distance: integer): bytes do Enum.concat(b[233],nq_rel(distance)) end
@@ -121,7 +131,7 @@ defmodule NativeEquality do
     # A slot from 16777216 on is an entry of the comparator array slot 0 points at.
     load = if slot < 0 do b[] else if slot < 16777216 do nc_slot(b[76,139,85],slot) else Enum.concat(b[76,139,85,248,77,139,146],nc_u32((slot-16777216)*8)) end end
     if slot < 0 do b[] else
-      nc_join(nc_join(Enum.concat(load,b[73,131,250,1,119,37,116,8]),b[72,57,247,15,148,192,235,76],text),b[235,49],nc_join(b[73,131,250,12,117,24],ne_equal(),b[235,19,49,210,77,137,211,73,193,235,32,117,5,65,255,210,235,3,65,255,18]))
+      nc_join(nc_join(Enum.concat(load,b[73,131,250,1,119,37,116,8]),b[72,57,247,15,148,192,235,76+nq_grown()],text),b[235,49+nq_grown()],nc_join(b[73,131,250,12,117,24],ne_equal(),Enum.concat(b[235,19+nq_grown(),49,210],nq_call())))
     end
   end
   # The code that leaves the comparator of a type in RAX. A list, tuple or

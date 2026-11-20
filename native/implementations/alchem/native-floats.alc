@@ -238,12 +238,12 @@ defmodule NativeFloats do
     folded = if both == 0 do b[] else ne_fold(nc_slice(nc_code(left),2,10),nc_slice(nc_code(right),2,10),kind) end
     if nc_tag(left) != 24 do b[] else if nc_tag(right) != 24 do b[] else if kind == 0 do b[] else if nw_marked(left) > 0 do b[] else
       if both == 1 do if Enum.count(folded) == 0 do b[] else nc_value(nc_pos(right),Enum.concat(b[72,184],folded),b[24]) end else
-        fused = if nc_arm() == 1 do (if kind < 3 do ne_fused(left,right,kind) else b[] end) else b[] end
+        fused = if nc_a64() == 1 do (if kind < 3 do ne_fused(left,right,kind) else b[] end) else b[] end
         made = nc_value(nc_pos(right),nc_join(Enum.concat(nc_code(left),b[80]),nc_code(right),Enum.concat(b[89],ne_operator(table,op,kind))),b[24])
         # Go's compiler folds an operation on two constants (as its SSA has
         # them: through names too), which then is no product to fuse.
-        folded_by_go = if nc_arm() == 1 do ne_go_constant(left)*ne_go_constant(right)*(if kind < 5 do 1 else 0 end) else 0 end
-        if Enum.count(fused) > 0 do fused else if folded_by_go == 1 do ne_flag(made,8) else if nc_arm()*(if kind == 3 do 1 else 0 end) == 1 do ne_product(made) else made end end end
+        folded_by_go = if nc_a64() == 1 do ne_go_constant(left)*ne_go_constant(right)*(if kind < 5 do 1 else 0 end) else 0 end
+        if Enum.count(fused) > 0 do fused else if folded_by_go == 1 do ne_flag(made,8) else if nc_a64()*(if kind == 3 do 1 else 0 end) == 1 do ne_product(made) else made end end end
       end
     end end end end
   end

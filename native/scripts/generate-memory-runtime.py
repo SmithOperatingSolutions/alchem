@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regenerate the collector's literal from spec/memory-x86_64.s; optional development step only."""
 from pathlib import Path
+import base64
 import subprocess
 import sys
 import tempfile
@@ -43,7 +44,35 @@ def generate_arm64():
     return arm64_runtime.module_text('NativeMemoryDataArm64','ga_blob',data,'spec/memory-x86_64.s',[('ga_syscall',symbols['x86_syscall'])]),len(data)
 
 
-if __name__=='__main__':
+def generate_darwin():
+    """The collector for macOS (spec/darwin-arm64.md), native-memory-data-darwin.alc:
+    its system call routine calls libSystem."""
+    sys.path.insert(0,str(ROOT/'scripts'))
+    import arm64_runtime
+    data,symbols=arm64_runtime.assemble_with_symbols((ROOT/'spec/memory-x86_64.s').read_text(),['PIC','DARWIN','DARWIN_ROUTINE'])
+    assert all(data[i+3]&0xfc==0x14 for i in range(0,48,4)),data[:48]
+    text=arm64_runtime.module_text('NativeMemoryDataDarwin','gd_blob',data,'spec/memory-x86_64.s',[('gd_syscall',symbols['x86_syscall'])])
+    # The functions of libSystem its routine calls, in the order of their
+    # words: DYLD_CHAINED_IMPORT words (library ordinal 1, libSystem; the
+    # offset of the name << 9), then the names.
+    imports=arm64_runtime.translator().DARWIN_IMPORTS
+    words=b'';names=b'\0'
+    for name in imports:
+        words+=(1|len(names)<<9).to_bytes(4,'little');names+=name.encode()+b'\0'
+    blob=words+names
+    parts=['b"'+base64.b64encode(blob[i:i+384]).decode()+'"' for i in range(0,len(blob),384)]
+    data_text=parts[0]
+    for part in parts[1:]:data_text=f'Enum.concat({data_text},{part})'
+    marker='  # Native smoke test'
+    text=text.replace(marker,f'  def gd_import_count(): integer do {len(imports)} end\n  def gd_import_data(): bytes do {data_text} end\n'+marker,1)
+    return text,len(data)
+
+
+if __name__=='__main__' and '--darwin' in sys.argv:
+    text,size=generate_darwin()
+    (ROOT/'implementations/alchem/native-memory-data-darwin.alc').write_text(text)
+    print(f'{size} bytes (macOS)')
+elif __name__=='__main__':
     text,size=generate()
     (ROOT/'implementations/alchem/native-memory-data.alc').write_text(text)
     print(f'{size} bytes')

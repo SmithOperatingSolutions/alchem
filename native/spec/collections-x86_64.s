@@ -306,9 +306,18 @@
   push %r11
   mov %r8,%r10
   shr $1,%r10
+.ifdef PIC
+  # Code is what stands less than 1 GiB and the head below the copy of the
+  # entry's words (spec/darwin-arm64.md); anything else a function value.
+  lea 0x400420,%rax
+  sub %r10,%rax
+  cmp $0x40001000,%rax
+  jae .Lkey_value\@
+.else
   mov %r10,%rax
   shr $32,%rax
   jnz .Lkey_value\@
+.endif
   call *%r10
   jmp .Lkey_done\@
 .Lkey_value\@:

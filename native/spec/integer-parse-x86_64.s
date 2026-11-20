@@ -517,7 +517,13 @@ ins_range:
 ins_float:
  mov ecx,[rsi+3]
  mov eax,1
+.ifdef PIC
+# The entry's address in the table's copy (spec/darwin-arm64.md).
+ sub ecx,0x400420
+ jmp [rcx*1+0x400420]
+.else
  jmp [rcx]
+.endif
 # A date or time of the library is written as its sigil, the fields after
 # the struct's count: 30 Date (year, month, day), 31 Time (hour, minute,
 # second, microsecond), 32 NaiveDateTime (both), 33 DateTime (both, then the

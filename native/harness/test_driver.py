@@ -47,7 +47,9 @@ def lay(files,root):
 def tools(compiler,base):
     """alchem and the bundler alone, built by the compiler."""
     spec=spec_from_file_location('build_alchem',ROOT/'scripts/build-alchem.py');builder=module_from_spec(spec);spec.loader.exec_module(builder)
-    made={'alchem':base/'alchem'};builder.build(compiler,made['alchem'])
+    # A compiler that makes macOS programs (Mach-O) builds `alchem` for macOS.
+    probe=subprocess.run([str(compiler)],input=b'defmodule M do\n  def main() do\n    System.halt(0)\n  end\nend\n',capture_output=True,env={'PATH':''},timeout=120)
+    made={'alchem':base/'alchem'};builder.build(compiler,made['alchem'],probe.stdout[:4]==b'\xcf\xfa\xed\xfe')
     built=subprocess.run([str(compiler)],input=(ROOT/'tools/alchem-bundle.alc').read_bytes(),capture_output=True,env={'PATH':''},timeout=300)
     assert (built.returncode,built.stderr)==(0,b''),('alchem-bundle',built.returncode,built.stderr)
     made['alchem-bundle']=base/'alchem-bundle';made['alchem-bundle'].unlink(missing_ok=True);made['alchem-bundle'].write_bytes(built.stdout);made['alchem-bundle'].chmod(0o700)
