@@ -1681,11 +1681,16 @@ def run(compiler,source,base,number):
     return process.returncode,out,err
 
 
-def started(compiler,bundler,files,entry,arguments,lines,directory):
-    """The first program of a group, running, with what it wrote up to its address."""
+def made(compiler,bundler,files,entry,directory):
+    """The program of entry among files, built."""
     for name,text in files.items():(directory/name).write_text(text)
     source=bundler.bundle(str(directory/entry)) if any('import "' in text for text in files.values()) else files[entry].encode()
-    program=build(compiler,source,directory/(entry+'.bin'))
+    return build(compiler,source,directory/(entry+'.bin'))
+
+
+def started(compiler,bundler,files,entry,arguments,lines,directory,program=None):
+    """The first program of a group (built here unless given), running, with what it wrote up to its address."""
+    program=program or made(compiler,bundler,files,entry,directory)
     process=subprocess.Popen([str(ROOT/'scripts/limited'),str(program)]+arguments,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,env=bounds(directory,150),cwd=directory,start_new_session=True)
     try:
         first=[process.stdout.readline() for _ in range(lines)]
@@ -1730,11 +1735,15 @@ def spoken(compiler,bundler,base):
 def trio(compiler,bundler,base):
     """Three nodes: the third connects to the other two and hands the first's process to the second, which is not connected to it."""
     directory=Path(base)/'trio';directory.mkdir(0o700)
-    first,before1,address1=started(compiler,bundler,{'na.alc':TRIO[0]},'na.alc',[],2,directory)
+    # Every program is built before the first starts, as in group: the first's
+    # process waits 20 seconds for a message, and then its name is gone, which
+    # a build on a loaded machine (macOS signs slowly) outlasts.
+    built=[made(compiler,bundler,{name:text},name,directory) for name,text in zip(['na.alc','nb.alc','nc.alc'],TRIO[:3])]
+    program=built[2]
+    first,before1,address1=started(compiler,bundler,{},'na.alc',[],2,directory,built[0])
     try:
-        second,before2,address2=started(compiler,bundler,{'nb.alc':TRIO[1]},'nb.alc',[],2,directory)
+        second,before2,address2=started(compiler,bundler,{},'nb.alc',[],2,directory,built[1])
         try:
-            program=build(compiler,TRIO[2].encode(),directory/'nc.bin')
             third=subprocess.Popen([str(ROOT/'scripts/limited'),str(program),address1,address2],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=bounds(directory,60),cwd=directory,start_new_session=True)
             try:out,err=third.communicate(timeout=120)
             finally:killed(third)
