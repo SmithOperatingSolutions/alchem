@@ -19,7 +19,7 @@ defmodule NativeCaseData do
   def cm_group_1_0(): bytes do nc_join(cm_group_0_0(),cm_group_0_1(),cm_group_0_2()) end
   def cm_group_1_1(): bytes do nc_join(cm_group_0_3(),b[],b[]) end
   def cm_group_2_0(): bytes do nc_join(cm_group_1_0(),cm_group_1_1(),b[]) end
-  def cm_blob(): bytes do cm_group_2_0() end
+  def cm_blob(): bytes do nc_os(cm_group_2_0(),b[145,3,0,0]) end
   # Native smoke test; generated String case runtime.
   def main() do System.halt(0) end
 end

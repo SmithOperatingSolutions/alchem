@@ -3,9 +3,12 @@
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/'scripts'))
+import windows_sites
 
 
 def packed_ranges():
@@ -19,14 +22,23 @@ def packed_ranges():
 
 
 def assemble(asm):
+    return assemble_sites(asm)[0]
+
+
+def assemble_sites(asm):
+    """The code, and where it makes system calls (scripts/windows_sites.py)."""
     with tempfile.TemporaryDirectory(prefix='alchem-runtime-generation-') as d:
         root=Path(d);source=root/'runtime.s';obj=root/'runtime.o';binary=root/'runtime.bin';source.write_text(asm)
-        subprocess.run(['as','--64','-o',str(obj),str(source)],check=True)
+        command=['as','--64','-o',str(obj),str(source)]
+        subprocess.run(command,check=True)
         subprocess.run(['objcopy','-O','binary','-j','.text',str(obj),str(binary)],check=True)
-        return binary.read_bytes()
+        windows=windows_sites.assemble(command)
+        subprocess.run(['objcopy','-O','binary','-j','.text',str(windows),str(binary)+'.win'],check=True)
+        raw=binary.read_bytes()
+        return raw,windows_sites.sites(raw,Path(str(binary)+'.win').read_bytes())
 
 
-def module_text(module,prefix,raw,comment,smoke):
+def module_text(module,prefix,raw,comment,smoke,found=()):
     """Checked literals in grouped functions; PREFIX_blob() returns the whole routine."""
     pieces=[];names=[]
     for i in range(0,len(raw),384):
@@ -43,7 +55,7 @@ def module_text(module,prefix,raw,comment,smoke):
             pieces.append(f'  def {name}(): bytes do nc_join('+','.join(args)+') end\n')
         names=merged;level+=1
     return (f'defmodule {module} do\n  # {comment}\n'+''.join(pieces)+
-            f'  def {prefix}_blob(): bytes do '+names[0]+'() end\n'
+            f'  def {prefix}_blob(): bytes do '+windows_sites.wrap(names[0]+'()',found)+' end\n'
             f'  # Native smoke test; {smoke}.\n  def main() do System.halt(0) end\nend\n')
 
 
@@ -52,8 +64,8 @@ def generate():
     asm=(ROOT/'spec/integer-parse-x86_64.s').read_text()
     assert 'PRINT_RANGE_COUNT' in asm and '# PRINT_DATA' in asm
     asm=asm.replace('PRINT_RANGE_COUNT',str(count)).replace('# PRINT_DATA','\n'.join(' .byte '+','.join(map(str,packed[i:i+32])) for i in range(0,len(packed),32)))
-    raw=assemble(asm)
-    return module_text('NativeParseData','ip',raw,'Generated from spec/integer-parse-x86_64.s and spec/print-ranges.json.','generated Integer.parse runtime'),len(raw)
+    raw,found=assemble_sites(asm)
+    return module_text('NativeParseData','ip',raw,'Generated from spec/integer-parse-x86_64.s and spec/print-ranges.json.','generated Integer.parse runtime',found),len(raw)
 
 
 if __name__=='__main__':

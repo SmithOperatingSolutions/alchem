@@ -36,7 +36,7 @@ defmodule NativeTrace do
   # After a match left 1 or 0 in AL: a value that does not match its pattern
   # ends the program, naming the pattern at pos.
   def nz_must(table: bytes, pos: integer): bytes do
-    if nz_on(table) == 0 do nc_join(b[132,192,15,133,57,0,0,0,191,2,0,0,0,184,1,0,0,0,72,141,53,19,0,0,0,186,21,0,0,0,15,5],b[191,2,0,0,0,184,60,0,0,0,15,5],b[112,97,116,116,101,114,110,32,109,97,116,99,104,32,102,97,105,108,101,100,10]) else
+    if nz_on(table) == 0 do nc_join(b[132,192,15,133,57,0,0,0,191,2,0,0,0,184,1,0,0,0,72,141,53,19,0,0,0,186,21,0,0,0,15,nc_sc()],b[191,2,0,0,0,184,60,0,0,0,15,nc_sc()],b[112,97,116,116,101,114,110,32,109,97,116,99,104,32,102,97,105,108,101,100,10]) else
       nc_join(b[132,192,117,16],Enum.concat(b[191],nc_u32(pos)),Enum.concat(b[49,246],nc_call(nz_slot(table))))
     end
   end
@@ -53,7 +53,7 @@ defmodule NativeTrace do
   # a failure naming the System.halt at pos.
   def nz_exit(table: bytes, pos: integer): bytes do
     if nz_on(table) == 0 do nc_exit_status() else
-      nc_join(b[72,61,255,0,0,0,118,19],nc_join(Enum.concat(b[191],nc_u32(pos)),b[190,2,0,0,0],nc_call(nz_slot(table))),b[72,137,199,184,60,0,0,0,15,5])
+      nc_join(b[72,61,255,0,0,0,118,19],nc_join(Enum.concat(b[191],nc_u32(pos)),b[190,2,0,0,0],nc_call(nz_slot(table))),b[72,137,199,184,60,0,0,0,15,nc_sc()])
     end
   end
   # 1 when pos follows a "(" that groups: one that no name or call precedes.

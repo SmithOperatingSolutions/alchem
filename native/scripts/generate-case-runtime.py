@@ -32,8 +32,8 @@ def generate():
     asm=asm.replace('# UTF8_WIDTH',macro).replace('UPPER_COUNT',str(len(tables['upper']))).replace('LOWER_COUNT',str(len(tables['lower']))).replace('TITLE_COUNT',str(len(tables['title'])))
     # Lookup reads eight bytes per six-byte entry.
     asm=asm.replace('# UPPER_DATA',data(packed(tables['upper']))).replace('# LOWER_DATA',data(packed(tables['lower']))).replace('# TITLE_DATA',data(packed(tables['title'])+b'\0\0'))
-    raw=shared.assemble(asm)
-    text=shared.module_text('NativeCaseData','cm',raw,'Generated from spec/case-map-x86_64.s and spec/case-ranges.json.','generated String case runtime')
+    raw,found=shared.assemble_sites(asm)
+    text=shared.module_text('NativeCaseData','cm',raw,'Generated from spec/case-map-x86_64.s and spec/case-ranges.json.','generated String case runtime',found)
     return text,len(raw)
 
 

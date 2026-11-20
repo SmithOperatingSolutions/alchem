@@ -369,7 +369,7 @@ defmodule NativeSets do
   # Stream.__sleep(milliseconds): nanosleep, again when a signal cuts it short.
   def nn_sleep(args: bytes): bytes do
     if nt_tag(nc_arg_kind(args,0)) != 0 do b[] else
-      nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),b[88,49,210,185,232,3,0,0,72,247,241,72,105,210,64,66,15,0,82,80,72,137,231,72,137,230,184,35,0,0,0,15,5,72,131,248,252,116,237,72,131,196,16,49,192]),b[0])
+      nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),b[88,49,210,185,232,3,0,0,72,247,241,72,105,210,64,66,15,0,82,80,72,137,231,72,137,230,184,35,0,0,0,15,nc_sc(),72,131,248,252,116,237,72,131,196,16,49,192]),b[0])
     end
   end
   def nn_cell(args: bytes, op: integer): bytes do

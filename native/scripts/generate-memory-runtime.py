@@ -7,6 +7,8 @@ import sys
 import tempfile
 
 ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/'scripts'))
+import windows_sites
 
 
 def generate():
@@ -14,9 +16,12 @@ def generate():
         root=Path(d);obj=root/'runtime.o';binary=root/'runtime.bin'
         # --stress: the testing variant (see STRESS in the source); never committed.
         stress=['--defsym','STRESS=1'] if '--stress' in sys.argv else []
-        subprocess.run(['as','--64',*stress,'-o',str(obj),str(ROOT/'spec/memory-x86_64.s')],check=True)
+        command=['as','--64',*stress,'-o',str(obj),str(ROOT/'spec/memory-x86_64.s')]
+        subprocess.run(command,check=True)
         subprocess.run(['objcopy','-O','binary','-j','.text',str(obj),str(binary)],check=True)
         data=binary.read_bytes()
+        subprocess.run(['objcopy','-O','binary','-j','.text',str(windows_sites.assemble(command)),str(binary)+'.win'],check=True)
+        found=windows_sites.sites(data,Path(str(binary)+'.win').read_bytes())
         # The twelve jumps the entry's words address must be five bytes each.
         assert all(data[i]==0xe9 for i in range(0,60,5)),data[:60]
         parts=[data[i:i+128] for i in range(0,len(data),128)]
@@ -27,7 +32,7 @@ def generate():
             if stop-first==1:return f'gm_part_{first}()'
             middle=(first+stop)//2
             return 'Enum.concat('+join(first,middle)+','+join(middle,stop)+')'
-        pieces.append('  def gm_blob(): bytes do '+join(0,len(parts))+' end\n')
+        pieces.append('  def gm_blob(): bytes do '+windows_sites.wrap(join(0,len(parts)),found)+' end\n')
         pieces.append('  # Native smoke test; generated collector.\n  def main() do System.halt(0) end\nend\n')
         return ''.join(pieces),len(data)
 

@@ -1704,7 +1704,7 @@ defmodule NativeSourceCompiler do
   end
 
   def nc_entry(id: integer): bytes do
-    check = b[72,61,255,0,0,0,118,12,191,70,0,0,0,184,60,0,0,0,15,5,72,137,199,184,60,0,0,0,15,5]
+    check = b[72,61,255,0,0,0,118,12,191,70,0,0,0,184,60,0,0,0,15,nc_sc(),72,137,199,184,60,0,0,0,15,nc_sc()]
     if nc_a64() == 1 do a_entry(Enum.concat(nc_call(id),check)) else nc_entry_x86(id,check) end
   end
   def nc_entry_x86(id: integer, check: bytes): bytes do
@@ -1815,7 +1815,7 @@ defmodule NativeSourceCompiler do
             if Enum.count(entry) == 0 do b[] else
               addresses = nc_addresses(meta,0,1152+nc_units(Enum.count(meta),4)*8)
               image = gm_image(entry,addresses,code)
-              if nc_pic() == 1 do a_executable(image,Enum.count(addresses)) else Enum.concat(nc_header(128+Enum.count(image)),image) end
+              if nc_pic() == 1 do a_executable(image,Enum.count(addresses)) else nc_elf_or_pe(Enum.concat(nc_header(128+Enum.count(image)),image)) end
             end
           end
         end

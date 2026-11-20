@@ -6,7 +6,9 @@ name: Native compiler
 # compiler stages under QEMU instead. A job of its own builds the compiler
 # for macOS as a macOS program, which four macOS jobs check side by side
 # (scripts/verify-darwin.py --shard). The complete suite
-# (scripts/verify-local.sh --with-source) runs nightly and on request.
+# (scripts/verify-local.sh --with-source) runs nightly and on request. The
+# x86-64 job also builds the Windows compiler (native/spec/windows.md),
+# which the Windows job runs: it must make itself again byte for byte.
 on:
   pull_request:
     paths:
@@ -97,6 +99,20 @@ jobs:
         env:
           ALCHEM_VERIFY_MEMORY: 14G
         run: bash scripts/verify-local.sh --with-source
+      - name: Windows compiler
+        if: matrix.gates == ''
+        run: |
+          test -x build/dev/A2 || python3 scripts/verify-quick.py --build-only
+          mkdir -p build/windows
+          python3 scripts/build-windows.py --source build/windows/compiler-source.alc --output build/windows/alchem-compiler-windows.exe
+          cp examples/hello-native.alc build/windows/hello.alc
+      - name: Keep the Windows compiler
+        if: matrix.gates == ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-compiler
+          path: native/build/windows
+          retention-days: 3
 
   macos-compiler:
     # spec/darwin-arm64.md: the compiler that makes macOS programs, which
@@ -161,3 +177,27 @@ jobs:
         run: |
           chmod 700 build/dev/alchem-compiler-macos
           python3 scripts/verify-darwin.py build/dev/alchem-compiler-macos --shard ${{ matrix.shard }}/4
+
+  windows:
+    name: Windows x64
+    needs: native
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: windows
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-compiler
+          path: windows
+      - name: The compiler makes itself
+        run: |
+          ./alchem-compiler-windows.exe < compiler-source.alc > again.exe
+          cmp again.exe alchem-compiler-windows.exe
+      - name: A program
+        run: |
+          ./alchem-compiler-windows.exe < hello.alc > hello.exe
+          out="$(./hello.exe)"
+          test "$out" = 'Hello from native Alchem!'

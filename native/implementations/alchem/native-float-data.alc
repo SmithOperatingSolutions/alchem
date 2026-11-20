@@ -75,7 +75,7 @@ defmodule NativeFloatData do
   def fl_group_2_0(): bytes do nc_join(fl_group_1_0(),fl_group_1_1(),fl_group_1_2()) end
   def fl_group_2_1(): bytes do nc_join(fl_group_1_3(),fl_group_1_4(),fl_group_1_5()) end
   def fl_group_3_0(): bytes do nc_join(fl_group_2_0(),fl_group_2_1(),b[]) end
-  def fl_blob(): bytes do fl_group_3_0() end
+  def fl_blob(): bytes do nc_os(fl_group_3_0(),b[75,0,0,0]) end
   # Native smoke test; generated float runtime.
   def main() do System.halt(0) end
 end

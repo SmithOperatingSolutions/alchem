@@ -96,7 +96,7 @@ defmodule NativeProcesses do
   def ac_entry(source: bytes, table: bytes, id: integer): bytes do
     close = ac_close(source,table)
     if close < 0 do nc_entry(id) else if nz_on(table) == 0 do nc_entry(id) else
-      check = b[72,61,255,0,0,0,118,12,191,70,0,0,0,184,60,0,0,0,15,5,72,137,199,184,60,0,0,0,15,5]
+      check = b[72,61,255,0,0,0,118,12,191,70,0,0,0,184,60,0,0,0,15,nc_sc(),72,137,199,184,60,0,0,0,15,nc_sc()]
       frame = b[72,129,236,160,0,0,0,72,141,132,36,160,0,0,0,65,87,80,72,141,5,76,0,0,0,80,65,255,118,240,73,137,102,240]
       before = nc_join(b[73,137,230],Enum.concat(nc_arena_init(),nc_stack_init()),frame)
       ended = nc_join(Enum.concat(nc_call(id),b[65,143,70,240,72,131,196,24,80,49,255]),Enum.concat(nc_call(close),b[89,72,133,192,72,15,68,193]),check)

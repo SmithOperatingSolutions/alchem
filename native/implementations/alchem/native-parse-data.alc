@@ -31,7 +31,7 @@ defmodule NativeParseData do
   def ip_group_1_1(): bytes do nc_join(ip_group_0_3(),ip_group_0_4(),ip_group_0_5()) end
   def ip_group_1_2(): bytes do nc_join(ip_group_0_6(),b[],b[]) end
   def ip_group_2_0(): bytes do nc_join(ip_group_1_0(),ip_group_1_1(),ip_group_1_2()) end
-  def ip_blob(): bytes do ip_group_2_0() end
+  def ip_blob(): bytes do nc_os(ip_group_2_0(),b[204,1,0,0,216,1,0,0,135,3,0,0]) end
   # Native smoke test; generated Integer.parse runtime.
   def main() do System.halt(0) end
 end
