@@ -1,0 +1,634 @@
+# Sys: what the File, System, Path, Port and IO functions share. Sys.call,
+# addr, peek, poke, stack, text, len, copy, find, byte and errno are the
+# compiler's own (spec/alchem-system.md); the functions here are written on
+# them and are not part of the pinned library. Names are short: the text is
+# held in the compiler's source.
+# The process's block of working memory, four pages mapped at first use and
+# kept in the word that ends argv: 0 the environment (0: the initial one),
+# 8 its length, 16 its room, 24 where the monotonic clock started, 32
+# collections counted, 40 bytes of standard input read ahead and 48 how
+# many, 56 the pad (a buffer that grows), 64 its length, 72 its room, 512
+# small results, 1024 a stat record, 4096 up a buffer of 12288 bytes.
+#: state/0
+  def state(): integer do
+    c = Sys.stack() + 8 + 8 * Sys.peek(Sys.stack())
+    s = Sys.peek(c)
+    if s != 0 do s else
+      m = Sys.call(9, 0, 16384, 3, 34, -1, 0)
+      if m < 0 do System.halt(71) end
+      Sys.poke(c, m)
+    end
+  end
+# The pad, emptied; one of more than a megabyte is given back first.
+#: pad/0 needs state/0
+  def pad(): integer do
+    s = Sys.state()
+    c = Sys.peek(s + 72)
+    if c > 1048576 do Sys.call(11, Sys.peek(s + 56), c) end
+    if c == 0 or c > 1048576 do
+      m = Sys.call(9, 0, 65536, 3, 34, -1, 0)
+      if m < 0 do System.halt(71) end
+      Sys.poke(s + 56, m)
+      Sys.poke(s + 72, 65536)
+    end
+    Sys.poke(s + 64, 0)
+    s
+  end
+# Where the pad's next byte goes, with room for k of them.
+#: room/1 needs state/0
+  def room(k: integer): integer do
+    s = Sys.state()
+    c = Sys.peek(s + 72)
+    if Sys.peek(s + 64) + k <= c do Sys.peek(s + 56) + Sys.peek(s + 64) else
+      m = Sys.call(25, Sys.peek(s + 56), c, c * 2, 1)
+      if m < 0 do System.halt(71) end
+      Sys.poke(s + 56, m)
+      Sys.poke(s + 72, c * 2)
+      Sys.room(k)
+    end
+  end
+# The pad's bytes as a string.
+#: got/0 needs state/0
+  def got(): string do
+    Sys.text(Sys.peek(Sys.state() + 56), Sys.peek(Sys.state() + 64))
+  end
+# Reads descriptor fd to its end onto the pad; 0 or the error.
+#: load/1 needs ready/1 room/1 state/0
+  def load(fd: integer): integer do
+    s = Sys.state()
+    n = Sys.peek(s + 64)
+    k = if n < 65536 do 65536 else n end
+    Sys.ready(fd)
+    r = Sys.call(0, fd, Sys.room(k), k)
+    if r == -4 do Sys.load(fd) else if r <= 0 do r else
+      Sys.poke(s + 64, n + r)
+      Sys.load(fd)
+    end end
+  end
+# Writes n bytes at a to descriptor fd; 0 or the error.
+#: put/3
+  def put(fd: integer, a: integer, n: integer): integer do
+    r = Sys.call(1, fd, a, n)
+    if r == -4 do Sys.put(fd, a, n) else if r < 0 do r else if r == n do 0 else Sys.put(fd, a + r, n - r) end end end
+  end
+# The address of p with a zero byte after it; 0 when p holds one, which Go
+# refuses as an invalid argument.
+#: z/1
+  def z(p: string): integer do
+    if Sys.find(Sys.addr(p), byte_size(p), 0) >= 0 do 0 else Sys.addr(p <> "\x00") end
+  end
+# A system call that takes a directory descriptor (-100: the working
+# directory) and a path, then c and d.
+#: at/5 needs z/1
+  def at(n: integer, fd: integer, p: string, c: integer, d: integer): integer do
+    z = Sys.z(p)
+    r = if z == 0 do -22 else Sys.call(n, fd, z, c, d) end
+    if r == -4 do Sys.at(n, fd, p, c, d) else r end
+  end
+# open(p, flags | O_CLOEXEC, mode).
+#: open/3 needs at/5
+  def open(p: string, f: integer, m: integer): integer do
+    Sys.at(257, -100, p, f + 0x80000, m)
+  end
+# A system call of two paths: rename 82, link 86, symlink 88.
+#: two/3 needs z/1
+  def two(n: integer, a: string, b: string): integer do
+    x = Sys.z(a)
+    y = Sys.z(b)
+    if x == 0 or y == 0 do -22 else Sys.call(n, x, y) end
+  end
+#: fail/3
+  def fail(op: string, p: string, r: integer): string do
+    op <> " " <> p <> ": " <> Sys.errno(0 - r)
+  end
+#: done/3 needs fail/3
+  def done(r: integer, op: string, p: string): result[tuple[], string] do
+    if r < 0 do error(Sys.fail(op, p, r)) else ok({}) end
+  end
+# The reason Elixir gives a failed file operation, else Go's text.
+#: why/3 needs fail/3
+  def why(op: string, p: string, r: integer): string do
+    if r == -2 do "enoent" else if r == -13 or r == -1 do "eacces" else if r == -17 or r == -39 do "eexist" else Sys.fail(op, p, r) end end end
+  end
+# stat (f 1) or lstat of p into the stat record; 0 or the error.
+#: stat/2 needs at/5 state/0
+  def stat(p: string, f: integer): integer do
+    Sys.at(262, -100, p, Sys.state() + 1024, 256 - 256 * f)
+  end
+# The type bits of the stat record: 4 a directory, 8 a file, 10 a link.
+#: kind/0 needs state/0
+  def kind(): integer do
+    rem(div(Sys.peek(Sys.state() + 1048), 4096), 16)
+  end
+# os.Remove: unlink, then rmdir; rmdir's error unless it is ENOTDIR.
+#: remove/1 needs at/5
+  def remove(p: string): integer do
+    u = Sys.at(263, -100, p, 0, 0)
+    d = if u < 0 do Sys.at(263, -100, p, 512, 0) else 0 end
+    if d < 0 and d != -20 do d else if d < 0 do u else 0 end end
+  end
+# The names an open directory holds, without . and .., as the kernel gives
+# them: the last result of getdents64 (0, or an error) and the names. Each
+# buffer of records is packed in place into its names with a / between.
+# got holds the names read so far, the last one first, and is empty at
+# the first call.
+#: names/2 needs pack/3 state/0
+  def names(fd: integer, got: list[string]): tuple[integer, list[string]] do
+    b = Sys.state() + 4096
+    n = Sys.call(217, fd, b, 12288)
+    if n <= 0 do {n, Enum.o_turn(got)} else
+      e = Sys.pack(b, b + n, b)
+      Sys.names(fd, if e == b do got else Enum.reduce(String.split(Sys.text(b, e - b - 1), "/"), got, fn x, all -> [x | all] end) end)
+    end
+  end
+#: pack/3
+  def pack(at: integer, stop: integer, out: integer): integer do
+    if at >= stop do out else
+      next = at + rem(Sys.peek(at + 16), 65536)
+      n = Sys.len(at + 19)
+      if (n == 1 or (n == 2 and Sys.byte(at + 20) == 46)) and Sys.byte(at + 19) == 46 do Sys.pack(next, stop, out) else
+        e = Sys.copy(out, at + 19, n)
+        Sys.poke(e, 47)
+        Sys.pack(next, stop, e + 1)
+      end
+    end
+  end
+# The sorted names of the directory at p (or of the open directory fd when
+# fd is not -1), as os.ReadDir reads them: the error (negative) and what
+# failed, or 0 and the names.
+#: list/2 needs Enum.sort/1 names/2 open/3
+  def list(p: string, at: integer): tuple[integer, string, list[string]] do
+    none: list[string] = []
+    fd = if at == -1 do Sys.open(p, 0x10000, 0) else at end
+    if fd < 0 do {fd, "open", none} else
+      f = Sys.names(fd, none)
+      if at == -1 do Sys.call(3, fd) end
+      if elem(f, 0) < 0 do {elem(f, 0), "readdirent", none} else {0, "", Enum.sort(elem(f, 1))} end
+    end
+  end
+# os.MkdirAll(p, mode): 0, or the error and the path it is about.
+#: mkdirs/2 needs at/5 kind/0 stat/2 up/3
+  def mkdirs(p: string, mode: integer): tuple[integer, string] do
+    a = Sys.addr(p)
+    if Sys.stat(p, 1) == 0 do if Sys.kind() == 4 do {0, p} else {-20, p} end else
+      i = Sys.up(a, Sys.up(a, byte_size(p) - 1, 47), 0)
+      u = if i > 0 do Sys.mkdirs(Sys.text(a, i), mode) else {0, p} end
+      r = if elem(u, 0) < 0 do 0 else Sys.at(258, -100, p, mode, 0) end
+      if elem(u, 0) < 0 do u else if r < 0 and not (Sys.stat(p, 0) == 0 and Sys.kind() == 4) do {r, p} else {0, p} end end
+    end
+  end
+# The index below i of the last byte of a that is no / (c 47), or that is
+# one (c 0); -1 when there is none.
+#: up/3
+  def up(a: integer, i: integer, c: integer): integer do
+    if i >= 0 and (Sys.byte(a + i) == 47) == (c == 47) do Sys.up(a, i - 1, c) else i end
+  end
+# The rune at a of n bytes, as Go decodes it: its width times 2097152 plus
+# its number; 2162685 (U+FFFD, one byte) for bytes that are no rune, and 0
+# for the start of one that needs more bytes than n.
+#: rune/2
+  def rune(a: integer, n: integer): integer do
+    b = Sys.byte(a)
+    k = if b < 194 do 0 else if b < 224 do 2 else if b < 240 do 3 else if b < 245 do 4 else 0 end end end end
+    c = if n > 1 do Sys.byte(a + 1) else 0 end
+    d = if n > 2 do Sys.byte(a + 2) else 0 end
+    e = if n > 3 do Sys.byte(a + 3) else 0 end
+    lo = if b == 224 do 160 else if b == 240 do 144 else 128 end end
+    hi = if b == 237 do 159 else if b == 244 do 143 else 191 end end
+    if b < 128 do 2097152 + b else if k == 0 do 2162685 else if n < 2 do 0 else if c < lo or c > hi do 2162685 else
+      if k == 2 do 4194304 + (b - 192) * 64 + c - 128 else if n < 3 do 0 else if d < 128 or d > 191 do 2162685 else
+        if k == 3 do 6291456 + (b - 224) * 4096 + (c - 128) * 64 + d - 128 else if n < 4 do 0 else if e < 128 or e > 191 do 2162685 else
+          8388608 + (b - 240) * 262144 + (c - 128) * 4096 + (d - 128) * 64 + e - 128
+        end end end
+      end end end
+    end end end end
+  end
+# Appends k bytes at a to the pad.
+#: keep/2 needs room/1 state/0
+  def keep(a: integer, k: integer): integer do
+    Sys.copy(Sys.room(k), a, k)
+    Sys.poke(Sys.state() + 64, Sys.peek(Sys.state() + 64) + k)
+  end
+# Appends the low n bytes (1 or 8) of v to the pad.
+#: push/2 needs room/1 state/0
+  def push(v: integer, n: integer): integer do
+    Sys.poke(Sys.room(8), v)
+    Sys.poke(Sys.state() + 64, Sys.peek(Sys.state() + 64) + n)
+  end
+# A file opened with File.open is a record h: 0 the descriptor, 8 1 once
+# closed, 16 and 24 where the unread bytes of its buffer start and end, 32
+# the buffer of 4096 bytes. The buffer is filled as Go's bufio.Reader fills
+# its own, so the descriptor stands where it stands upstream.
+# Moves the unread bytes to the start and reads once behind them.
+#: fill/1 needs ready/1
+  def fill(h: integer): integer do
+    b = Sys.peek(h + 32)
+    k = Sys.peek(h + 24) - Sys.peek(h + 16)
+    Sys.copy(b, b + Sys.peek(h + 16), k)
+    Sys.poke(h + 16, 0)
+    Sys.ready(Sys.peek(h))
+    n = Sys.call(0, Sys.peek(h), b + k, 4096 - k)
+    Sys.poke(h + 24, if n > 0 do k + n else k end)
+    if n == -4 do Sys.fill(h) else n end
+  end
+# The next line of h, with its line break, onto the pad.
+#: line/1 needs fill/1 keep/2
+  def line(h: integer): integer do
+    r = Sys.peek(h + 16)
+    n = Sys.peek(h + 24) - r
+    i = Sys.find(Sys.peek(h + 32) + r, n, 10)
+    k = if i >= 0 do i + 1 else n end
+    if i >= 0 or n >= 4096 do
+      Sys.keep(Sys.peek(h + 32) + r, k)
+      Sys.poke(h + 16, r + k)
+      if i >= 0 do 0 else Sys.line(h) end
+    else
+      if Sys.fill(h) > 0 do Sys.line(h) else
+        Sys.keep(Sys.peek(h + 32), n)
+        Sys.poke(h + 16, n)
+      end
+    end
+  end
+# Up to c bytes of h onto the pad, as io.ReadFull reads a bufio.Reader.
+#: take/2 needs fill/1 keep/2 room/1 state/0
+  def take(h: integer, c: integer): integer do
+    r = Sys.peek(h + 16)
+    n = Sys.peek(h + 24) - r
+    k = if n < c do n else c end
+    if c == 0 do 0 else
+      if n > 0 do
+        Sys.keep(Sys.peek(h + 32) + r, k)
+        Sys.poke(h + 16, r + k)
+        Sys.take(h, c - k)
+      else
+        g = if c < 4096 do Sys.fill(h) else Sys.call(0, Sys.peek(h), Sys.room(c), c) end
+        if c >= 4096 and g > 0 do Sys.poke(Sys.state() + 64, Sys.peek(Sys.state() + 64) + g) end
+        if g > 0 do Sys.take(h, if c < 4096 do c else c - g end) else if g == -4 do Sys.take(h, c) else 0 end end
+      end
+    end
+  end
+# Up to c characters of h onto the pad, a thousand to a level of calls;
+# bytes that are no character become U+FFFD one by one.
+#: runes/2 needs run/2
+  def runes(h: integer, c: integer): integer do
+    k = if c > 1000 do 1000 else c end
+    if Sys.run(h, k) == 0 and c > k do Sys.runes(h, c - k) else 0 end
+  end
+# 0 when c characters were read, 1 at the end of the file.
+#: run/2 needs fill/1 keep/2 rune/2
+  def run(h: integer, c: integer): integer do
+    r = Sys.peek(h + 16)
+    n = Sys.peek(h + 24) - r
+    v = if n > 0 do Sys.rune(Sys.peek(h + 32) + r, n) else 0 end
+    if c == 0 do 0 else
+      if v == 0 and Sys.fill(h) > 0 do Sys.run(h, c) else
+        if n == 0 do 1 else
+          w = if v == 0 do 1 else div(v, 2097152) end
+          if v == 0 or v == 2162685 do Sys.keep(Sys.addr("\xEF\xBF\xBD"), 3) else Sys.keep(Sys.peek(h + 32) + Sys.peek(h + 16), w) end
+          Sys.poke(h + 16, Sys.peek(h + 16) + w)
+          Sys.run(h, c - 1)
+        end
+      end
+    end
+  end
+# Standard input is read a byte at a time, as IO.read_line reads it, so
+# nothing is taken that was not asked for. The next byte, -1 at the end;
+# bytes read ahead of a character that turned out to be none come first.
+#: next/0 needs ready/1 state/0
+  def next(): integer do
+    s = Sys.state()
+    k = Sys.peek(s + 48)
+    q = Sys.peek(s + 40)
+    r = if k > 0 do 0 else Sys.call(0, Sys.ready(0), s + 512, 1) end
+    if k > 0 do
+      Sys.poke(s + 48, k - 1)
+      Sys.poke(s + 40, div(q, 256))
+      rem(q, 256)
+    else
+      if r == -4 do Sys.next() else if r <= 0 do -1 else Sys.byte(s + 512) end end
+    end
+  end
+# A line of standard input onto the pad: 1 when it ended, 0 after k bytes.
+#: gets/1 needs next/0 push/2
+  def gets(k: integer): integer do
+    b = if k == 0 do 0 else Sys.next() end
+    if k == 0 do 0 else if b < 0 do 1 else
+      Sys.push(b, 1)
+      if b == 10 do 1 else Sys.gets(k - 1) end
+    end end
+  end
+#: getl/0 needs gets/1
+  def getl(): integer do
+    if Sys.gets(1000) == 0 do Sys.getl() else 0 end
+  end
+# Up to c characters of standard input onto the pad: 0 when all were read.
+#: chars/1 needs char/1
+  def chars(c: integer): integer do
+    k = if c > 1000 do 1000 else c end
+    if Sys.char(k) == 0 and c > k do Sys.chars(c - k) else 0 end
+  end
+#: char/1 needs keep/2 more/2 next/0 rune/2 state/0
+  def char(c: integer): integer do
+    a = Sys.state() + 520
+    b = if c == 0 do 0 else Sys.next() end
+    if c == 0 do 0 else if b < 0 do 1 else
+      Sys.poke(a + 8, 0)
+      Sys.poke(a, b)
+      n = Sys.more(a, 1)
+      v = Sys.rune(a, n)
+      if v == 0 or v == 2162685 do
+        Sys.keep(Sys.addr("\xEF\xBF\xBD"), 3)
+        if n > 1 do
+          Sys.poke(a - 480, rem(Sys.peek(a + 1), if n == 2 do 256 else if n == 3 do 65536 else 16777216 end end))
+          Sys.poke(a - 472, n - 1)
+        end
+      else
+        Sys.keep(a, n)
+      end
+      Sys.char(c - 1)
+    end end
+  end
+# Reads on while the n bytes at a start a character that needs more.
+#: more/2 needs next/0 rune/2
+  def more(a: integer, n: integer): integer do
+    b = if Sys.rune(a, n) == 0 do Sys.next() else -1 end
+    if b < 0 do n else
+      Sys.poke(a + n, b)
+      Sys.more(a, n + 1)
+    end
+  end
+# Up to c bytes of standard input onto the pad.
+#: bin/1 needs next/0 push/2 ready/1 room/1 state/0
+  def bin(c: integer): integer do
+    s = Sys.state()
+    r = if c == 0 or Sys.peek(s + 48) > 0 do 0 else Sys.call(0, Sys.ready(0), Sys.room(c), c) end
+    if c == 0 do 0 else
+      if Sys.peek(s + 48) > 0 do
+        Sys.push(Sys.next(), 1)
+        Sys.bin(c - 1)
+      else
+        if r > 0 do Sys.poke(s + 64, Sys.peek(s + 64) + r) end
+        if r > 0 do Sys.bin(c - r) else if r == -4 do Sys.bin(c) else 0 end end
+      end
+    end
+  end
+# The environment as Go keeps it: the initial one copied at first use, an
+# entry of a name met before or of no text left out; put_env changes the
+# copy, and System.get_env reads it. The state block, the copy made.
+#: env/0 needs span/2 state/0 weed/3
+  def env(): integer do
+    s = Sys.state()
+    e = Sys.stack() + 16 + 8 * Sys.peek(Sys.stack())
+    if Sys.peek(s) != 0 do s else
+      c = Sys.span(e, 0) + 64
+      m = Sys.call(9, 0, c * 8, 3, 34, -1, 0)
+      if m < 0 do System.halt(71) end
+      Sys.poke(s + 8, Sys.weed(e, m, 0))
+      Sys.poke(s + 16, c)
+      Sys.poke(s, m)
+      s
+    end
+  end
+#: span/2
+  def span(e: integer, n: integer): integer do
+    if Sys.peek(e + 8 * n) == 0 do n else Sys.span(e, n + 1) end
+  end
+#: weed/3 needs held/4
+  def weed(e: integer, m: integer, k: integer): integer do
+    p = Sys.peek(e)
+    q = if p == 0 do 0 else Sys.find(p, Sys.len(p), 61) end
+    if p == 0 do
+      Sys.poke(m + 8 * k, 0)
+      k
+    else
+      if Sys.byte(p) == 0 or (q >= 0 and Sys.held(m, k, p, q + 1) >= 0) do Sys.weed(e + 8, m, k) else
+        Sys.poke(m + 8 * k, p)
+        Sys.weed(e + 8, m, k + 1)
+      end
+    end
+  end
+# The index below k of the entry of m that starts with the n bytes at p.
+#: held/4
+  def held(m: integer, k: integer, p: integer, n: integer): integer do
+    if k == 0 do -1 else if Sys.same(Sys.peek(m + 8 * k - 8), p, n) == 1 do k - 1 else Sys.held(m, k - 1, p, n) end end
+  end
+# Whether the file at p can be run, as exec.LookPath asks.
+#: exe/1 needs at/5 kind/0 stat/2 state/0
+  def exe(p: string): boolean do
+    m = Sys.state() + 1048
+    r = if Sys.stat(p, 1) < 0 or Sys.kind() == 4 do -2 else Sys.at(439, -100, p, 1, 512) end
+    r == 0 or ((r == -38 or r == -1) and rem(Sys.peek(m), 2) + rem(div(Sys.peek(m), 8), 2) + rem(div(Sys.peek(m), 64), 2) > 0)
+  end
+# exec.LookPath: 0 and the path, 1 and a path found relative to the working
+# directory, or 2.
+#: which/1 needs Path.join/2 exe/1
+  def which(f: string): tuple[integer, string] do
+    v = System.get_env("PATH", "")
+    if f == "" or f == "." or f == ".." or v == "" do {2, ""} else
+      Enum.reduce(String.split(v, ":"), {2, ""}, fn d, r ->
+        p = Path.join(if d == "" do "." else d end, f)
+        if elem(r, 0) < 2 or not Sys.exe(p) do r else {if String.starts_with?(p, "/") do 0 else 1 end, p} end
+      end)
+    end
+  end
+# filepath.Abs.
+#: abs/1 needs File.cwd/0 Path.join/2
+  def abs(p: string): result[string, string] do
+    if String.starts_with?(p, "/") do ok(Path.join(p, "")) else
+      case File.cwd() do
+        ok(d) -> ok(Path.join(d, p))
+        error(e) -> error(e)
+      end
+    end
+  end
+# Starts the program at p with the arguments a (zero-ended strings in
+# words at a, a zero word last) and the environment e, in the directory d
+# unless it is 0; its standard output, and its standard error when m is 1,
+# go to a pipe. The process and the pipe's reading end, or the error.
+#: spawn/5 needs state/0 wait/4
+  def spawn(p: integer, a: integer, e: integer, d: integer, m: integer): tuple[integer, integer] do
+    s = Sys.state() + 512
+    Sys.call(293, s, 0x80000)
+    Sys.call(293, s + 8, 0x80000)
+    i = Sys.call(257, -100, Sys.addr("/dev/null\x00"), 0x80000, 0)
+    o = rem(div(Sys.peek(s), 4294967296), 4294967296)
+    w = rem(div(Sys.peek(s + 8), 4294967296), 4294967296)
+    x = rem(Sys.peek(s + 8), 4294967296)
+    c = Sys.call(57)
+    if c == 0 do
+      r = if d == 0 do 0 else Sys.call(80, d) end
+      y = Sys.call(72, o, 1030, 3)
+      Sys.call(33, Sys.call(72, i, 1030, 3), 0)
+      Sys.call(33, y, 1)
+      if m == 1 do Sys.call(33, y, 2) end
+      f = if r < 0 do r else Sys.call(59, p, a, e) end
+      Sys.poke(s + 16, 0 - f)
+      Sys.call(1, w, s + 16, 8)
+      Sys.call(60, 253)
+    end
+    Sys.call(3, i)
+    Sys.call(3, o)
+    Sys.call(3, w)
+    n = if c < 0 do 0 else Sys.wait(0, x, s + 16, 8) end
+    Sys.call(3, x)
+    if c < 0 or n > 0 do Sys.call(3, rem(Sys.peek(s), 4294967296)) end
+    if n > 0 do Sys.wait(61, c, s + 24, 0) end
+    {if c < 0 do c else if n > 0 do 0 - Sys.peek(s + 16) else c end end, rem(Sys.peek(s), 4294967296)}
+  end
+# read (n 0) or wait4 (n 61), again when a signal interrupted it.
+#: wait/4
+  def wait(n: integer, a: integer, b: integer, c: integer): integer do
+    r = Sys.call(n, a, b, c, 0)
+    if r == -4 do Sys.wait(n, a, b, c) else r end
+  end
+# os.RemoveAll below the open directory d: 0, or the error, what failed and
+# the path under d it is about.
+#: wipe/2 needs at/5 list/2 state/0
+  def wipe(d: integer, b: string): tuple[integer, string, string] do
+    u = Sys.at(263, d, b, 0, 0)
+    f = if u == -21 or u == -1 or u == -13 do Sys.at(257, d, b, 0xB0000, 0) else -999 end
+    l = if f == -20 or f == -40 do Sys.at(267, d, b, Sys.state() + 4096, 64) else -1 end
+    n = if f >= 0 do Sys.list("", f) else {0, "", [b]} end
+    e = if f < 0 do {if l >= 0 do u else f end, "openfdat", b} else
+      Enum.reduce(elem(n, 2), {0, "", ""}, fn x, g ->
+        r = Sys.wipe(f, x)
+        if elem(g, 0) < 0 or elem(r, 0) == 0 do g else {elem(r, 0), elem(r, 1), b <> "/" <> elem(r, 2)} end
+      end)
+    end
+    if f >= 0 do Sys.call(3, f) end
+    t = if f == -999 or f == -2 or elem(n, 0) < 0 or (f == -20 and l < 0) do 0 else Sys.at(263, d, b, 512, 0) end
+    if u == 0 or u == -2 or f == -2 or elem(n, 0) == -2 or (f != -999 and (t == 0 or t == -2) and not (f == -20 and l < 0) and elem(n, 0) == 0) do {0, "", ""} else
+      if f == -999 or (f == -20 and l < 0) do {u, "unlinkat", b} else
+        if elem(n, 0) < 0 do {elem(n, 0), "readdirnames", b} else if elem(e, 0) < 0 do e else {t, "unlinkat", b} end end
+      end
+    end
+  end
+# One step of filepath.WalkDir for File.cp_r: the entry at a is copied to
+# b, whose path goes onto the pad with a zero byte behind it. 0, or the
+# error, what failed and its path.
+#: walk/2 needs Path.join/2 at/5 file/3 keep/2 kind/0 list/2 mkdirs/2 push/2 remove/1 stat/2 state/0 two/3
+  def walk(a: string, b: string): tuple[integer, string, string] do
+    s = Sys.state()
+    r = Sys.stat(a, 0)
+    k = Sys.kind()
+    m = rem(Sys.peek(s + 1048), 512)
+    d = if r == 0 and k == 4 do Sys.mkdirs(b, rem(m, 64) + 448) else {0, ""} end
+    l = if r == 0 and k == 10 do Sys.at(267, -100, a, s + 4096, 12288) else 0 end
+    t = if l > 0 do Sys.text(s + 4096, l) else "" end
+    if l > 0 do Sys.remove(b) end
+    e = if r < 0 do {r, "lstat", a} else if elem(d, 0) < 0 do {elem(d, 0), "mkdir", elem(d, 1)} else if l < 0 do {l, "readlink", a} else
+      if k == 10 do {Sys.two(88, t, b), "symlink", t <> " " <> b} else if k == 4 do {0, "", ""} else Sys.file(a, b, m) end end
+    end end end
+    if elem(e, 0) == 0 do
+      Sys.keep(Sys.addr(b), byte_size(b))
+      Sys.push(0, 1)
+    end
+    n = if elem(e, 0) == 0 and k == 4 do Sys.list(a, -1) else {0, "", [a]} end
+    if elem(e, 0) < 0 or k != 4 do e else if elem(n, 0) < 0 do {elem(n, 0), elem(n, 1), a} else
+      Enum.reduce(elem(n, 2), e, fn x, g -> if elem(g, 0) < 0 do g else Sys.walk(Path.join(a, x), Path.join(b, x)) end end)
+    end end
+  end
+# os.ReadFile of a, then os.WriteFile to b with the mode m; the file is
+# held in a pad of its own meanwhile.
+#: file/3 needs load/1 open/3 pad/0 put/3 state/0
+  def file(a: string, b: string, m: integer): tuple[integer, string, string] do
+    s = Sys.state()
+    x = Sys.peek(s + 56)
+    y = Sys.peek(s + 64)
+    z = Sys.peek(s + 72)
+    fd = Sys.open(a, 0, 0)
+    Sys.poke(s + 72, 0)
+    Sys.pad()
+    r = if fd < 0 do 0 else Sys.load(fd) end
+    if fd >= 0 do Sys.call(3, fd) end
+    t = if fd < 0 or r < 0 do 0 else Sys.open(b, 577, m) end
+    w = if fd < 0 or r < 0 or t < 0 do 0 else Sys.put(t, Sys.peek(s + 56), Sys.peek(s + 64)) end
+    c = if fd < 0 or r < 0 or t < 0 do 0 else Sys.call(3, t) end
+    Sys.call(11, Sys.peek(s + 56), Sys.peek(s + 72))
+    Sys.poke(s + 56, x)
+    Sys.poke(s + 64, y)
+    Sys.poke(s + 72, z)
+    if fd < 0 do {fd, "open", a} else if r < 0 do {r, "read", a} else if t < 0 do {t, "open", b} else
+      if w < 0 do {w, "write", b} else if c < 0 do {c, "close", b} else {0, "", ""} end end
+    end end end
+  end
+# exec's dedupEnv over the entries at y, of which those from the n-th on
+# were added by the caller: an entry (the j-th and the ones behind it are
+# still to check) whose name a later added one has is left out.
+#: thin/3 needs later/3 name/1 span/2
+  def thin(y: integer, j: integer, n: integer): integer do
+    p = Sys.peek(y + 8 * j)
+    k = if p == 0 do -1 else Sys.name(p) end
+    if p == 0 do 0 else
+      if k >= 0 and Sys.later(y + 8 * (if j < n do n else j + 1 end), k, p) do
+        Sys.copy(y + 8 * j, y + 8 * j + 8, 8 * Sys.span(y + 8 * j, 0))
+        Sys.thin(y, j, if j < n do n - 1 else n end)
+      else
+        Sys.thin(y, j + 1, n)
+      end
+    end
+  end
+#: later/3 needs name/1
+  def later(e: integer, k: integer, p: integer): boolean do
+    q = Sys.peek(e)
+    if q == 0 do false else if Sys.name(q) == k and Sys.same(p, q, k) == 1 do true else Sys.later(e + 8, k, p) end end
+  end
+# How many bytes of the entry at p name it, with their =; -1 when it has no
+# = and 0 when it starts with its only one.
+#: name/1
+  def name(p: integer): integer do
+    n = Sys.len(p)
+    q = Sys.find(p, n, 61)
+    r = if q == 0 do Sys.find(p + 1, n - 1, 61) else 0 end
+    if q < 0 do -1 else if q > 0 do q + 1 else if r < 0 do 0 else r + 2 end end end
+  end
+# In a program with processes a read gives way to the other processes until
+# the descriptor has something (library/Process.alc keeps the function that
+# waits at g + 1032): the descriptor. 1 for such a program.
+#: busy/0 needs state/0
+  def busy(): integer do
+    g = Sys.peek(Sys.state() + 96)
+    if g == 0 do 0 else if Sys.peek(g + 1032) == 0 do 0 else 1 end end
+  end
+#: ready/1 needs busy/0 state/0
+  def ready(fd: integer): integer do
+    if Sys.busy() == 1 do
+      f: fn[integer, integer] = Process.__any(Sys.peek(Sys.peek(Sys.state() + 96) + 1032))
+      f(fd)
+    end
+    fd
+  end
+# The rest of standard input onto the pad, read as it comes.
+#: rest/0 needs load/1 next/0 push/2 state/0
+  def rest(): integer do
+    if Sys.peek(Sys.state() + 48) > 0 do
+      Sys.push(Sys.next(), 1)
+      Sys.rest()
+    else Sys.load(0) end
+  end
+# A map as one leaf: its count and its keys and values side by side. A
+# map of many entries is a tree of such leaves (spec/alchem-memory.md,
+# "Maps": bit 62 of a node's first word says it is a branch, with the
+# count of its children at +8 and a key and a child every 16 bytes from
+# +16); what reads a map's words (JSON, Node) reads this.
+#: flat/1 needs flat_walk/2
+  def flat(w: integer): integer do
+    n = Sys.peek(w)
+    if n < 4611686018427387904 do w else
+      c = n - 4611686018427387904
+      r = Sys.addr(String.duplicate("\x00", 8 + 16 * c))
+      Sys.poke(r, c)
+      Sys.flat_walk(w, r + 8)
+      r
+    end
+  end
+# The entries below the node at w, copied to d on: where the next goes.
+#: flat_walk/2 needs flat_kids/3
+  def flat_walk(w: integer, d: integer): integer do
+    n = Sys.peek(w)
+    if n < 4611686018427387904 do Sys.copy(d, w + 8, 16 * n) else Sys.flat_kids(w + 16, Sys.peek(w + 8), d) end
+  end
+#: flat_kids/3 needs flat_walk/2
+  def flat_kids(a: integer, m: integer, d: integer): integer do
+    if m == 0 do d else Sys.flat_kids(a + 16, m - 1, Sys.flat_walk(Sys.peek(a + 8), d)) end
+  end

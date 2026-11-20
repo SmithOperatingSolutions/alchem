@@ -1,0 +1,468 @@
+# DiskStore: text under text keys in one file (compiler/library.go.txt,
+# "---- DiskStore ----"). The file is a log: "ALCHEMSTORE1\n", then records,
+# each the length of its body and the body's CRC-32 (four bytes each, the
+# lowest first) and the body: changes, each a byte (1 put, 2 delete), the
+# key and for a put the value, each behind its length as a varint. A change
+# is on the disk (write, then fsync) before the call that made it returns.
+#
+# A store is a block: 0 its path, 8 the descriptor of the log, 16 closed,
+# 24 the log's length, 32 the length it would have with only what is
+# current, 40 the entries in the order of their keys (a key and a value,
+# two words each), 48 how many, 56 the room for them, 64 the process that
+# runs DiskStore.update (0: none) and 72 who waits for it, 80 as much
+# memory again, to move entries through. g + 328 holds the open stores.
+#: struct disk_store
+  struct disk_store do
+    at: integer
+    k: option[fn[integer, integer]]
+  end
+# The key of entry i of the entries at a.
+#: _key/2
+  def _key(a: integer, i: integer): string do
+    Process.__any(Sys.peek(a + 16 * i))
+  end
+# The first entry from lo to hi whose key is not before key.
+#: _at/4 needs _key/2
+  def _at(a: integer, lo: integer, hi: integer, key: string): integer do
+    if lo >= hi do lo else
+      mid = div(lo + hi, 2)
+      if DiskStore._key(a, mid) < key do DiskStore._at(a, mid + 1, hi, key) else DiskStore._at(a, lo, mid, key) end
+    end
+  end
+# A change is made in memory.
+#: _apply/4 needs _at/4 _grow/1 _key/2
+  def _apply(sb: integer, del: integer, key: string, value: string): integer do
+    a = Sys.peek(sb + 40)
+    n = Sys.peek(sb + 48)
+    i = DiskStore._at(a, 0, n, key)
+    had = i < n and DiskStore._key(a, i) == key
+    old: string = if had do Process.__any(Sys.peek(a + 16 * i + 8)) else "" end
+    if had do Sys.poke(sb + 32, Sys.peek(sb + 32) - byte_size(key) - byte_size(old) - 20) end
+    if del == 1 do
+      if had do
+        Sys.copy(a + 16 * i, a + 16 * i + 16, 16 * (n - i - 1))
+        Sys.poke(sb + 48, n - 1)
+      end
+      0
+    else
+      if not had do
+        if n == Sys.peek(sb + 56) do DiskStore._grow(sb) end
+        b = Sys.peek(sb + 40)
+        Sys.copy(Sys.peek(sb + 80), b + 16 * i, 16 * (n - i))
+        Sys.copy(b + 16 * i + 16, Sys.peek(sb + 80), 16 * (n - i))
+        Sys.poke(b + 16 * i, Process.__word(key))
+        Sys.poke(sb + 48, n + 1)
+      end
+      Sys.poke(Sys.peek(sb + 40) + 16 * i + 8, Process.__word(value))
+      Sys.poke(sb + 32, Sys.peek(sb + 32) + byte_size(key) + byte_size(value) + 20)
+    end
+  end
+# Room for twice the entries.
+#: _grow/1
+  def _grow(sb: integer): integer do
+    cap = Sys.peek(sb + 56)
+    m = Sys.call(9, 0, cap * 64 + 16, 3, 34, -1, 0)
+    if m < 0 do System.halt(71) end
+    Sys.copy(m, Sys.peek(sb + 40), Sys.peek(sb + 48) * 16)
+    Sys.call(11, Sys.peek(sb + 40), cap * 32 + 16)
+    Sys.poke(sb + 40, m)
+    Sys.poke(sb + 80, m + cap * 32 + 8)
+    Sys.poke(sb + 56, cap * 2)
+  end
+# How many bytes a number takes as a varint, and the number written at a
+# so: the address after it.
+#: _varn/1
+  def _varn(v: integer): integer do
+    if v < 128 do 1 else 1 + DiskStore._varn(div(v, 128)) end
+  end
+#: _var/2
+  def _var(a: integer, v: integer): integer do
+    if v < 128 do Sys.poke(a, v) - v + a + 1 else
+      Sys.poke(a, rem(v, 128) + 128)
+      DiskStore._var(a + 1, div(v, 128))
+    end
+  end
+# The varint at a, of the n bytes there: its value and its length (0: it
+# is none).
+#: _unvar/4 needs Enum.at/3
+  def _unvar(a: integer, n: integer, shift: integer, v: integer): tuple[integer, integer] do
+    if n == 0 or shift > 9 do {0, 0} else
+      c = Sys.byte(a)
+      if shift == 9 and c > 1 do {0, 0} else
+        now = v + rem(c, 128) * Enum.at([1, 128, 16384, 2097152, 268435456, 34359738368, 4398046511104, 562949953421312, 72057594037927936, 0], shift, 0)
+        if c < 128 do {now, shift + 1} else DiskStore._unvar(a + 1, n - 1, shift + 1, now) end
+      end
+    end
+  end
+# The bytes one change takes in a record's body.
+#: _size/1 needs _varn/1
+  def _size(c: tuple[integer, string, string]): integer do
+    {del, key, value} = c
+    1 + DiskStore._varn(byte_size(key)) + byte_size(key) + (if del == 1 do 0 else DiskStore._varn(byte_size(value)) + byte_size(value) end)
+  end
+# A record of changes is written at a: the address after it.
+#: _record/2 needs HTTP._crc/4 HTTP._k/0 _size/1 _var/2
+  def _record(a: integer, changes: list[tuple[integer, string, string]]): integer do
+    size = Enum.reduce(changes, 0, fn c, acc -> acc + DiskStore._size(c) end)
+    e = Enum.reduce(changes, a + 8, fn {del, key, value}, at ->
+      Sys.poke(at, if del == 1 do 2 else 1 end)
+      b = Sys.copy(DiskStore._var(at + 1, byte_size(key)), Sys.addr(key), byte_size(key))
+      if del == 1 do b else Sys.copy(DiskStore._var(b, byte_size(value)), Sys.addr(value), byte_size(value)) end
+    end)
+    Sys.poke(e, 0)
+    sum = HTTP._crc(HTTP._k(), a + 8, size, 0)
+    Sys.poke(a, size)
+    Enum.reduce(0..3, sum, fn i, v ->
+      Sys.poke(a + 4 + i, Sys.peek(a + 4 + i) - Sys.byte(a + 4 + i) + rem(v, 256))
+      div(v, 256)
+    end)
+    e
+  end
+# The changes of a record's body (n bytes at a) are made in memory when
+# the body is whole: 1, or 0 for a body that is none.
+#: _replay/4 needs _apply/4 _unvar/4
+  def _replay(sb: integer, a: integer, n: integer, dry: integer): integer do
+    if n == 0 do 1 else
+      op = Sys.byte(a)
+      {kn, ku} = DiskStore._unvar(a + 1, n - 1, 0, 0)
+      if ku == 0 or kn > n - 1 - ku or op != 1 and op != 2 do 0 else
+        at = a + 1 + ku + kn
+        left = n - 1 - ku - kn
+        {vn, vu} = if op == 2 do {0, 0} else DiskStore._unvar(at, left, 0, 0) end
+        if op == 1 and (vu == 0 or vn > left - vu) do 0 else
+          if dry == 0 do DiskStore._apply(sb, if op == 2 do 1 else 0 end, Sys.text(a + 1 + ku, kn), if op == 2 do "" else Sys.text(at + vu, vn) end) end
+          DiskStore._replay(sb, at + vu + vn, left - vu - vn, dry)
+        end
+      end
+    end
+  end
+# The records of a log (n bytes at a) from the offset at are made in
+# memory, up to the first that is cut short or spoiled: the offset after
+# the last whole one.
+#: _load/4 needs HTTP._crc/4 HTTP._k/0 _replay/4
+  def _load(sb: integer, a: integer, n: integer, at: integer): integer do
+    if n - at < 8 do at else
+      size = Sys.byte(a + at) + Sys.byte(a + at + 1) * 256 + Sys.byte(a + at + 2) * 65536 + Sys.byte(a + at + 3) * 16777216
+      sum = Sys.byte(a + at + 4) + Sys.byte(a + at + 5) * 256 + Sys.byte(a + at + 6) * 65536 + Sys.byte(a + at + 7) * 16777216
+      if size > n - at - 8 or HTTP._crc(HTTP._k(), a + at + 8, size, 0) != sum or DiskStore._replay(sb, a + at + 8, size, 1) == 0 do at else
+        DiskStore._replay(sb, a + at + 8, size, 0)
+        DiskStore._load(sb, a, n, at + 8 + size)
+      end
+    end
+  end
+# The store whose path is full among the open ones (cells from x); 0 for
+# none.
+#: _opened/2
+  def _opened(x: integer, full: string): integer do
+    if x == 0 do 0 else
+      sb = Sys.peek(x + 8)
+      path: string = Process.__any(Sys.peek(sb))
+      if path == full do sb else DiskStore._opened(Sys.peek(x), full) end
+    end
+  end
+#: open/1 needs Process._g/0 Sys.abs/1 _opened/2 _read/3
+  def open(path: string): result[disk_store, string] do
+    g = Process._g()
+    case Sys.abs(path) do
+      error(e) -> error(e)
+      ok(full) ->
+        was = DiskStore._opened(Sys.peek(g + 328), full)
+        if was == 0 do DiskStore._read(g, path, full) else
+          same: disk_store = %disk_store{at: was, k: none}
+          ok(same)
+        end
+    end
+  end
+# What the file holds is read, as os.ReadFile reads it, and made in
+# memory.
+#: _read/3 needs Process._take/2 Sys.open/3 Sys.why/3 _load/4 _log/5
+  def _read(g: integer, path: string, full: string): result[disk_store, string] do
+    magic = "ALCHEMSTORE1\n"
+    rd = Sys.open(full, 0, 0)
+    n = if rd < 0 do 0 else Sys.call(8, rd, 0, 2) end
+    probe = if rd < 0 do 0 else Sys.call(17, rd, g + 2040, 1, 0) end
+    m = if rd < 0 or n <= 0 or probe < 0 do 0 else Sys.call(9, 0, n, 1, 2, rd, 0) end
+    if rd >= 0 do Sys.call(3, rd) end
+    size = if n < 0 or m <= 0 do 0 else n end
+    head = if size == 0 do "" else Sys.text(m, if size < 13 do size else 13 end) end
+    fresh = size == 0 or size < 13 and head == Sys.text(Sys.addr(magic), size)
+    if rd < 0 and rd != -2 do error(Sys.why("open", full, rd)) else
+      if probe < 0 or m < 0 do error(Sys.why("read", full, if probe < 0 do probe else m end)) else
+        if not fresh and head != magic do
+          Sys.call(11, m, n)
+          error(path <> " is not a store")
+        else
+          sb = Process._take(g, 96)
+          room = Sys.call(9, 0, 131088, 3, 34, -1, 0)
+          if room < 0 do System.halt(71) end
+          Sys.poke(sb, Process.__word(full))
+          Sys.poke(sb + 32, 13)
+          Sys.poke(sb + 40, room)
+          Sys.poke(sb + 56, 4096)
+          Sys.poke(sb + 80, room + 65544)
+          kept = if fresh do 0 else DiskStore._load(sb, m, size, 13) end
+          if m > 0 do Sys.call(11, m, n) end
+          DiskStore._log(g, sb, full, kept, magic)
+        end
+      end
+    end
+  end
+# The log is opened for writing, made if there is none, and cut after its
+# last whole record.
+#: _log/5 needs Process._push/5 Sys.open/3 Sys.why/3
+  def _log(g: integer, sb: integer, full: string, kept: integer, magic: string): result[disk_store, string] do
+    fd = Sys.open(full, 66, 384)
+    w = if fd < 0 or kept != 0 do 0 else Sys.call(18, fd, Sys.addr(magic), 13, 0) end
+    keep = if kept == 0 do 13 else kept end
+    t = if fd < 0 or w < 0 do 0 else Sys.call(77, fd, keep) end
+    s = if fd < 0 or w < 0 or t < 0 do 0 else Sys.call(8, fd, keep, 0) end
+    y = if fd < 0 or w < 0 or t < 0 or s < 0 do 0 else Sys.call(74, fd) end
+    if fd < 0 or w < 0 or t < 0 or s < 0 or y < 0 do
+      if fd >= 0 do Sys.call(3, fd) end
+      Sys.call(11, Sys.peek(sb + 40), 131088)
+      error(if fd < 0 do Sys.why("open", full, fd) else if w < 0 do Sys.why("write", full, w) else if t < 0 do Sys.why("truncate", full, t) else if s < 0 do Sys.why("seek", full, s) else Sys.why("sync", full, y) end end end end)
+    else
+      Sys.poke(sb + 8, fd)
+      Sys.poke(sb + 24, keep)
+      Process._push(g, g + 328, sb, 0, 0)
+      made: disk_store = %disk_store{at: sb, k: none}
+      ok(made)
+    end
+  end
+# The log is written afresh with only what the store holds now, beside it,
+# and takes its place: "" or what went wrong.
+#: _rewrite/1 needs Path.dirname/1 Sys.at/5 Sys.open/3 Sys.put/3 Sys.two/3 Sys.why/3 _fresh/4
+  def _rewrite(sb: integer): string do
+    full: string = Process.__any(Sys.peek(sb))
+    a = Sys.peek(sb + 40)
+    n = Sys.peek(sb + 48)
+    total = Sys.peek(sb + 32) + 64
+    m = Sys.call(9, 0, total, 3, 34, -1, 0)
+    if m < 0 do System.halt(71) end
+    magic = "ALCHEMSTORE1\n"
+    start = Sys.copy(m, Sys.addr(magic), 13)
+    e = DiskStore._fresh(a, 0, n, start)
+    beside = full <> ".compact"
+    fd = Sys.open(beside, 578, 384)
+    w = if fd < 0 do 0 else Sys.put(fd, m, e - m) end
+    y = if fd < 0 or w < 0 do 0 else Sys.call(74, fd) end
+    Sys.call(11, m, total)
+    if fd < 0 do Sys.why("open", beside, fd) else
+      Sys.call(3, fd)
+      if w < 0 or y < 0 do
+        Sys.at(263, -100, beside, 0, 0)
+        if w < 0 do Sys.why("write", beside, w) else Sys.why("sync", beside, y) end
+      else
+        Sys.call(3, Sys.peek(sb + 8))
+        r = Sys.two(82, beside, full)
+        if r < 0 do Sys.at(263, -100, beside, 0, 0) end
+        log = Sys.open(full, 2, 384)
+        Sys.poke(sb + 8, log)
+        if log < 0 do Sys.why("open", full, log) else
+          if r == 0 do
+            Sys.poke(sb + 24, e - m)
+            dir = Sys.open(Path.dirname(full), 0, 0)
+            if dir >= 0 do
+              Sys.call(74, dir)
+              Sys.call(3, dir)
+            end
+          end
+          s = Sys.call(8, log, Sys.peek(sb + 24), 0)
+          if s < 0 do Sys.why("seek", full, s) else if r < 0 do "rename " <> beside <> " " <> full <> ": " <> Sys.errno(0 - r) else "" end end
+        end
+      end
+    end
+  end
+# Each entry as a record of its own, written from at on.
+#: _fresh/4 needs _record/2
+  def _fresh(a: integer, i: integer, n: integer, at: integer): integer do
+    if i == n do at else
+      key: string = Process.__any(Sys.peek(a + 16 * i))
+      value: string = Process.__any(Sys.peek(a + 16 * i + 8))
+      DiskStore._fresh(a, i + 1, n, DiskStore._record(at, [{0, key, value}]))
+    end
+  end
+# The running process waits while DiskStore.update runs in another.
+#: _free/2 needs Process._check/1 Process._drop/3 Process._push/5 Process._wait/2
+  def _free(g: integer, sb: integer): integer do
+    if Sys.peek(sb + 64) == 0 do 0 else
+      c = Sys.peek(g)
+      Process._push(g, sb + 72, c, 0, 0)
+      Process._wait(g, 0)
+      Process._drop(g, sb + 72, c)
+      Process._check(g)
+      DiskStore._free(g, sb)
+    end
+  end
+# A record of changes goes to the disk and then into memory; the log is
+# written afresh when that was asked or it has grown well past what it
+# holds. "" or what went wrong.
+#: _write/3 needs Sys.put/3 Sys.why/3 _apply/4 _record/2 _rewrite/1 _size/1
+  def _write(sb: integer, changes: list[tuple[integer, string, string]], compact: boolean): string do
+    full: string = Process.__any(Sys.peek(sb))
+    fd = Sys.peek(sb + 8)
+    wrong = if changes == [] do "" else
+      room = Enum.reduce(changes, 32, fn c, acc -> acc + DiskStore._size(c) end)
+      m = Sys.call(9, 0, room, 3, 34, -1, 0)
+      if m < 0 do System.halt(71) end
+      e = DiskStore._record(m, changes)
+      w = Sys.put(fd, m, e - m)
+      y = if w < 0 do 0 else Sys.call(74, fd) end
+      Sys.call(11, m, room)
+      if w < 0 or y < 0 do
+        Sys.call(77, fd, Sys.peek(sb + 24))
+        Sys.call(8, fd, Sys.peek(sb + 24), 0)
+        if w < 0 do Sys.why("write", full, w) else Sys.why("sync", full, y) end
+      else
+        Sys.poke(sb + 24, Sys.peek(sb + 24) + e - m)
+        Enum.reduce(changes, 0, fn {del, key, value}, acc -> DiskStore._apply(sb, del, key, value) end)
+        ""
+      end
+    end
+    if wrong != "" or not compact and Sys.peek(sb + 24) <= 2 * Sys.peek(sb + 32) + 1048576 do wrong else
+      again = DiskStore._rewrite(sb)
+      if compact do again else "" end
+    end
+  end
+# A write of any process but one that runs DiskStore.update.
+#: _submit/3 needs Process._check/1 Process._g/0 _free/2 _write/3
+  def _submit(sb: integer, changes: list[tuple[integer, string, string]], compact: boolean): result[tuple[], string] do
+    g = Process._g()
+    DiskStore._free(g, sb)
+    Process._check(g)
+    if Sys.peek(sb + 16) == 1 do error("closed") else
+      wrong = DiskStore._write(sb, changes, compact)
+      if wrong == "" do ok({}) else error(wrong) end
+    end
+  end
+#: put/3 needs _submit/3
+  def put(s: disk_store, key: string, value: string): result[tuple[], string] do
+    DiskStore._submit(s.at, [{0, key, value}], false)
+  end
+#: delete/2 needs _submit/3
+  def delete(s: disk_store, key: string): result[tuple[], string] do
+    DiskStore._submit(s.at, [{1, key, ""}], false)
+  end
+#: commit/3 needs Enum.map/2 _submit/3
+  def commit(s: disk_store, puts: list[tuple[string, string]], deletes: list[string]): result[tuple[], string] do
+    changes = Enum.map(deletes, fn key -> {1, key, ""} end) ++ Enum.map(puts, fn {key, value} -> {0, key, value} end)
+    if changes == [] do ok({}) else DiskStore._submit(s.at, changes, false) end
+  end
+#: compact/1 needs _submit/3
+  def compact(s: disk_store): result[tuple[], string] do
+    DiskStore._submit(s.at, [], true)
+  end
+#: update/3 needs Process._g/0 Process._wake/2 _at/4 _free/2 _key/2 _write/3
+  def update(s: disk_store, key: string, f: fn[option[string], option[string]]): result[option[string], string] do
+    g = Process._g()
+    sb = s.at
+    DiskStore._free(g, sb)
+    Sys.poke(sb + 64, Sys.peek(g))
+    try do
+      a = Sys.peek(sb + 40)
+      n = Sys.peek(sb + 48)
+      i = DiskStore._at(a, 0, n, key)
+      had = i < n and DiskStore._key(a, i) == key
+      if Sys.peek(sb + 16) == 1 do error("closed") else
+        held: option[string] = if had do some(Process.__any(Sys.peek(a + 16 * i + 8))) else none end
+        next = f(held)
+        case next do
+          none ->
+            if not had do ok(next) else
+              if Sys.peek(sb + 16) == 1 or DiskStore._write(sb, [{1, key, ""}], false) != "" do error("the change could not be written") else ok(next) end
+            end
+          some(value) -> if Sys.peek(sb + 16) == 1 or DiskStore._write(sb, [{0, key, value}], false) != "" do error("the change could not be written") else ok(next) end
+        end
+      end
+    after
+      Sys.poke(sb + 64, 0)
+      Process._wake(g, sb + 72)
+    end
+  end
+#: close/1 needs Process._drop/3 Process._g/0
+  def close(s: disk_store): boolean do
+    g = Process._g()
+    sb = s.at
+    if Sys.peek(sb + 16) == 1 do false else
+      Sys.poke(sb + 16, 1)
+      Sys.call(3, Sys.peek(sb + 8))
+      Sys.call(11, Sys.peek(sb + 40), Sys.peek(sb + 56) * 32 + 16)
+      Sys.poke(sb + 48, 0)
+      Process._drop(g, g + 328, sb)
+      true
+    end
+  end
+# The entries from index i up to j, as pairs.
+#: _pairs/3 needs Enum.map/2
+  def _pairs(a: integer, i: integer, j: integer): list[tuple[string, string]] do
+    empty: list[tuple[string, string]] = []
+    if i >= j do empty else
+      Enum.map(i..(j - 1), fn x ->
+        key: string = Process.__any(Sys.peek(a + 16 * x))
+        value: string = Process.__any(Sys.peek(a + 16 * x + 8))
+        {key, value}
+      end)
+    end
+  end
+#: get/2 needs _at/4 _key/2
+  def get(s: disk_store, key: string): option[string] do
+    sb = s.at
+    if Sys.peek(sb + 16) == 1 do raise("DiskStore.get: the store is closed") end
+    a = Sys.peek(sb + 40)
+    n = Sys.peek(sb + 48)
+    i = DiskStore._at(a, 0, n, key)
+    if i < n and DiskStore._key(a, i) == key do some(Process.__any(Sys.peek(a + 16 * i + 8))) else none end
+  end
+#: has_key?/2 needs _at/4 _key/2
+  def has_key?(s: disk_store, key: string): boolean do
+    sb = s.at
+    if Sys.peek(sb + 16) == 1 do raise("DiskStore.has_key?: the store is closed") end
+    a = Sys.peek(sb + 40)
+    n = Sys.peek(sb + 48)
+    i = DiskStore._at(a, 0, n, key)
+    i < n and DiskStore._key(a, i) == key
+  end
+#: keys/1 needs Enum.map/2 _key/2
+  def keys(s: disk_store): list[string] do
+    sb = s.at
+    if Sys.peek(sb + 16) == 1 do raise("DiskStore.keys: the store is closed") end
+    a = Sys.peek(sb + 40)
+    n = Sys.peek(sb + 48)
+    empty: list[string] = []
+    if n == 0 do empty else Enum.map(0..(n - 1), fn i -> DiskStore._key(a, i) end) end
+  end
+#: size/1
+  def size(s: disk_store): integer do
+    if Sys.peek(s.at + 16) == 1 do raise("DiskStore.size: the store is closed") end
+    Sys.peek(s.at + 48)
+  end
+#: range/3 needs _at/4 _pairs/3
+  def range(s: disk_store, from: string, to: string): list[tuple[string, string]] do
+    sb = s.at
+    if Sys.peek(sb + 16) == 1 do raise("DiskStore.range: the store is closed") end
+    a = Sys.peek(sb + 40)
+    n = Sys.peek(sb + 48)
+    DiskStore._pairs(a, DiskStore._at(a, 0, n, from), DiskStore._at(a, 0, n, to))
+  end
+#: prefix/2 needs TCP._s/0 _at/4 _pairs/3 _trimmed/2
+  def prefix(s: disk_store, pre: string): list[tuple[string, string]] do
+    sb = s.at
+    if Sys.peek(sb + 16) == 1 do raise("DiskStore.prefix: the store is closed") end
+    a = Sys.peek(sb + 40)
+    n = Sys.peek(sb + 48)
+    m = DiskStore._trimmed(Sys.addr(pre), byte_size(pre))
+    if m == 0 do DiskStore._pairs(a, DiskStore._at(a, 0, n, pre), n) else
+      t = TCP._s() + 4096
+      after_pre = if m > 196000 do pre else
+        Sys.copy(t, Sys.addr(pre), m)
+        Sys.poke(t + m - 1, Sys.byte(t + m - 1) + 1)
+        Sys.text(t, m)
+      end
+      DiskStore._pairs(a, DiskStore._at(a, 0, n, pre), DiskStore._at(a, 0, n, after_pre))
+    end
+  end
+# The length of a text without the bytes 255 it ends in.
+#: _trimmed/2
+  def _trimmed(p: integer, n: integer): integer do
+    if n == 0 or Sys.byte(p + n - 1) != 255 do n else DiskStore._trimmed(p, n - 1) end
+  end

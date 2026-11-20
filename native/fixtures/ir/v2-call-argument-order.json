@@ -1,0 +1,71 @@
+{
+  "version": 2,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "const.i64",
+              "dest": "x",
+              "value": 84
+            },
+            {
+              "op": "const.i64",
+              "dest": "y",
+              "value": 42
+            },
+            {
+              "op": "call",
+              "dest": "r",
+              "callee": "subtract",
+              "args": [
+                "x",
+                "y"
+              ]
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    },
+    {
+      "name": "subtract",
+      "params": [
+        {
+          "name": "lhs",
+          "type": "i64"
+        },
+        {
+          "name": "rhs",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "sub.i64",
+              "dest": "r",
+              "lhs": "lhs",
+              "rhs": "rhs"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    }
+  ]
+}

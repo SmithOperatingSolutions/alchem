@@ -1,0 +1,86 @@
+{
+  "version": 5,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "bytes.const",
+              "dest": "b",
+              "values": [
+                0,
+                42,
+                255
+              ]
+            },
+            {
+              "op": "const.i64",
+              "dest": "i",
+              "value": 1
+            },
+            {
+              "op": "const.i64",
+              "dest": "d",
+              "value": 7
+            },
+            {
+              "op": "call",
+              "dest": "r",
+              "callee": "read",
+              "args": [
+                "b",
+                "i",
+                "d"
+              ]
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    },
+    {
+      "name": "read",
+      "params": [
+        {
+          "name": "b",
+          "type": "bytes"
+        },
+        {
+          "name": "i",
+          "type": "i64"
+        },
+        {
+          "name": "d",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "bytes.get",
+              "dest": "r",
+              "buffer": "b",
+              "index": "i",
+              "default": "d"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    }
+  ]
+}

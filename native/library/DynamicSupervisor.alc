@@ -1,0 +1,313 @@
+# DynamicSupervisor: a supervisor whose children are started while it runs
+# (compiler/actor/services.go). A block: 0 its own process, 8 the restarts
+# allowed within 16 nanoseconds, 24 and 32 its first and last child, 40 the
+# restarts so far, 48 where the program started it, 56 the most children it
+# takes (0: any number), 64 when the recent restarts were. A child is six
+# words: the function that starts it, its process, its policy (0
+# permanent, 1 transient, 2 temporary), 1 once its end was seen, 1 once it
+# was removed.
+#: struct dynamic_supervisor also Process Agent Task Server Supervisor Registry Port _receive
+  struct dynamic_supervisor do
+    at: integer
+    k: option[fn[integer, integer]]
+  end
+#: _made/1
+  def _made(d: integer): dynamic_supervisor do
+    %dynamic_supervisor{at: d, k: none}
+  end
+#: _run/1 needs Process._ended/0 Process._note/1 _down/1 _main/1
+  def _run(d: integer): integer do
+    try do
+      DynamicSupervisor._main(d)
+    rescue
+      m when Process._note(m) -> 0
+    after
+      DynamicSupervisor._down(d)
+      Process._ended()
+    end
+  end
+#: _main/1 needs Process._check/1 Process._g/0 _turn/1
+  def _main(d: integer): integer do
+    Process._check(Process._g())
+    Process.__depth(1)
+    st: fn[integer, integer] = fn(a: integer): integer do DynamicSupervisor._turn(a) end
+    Process.__until(st, d)
+  end
+#: _down/1 needs Process._drop/3 Process._g/0 _joins/2 _stops/2
+  def _down(d: integer): integer do
+    g = Process._g()
+    Process._drop(g, g + 144, Sys.peek(d))
+    DynamicSupervisor._stops(g, Sys.peek(d + 24))
+    DynamicSupervisor._joins(g, Sys.peek(d + 24))
+  end
+# The first child whose end has not been seen, now seen; 0 for none.
+#: _failed/1
+  def _failed(x: integer): integer do
+    if x == 0 do 0 else
+      e = Sys.peek(x + 8)
+      q = Sys.peek(e + 8)
+      if Sys.peek(e + 32) == 0 and q != 0 and Sys.peek(q + 376) == 1 and Sys.peek(e + 24) == 0 do
+        Sys.poke(e + 24, 1)
+        e
+      else DynamicSupervisor._failed(Sys.peek(x)) end
+    end
+  end
+#: _turn/1 needs Process._check/1 Process._g/0 Process._wait/2 _failed/1 _mend/3
+  def _turn(d: integer): integer do
+    g = Process._g()
+    Process._check(g)
+    e = DynamicSupervisor._failed(Sys.peek(d + 24))
+    if e == 0 do Process._wait(g, 0) else DynamicSupervisor._mend(g, d, e) end
+    0
+  end
+#: _count/1
+  def _count(x: integer): integer do
+    if x == 0 do 0 else 1 + DynamicSupervisor._count(Sys.peek(x)) end
+  end
+#: _problem/1
+  def _problem(k: integer): string do
+    if k == 1 do "supervisor is not running" else "max_children" end
+  end
+#: _ids/1
+  def _ids(x: integer): list[integer] do
+    if x == 0 do [] else
+      e = Sys.peek(x + 8)
+      q = Sys.peek(e + 8)
+      if Sys.peek(e + 32) == 0 and q != 0 and Sys.peek(q + 376) == 0 do [Sys.peek(q + 40) | DynamicSupervisor._ids(Sys.peek(x))] else DynamicSupervisor._ids(Sys.peek(x)) end
+    end
+  end
+#: _begin/4 needs Process._check/1 Process._g/0 Process._new/2 Process._own/3 Process._push/5 Process._start/3 Process._take/2 _run/1
+  def _begin(c: integer, limit: integer, window: integer, place: integer): integer do
+    g = Process._g()
+    Process._check(g)
+    if limit < 0 or window <= 0 or window > 86400000 do raise("invalid supervision limits") end
+    if Sys.peek(g + 112) == 1 do raise("runtime shutting down") end
+    task = Process._new(g, 0)
+    Process._own(g, c, task)
+    Process._push(g, g + 144, task, 0, 0)
+    d = Process._take(g, 72)
+    Sys.poke(d, task)
+    Sys.poke(d + 8, limit)
+    Sys.poke(d + 16, window * 1000000)
+    Sys.poke(d + 48, place)
+    r: fn[integer] = fn(): integer do DynamicSupervisor._run(d) end
+    Process._start(g, task, Process.__word(r))
+    d
+  end
+#: _unlist/4 needs Process._free/2
+  def _unlist(g: integer, d: integer, h: integer, e: integer): integer do
+    x = Sys.peek(h)
+    if x == 0 do 0 else
+      if Sys.peek(x + 8) != e do DynamicSupervisor._unlist(g, d, x, e) else
+        Sys.poke(h, Sys.peek(x))
+        if Sys.peek(d + 32) == x do Sys.poke(d + 32, if h == d + 24 do 0 else h end) end
+        Process._free(g, x)
+      end
+    end
+  end
+#: _kid/4 needs Process._spawn/4
+  def _kid(g: integer, w: integer, t: integer, x: integer): integer do
+    p = Process._spawn(g, w, 1024, t)
+    if Sys.peek(x + 8) == 0 do Sys.poke(x + 8, p) end
+    p
+  end
+# o: the options; n: the restarts allowed, the seconds they are counted
+# over and the most children.
+#: _options/3 needs Atom.to_string/1 Process._g/0 _begin/4
+  def _options(o: list[tuple[atom, integer]], n: tuple[integer, integer, integer], place: integer): integer do
+    case o do
+      [] ->
+        d = DynamicSupervisor._begin(Sys.peek(Process._g()), elem(n, 0), elem(n, 1) * 1000, place)
+        Sys.poke(d + 56, elem(n, 2))
+        d
+      [{k, v} | rest] ->
+        if k == :max_restarts do DynamicSupervisor._options(rest, {v, elem(n, 1), elem(n, 2)}, place) else
+          if k == :max_seconds do DynamicSupervisor._options(rest, {elem(n, 0), v, elem(n, 2)}, place) else
+            if k != :max_children do raise("unknown option :" <> Atom.to_string(k) <> "; DynamicSupervisor.start_link takes max_restarts:, max_seconds: and max_children:") end
+            if v < 0 do raise("max_children: cannot be negative") end
+            DynamicSupervisor._options(rest, {elem(n, 0), elem(n, 1), v}, place)
+          end
+        end
+    end
+  end
+# The child e is no longer one of the supervisor's.
+#: _remove/3 needs _unlist/4
+  def _remove(g: integer, d: integer, e: integer): integer do
+    Sys.poke(e + 32, 1)
+    DynamicSupervisor._unlist(g, d, d + 24, e)
+  end
+#: _mend/3 needs Process._abnormal/1 Process._now/1 Process._push/5 Process._stir/2 Supervisor._intense/3 Supervisor._recent/4 _remove/3
+  def _mend(g: integer, d: integer, e: integer): integer do
+    p = Sys.peek(e + 16)
+    bad = Process._abnormal(Sys.peek(Sys.peek(e + 8) + 160))
+    if p == 2 or p - bad == 1 do DynamicSupervisor._remove(g, d, e) else
+      now = Process._now(g)
+      Supervisor._intense(Supervisor._recent(g, d + 64, now, Sys.peek(d + 16)), Sys.peek(d + 8), Sys.peek(d + 48))
+      Process._push(g, d + 64, now, 0, 0)
+      f: fn[integer] = Process.__any(Sys.peek(e))
+      t = f()
+      Sys.poke(d + 40, Sys.peek(d + 40) + 1)
+      Sys.poke(e + 8, t)
+      Sys.poke(e + 24, 0)
+      Process._stir(g, Sys.peek(g + 144))
+    end
+  end
+# A child of the supervisor d that the function value s starts: 0, or 1
+# when the supervisor is not running, or 2 when it has all the children it
+# takes.
+#: _add/3 needs Process._cancel/4 Process._check/1 Process._g/0 Process._put/5 Process._stir/2 Process._take/2 Supervisor._policy/1 _count/1
+  def _add(d: integer, s: integer, policy: string): integer do
+    g = Process._g()
+    Process._check(g)
+    p = Supervisor._policy(policy)
+    if p < 0 do raise("a child's restart is permanent, transient or temporary") end
+    task = Sys.peek(d)
+    most = Sys.peek(d + 56)
+    if Sys.peek(task + 56) == 1 do 1 else
+      if most > 0 and DynamicSupervisor._count(Sys.peek(d + 24)) >= most do 2 else
+        e = Process._take(g, 48)
+        Sys.poke(e + 16, p)
+        Process._put(g, d + 24, e, 0, 0)
+        f: fn[integer] = Process.__any(s)
+        t = f()
+        if Sys.peek(task + 56) == 1 do
+          Process._cancel(g, t, Process.__word("shutdown"), 0)
+          Sys.poke(e + 32, 1)
+          1
+        else
+          Sys.poke(e, s)
+          Sys.poke(e + 8, t)
+          Process._stir(g, Sys.peek(g + 144))
+          0
+        end
+      end
+    end
+  end
+#: start_link/0 needs Process._g/0 _begin/4 _made/1
+  def start_link(): dynamic_supervisor do
+    DynamicSupervisor._made(DynamicSupervisor._begin(Sys.peek(Process._g()), 3, 5000, Stream.__where()))
+  end
+#: start_link/1 needs _made/1 _options/3
+  def start_link(o: list[tuple[atom, integer]]): dynamic_supervisor do
+    DynamicSupervisor._made(DynamicSupervisor._options(o, {3, 5, 0}, Stream.__where()))
+  end
+#: _stops/2 needs Process._cancel/4
+  def _stops(g: integer, x: integer): integer do
+    if x == 0 do 0 else
+      q = Sys.peek(Sys.peek(x + 8) + 8)
+      if q != 0 do Process._cancel(g, q, Process.__word("shutdown"), 0) end
+      DynamicSupervisor._stops(g, Sys.peek(x))
+    end
+  end
+#: _joins/2 needs Process._await/3
+  def _joins(g: integer, x: integer): integer do
+    if x == 0 do 0 else
+      q = Sys.peek(Sys.peek(x + 8) + 8)
+      if q != 0 do Process._await(g, Sys.peek(g), q) end
+      DynamicSupervisor._joins(g, Sys.peek(x))
+    end
+  end
+# The child of d whose process has the number i is stopped and awaited.
+#: _end/2 needs Process._await/3 Process._cancel/4 Process._check/1 Process._g/0 _by/2 _remove/3
+  def _end(d: integer, i: integer): boolean do
+    g = Process._g()
+    Process._check(g)
+    e = DynamicSupervisor._by(Sys.peek(d + 24), i)
+    if e == 0 do false else
+      Sys.poke(e + 32, 1)
+      t = Sys.peek(e + 8)
+      Process._cancel(g, t, Process.__word("shutdown"), 0)
+      Process._await(g, Sys.peek(g), t)
+      DynamicSupervisor._remove(g, d, e)
+      true
+    end
+  end
+#: _by/2
+  def _by(x: integer, i: integer): integer do
+    if x == 0 do 0 else
+      e = Sys.peek(x + 8)
+      q = Sys.peek(e + 8)
+      if q != 0 and Sys.peek(q + 40) == i and Sys.peek(e + 32) == 0 do e else DynamicSupervisor._by(Sys.peek(x), i) end
+    end
+  end
+#: start_child/3 needs Atom.to_string/1 Process._cell/4 Process._g/0 _add/3 _kid/4 _problem/1
+  def start_child(s: dynamic_supervisor, body: fn[pid[a], integer], restart: atom): result[pid[a], string] do
+    t = Sys.peek(Sys.stack() - 48)
+    g = Process._g()
+    w = Process.__word(body)
+    x = Process._cell(g, 0, 0, 0)
+    f: fn[integer] = fn(): integer do DynamicSupervisor._kid(Process._g(), w, t, x) end
+    k = DynamicSupervisor._add(s.at, Process.__word(f), Atom.to_string(restart))
+    if k != 0 do error(DynamicSupervisor._problem(k)) else
+      r: pid[a] = %pid{at: Sys.peek(x + 8), k: none}
+      ok(r)
+    end
+  end
+#: start_child/2 needs Process._cell/4 Process._g/0 _add/3 _kid/4 _problem/1
+  def start_child(s: dynamic_supervisor, body: fn[pid[a], integer]): result[pid[a], string] do
+    t = Sys.peek(Sys.stack() - 48)
+    g = Process._g()
+    w = Process.__word(body)
+    x = Process._cell(g, 0, 0, 0)
+    f: fn[integer] = fn(): integer do DynamicSupervisor._kid(Process._g(), w, t, x) end
+    k = DynamicSupervisor._add(s.at, Process.__word(f), "permanent")
+    if k != 0 do error(DynamicSupervisor._problem(k)) else
+      r: pid[a] = %pid{at: Sys.peek(x + 8), k: none}
+      ok(r)
+    end
+  end
+#: _serve/5 needs Server._supervised/6
+  def _serve(d: integer, t: integer, w: integer, h: integer, x: tuple[integer, integer]): integer do
+    b = Server._supervised(Sys.peek(d), t, w, h, {Sys.peek(d + 8), div(Sys.peek(d + 16), 1000000)}, elem(x, 1))
+    Sys.poke(elem(x, 0) + 8, b)
+    Sys.peek(Sys.peek(b + 8))
+  end
+#: start_server/3 needs Process._cell/4 Process._check/1 Process._g/0 _add/3 _problem/1 _serve/5
+  def start_server(s: dynamic_supervisor, state: st, handle: fn[st, q, tuple[st, r]]): result[server[q, r], string] do
+    t = Sys.peek(Sys.stack() - 48)
+    place = Stream.__where()
+    g = Process._g()
+    Process._check(g)
+    d = s.at
+    w = Process.__word(state)
+    h = Process.__word(handle)
+    x = Process._cell(g, 0, 0, 0)
+    f: fn[integer] = fn(): integer do DynamicSupervisor._serve(d, t, w, h, {x, place}) end
+    k = DynamicSupervisor._add(d, Process.__word(f), "temporary")
+    if k != 0 do error(DynamicSupervisor._problem(k)) else
+      v: server[q, r] = %server{at: Sys.peek(x + 8), k: none}
+      ok(v)
+    end
+  end
+#: terminate_child/2 needs _end/2
+  def terminate_child(s: dynamic_supervisor, p: pid[a]): boolean do
+    DynamicSupervisor._end(s.at, Sys.peek(p.at + 40))
+  end
+#: which_children/1 needs Process._check/1 Process._g/0 _ids/1
+  def which_children(s: dynamic_supervisor): list[integer] do
+    Process._check(Process._g())
+    DynamicSupervisor._ids(Sys.peek(s.at + 24))
+  end
+#: count_children/1 needs Process._check/1 Process._g/0 _ids/1
+  def count_children(s: dynamic_supervisor): integer do
+    Process._check(Process._g())
+    length(DynamicSupervisor._ids(Sys.peek(s.at + 24)))
+  end
+#: restarts/1
+  def restarts(s: dynamic_supervisor): integer do
+    Sys.peek(s.at + 40)
+  end
+#: stop/1 needs Process._cancel/4 Process._check/1 Process._g/0 Process._joined/3
+  def stop(s: dynamic_supervisor): boolean do
+    g = Process._g()
+    Process._check(g)
+    q = Sys.peek(s.at)
+    Process._cancel(g, q, Process.__word("shutdown"), 0)
+    Process._joined(g, q, 5000) == 1
+  end
+#: alive/1 needs Process._check/1 Process._g/0
+  def alive(s: dynamic_supervisor): boolean do
+    Process._check(Process._g())
+    q = Sys.peek(s.at)
+    Sys.peek(q + 56) + Sys.peek(q + 376) == 0
+  end

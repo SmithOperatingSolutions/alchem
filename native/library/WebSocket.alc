@@ -1,0 +1,718 @@
+# WebSocket: RFC 6455 as the pinned runtime speaks it
+# (compiler/library.go.txt, "---- WebSocket ----"), over the sockets of
+# library/TCP.alc and the server of library/HTTP.alc.
+#
+# A WebSocket is a block: 0 its connection (a socket of TCP.alc that
+# nobody owns), 8 set for the end that connected (which masks what it
+# sends), 16 the most bytes a message may have, 24 set when messages are
+# compressed, 32 and 40 the first and last of the events not yet taken and
+# 48 how many (at most 16), 56 set once the reader has ended, 64 once this
+# end has closed the connection, 72 once a close frame was sent, 80 once a
+# caller took on closing it, 88 once it has, 96 the process whose end
+# closes it, 104 the process given by controlling_process, 112 how many
+# events are still to be sent as messages (-1: all), 120 the process that
+# sends them, 136 who waits for an event or the reader's end, 144 the
+# reader when it waits for room, 152 set when no event will come any more,
+# 160 the process that writes and 168 those that wait to.
+#: struct websocket also WebSocket
+  struct websocket do
+    at: integer
+    k: option[fn[integer, integer]]
+  end
+  type WebSocket.Event do
+    text(text: string)
+    binary(data: string)
+    closed(code: integer, reason: string)
+    error(reason: string)
+  end
+#: _kind/0 needs Process.whereis/1
+  def _kind(): integer do
+    r: option[pid[WebSocket.Event]] = Process.whereis(:websocket_event)
+    Sys.peek(Sys.stack() - 48)
+  end
+# Whether the n bytes at p are UTF-8 as Go's utf8.Valid has it.
+#: _utf8/2 needs _cont/2
+  def _utf8(p: integer, n: integer): boolean do
+    if n == 0 do true else
+      c = Sys.byte(p)
+      if c < 128 do WebSocket._utf8(p + 1, n - 1) else
+        d = if n < 2 do 0 else Sys.byte(p + 1) end
+        if c >= 194 and c <= 223 do if WebSocket._cont(p + 1, n - 1) >= 1 do WebSocket._utf8(p + 2, n - 2) else false end else
+          if c >= 224 and c <= 239 do
+            fits = if c == 224 do d >= 160 else if c == 237 do d <= 159 else true end end
+            if fits and WebSocket._cont(p + 1, n - 1) >= 2 do WebSocket._utf8(p + 3, n - 3) else false end
+          else
+            if c >= 240 and c <= 244 do
+              fits = if c == 240 do d >= 144 else if c == 244 do d <= 143 else true end end
+              if fits and WebSocket._cont(p + 1, n - 1) >= 3 do WebSocket._utf8(p + 4, n - 4) else false end
+            else false end
+          end
+        end
+      end
+    end
+  end
+# How many of the next three bytes go on a character.
+#: _cont/2
+  def _cont(p: integer, n: integer): integer do
+    if n == 0 or Sys.byte(p) < 128 or Sys.byte(p) > 191 do 0 else
+      if n == 1 or Sys.byte(p + 1) < 128 or Sys.byte(p + 1) > 191 do 1 else
+        if n == 2 or Sys.byte(p + 2) < 128 or Sys.byte(p + 2) > 191 do 2 else 3 end
+      end
+    end
+  end
+# Sec-WebSocket-Accept for a key: the SHA-1 is the Crypto runtime's
+# (spec/alchem-crypto.md).
+# The table frames are masked with (HTTP._k, a mapping of its own) is
+# made here, as it was when the SHA-1 was this file's: before the
+# processes of a connection reserve their stacks, which under a limit on
+# the address space leave little behind them.
+#: _accept/1 needs Base.encode64/1 Crypto.hash/2 HTTP._k/0
+  def _accept(key: string): string do
+    k = HTTP._k()
+    Base.encode64(Crypto.hash(:sha1, key <> "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+  end
+# n bytes at p go to q, each changed by the key's byte for its place: r0 to
+# r3 are the rows of the table of exclusive or for the key's four bytes.
+#: _mask/6
+  def _mask(p: integer, q: integer, n: integer, r0: integer, r1: integer, r23: tuple[integer, integer]): integer do
+    {r2, r3} = r23
+    if n >= 4 do
+      Sys.poke(q, Sys.byte(r0 + Sys.byte(p)) + Sys.byte(r1 + Sys.byte(p + 1)) * 256 + Sys.byte(r2 + Sys.byte(p + 2)) * 65536 + Sys.byte(r3 + Sys.byte(p + 3)) * 16777216)
+      WebSocket._mask(p + 4, q + 4, n - 4, r0, r1, r23)
+    else
+      if n >= 1 do Sys.poke(q, Sys.byte(r0 + Sys.byte(p))) end
+      if n >= 2 do Sys.poke(q + 1, Sys.byte(r1 + Sys.byte(p + 1))) end
+      if n >= 3 do Sys.poke(q + 2, Sys.byte(r2 + Sys.byte(p + 2))) end
+      0
+    end
+  end
+# One frame is written, masked by the end that connected: "" or why not.
+#: _frame/4 needs HTTP._k/0 Process._due/2 Process._wake/2 TCP._write/5 _mask/6 _wlock/2
+  def _frame(g: integer, wb: integer, op: integer, payload: string): string do
+    n = byte_size(payload)
+    client = Sys.peek(wb + 8)
+    room = n + 32
+    m = Sys.call(9, 0, room, 3, 34, -1, 0)
+    if m < 0 do System.halt(71) end
+    Sys.poke(m, 128 + op)
+    bit = client * 128
+    h = if n < 126 do
+      Sys.poke(m + 1, bit + n)
+      2
+    else
+      if n < 65536 do
+        Sys.poke(m + 1, bit + 126)
+        Sys.poke(m + 2, div(n, 256))
+        Sys.poke(m + 3, rem(n, 256))
+        4
+      else
+        Sys.poke(m + 1, bit + 127)
+        Sys.poke(m + 2, 0)
+        Sys.poke(m + 6, div(n, 16777216))
+        Sys.poke(m + 7, rem(div(n, 65536), 256))
+        Sys.poke(m + 8, rem(div(n, 256), 256))
+        Sys.poke(m + 9, rem(n, 256))
+        10
+      end
+    end
+    if client == 1 do
+      k = HTTP._k()
+      Sys.call(318, m + h, 4, 0)
+      WebSocket._mask(Sys.addr(payload), m + h + 4, n, k + Sys.byte(m + h) * 256, k + Sys.byte(m + h + 1) * 256, {k + Sys.byte(m + h + 2) * 256, k + Sys.byte(m + h + 3) * 256})
+    else Sys.copy(m + h, Sys.addr(payload), n) end
+    total = h + client * 4 + n
+    WebSocket._wlock(g, wb)
+    why = TCP._write(g, Sys.peek(wb), m, total, Process._due(g, 10000))
+    Sys.poke(wb + 160, 0)
+    Process._wake(g, wb + 168)
+    Sys.call(11, m, room)
+    why
+  end
+#: _wlock/2 needs Process._drop/3 Process._push/5 Process._wait/2
+  def _wlock(g: integer, wb: integer): integer do
+    c = Sys.peek(g)
+    if Sys.peek(wb + 160) == 0 do Sys.poke(wb + 160, c) else
+      Process._push(g, wb + 168, c, 0, 0)
+      Process._wait(g, 0)
+      Process._drop(g, wb + 168, c)
+      WebSocket._wlock(g, wb)
+    end
+  end
+# n bytes of the connection, however long they take: "" with the reason at
+# the connection's 120 when they do not come.
+#: _take/3 needs TCP._exact/5
+  def _take(g: integer, cb: integer, n: integer): string do
+    Sys.poke(cb + 120, 0)
+    if n == 0 do "" else TCP._exact(g, cb, 0, n, 0) end
+  end
+# The next frame: 0, whether it ends a message, its kind (64 more when it
+# is compressed) and what it holds; or 1 (the connection gave none, the
+# reason is the connection's) or the close code of a broken rule with what
+# to say of it.
+#: _next/2 needs Port._big/3 _plain/2 _take/3
+  def _next(g: integer, wb: integer): tuple[integer, boolean, integer, string] do
+    cb = Sys.peek(wb)
+    client = Sys.peek(wb + 8)
+    head = WebSocket._take(g, cb, 2)
+    if Sys.peek(cb + 120) != 0 do {1, false, 0, ""} else
+      b0 = Sys.byte(Sys.addr(head))
+      b1 = Sys.byte(Sys.addr(head) + 1)
+      fin = b0 >= 128
+      op = rem(b0, 16)
+      rsv1 = rem(div(b0, 64), 2) == 1
+      packed = rsv1 and Sys.peek(wb + 24) == 1 and (op == 1 or op == 2)
+      masked = if b1 >= 128 do 1 else 0 end
+      if rem(div(b0, 16), 4) != 0 or rsv1 and not packed do {1002, false, 0, "protocol error: reserved bits are set"} else
+        if masked == client do {1002, false, 0, if client == 1 do "protocol error: the server masked a frame" else "protocol error: the client sent an unmasked frame" end} else
+          short = rem(b1, 128)
+          more = if short == 126 do WebSocket._take(g, cb, 2) else if short == 127 do WebSocket._take(g, cb, 8) else "" end end
+          if Sys.peek(cb + 120) != 0 do {1, false, 0, ""} else
+            size = if short < 126 do short else if short == 127 and Sys.byte(Sys.addr(more)) >= 64 do 4611686018427387904 else Port._big(Sys.addr(more), byte_size(more), 0) end end
+            if op >= 8 and (not fin or size > 125) do {1002, false, 0, "protocol error: a control frame is fragmented or too long"} else
+              if size > Sys.peek(wb + 16) do {1009, false, 0, "message too large"} else
+                key = if masked == 1 do WebSocket._take(g, cb, 4) else "" end
+                body = if Sys.peek(cb + 120) != 0 do "" else WebSocket._take(g, cb, size) end
+                if Sys.peek(cb + 120) != 0 do {1, false, 0, ""} else
+                  {0, fin, op + (if packed do 64 else 0 end), if masked == 1 do WebSocket._plain(body, key) else body end}
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# A masked payload as it was.
+#: _plain/2 needs HTTP._k/0 TCP._s/0 _mask/6
+  def _plain(body: string, key: string): string do
+    n = byte_size(body)
+    k = HTTP._k()
+    q = Sys.addr(key)
+    m = if n + 16 <= 196608 do TCP._s() + 4096 else Sys.call(9, 0, n + 16, 3, 34, -1, 0) end
+    if m < 0 do System.halt(71) end
+    WebSocket._mask(Sys.addr(body), m, n, k + Sys.byte(q) * 256, k + Sys.byte(q + 1) * 256, {k + Sys.byte(q + 2) * 256, k + Sys.byte(q + 3) * 256})
+    out = Sys.text(m, n)
+    if n + 16 > 196608 do Sys.call(11, m, n + 16) end
+    out
+  end
+# An event waits to be taken; the reader waits while sixteen do. 0 when
+# this end closed the connection first.
+#: _emit/3 needs Process._cell/4 Process._drop/3 Process._push/5 Process._wait/2 Process._wake/2
+  def _emit(g: integer, wb: integer, w: integer): integer do
+    if Sys.peek(wb + 64) == 1 do 0 else
+      if Sys.peek(wb + 48) < 16 do
+        x = Process._cell(g, w, 0, 0)
+        t = Sys.peek(wb + 40)
+        if t == 0 do Sys.poke(wb + 32, x) else Sys.poke(t, x) end
+        Sys.poke(wb + 40, x)
+        Sys.poke(wb + 48, Sys.peek(wb + 48) + 1)
+        Process._wake(g, wb + 136)
+        1
+      else
+        c = Sys.peek(g)
+        Process._push(g, wb + 144, c, 0, 0)
+        Process._wait(g, 0)
+        Process._drop(g, wb + 144, c)
+        WebSocket._emit(g, wb, w)
+      end
+    end
+  end
+# The reader ends: a last event is queued when there is room, and no other
+# follows.
+#: _finish/3 needs Process._cell/4 Process._wake/2
+  def _finish(g: integer, wb: integer, w: integer): integer do
+    if w != 0 and Sys.peek(wb + 48) < 16 do
+      x = Process._cell(g, w, 0, 0)
+      t = Sys.peek(wb + 40)
+      if t == 0 do Sys.poke(wb + 32, x) else Sys.poke(t, x) end
+      Sys.poke(wb + 40, x)
+      Sys.poke(wb + 48, Sys.peek(wb + 48) + 1)
+    end
+    Sys.poke(wb + 152, 1)
+    Sys.poke(wb + 56, 1)
+    Process._wake(g, wb + 136)
+    0
+  end
+# The first event that waits, as a word; 0 for none.
+#: _event/2 needs Process._free/2 Process._wake/2
+  def _event(g: integer, wb: integer): integer do
+    x = Sys.peek(wb + 32)
+    if x == 0 do 0 else
+      w = Sys.peek(x + 8)
+      n = Sys.peek(x)
+      Sys.poke(wb + 32, n)
+      if n == 0 do Sys.poke(wb + 40, 0) end
+      Sys.poke(wb + 48, Sys.peek(wb + 48) - 1)
+      Process._free(g, x)
+      Process._wake(g, wb + 144)
+      w
+    end
+  end
+# Two bytes of a number, the highest first.
+#: _be16/1 needs TCP._s/0
+  def _be16(v: integer): string do
+    s = TCP._s() + 256
+    Sys.poke(s, div(v, 256) + rem(v, 256) * 256)
+    Sys.text(s, 2)
+  end
+# A rule of the protocol was broken: the other end is told with a close
+# frame, the connection dropped, and the last event says what was wrong.
+#: _failed/4 needs TCP._close/2 _be16/1 _finish/3 _frame/4
+  def _failed(g: integer, wb: integer, code: integer, text: string): integer do
+    sending = Sys.peek(wb + 72) == 0
+    Sys.poke(wb + 72, 1)
+    if sending do WebSocket._frame(g, wb, 8, WebSocket._be16(code) <> text) end
+    TCP._close(g, Sys.peek(wb))
+    WebSocket._finish(g, wb, Process.__word(WebSocket.Event.error(text)))
+  end
+# The connection gave no frame.
+#: _broken/2 needs TCP._close/2 _finish/3
+  def _broken(g: integer, wb: integer): integer do
+    cb = Sys.peek(wb)
+    why: string = Process.__any(Sys.peek(cb + 120))
+    TCP._close(g, cb)
+    if Sys.peek(wb + 88) == 1 or why == "closed" or why == "unexpected EOF" do WebSocket._finish(g, wb, Process.__word(WebSocket.Event.closed(1006, ""))) else WebSocket._finish(g, wb, Process.__word(WebSocket.Event.error(why))) end
+  end
+# The other end's close frame is answered and ends the reader.
+#: _peerclosed/3 needs TCP._close/2 TCP._sub/3 _be16/1 _failed/4 _finish/3 _frame/4 _utf8/2
+  def _peerclosed(g: integer, wb: integer, payload: string): integer do
+    n = byte_size(payload)
+    p = Sys.addr(payload)
+    code = if n >= 2 do Sys.byte(p) * 256 + Sys.byte(p + 1) else 1005 end
+    reason = if n >= 2 do TCP._sub(payload, 2, n - 2) else "" end
+    valid = code >= 1000 and code < 5000 and code != 1004 and code != 1005 and code != 1006 and (code < 1012 or code >= 3000)
+    if n == 1 do WebSocket._failed(g, wb, 1002, "protocol error: a close frame with a one-byte body") else
+      if n >= 2 and (not valid or not WebSocket._utf8(Sys.addr(reason), n - 2)) do WebSocket._failed(g, wb, 1002, "protocol error: an invalid close code or reason") else
+        answered = Sys.peek(wb + 72) == 1
+        Sys.poke(wb + 72, 1)
+        if not answered do WebSocket._frame(g, wb, 8, if code == 1005 do "" else WebSocket._be16(code) end) end
+        TCP._close(g, Sys.peek(wb))
+        WebSocket._finish(g, wb, Process.__word(WebSocket.Event.closed(code, reason)))
+      end
+    end
+  end
+# What the reader does: frames become whole messages and those events,
+# pings are answered, until the connection ends.
+#: _reading/5 needs HTTP._inflate/3 TCP._join/2 _broken/2 _emit/3 _failed/4 _finish/3 _frame/4 _next/2 _peerclosed/3 _utf8/2
+  def _reading(g: integer, wb: integer, kind: integer, parts: list[string], state: tuple[integer, boolean]): integer do
+    {total, packed} = state
+    empty: list[string] = []
+    {st, fin, coded, payload} = WebSocket._next(g, wb)
+    op = rem(coded, 64)
+    if st == 1 do WebSocket._broken(g, wb) else
+      if st != 0 do WebSocket._failed(g, wb, st, payload) else
+        if op == 8 do WebSocket._peerclosed(g, wb, payload) else
+          if op == 9 or op == 10 do
+            if op == 9 do WebSocket._frame(g, wb, 10, payload) end
+            WebSocket._reading(g, wb, kind, parts, state)
+          else
+            zipped = if coded >= 64 do kind == 0 else packed end
+            if (op == 1 or op == 2) and kind != 0 do WebSocket._failed(g, wb, 1002, "protocol error: a message began before the last one ended") else
+              if op == 0 and kind == 0 do WebSocket._failed(g, wb, 1002, "protocol error: a continuation frame without a message") else
+                if op > 2 do WebSocket._failed(g, wb, 1002, "protocol error: unknown opcode #{op}") else
+                  now = if op == 0 do kind else op end
+                  all = if op == 0 do parts ++ [payload] else [payload] end
+                  size = (if op == 0 do total else 0 end) + byte_size(payload)
+                  limit = Sys.peek(wb + 16)
+                  if size > limit do WebSocket._failed(g, wb, 1009, "message too large") else
+                    if not fin do WebSocket._reading(g, wb, now, all, {size, zipped}) else
+                      raw = TCP._join(all, size)
+                      full = raw <> "\x00\x00\xff\xff\x01\x00\x00\xff\xff"
+                      {message, bad} = if zipped do HTTP._inflate(Sys.addr(full), byte_size(full), limit) else {raw, 0} end
+                      if bad == 1 do WebSocket._failed(g, wb, 1007, "a compressed message could not be read") else
+                        if bad == 2 do WebSocket._failed(g, wb, 1009, "message too large") else
+                          if now == 1 and not WebSocket._utf8(Sys.addr(message), byte_size(message)) do WebSocket._failed(g, wb, 1007, "a text message is not valid UTF-8") else
+                            w = Process.__word(if now == 2 do WebSocket.Event.binary(message) else WebSocket.Event.text(message) end)
+                            if WebSocket._emit(g, wb, w) == 0 do WebSocket._finish(g, wb, 0) else WebSocket._reading(g, wb, 0, empty, {0, false}) end
+                          end
+                        end
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# The closing handshake from this end, and the connection dropped: 1, or 0
+# when another caller is closing it or has.
+#: _shut/4 needs Process._due/2 Process._g/0 Process._wake/2 TCP._close/2 _be16/1 _frame/4 _until/3
+  def _shut(wb: integer, code: integer, reason: string, wait: integer): integer do
+    g = Process._g()
+    if Sys.peek(wb + 80) == 1 do 0 else
+      Sys.poke(wb + 80, 1)
+      sending = Sys.peek(wb + 72) == 0
+      Sys.poke(wb + 72, 1)
+      if sending do WebSocket._frame(g, wb, 8, WebSocket._be16(code) <> reason) end
+      if wait == 1 do WebSocket._until(g, wb, Process._due(g, 1000)) end
+      Sys.poke(wb + 88, 1)
+      Sys.poke(wb + 64, 1)
+      Process._wake(g, wb + 144)
+      TCP._close(g, Sys.peek(wb))
+      1
+    end
+  end
+# The running process waits until the reader has ended or the time d
+# comes.
+#: _until/3 needs Process._drop/3 Process._now/1 Process._push/5 Process._wait/2
+  def _until(g: integer, wb: integer, d: integer): integer do
+    if Sys.peek(wb + 56) == 1 or Process._now(g) >= d do 0 else
+      c = Sys.peek(g)
+      Process._push(g, wb + 136, c, 0, 0)
+      Process._wait(g, d)
+      Process._drop(g, wb + 136, c)
+      WebSocket._until(g, wb, d)
+    end
+  end
+# Process q owns the WebSocket: its end closes it with 1001, going away.
+#: _own/3 needs Process._onend/3 _shut/4
+  def _own(g: integer, wb: integer, q: integer): integer do
+    Sys.poke(wb + 96, q)
+    f: fn[string, integer] = fn(r: string): integer do
+      if Sys.peek(wb + 96) == q do WebSocket._shut(wb, 1001, "", 0) end
+      0
+    end
+    Process._onend(g, q, Process.__word(f))
+  end
+# A WebSocket over a connection whose handshake is done.
+#: _new/5 needs Process._g/0 Process._go/2 Process._take/2 _own/3 _reading/5
+  def _new(g: integer, cb: integer, client: integer, limit: integer, deflate: boolean): websocket do
+    wb = Process._take(g, 184)
+    Sys.poke(wb, cb)
+    Sys.poke(wb + 8, client)
+    Sys.poke(wb + 16, limit)
+    Sys.poke(wb + 24, if deflate do 1 else 0 end)
+    Sys.poke(cb + 24, 0)
+    WebSocket._own(g, wb, Sys.peek(g))
+    empty: list[string] = []
+    f: fn[integer] = fn(): integer do WebSocket._reading(Process._g(), wb, 0, empty, {0, false}) end
+    Process._go(g, Process.__word(f))
+    made: websocket = %websocket{at: wb, k: none}
+    made
+  end
+# A message is sent, compressed when that was agreed and makes it shorter.
+#: _send/3 needs HTTP._deflate/2 Process._check/1 Process._g/0 TCP._close/2 _frame/4
+  def _send(wb: integer, op: integer, data: string): result[tuple[], string] do
+    g = Process._g()
+    Process._check(g)
+    if Sys.peek(wb + 72) == 1 do error("closed") else
+      small = if Sys.peek(wb + 24) == 1 and byte_size(data) >= 256 do HTTP._deflate(data, 0) else data end
+      packed = byte_size(small) < byte_size(data)
+      why = WebSocket._frame(g, wb, if packed do op + 64 else op end, if packed do small else data end)
+      if why == "" do ok({}) else
+        TCP._close(g, Sys.peek(wb))
+        error(why)
+      end
+    end
+  end
+#: send/2 needs _send/3
+  def send(ws: websocket, text: string): result[tuple[], string] do
+    WebSocket._send(ws.at, 1, text)
+  end
+#: send_binary/2 needs _send/3
+  def send_binary(ws: websocket, data: string): result[tuple[], string] do
+    WebSocket._send(ws.at, 2, data)
+  end
+#: close/1 needs _shut/4
+  def close(ws: websocket): boolean do
+    WebSocket._shut(ws.at, 1000, "", 1) == 1
+  end
+#: close/3 needs _shut/4 _utf8/2
+  def close(ws: websocket, code: integer, reason: string): boolean do
+    if code != 1000 and (code < 3000 or code > 4999) do raise("WebSocket.close: the code must be 1000 or 3000 to 4999, not #{code}") end
+    if byte_size(reason) > 123 or not WebSocket._utf8(Sys.addr(reason), byte_size(reason)) do raise("WebSocket.close: the reason must be valid text of at most 123 bytes") end
+    WebSocket._shut(ws.at, code, reason, 1) == 1
+  end
+# The next event, waited for until the time d: its word, 0 when none will
+# come, -1 when the time came.
+#: _await/3 needs Process._check/1 Process._drop/3 Process._now/1 Process._push/5 Process._wait/2 _event/2
+  def _await(g: integer, wb: integer, d: integer): integer do
+    Process._check(g)
+    w = WebSocket._event(g, wb)
+    if w != 0 do w else
+      if Sys.peek(wb + 152) == 1 do 0 else
+        if d != 0 and Process._now(g) >= d do -1 else
+          c = Sys.peek(g)
+          Process._push(g, wb + 136, c, 0, 0)
+          Process._wait(g, d)
+          Process._drop(g, wb + 136, c)
+          WebSocket._await(g, wb, d)
+        end
+      end
+    end
+  end
+#: recv/2 needs Process._due/2 Process._g/0 _await/3
+  def recv(ws: websocket, ms: integer): result[WebSocket.Event, string] do
+    g = Process._g()
+    wb = ws.at
+    if Sys.peek(wb + 112) != 0 or Sys.peek(wb + 120) != 0 do error("the socket is active") else
+      w = WebSocket._await(g, wb, Process._due(g, ms))
+      if w == 0 do error("closed") else
+        if w == -1 do error("timeout") else
+          e: WebSocket.Event = Process.__any(w)
+          ok(e)
+        end
+      end
+    end
+  end
+# What the process of an active WebSocket does: events go to r as messages.
+#: _pump/2 needs Process._drop/3 Process._g/0 Process._push/5 Process._wait/2 TCP._tell/3 _event/2
+  def _pump(wb: integer, r: integer): integer do
+    g = Process._g()
+    if Sys.peek(wb + 112) == 0 do Sys.poke(wb + 120, 0) else
+      w = WebSocket._event(g, wb)
+      if w == 0 do
+        if Sys.peek(wb + 152) == 1 do
+          Sys.poke(wb + 112, 0)
+          Sys.poke(wb + 120, 0)
+        else
+          c = Sys.peek(g)
+          Process._push(g, wb + 136, c, 0, 0)
+          Process._wait(g, 0)
+          Process._drop(g, wb + 136, c)
+          WebSocket._pump(wb, r)
+        end
+      else
+        if Sys.peek(wb + 112) > 0 do Sys.poke(wb + 112, Sys.peek(wb + 112) - 1) end
+        last = Sys.peek(wb + 112) == 0
+        if last do Sys.poke(wb + 120, 0) end
+        TCP._tell(g, r, w)
+        if last do 0 else WebSocket._pump(wb, r) end
+      end
+    end
+  end
+#: setopts/2 needs Process._g/0 Process._go/2 Process._ready/2 Process._same/2 _kind/0 _pump/2
+  def setopts(ws: websocket, o: list[tuple[atom, atom]]): result[tuple[], string] do
+    g = Process._g()
+    wb = ws.at
+    case o do
+      [] -> ok({})
+      [{k, v} | rest] ->
+        if k != :active or v != :true and v != :once and v != :false do raise("WebSocket.setopts: the option is active: true, :once or false") end
+        count = if v == :true do -1 else if v == :once do 1 else 0 end end
+        Sys.poke(wb + 112, count)
+        if count == 0 or Sys.peek(wb + 120) != 0 do
+          if count == 0 and Sys.peek(wb + 120) != 0 do Process._ready(g, Sys.peek(wb + 120)) end
+          WebSocket.setopts(ws, rest)
+        else
+          r = if Sys.peek(wb + 104) != 0 do Sys.peek(wb + 104) else Sys.peek(wb + 96) end
+          if r == 0 or Sys.peek(r + 136) == 0 or Sys.peek(r + 144) == 0 or Process._same(Sys.peek(r + 144), WebSocket._kind()) == 0 do
+            Sys.poke(wb + 112, 0)
+            error("the controlling process does not take WebSocket.Event messages")
+          else
+            f: fn[integer] = fn(): integer do WebSocket._pump(wb, r) end
+            Sys.poke(wb + 120, Process._go(g, Process.__word(f)))
+            WebSocket.setopts(ws, rest)
+          end
+        end
+    end
+  end
+#: controlling_process/2 needs Process._g/0 _own/3
+  def controlling_process(ws: websocket, p: pid[a]): boolean do
+    WebSocket._own(Process._g(), ws.at, p.at)
+    Sys.poke(ws.at + 104, p.at)
+    true
+  end
+#: peer/1
+  def peer(ws: websocket): string do
+    Process.__any(Sys.peek(Sys.peek(ws.at) + 112))
+  end
+#: compressed?/1
+  def compressed?(ws: websocket): boolean do
+    Sys.peek(ws.at + 24) == 1
+  end
+# The extensions a Sec-WebSocket-Extensions header names, each as its name
+# and then its settings, name=value.
+#: _extensions/1 needs Enum.filter/2 Enum.map/2 HTTP._parts/2 HTTP._trim/1 String.trim/2 TCP._lower/1 TCP._sub/3
+  def _extensions(h: list[tuple[string, string]]): list[list[string]] do
+    case h do
+      [] -> []
+      [{k, v} | rest] ->
+        here = if TCP._lower(k) != "sec-websocket-extensions" do [] else
+          Enum.filter(Enum.map(HTTP._parts(v, 44), fn offer ->
+            Enum.map(HTTP._parts(offer, 59), fn part ->
+              t = HTTP._trim(part)
+              i = Sys.find(Sys.addr(t), byte_size(t), 61)
+              if i < 0 do TCP._lower(t) else TCP._lower(HTTP._trim(TCP._sub(t, 0, i))) <> "=" <> String.trim(HTTP._trim(TCP._sub(t, i + 1, byte_size(t) - i - 1)), "\"") end
+            end)
+          end), fn e -> hd(e) != "" end)
+        end
+        here ++ WebSocket._extensions(rest)
+    end
+  end
+# Whether a client offered compression in a form this end can give.
+#: _offered/1 needs Enum.all?/2 Enum.any?/2 String.split/2 _extensions/1
+  def _offered(h: list[tuple[string, string]]): boolean do
+    Enum.any?(WebSocket._extensions(h), fn e ->
+      hd(e) == "permessage-deflate" and Enum.all?(tl(e), fn s ->
+        name = hd(String.split(s, "="))
+        s == "server_max_window_bits=15" or name == "client_max_window_bits" or name == "server_no_context_takeover" or name == "client_no_context_takeover"
+      end)
+    end)
+  end
+#: _upgrade/3 needs Base.decode64/1 HTTP._get/2 HTTP._holds/3 Process._due/2 Process._g/0 Process._has/2 Process._ready/2 TCP._close/2 TCP._write/5 _accept/1 _new/5 _offered/1
+  def _upgrade(limit: integer, compress: boolean, where: integer): result[websocket, string] do
+    g = Process._g()
+    me = Sys.peek(g)
+    c = Process._has(g + 312, me)
+    if c == 0 do error("WebSocket.upgrade must be called by the process handling the request") else
+      x = Sys.peek(c + 16)
+      r: HTTP.Request = Process.__any(Sys.peek(x + 80))
+      key = HTTP._get(r.headers, "sec-websocket-key")
+      sized = case Base.decode64(key) do
+        some(raw) -> byte_size(raw) == 16
+        none -> false
+      end
+      if r.method != "GET" do error("not a WebSocket request: the method is " <> r.method) else
+        if not HTTP._holds(r.headers, "connection", "upgrade") or not HTTP._holds(r.headers, "upgrade", "websocket") do error("not a WebSocket request: no upgrade to websocket") else
+          if HTTP._get(r.headers, "sec-websocket-version") != "13" do error("not a WebSocket request: the version must be 13") else
+            if not sized do error("not a WebSocket request: the key is missing or malformed") else
+              if Sys.peek(x + 32) == 4 do error("the request has already been upgraded") else
+                Sys.poke(x + 32, 4)
+                cb = Sys.peek(x + 8)
+                Process._ready(g, Sys.peek(x + 40))
+                deflate = compress and WebSocket._offered(r.headers)
+                out = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " <> WebSocket._accept(key) <> "\r\n" <> (if deflate do "Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover\r\n" else "" end) <> "\r\n"
+                why = TCP._write(g, cb, Sys.addr(out), byte_size(out), Process._due(g, 10000))
+                if why != "" do
+                  TCP._close(g, cb)
+                  error(why)
+                else ok(WebSocket._new(g, cb, 0, limit, deflate)) end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+#: upgrade/1 needs _upgrade/3
+  def upgrade(r: HTTP.Request): result[websocket, string] do
+    WebSocket._upgrade(16777216, false, 0)
+  end
+#: upgrade/2 needs Atom.to_string/1 _upgrade/3
+  def upgrade(r: HTTP.Request, o: list[tuple[atom, boolean]]): result[websocket, string] do
+    compress = Enum.reduce(o, false, fn {k, v}, acc ->
+      if k != :compress do raise("WebSocket.upgrade: unknown option :" <> Atom.to_string(k) <> "; the options are max_message_bytes: and compress:") end
+      v
+    end)
+    WebSocket._upgrade(16777216, compress, 0)
+  end
+#: upgrade/2 form 2 needs Atom.to_string/1 _upgrade/3
+  def upgrade(r: HTTP.Request, o: list[tuple[atom, integer]]): result[websocket, string] do
+    {limit, compress} = Enum.reduce(o, {16777216, false}, fn {k, v}, acc ->
+      if k == :max_message_bytes and v <= 0 do raise("WebSocket.upgrade: max_message_bytes: must be positive") end
+      if k != :max_message_bytes and k != :compress do raise("WebSocket.upgrade: unknown option :" <> Atom.to_string(k) <> "; the options are max_message_bytes: and compress:") end
+      if k == :compress do {elem(acc, 0), v != 0} else {v, elem(acc, 1)} end
+    end)
+    WebSocket._upgrade(limit, compress, 0)
+  end
+#: connect/2 needs connect/4
+  def connect(a: string, ms: integer): result[websocket, string] do
+    o: list[tuple[atom, string]] = []
+    h: list[tuple[string, string]] = []
+    WebSocket.connect(a, ms, o, h)
+  end
+#: connect/3 needs connect/4
+  def connect(a: string, ms: integer, o: list[tuple[atom, string]]): result[websocket, string] do
+    h: list[tuple[string, string]] = []
+    WebSocket.connect(a, ms, o, h)
+  end
+# The headers a caller adds to the handshake: what is wrong with them
+# ("": nothing) and their lines.
+#: _extra/2 needs Enum.member?/2 TCP._lower/1
+  def _extra(h: list[tuple[string, string]], acc: string): tuple[string, string] do
+    case h do
+      [] -> {"", acc}
+      [{name, value} | rest] ->
+        p = Sys.addr(name)
+        n = byte_size(name)
+        q = Sys.addr(value)
+        m = byte_size(value)
+        if n == 0 or Sys.find(p, n, 32) >= 0 or Sys.find(p, n, 9) >= 0 or Sys.find(p, n, 13) >= 0 or Sys.find(p, n, 10) >= 0 or Sys.find(p, n, 58) >= 0 or Sys.find(q, m, 13) >= 0 or Sys.find(q, m, 10) >= 0 do {"invalid header " <> inspect(name), ""} else
+          if Enum.member?(["host", "upgrade", "connection", "sec-websocket-key", "sec-websocket-version", "sec-websocket-extensions"], TCP._lower(name)) do {"the header " <> name <> " is set by the WebSocket handshake", ""} else WebSocket._extra(rest, acc <> name <> ": " <> value <> "\r\n") end
+        end
+    end
+  end
+#: _options/2 needs Atom.to_string/1 TCP._sub/3
+  def _options(o: list[tuple[atom, string]], acc: tuple[string, string, boolean]): tuple[string, string, boolean] do
+    {ca, origin, compress} = acc
+    case o do
+      [] -> acc
+      [{k, v} | rest] ->
+        if k != :ca_file and k != :insecure and k != :origin and k != :compress do raise("WebSocket.connect: unknown option :" <> Atom.to_string(k) <> "; the options are ca_file:, insecure:, origin: and compress:") end
+        tls = if k == :ca_file do TCP._sub(ca, 0, 1) <> v else if k == :insecure do (if v == "true" do "1" else "0" end) <> TCP._sub(ca, 1, byte_size(ca) - 1) else ca end end
+        WebSocket._options(rest, {tls, if k == :origin do v else origin end, if k == :compress do v == "true" else compress end})
+    end
+  end
+#: connect/4 needs Enum.at/3 HTTP._hostport/1 HTTP._url/1 Process._check/1 Process._due/2 Process._g/0 TCP._block/3 TCP._close/2 TCP._dial/3 _extra/2 _handshake/6 _options/2
+  def connect(a: string, ms: integer, o: list[tuple[atom, string]], h: list[tuple[string, string]]): result[websocket, string] do
+    g = Process._g()
+    Process._check(g)
+    {bad, extra} = WebSocket._extra(h, "")
+    if bad != "" do error(bad) else
+      {ca, origin, compress} = WebSocket._options(o, {"0", "", false})
+      {why, u} = HTTP._url(a)
+      scheme = Enum.at(u, 0, "")
+      if why != "" do error("parse " <> inspect(a) <> ": " <> why) else
+        if scheme != "ws" and scheme != "wss" do error("a WebSocket address starts with ws:// or wss://") else
+          d = Process._due(g, ms)
+          {fd, gone} = TCP._dial(g, HTTP._hostport(["http" <> (if scheme == "wss" do "s" else "" end)] ++ tl(u)), d)
+          if fd < 0 do error(gone) else
+            cb = TCP._block(g, fd, 2)
+            try do
+              WebSocket._handshake(g, cb, u, d, {ca, origin, compress}, extra)
+            after
+              if Sys.peek(cb + 152) == 0 do TCP._close(g, cb) end
+            end
+          end
+        end
+      end
+    end
+  end
+#: _handshake/6 needs Base.encode64/1 HTTP._barehost/1 HTTP._get/2 HTTP._holds/3 HTTP._reshead/3 TCP._s/0 TCP._sub/3 TCP._write/5 TLS._cafile/1 TLS._dial/5 _accept/1 _chosen/3 _extensions/1 _new/5
+  def _handshake(g: integer, cb: integer, u: list[string], d: integer, opts: tuple[string, string, boolean], extra: string): result[websocket, string] do
+    {ca, origin, compress} = opts
+    [scheme, user, has, host, path, query, force, frag, opaque, omit] = u
+    empty: list[tuple[string, string]] = []
+    file = TCP._sub(ca, 1, byte_size(ca) - 1)
+    secure = if scheme != "wss" do "" else
+      {roots, wrong} = if file == "" do {empty, ""} else TLS._cafile(file) end
+      if wrong != "" do wrong else
+        said = elem(TLS._dial(g, cb, d, HTTP._barehost(u), {if TCP._sub(ca, 0, 1) == "1" do 1 else 0 end, roots}), 1)
+        if said == "EOF" do "closed" else said end
+      end
+    end
+    if secure != "" do error(secure) else
+      s = TCP._s() + 512
+      Sys.call(318, s, 16, 0)
+      key = Base.encode64(Sys.text(s, 16))
+      target = (if path == "" do "/" else path end) <> (if force != "" or query != "" do "?" <> query else "" end)
+      out = "GET " <> target <> " HTTP/1.1\r\nHost: " <> host <> "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: " <> key <> "\r\nSec-WebSocket-Version: 13\r\n" <> (if origin == "" do "" else "Origin: " <> origin <> "\r\n" end) <> (if compress do "Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_no_context_takeover\r\n" else "" end) <> extra <> "\r\n"
+      sent = TCP._write(g, cb, Sys.addr(out), byte_size(out), d)
+      {wrong, status, rh} = if sent != "" do {sent, 0, []} else HTTP._reshead(g, cb, d) end
+      broken = "net/http: HTTP/1.x transport connection broken: "
+      if wrong != "" do error(if wrong == "EOF" do "unexpected EOF" else if byte_size(wrong) > byte_size(broken) and TCP._sub(wrong, 0, byte_size(broken)) == broken do TCP._sub(wrong, byte_size(broken), byte_size(wrong) - byte_size(broken)) else wrong end end) else
+        line: string = Process.__any(Sys.peek(cb + 160))
+        if status != 101 or not HTTP._holds(rh, "upgrade", "websocket") or HTTP._get(rh, "sec-websocket-accept") != WebSocket._accept(key) do error("the server did not accept the WebSocket: " <> line) else
+          {odd, deflate} = WebSocket._chosen(WebSocket._extensions(rh), compress, false)
+          if odd != "" do error("the server chose an extension that was not offered: " <> odd) else
+            Sys.poke(cb + 152, 1)
+            ok(WebSocket._new(g, cb, 1, 16777216, deflate))
+          end
+        end
+      end
+    end
+  end
+# The server may use only what was offered: compression, once, with each
+# of its messages compressed on its own.
+#: _chosen/3 needs Enum.member?/2
+  def _chosen(e: list[list[string]], compress: boolean, deflate: boolean): tuple[string, boolean] do
+    case e do
+      [] -> {"", deflate}
+      [x | rest] ->
+        if hd(x) != "permessage-deflate" or not compress or deflate or not Enum.member?(tl(x), "server_no_context_takeover") do {hd(x), false} else WebSocket._chosen(rest, compress, true) end
+    end
+  end

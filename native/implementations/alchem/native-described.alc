@@ -1,0 +1,444 @@
+defmodule NativeDescribed do
+  # inspect, JSON.encode and JSON.decode_as on a type that mentions a type
+  # variable. A generic function is compiled once and takes a comparator per
+  # type variable, which says how to compare values but not what they are;
+  # the description of the type (native-inspect.alc) has to reach it at run
+  # time. A generic function of the program that needs one is "described".
+  # It takes, after the comparators of its type variables, one more hidden
+  # argument per variable, the twin: the address of the first node of the
+  # description of the type the variable stands for. The twin of a is named
+  # a and byte 127, which no program can write, so whatever carries
+  # comparators carries it: a call, a fn inside the function, &name/N.
+  #
+  # Inside such a function a type variable is described by node 35, which
+  # holds the address of another description's first node. The code copies
+  # the description to the arena and writes each twin into its node.
+  #
+  # What is known of a function is one byte: bit 128 described, bits 0 to 5
+  # which of its first six type variables it reads from JSON, bit 6 that it
+  # reads one past them. It stands in the finished table's name index,
+  # which holds a record's number in four bytes and reads three: the fourth
+  # byte of entry id is the byte of record id, whatever record the entry
+  # names.
+  def jd_byte(table: bytes, id: integer): integer do
+    if nc_indexed(table) == 0 do 0 else Enum.at(table,nc_records(Enum.count(table))*27+30+id*4,0) end
+  end
+  def jd_put(table: bytes, id: integer, value: integer): bytes do
+    at = nc_records(Enum.count(table))*27+30+id*4
+    nc_join(nc_slice(table,0,at),b[value],nc_slice(table,at+1,Enum.count(table)))
+  end
+  def jd_on(table: bytes, id: integer): integer do
+    if jd_byte(table,id) >= 128 do 1 else 0 end
+  end
+  # Where a node's own bytes start: behind its length and its tag. The one
+  # place here that says how long a node's length is (jd_holes reads it
+  # with nc_read as jn_keyed does).
+  def jd_head(): integer do 3 end
+  # Where node 35 has its address: 8 bytes from its start, behind zeros, so
+  # that the word a walker reads a node's length from is never negative
+  # (the JSON library takes the length as that word's remainder).
+  def jd_at(): integer do 8 end
+  # names (length and name each) as their twins.
+  def jd_twins(names: bytes, offset: integer): bytes do
+    size = Enum.at(names,offset,0)
+    if offset >= Enum.count(names) do b[] else
+      nc_join(b[size+1],nc_slice(names,offset+1,offset+1+size),Enum.concat(b[127],jd_twins(names,offset+1+size)))
+    end
+  end
+  # The hidden arguments of function target: its type variables, and for a
+  # described function their twins after them.
+  def jd_names(table: bytes, target: integer, names: bytes): bytes do
+    if Enum.count(names) == 0 do names else if jd_on(table,target) == 0 do names else Enum.concat(names,jd_twins(names,0)) end end
+  end
+  # The twins among vars (name length, name, a byte and the slot in three)
+  # as what ni_describe has seen: the type variable's type, and the number
+  # of its entry in vars where a named type has its offset.
+  def jd_seed(vars: bytes, offset: integer): bytes do
+    jd_seed_from(vars,offset,0)
+  end
+  def jd_seed_from(vars: bytes, offset: integer, index: integer): bytes do
+    size = Enum.at(vars,offset,0)
+    if offset >= Enum.count(vars) do b[] else if index > 65000 do b[] else
+      Enum.concat(if Enum.at(vars,offset+size,0) != 127 do b[] else nc_join(b[size+1,16,size-1],nc_slice(vars,offset+1,offset+size),nc_u16(index)) end,jd_seed_from(vars,offset+5+size,index+1))
+    end end
+  end
+  # The slot of entry index of vars.
+  def jd_slot(vars: bytes, offset: integer, index: integer): integer do
+    size = Enum.at(vars,offset,0)
+    if index == 0 do nc_cursor(vars,offset+2+size) else jd_slot(vars,offset+5+size,index-1) end
+  end
+  # Every variable of names as seen in slot 0: what a type would be
+  # described by if each of its variables had a twin.
+  def jd_all(names: bytes, offset: integer): bytes do
+    size = Enum.at(names,offset,0)
+    if offset >= Enum.count(names) do b[] else
+      nc_join(b[size+2,16,size],nc_slice(names,offset+1,offset+1+size),Enum.concat(b[0,0],jd_all(names,offset+1+size)))
+    end
+  end
+  # The node of a type variable: 35 and the number of its twin's entry in
+  # vars, which the address takes the place of. b[] when no twin is in reach.
+  def jd_hole(seen: bytes, kind: bytes): bytes do
+    index = ni_seen(seen,kind,0)
+    if index < 0 do b[] else ni_node(35,nc_join(nc_zeros(jd_at()-jd_head()),nc_u16(index),b[0,0,0,0,0,0])) end
+  end
+  # Where a count, or a name behind its length, ends (ni_count: one byte, or
+  # 255 and four).
+  def jd_counted(node: bytes, offset: integer): integer do
+    if Enum.at(node,offset,0) == 255 do offset+5 else offset+1 end
+  end
+  def jd_named(node: bytes, offset: integer): integer do
+    if Enum.at(node,offset,0) == 255 do offset+5+nc_long(node,offset+1) else offset+1+Enum.at(node,offset,0) end
+  end
+  # Where the nodes 35 of the description at offset stand, 3 bytes each.
+  def jd_holes(node: bytes, offset: integer): bytes do
+    tag = Enum.at(node,offset+2,0)
+    stop = offset+nc_read(node,offset)
+    inside = offset+jd_head()
+    if tag == 35 do nc_u24(offset) else if (tag-4)*(tag-7)*(tag-25)*(tag-34)*(tag-36) == 0 do jd_holes(node,inside) else
+      if (tag-6)*(tag-8) == 0 do jd_run(node,inside,stop) else if tag == 5 do jd_run(node,jd_counted(node,inside),stop) else
+        if tag == 13 do jd_fields(node,jd_counted(node,jd_named(node,inside)),stop) else if tag == 14 do jd_variants(node,jd_counted(node,jd_named(node,inside)),stop) else b[] end end
+      end end
+    end end
+  end
+  def jd_run(node: bytes, offset: integer, stop: integer): bytes do
+    if offset >= stop do b[] else Enum.concat(jd_holes(node,offset),jd_run(node,offset+nc_read(node,offset),stop)) end
+  end
+  def jd_fields(node: bytes, offset: integer, stop: integer): bytes do
+    start = jd_named(node,offset)
+    if offset >= stop do b[] else Enum.concat(jd_holes(node,start),jd_fields(node,start+nc_read(node,start),stop)) end
+  end
+  def jd_variants(node: bytes, offset: integer, stop: integer): bytes do
+    if offset >= stop do b[] else Enum.concat(jd_run(node,jd_counted(node,jd_named(node,offset+2)),offset+nc_read(node,offset)),jd_variants(node,offset+nc_read(node,offset),stop)) end
+  end
+  # The code that leaves the address of the description node in RAX. One
+  # without type variables stands behind the code; a type variable alone is
+  # its twin; any other is copied to the arena, as a value of its own (the
+  # allocation hook marks where it starts), and gets its twins there. The
+  # copy is held by RAX and then by whoever takes it: a slot, the stack. A
+  # twin written into it is the start of another such value, or stands in
+  # the image; since a node may stand at any byte and the collector reads
+  # a value word by word, each twin is written once more behind the
+  # description, in a word of its own, which keeps what it points at.
+  # RCX, RSI, RDI and R11 are used.
+  def jd_placed(node: bytes, vars: bytes): bytes do
+    holes = if Enum.count(node) == 0 do b[] else jd_holes(node,0) end
+    if Enum.count(node) == 0 do b[] else if Enum.count(holes) == 0 do jn_node(node) else
+      if Enum.at(node,2,0) == 35 do nc_slot(b[72,139,69],jd_slot(vars,0,nc_read(node,jd_at()))) else jd_copy(node,holes,vars) end
+    end end
+  end
+  def jd_copy(node: bytes, holes: bytes, vars: bytes): bytes do
+    size = Enum.count(node)
+    template = nc_join(xa_mark(size,b[72,141,53,5,0,0,0]),Enum.concat(b[233],nc_u32(size)),node)
+    room = nc_join(Enum.concat(b[77,141,156,36],nc_u32(nc_units(size+7,8)*8+nc_units(Enum.count(holes),3)*8)),b[77,57,235,118,12],gm_hook())
+    nc_join(template,room,nc_join(Enum.concat(b[76,137,231,185],nc_u32(size)),b[243,164,76,137,224,77,137,220],jd_patches(node,holes,vars,0)))
+  end
+  def jd_patches(node: bytes, holes: bytes, vars: bytes, index: integer): bytes do
+    at = nc_cursor(holes,index)+jd_at()
+    if index >= Enum.count(holes) do b[] else
+      nc_join(nc_slot(b[72,139,77],jd_slot(vars,0,nc_read(node,at))),nc_join(b[72,137,136],nc_u32(at),Enum.concat(b[72,137,136],nc_u32(nc_units(Enum.count(node)+7,8)*8+nc_units(index,3)*8))),jd_patches(node,holes,vars,index+3))
+    end
+  end
+  # The twin a call passes for a type variable that stands for kind. It is
+  # made as for JSON.decode_as (an option that a type variable of a struct
+  # stands for is node 34; counts and the lengths of names are one byte),
+  # since the callee may read by it. A type the JSON library has no
+  # description for (a count of 255 or more) is described as for inspect,
+  # inside node 36: inspect looks through it and the JSON library does not.
+  # b[] when the type mentions a variable of the caller that has no twin:
+  # the caller needs descriptions too. A type that has no description
+  # otherwise is passed as a function is, which inspect shows without
+  # looking at it.
+  def jd_twin(source: bytes, table: bytes, kind: bytes, vars: bytes): bytes do
+    narrow = ni_describe(source,table,kind,0,Enum.concat(b[1,255,0,0],jd_seed(vars,0)))
+    wide = if Enum.count(narrow) > 0 do b[] else ni_describe(source,table,kind,jd_head(),jd_seed(vars,0)) end
+    code = jd_placed(if Enum.count(narrow) > 0 do narrow else if Enum.count(wide) == 0 do b[] else ni_node(36,wide) end end,vars)
+    if Enum.count(code) > 0 do code else
+      if Enum.count(ni_describe(source,table,kind,0,jd_all(nu_names(kind,0,b[]),0))) > 0 do b[] else jn_node(ni_node(10,b[])) end
+    end
+  end
+  # inspect of the value in RDI whose type mentions type variables: a
+  # string in RAX. b[] when a variable has no twin in reach.
+  def jd_show(source: bytes, table: bytes, kind: bytes, vars: bytes): bytes do
+    code = if Enum.count(vars) == 0 do b[] else jd_placed(ni_describe(source,table,kind,0,jd_seed(vars,0)),vars) end
+    if Enum.count(code) == 0 do b[] else nc_join(Enum.concat(b[87],code),b[72,137,198,95,186,4,0,0,0],nc_call(nc_records(Enum.count(table)))) end
+  end
+  # &inspect/1 and the like are compiled from a text of their own, which
+  # names nothing of the function they stand in. Where that function has
+  # twins the text's function captures every slot as a fn does, without a
+  # name (a record at position 1 of the text, of no length) and without a
+  # type but for the comparators and twins. The records stand in the order
+  # of the function's own, so each keeps its slot.
+  def jd_carried_scope(scope: bytes, env: bytes): bytes do
+    if Enum.count(jd_seed(nu_vars(env,2),0)) == 0 do scope else Enum.concat(scope,jd_carried(env,2)) end
+  end
+  # A record that stands for no value (gm_held) stays one that says
+  # nothing here: a type expected at position 1, which no call stands at.
+  def jd_carried(env: bytes, offset: integer): bytes do
+    tag = nc_env_tag(env,offset)
+    if offset >= Enum.count(env) do b[] else
+      Enum.concat(nc_env_record(1,1,if tag == 17 do nt_read(env,offset+7) else if tag == 21 do b[21,9] else if (tag-40)*(46-tag) >= 0 do b[21,9] else b[0] end end end),jd_carried(env,nc_env_next(env,offset)))
+    end
+  end
+  # &JSON.encode!/1, &JSON.encode!/2, &JSON.encode/1 and &JSON.decode_as/1:
+  # a function value that calls the library with the description of the
+  # type its parameter has, or of the type its result is expected to hold.
+  # given: the parameter types and the result type expected, as nf_inferred
+  # has them. Any other reference is the library's by arity.
+  def jd_referred(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, given: bytes): bytes do
+    name = nc_start(source,nc_end(source,pos))
+    op = if nc_word(source,name,b[74,83,79,78]) == 0 do 0 else if nf_target(source,name,env,table) >= 0 do 0 else if nn_library(source,env,table) == 1 do 0 else jn_which(source,sg_referred(source,pos)) end end end
+    if op == 0 do nf_library(source,pos,env,table,depth,nc_slice(given,0,nt_skip(given,0,nt_items(given,0)-1))) else jd_json(source,pos,env,table,Enum.concat(b[depth,op],given)) end
+  end
+  def jd_json(source: bytes, pos: integer, env: bytes, table: bytes, plan: bytes): bytes do
+    op = Enum.at(plan,1,0)
+    given = nc_slice(plan,2,Enum.count(plan))
+    words = nc_slice(given,0,nt_skip(given,0,nt_items(given,0)-1))
+    count = nt_items(words,0)
+    wanted = nt_read(given,nt_skip(given,0,count))
+    form = nf_library_form(source,pos,env,table)
+    captures = nf_captures(env,2)
+    scope = nf_capture_env(source,env,nf_unnamed(nc_u16(nc_read(env,0)),words,0),captures,0)
+    target = if op != 3 do nt_item(words,0) else if nt_tag(wanted) != 6 do b[] else if nt_tag(nt_child(wanted,1)) != 2 do b[] else nt_child(wanted,0) end end end
+    fits = if nc_pos(form) < 0 do 0 else if nc_tag(form) != count do 0 else if Enum.count(scope) == 0 do 0 else if nu_holes(target,0) == 1 do 0 else if op == 3 do if count != 1 do 0 else nq_comparable(source,table,target,b[])*(1-jd_poisoned(source,table,target)) end else if count == 1 do 1 else if op == 1 do if count == 2 do 1 else 0 end else 0 end end end end end end end
+    described = if fits == 0 do b[] else ni_describe(source,table,target,0,Enum.concat(if op == 3 do b[1,255,0,0] else b[1,254,0,0] end,jd_seed(nu_vars(scope,2),0))) end
+    node = if op != 3 do described else if Enum.count(described) == 0 do b[] else if jn_keyed(described,0) == 1 do b[] else described end end end
+    value = if Enum.count(node) == 0 do b[] else jd_json_call(source,pos,scope,table,nc_join(b[Enum.at(plan,0,0),op,count],nt_cell(wanted),Enum.concat(nt_cell(words),node))) end
+    kind = nt_function(Enum.concat(words,nt_cell(nc_kind(value))),count)
+    if nc_pos(value) < 0 do b[] else nc_value(nc_pos(form)+1,nf_code(count,gm_held(env,2),nc_join(nz_enter_plain(nc_start(source,pos)),zf_cover(source,table,env,nc_start(source,pos)),nc_code(value))),kind) end
+  end
+  # The call itself, in the scope of the function value. plan: the depth,
+  # which of the three, the number of parameters, the result type wanted
+  # and the parameter types, each behind its length, then the description.
+  def jd_json_call(source: bytes, pos: integer, scope: bytes, table: bytes, plan: bytes): bytes do
+    op = Enum.at(plan,1,0)
+    count = Enum.at(plan,2,0)
+    wanted = nt_read(plan,3)
+    words = nt_read(plan,nt_after(plan,3))
+    node = nc_slice(plan,nt_after(plan,nt_after(plan,3)),Enum.count(plan))
+    name = nc_start(source,nc_end(source,pos))
+    kinds = nc_join(nt_cell(if op == 3 do nt_item(words,0) else b[0] end),if count == 2 do nt_cell(nt_item(words,1)) else b[] end,Enum.concat(b[1,0],nt_cell(nc_zeros(count+1))))
+    packet = nc_arg_packet(0,count+1,kinds,nc_join(nf_pushes(count,0),jd_placed(node,nu_vars(scope,2)),b[80]))
+    home = Enum.concat(b[65,108,99,104,101,109,74,83,79,78],ny_digits(count+1))
+    made = nn_passes(source,name,sg_referred(source,pos),scope,table,nc_join(b[Enum.at(plan,0,0),1,0,Enum.count(home)],home,packet))
+    if nc_pos(made) < 0 do b[] else nh_placed(table,if op == 3 do nc_join(nc_slice(made,0,4),nt_cell(wanted),nc_code(made)) else made end,nc_start(source,pos)) end
+  end
+  # Which functions are described is settled before any code is kept. A
+  # generic function of the program that does not compile as the table
+  # stands is taken to need descriptions (it describes a type variable, or
+  # passes one to a described function) and is marked; that is repeated
+  # until a round marks none. A function that fails for another reason is
+  # marked too, and fails again when the program is compiled.
+  #
+  # Then which of its type variables each described function reads from
+  # JSON, as the pinned compiler works it out before it rejects a call that
+  # gives such a variable a type JSON cannot be read as: bits 0 to 5 of
+  # byte 24 for the first six variables and bit 6 for those after them
+  # together. A function is compiled once more per bit with its variables
+  # of that bit "poisoned": then JSON.decode_as of a type that mentions one,
+  # and a call that gives one to a variable the callee reads, do not
+  # compile. That too is repeated until a round finds nothing. Whether a
+  # variable past the sixth is read is asked only where it matters (a call
+  # gives it a type that cannot be read, or a poisoned one), by compiling
+  # the callee with that one variable poisoned.
+  #
+  # What is poisoned stands in the record of zeros behind the table's
+  # records: in byte 1 how many compilations for it are under way, one
+  # inside the other, then for each the function (2 bytes) and what of it:
+  # 0 to 5 that variable, 6 those past the sixth, 7 and up the variable
+  # with that index less one. The last is the one being compiled.
+  def jd_settle(source: bytes, table: bytes): bytes do
+    count = nc_records(Enum.count(table))
+    if jd_wanted(source,table,0,count) == 0 do table else jd_rounds(source,b[],jd_rounds(source,b[],table,0),2) end
+  end
+  # Rounds over the records until one changes nothing. A mark is seen by
+  # the functions tried after it in the same round, and the rounds go from
+  # the last record to the first and back by turns, so that a chain of
+  # callers written in either order is settled in a round or two. After
+  # the first round a function is tried again only when its text holds the
+  # name of a function whose marks changed since the round before began
+  # (since: the table as it was then), or of one that reads a variable past
+  # its sixth, which its byte does not name. mode: 2 for the variables
+  # read, and 1 more for a round from the first record on.
+  def jd_rounds(source: bytes, since: bytes, table: bytes, mode: integer): bytes do
+    count = nc_records(Enum.count(table))
+    next = jd_sweep(source,since,table,0,count,mode)
+    turned = if mode-nc_units(mode,2)*2 == 0 do mode+1 else mode-1 end
+    if jd_total(next,0,count) == jd_total(table,0,count) do table else jd_rounds(source,table,next,turned) end
+  end
+  def jd_sweep(source: bytes, since: bytes, table: bytes, first: integer, stop: integer, mode: integer): bytes do
+    if first >= stop do table else
+      if stop-first == 1 do jd_record(source,since,table,first,mode) else
+        middle = first+nc_half(stop-first)
+        if mode-nc_units(mode,2)*2 == 0 do jd_sweep(source,since,jd_sweep(source,since,table,middle,stop,mode),first,middle,mode) else jd_sweep(source,since,jd_sweep(source,since,table,first,middle,mode),middle,stop,mode) end
+      end
+    end
+  end
+  # The table after function id was tried.
+  def jd_record(source: bytes, since: bytes, table: bytes, id: integer, mode: integer): bytes do
+    flags = Enum.at(table,id*27+16,0)
+    due = if flags*(flags-16) != 0 do 0 else if mode < 2 do jd_open(source,table,id) else jd_on(table,id) end end
+    more = if due == 0 do 0 else if jd_touched(source,since,table,id,0,nc_records(Enum.count(table))) == 0 do 0 else
+      if mode < 2 do if Enum.count(nc_function(source,table,id)) > 0 do 0 else 128 end else jd_probes(source,table,id,0,jd_bits(nu_name_count(jd_base(source,table,id),0))) end
+    end end
+    if more == 0 do table else jd_put(table,id,jd_byte(table,id)+more) end
+  end
+  # 1 when the text of function id (and of its further clauses, which
+  # follow it) holds the name of a function, among the records first to
+  # stop, whose marks are not what they were in since; 1 without a since.
+  def jd_touched(source: bytes, since: bytes, table: bytes, id: integer, first: integer, stop: integer): integer do
+    if Enum.count(since) == 0 do 1 else if first >= stop do 0 else
+      if stop-first == 1 do
+        if (1-jd_bit(jd_byte(table,first),6))*(if jd_byte(table,first) == jd_byte(since,first) do 1 else 0 end) == 1 do 0 else if Enum.at(table,first*27+16,0)*(Enum.at(table,first*27+16,0)-16) != 0 do 0 else
+          mx_raw(source,nc_meta(table,id,9),jd_text_end(table,id),nc_slice(source,nc_meta(table,first,0),jd_plain_end(source,nc_meta(table,first,0),nc_meta(table,first,3))))
+        end end
+      else
+        middle = first+nc_half(stop-first)
+        if jd_touched(source,since,table,id,first,middle) == 1 do 1 else jd_touched(source,since,table,id,middle,stop) end
+      end
+    end end
+  end
+  # Where a name ends that a call is written with: before byte 127, behind
+  # which a function of a protocol's implementation has the protocol
+  # (native-protocols.alc).
+  def jd_plain_end(source: bytes, pos: integer, stop: integer): integer do
+    if pos >= stop do stop else if byte_at(source,pos) == 127 do pos else jd_plain_end(source,pos+1,stop) end end
+  end
+  # Where the text of function id ends: with its last clause.
+  def jd_text_end(table: bytes, id: integer): integer do
+    if nj_more(table,id) < 0 do nc_meta(table,id,12) else jd_text_end(table,nj_more(table,id)) end
+  end
+  # 1 for a generic function of the program that is not described yet.
+  def jd_open(source: bytes, table: bytes, id: integer): integer do
+    if jd_on(table,id) == 1 do 0 else if od_library(source,table,id) == 1 do 0 else nu_generic(source,table,id) end end
+  end
+  def jd_total(table: bytes, first: integer, stop: integer): integer do
+    if first >= stop do 0 else
+      if stop-first == 1 do if (Enum.at(table,first*27+16,0))*(Enum.at(table,first*27+16,0)-16) != 0 do 0 else jd_byte(table,first) end else
+        middle = first+nc_half(stop-first)
+        jd_total(table,first,middle)+jd_total(table,middle,stop)
+      end
+    end
+  end
+  # The type variables of function id, without twins.
+  def jd_base(source: bytes, table: bytes, id: integer): bytes do
+    nu_names(nc_return_kind(source,table,id),0,nu_cell_names(nj_cells(source,table,id),0,b[]))
+  end
+  def jd_bits(count: integer): integer do if count > 7 do 7 else count end end
+  def jd_power(bit: integer): integer do if bit == 0 do 1 else 2*jd_power(bit-1) end end
+  # 1 when bit is set in mask.
+  def jd_bit(mask: integer, bit: integer): integer do
+    upper = nc_units(mask,jd_power(bit))
+    upper-nc_units(upper,2)*2
+  end
+  # The table with function id being compiled for what.
+  def jd_push(table: bytes, id: integer, what: integer): bytes do
+    zero = nc_records(Enum.count(table))*27
+    depth = Enum.at(table,zero+1,0)
+    nc_join(nc_join(nc_slice(table,0,zero+1),b[depth+1],nc_slice(table,zero+2,zero+2+depth*3)),Enum.concat(nc_u16(id),b[what]),nc_slice(table,zero+5+depth*3,Enum.count(table)))
+  end
+  # 1 when function id reads what from JSON: it does not compile with that poisoned.
+  def jd_reads(source: bytes, table: bytes, id: integer, what: integer): integer do
+    if Enum.count(nc_function(source,jd_push(table,id,what),id)) > 0 do 0 else 1 end
+  end
+  # The bits from bit on, of count, that function id turns out to read.
+  def jd_probes(source: bytes, table: bytes, id: integer, bit: integer, count: integer): integer do
+    if bit >= count do 0 else
+      found = if jd_bit(jd_byte(table,id),bit) == 1 do 0 else jd_reads(source,table,id,bit)*jd_power(bit) end
+      found+jd_probes(source,table,id,bit+1,count)
+    end
+  end
+  # 1 when the compilation of function id for what is under way, from entry index on.
+  def jd_under(table: bytes, id: integer, what: integer, index: integer): integer do
+    at = nc_records(Enum.count(table))*27+2+index*3
+    if index >= Enum.at(table,at-2-index*3+1,0) do 0 else
+      if nc_read(table,at) == id do if Enum.at(table,at+2,0) == what do 1 else jd_under(table,id,what,index+1) end else jd_under(table,id,what,index+1) end
+    end
+  end
+  # 1 when function target reads its variable index, past the sixth: asked
+  # by compiling it, unless that is under way already (then this path adds
+  # nothing) or four are (then it is taken to read: the record's bytes from
+  # 14 on, its flags among them, stay zero).
+  def jd_late(source: bytes, table: bytes, target: integer, index: integer): integer do
+    depth = Enum.at(table,nc_records(Enum.count(table))*27+1,0)
+    if jd_bit(jd_byte(table,target),6) == 0 do 0 else if jd_under(table,target,index+1,0) == 1 do 0 else if depth >= 4 do 1 else jd_reads(source,table,target,index+1) end end end
+  end
+  # 1 when kind mentions a poisoned type variable of the function being
+  # compiled for that.
+  def jd_poisoned(source: bytes, table: bytes, kind: bytes): integer do
+    zero = nc_records(Enum.count(table))*27
+    depth = if nc_indexed(table) == 0 do 0 else Enum.at(table,zero+1,0) end
+    if depth == 0 do 0 else if nu_has(kind,16,0,Enum.count(kind)) == 0 do 0 else
+      jd_meets(nu_names(kind,0,b[]),jd_base(source,table,nc_read(table,zero+depth*3-1)),b[Enum.at(table,zero+depth*3+1,0),0,0,0])
+    end end
+  end
+  # 1 when one of names is a variable among all that what covers. state:
+  # what, the index and the offset in all (2 bytes).
+  def jd_meets(names: bytes, all: bytes, state: bytes): integer do
+    what = Enum.at(state,0,0)
+    index = Enum.at(state,1,0)
+    offset = nc_read(state,2)
+    size = Enum.at(all,offset,0)
+    covered = if what < 6 do if index == what do 1 else 0 end else if what == 6 do if index >= 6 do 1 else 0 end else if index == what-1 do 1 else 0 end end end
+    if offset >= Enum.count(all) do 0 else
+      if covered*nu_named(names,nc_slice(all,offset+1,offset+1+size),0) == 1 do 1 else jd_meets(names,all,Enum.concat(b[what,index+1],nc_u16(offset+1+size))) end
+    end
+  end
+  # 1 when JSON.decode_as can give a value of the type: no function, stream
+  # or handle in it and no map whose keys are tuples; a type variable counts
+  # as readable, since whoever chooses its type answers for it.
+  def jd_readable(source: bytes, table: bytes, kind: bytes): integer do
+    node = if nq_comparable(source,table,kind,b[]) == 0 do b[] else ni_describe(source,table,kind,0,Enum.concat(b[1,255,0,0],jd_all(nu_names(kind,0,b[]),0))) end
+    if Enum.count(node) == 0 do 0 else 1-jn_keyed(node,0) end
+  end
+  # 1 when a call of function target with the types subst gives its
+  # variables is rejected: a variable it reads from JSON stands for a type
+  # that cannot be read, or (while the caller is compiled with variables
+  # poisoned) for one that mentions such a variable.
+  def jd_refused(source: bytes, table: bytes, target: integer, subst: bytes): integer do
+    mask = jd_byte(table,target)
+    if mask <= 128 do 0 else jd_refused_from(source,table,jd_base(source,table,target),subst,Enum.concat(nc_u16(target),b[0,0,0])) end
+  end
+  # state: the function (2 bytes), the index and the offset in names (2 bytes).
+  def jd_refused_from(source: bytes, table: bytes, names: bytes, subst: bytes, state: bytes): integer do
+    target = nc_read(state,0)
+    index = Enum.at(state,2,0)
+    offset = nc_read(state,3)
+    size = Enum.at(names,offset,0)
+    kind = nu_apply(Enum.concat(b[16],nc_slice(names,offset,offset+1+size)),subst)
+    if offset >= Enum.count(names) do 0 else
+      bad = if jd_poisoned(source,table,kind) == 1 do 1 else 1-jd_readable(source,table,kind) end
+      read = if bad == 0 do 0 else if index < 6 do jd_bit(jd_byte(table,target),index) else jd_late(source,table,target,index) end end
+      if read == 1 do 1 else jd_refused_from(source,table,names,subst,nc_join(nc_u16(target),b[index+1],nc_u16(offset+1+size))) end
+    end
+  end
+  # 1 when a function of the program mentions inspect, JSON or Gen: only
+  # then can a type variable need a description.
+  def jd_wanted(source: bytes, table: bytes, first: integer, stop: integer): integer do
+    if first >= stop do 0 else
+      if stop-first == 1 do jd_mentions(source,table,first) else
+        middle = first+nc_half(stop-first)
+        if jd_wanted(source,table,first,middle) == 1 do 1 else jd_wanted(source,table,middle,stop) end
+      end
+    end
+  end
+  def jd_mentions(source: bytes, table: bytes, id: integer): integer do
+    flags = Enum.at(table,id*27+16,0)
+    if flags*(flags-1)*(flags-16)*(flags-40) != 0 do 0 else if od_library(source,table,id) == 1 do 0 else jd_text(source,nc_meta(table,id,9),nc_meta(table,id,12)) end end
+  end
+  def jd_text(source: bytes, first: integer, stop: integer): integer do
+    if stop-first > 64 do
+      middle = first+nc_half(stop-first)
+      if jd_text(source,first,middle) == 1 do 1 else jd_text(source,middle,stop) end
+    else jd_scan(source,first,stop) end
+  end
+  def jd_scan(source: bytes, pos: integer, stop: integer): integer do
+    value = byte_at(source,pos)
+    if pos >= stop do 0 else
+      if (value-105)*(value-74)*(value-71) != 0 do jd_scan(source,pos+1,stop) else
+        if nc_word(source,pos,b[105,110,115,112,101,99,116])+nc_word(source,pos,b[74,83,79,78])+nc_word(source,pos,b[71,101,110]) > 0 do 1 else jd_scan(source,pos+1,stop) end
+      end
+    end
+  end
+  # Native smoke test; descriptions for type variables.
+  def main() do System.halt(0) end
+end

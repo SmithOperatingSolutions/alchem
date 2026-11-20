@@ -1,0 +1,3567 @@
+# TLS: the protocol the network modules and the nodes speak when they
+# encrypt (spec/alchem-tls.md): versions 1.3 and 1.2 as a client and as a
+# server, the certificates of X.509 and their verification, and the
+# arithmetic under them. The ciphers and the arithmetic on large numbers
+# are machine code (spec/tls-x86_64.s, Sys.tls); the digests are Crypto's.
+#
+# g + 1040 holds the block G of this file: 0 working memory for the curve
+# of 25519, 8 the certificates the system trusts and 16 set once they were
+# read, 24 one more than what the processor has (bit 0: AES), 32 to 48 the
+# curves P-256, P-384 and P-521, 56 working memory for the other curves and
+# RSA, 64 to 136 the words of a call of the runtime.
+#: _g/0 needs Process._g/0 Process._take/2
+  def _g(): integer do
+    g = Process._g()
+    t = Sys.peek(g + 1040)
+    if t != 0 do t else
+      m = Process._take(g, 256)
+      Sys.poke(g + 1040, m)
+      m
+    end
+  end
+# Working memory: 64 KiB mapped at first use.
+#: _w/0 needs _g/0
+  def _w(): integer do
+    t = TLS._g()
+    w = Sys.peek(t)
+    if w != 0 do w else
+      m = Sys.call(9, 0, 65536, 3, 34, -1, 0)
+      if m < 0 do System.halt(71) end
+      Sys.poke(t, m)
+    end
+  end
+# The runtime (spec/tls-x86_64.s) is asked for operation op with up to
+# four words, or eight.
+#: _t/5 needs _g/0
+  def _t(op: integer, a: integer, b: integer, c: integer, d: integer): integer do
+    k = TLS._g() + 64
+    Sys.poke(k, op)
+    Sys.poke(k + 8, a)
+    Sys.poke(k + 16, b)
+    Sys.poke(k + 24, c)
+    Sys.poke(k + 32, d)
+    Sys.tls(k)
+  end
+#: _t9/6 needs _g/0
+  def _t9(op: integer, key: integer, nonce: integer, aad: string, io: list[integer], tag: integer): integer do
+    k = TLS._g() + 64
+    [from, n, to] = io
+    Sys.poke(k, op)
+    Sys.poke(k + 8, key)
+    Sys.poke(k + 16, nonce)
+    Sys.poke(k + 24, Sys.addr(aad))
+    Sys.poke(k + 32, byte_size(aad))
+    Sys.poke(k + 40, from)
+    Sys.poke(k + 48, n)
+    Sys.poke(k + 56, to)
+    Sys.poke(k + 64, tag)
+    Sys.tls(k)
+  end
+# A digest and an HMAC by the number Crypto gives the algorithm (3
+# SHA-256, 4 SHA-384, 5 SHA-512, 1 SHA-1).
+#: _h/2 needs Crypto.run/6
+  def _h(alg: integer, m: string): string do
+    Crypto.run(0, alg, "", m, 0, 0)
+  end
+#: _hm/3 needs Crypto.run/6
+  def _hm(alg: integer, key: string, m: string): string do
+    Crypto.run(1, alg, key, m, 0, 0)
+  end
+# Curve25519 as TweetNaCl has it. A field element is 16 words of 16 bits
+# each (they may run over, and under 0, between carries) at an address;
+# those of the working memory w are numbered: element k is at w + 128 * k.
+# The 31 words of a product stand at w + 16384.
+#: _zero/2
+  def _zero(a: integer, k: integer): integer do
+    if k == 0 do 0 else
+      Sys.poke(a, 0)
+      TLS._zero(a + 8, k - 1)
+    end
+  end
+# The words of a list from a on.
+#: _words/2
+  def _words(a: integer, vs: list[integer]): integer do
+    Enum.reduce(vs, a, fn v, at -> Sys.poke(at, v) - v + at + 8 end)
+  end
+#: _ga/3
+  def _ga(o: integer, a: integer, b: integer): integer do
+    Enum.reduce([0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120], 0, fn i, z -> Sys.poke(o + i, Sys.peek(a + i) + Sys.peek(b + i)) * 0 end)
+  end
+#: _gz/3
+  def _gz(o: integer, a: integer, b: integer): integer do
+    Enum.reduce([0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120], 0, fn i, z -> Sys.poke(o + i, Sys.peek(a + i) - Sys.peek(b + i)) * 0 end)
+  end
+# x divided by 2 to the k, rounded down.
+#: _asr/2
+  def _asr(x: integer, k: integer): integer do
+    if x >= 0 do Process.__shr(x, k) else -1 - Process.__shr(-1 - x, k) end
+  end
+#: _car/2 needs _asr/2
+  def _car(o: integer, i: integer): integer do
+    if i == 16 do 0 else
+      v = Sys.peek(o + 8 * i) + 65536
+      c = TLS._asr(v, 16)
+      if i < 15 do Sys.poke(o + 8 * i + 8, Sys.peek(o + 8 * i + 8) + c - 1) else Sys.poke(o, Sys.peek(o) + 38 * (c - 1)) end
+      Sys.poke(o + 8 * i, v - c * 65536)
+      TLS._car(o, i + 1)
+    end
+  end
+#: _gm/4 needs _car/2 _gm1/4 _gm3/2 _zero/2
+  def _gm(w: integer, o: integer, a: integer, b: integer): integer do
+    t = w + 16384
+    TLS._zero(t, 31)
+    TLS._gm1(t, a, b, 0)
+    TLS._gm3(t, 0)
+    Sys.copy(o, t, 128)
+    TLS._car(o, 0)
+    TLS._car(o, 0)
+  end
+#: _gm1/4 needs _gm2/4
+  def _gm1(t: integer, a: integer, b: integer, i: integer): integer do
+    if i == 128 do 0 else
+      TLS._gm2(t + i, Sys.peek(a + i), b, 0)
+      TLS._gm1(t, a, b, i + 8)
+    end
+  end
+#: _gm2/4
+  def _gm2(t: integer, x: integer, b: integer, j: integer): integer do
+    if j == 128 do 0 else
+      Sys.poke(t + j, Sys.peek(t + j) + x * Sys.peek(b + j))
+      TLS._gm2(t, x, b, j + 8)
+    end
+  end
+#: _gm3/2
+  def _gm3(t: integer, i: integer): integer do
+    if i == 120 do 0 else
+      Sys.poke(t + i, Sys.peek(t + i) + 38 * Sys.peek(t + i + 128))
+      TLS._gm3(t, i + 8)
+    end
+  end
+# p and q change places when b is 1.
+#: _sel/3
+  def _sel(p: integer, q: integer, b: integer): integer do
+    if b == 0 do 0 else
+      Enum.reduce([0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120], 0, fn i, z ->
+        x = Sys.peek(p + i)
+        Sys.poke(p + i, Sys.peek(q + i))
+        Sys.poke(q + i, x) * 0
+      end)
+    end
+  end
+# The 32 bytes of element a, each in a word, at o. Elements 100 and 101
+# are used.
+#: _pack/3 needs _car/2 _pack1/3 _pack2/3
+  def _pack(w: integer, o: integer, a: integer): integer do
+    t = w + 12800
+    m = w + 12928
+    Sys.copy(t, a, 128)
+    TLS._car(t, 0)
+    TLS._car(t, 0)
+    TLS._car(t, 0)
+    TLS._pack1(t, m, 0)
+    TLS._pack1(t, m, 0)
+    TLS._pack2(o, t, 0)
+  end
+#: _pack1/3 needs _sel/3
+  def _pack1(t: integer, m: integer, i: integer): integer do
+    if i == 0 do
+      Sys.poke(m, Sys.peek(t) - 0xffed)
+      TLS._pack1(t, m, 1)
+    else
+      prev = Sys.peek(m + 8 * i - 8)
+      Sys.poke(m + 8 * i, Sys.peek(t + 8 * i) - (if i == 15 do 0x7fff else 0xffff end) - Process.__and(Process.__shr(prev, 16), 1))
+      Sys.poke(m + 8 * i - 8, Process.__and(prev, 0xffff))
+      if i < 15 do TLS._pack1(t, m, i + 1) else TLS._sel(t, m, 1 - Process.__and(Process.__shr(Sys.peek(m + 120), 16), 1)) end
+    end
+  end
+#: _pack2/3
+  def _pack2(o: integer, t: integer, i: integer): integer do
+    if i == 16 do 0 else
+      Sys.poke(o + 16 * i, Process.__and(Sys.peek(t + 8 * i), 255))
+      Sys.poke(o + 16 * i + 8, Process.__and(Process.__shr(Sys.peek(t + 8 * i), 8), 255))
+      TLS._pack2(o, t, i + 1)
+    end
+  end
+# The element of the 32 bytes at p.
+#: _unpack/3
+  def _unpack(o: integer, p: integer, i: integer): integer do
+    if i == 16 do Sys.poke(o + 120, Process.__and(Sys.peek(o + 120), 0x7fff)) else
+      Sys.poke(o + 8 * i, Sys.byte(p + 2 * i) + 256 * Sys.byte(p + 2 * i + 1))
+      TLS._unpack(o, p, i + 1)
+    end
+  end
+# o is 1 / a. Element 102 is used.
+#: _inv/4 needs _gm/4
+  def _inv(w: integer, o: integer, a: integer, k: integer): integer do
+    c = w + 13056
+    if k == 253 do Sys.copy(c, a, 128) end
+    if k < 0 do Sys.copy(o, c, 128) else
+      TLS._gm(w, c, c, c)
+      if k != 2 and k != 4 do TLS._gm(w, c, c, a) end
+      TLS._inv(w, o, a, k - 1)
+    end
+  end
+# The bytes at an address, one to a word, as text.
+#: _text/3
+  def _text(w: integer, a: integer, k: integer): string do
+    t = String.duplicate("\x00", k)
+    Enum.reduce(0..(k - 1)//1, 0, fn i, z -> Sys.poke(Sys.addr(t) + i, Sys.byte(a + 8 * i) + Process.__shl(Process.__shr(Sys.peek(Sys.addr(t) + i), 8), 8)) * 0 end)
+    t
+  end
+# X25519 (RFC 7748): the scalar s, 32 bytes, times the point p, 32 bytes.
+# The field is the runtime's (spec/tls-x86_64.s), as the other curves'
+# are: the ladder's steps and its swaps do not depend on the scalar. What
+# the runtime keeps for the field is at word 168 of the block, with the
+# number 121665 and the field's size less two behind it. Slots 61 to 76
+# of the working memory are used.
+#: _x25519/2 needs _e/0 _exp/5 _g/0 _hex/1 _limbs/2 _lz/1 _mont/2 _t/5 _xlad/5 _zero/2
+  def _x25519(s: string, p: string): string do
+    t = TLS._g()
+    if Sys.peek(t + 168) == 0 do
+      f0 = TLS._mont(TLS._limbs(TLS._hex("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed"), 4), 4)
+      held = TLS._lz(24)
+      Sys.copy(held, f0, 112)
+      Sys.copy(held + 112, TLS._limbs(TLS._hex("01db41"), 4), 32)
+      TLS._t(2, held, held + 112, held + 112, held + 48)
+      Sys.copy(held + 144, TLS._limbs(TLS._hex("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeb"), 4), 32)
+      Sys.poke(t + 168, held)
+    end
+    f = Sys.peek(t + 168)
+    e = TLS._e() + 4880
+    TLS._zero(e, 160)
+    k = e
+    one = e + 80
+    x1 = e + 160
+    x2 = e + 240
+    x3 = e + 400
+    Sys.copy(k, Sys.addr(s), 32)
+    Sys.poke(k, Process.__and(Sys.peek(k), -8))
+    Sys.poke(k + 24, Process.__or(Process.__and(Sys.peek(k + 24), 0x3fffffffffffffff), 0x4000000000000000))
+    Sys.copy(x1, Sys.addr(p), 32)
+    Sys.poke(x1 + 24, Process.__and(Sys.peek(x1 + 24), 0x7fffffffffffffff))
+    TLS._t(7, f, x1, x1, 4)
+    TLS._t(2, f, x1, x1, f + 48)
+    Sys.poke(one, 1)
+    Sys.copy(x2, f + 80, 32)
+    Sys.copy(x3, x1, 32)
+    Sys.copy(x3 + 80, f + 80, 32)
+    last = TLS._xlad(f, e, k, 254, 0)
+    TLS._t(6, x2, x3, 20, last)
+    z = e + 560
+    TLS._t(2, f, z, x2 + 80, one)
+    TLS._exp(f, z, z, f + 144, 255)
+    TLS._t(2, f, z, z, f + 48)
+    TLS._t(2, f, z, z, x2)
+    TLS._t(2, f, z, z, one)
+    Sys.text(z, 32)
+  end
+# The ladder from bit i of the scalar down: the last bit taken.
+#: _xlad/5 needs _t/5
+  def _xlad(f: integer, e: integer, k: integer, i: integer, swap: integer): integer do
+    if i < 0 do swap else
+      bit = Process.__and(Process.__shr(Sys.peek(k + 8 * div(i, 64)), rem(i, 64)), 1)
+      x1 = e + 160
+      x2 = e + 240
+      z2 = e + 320
+      x3 = e + 400
+      z3 = e + 480
+      a = e + 640
+      aa = e + 720
+      b = e + 800
+      bb = e + 880
+      c = e + 960
+      d = e + 1040
+      ee = e + 1120
+      TLS._t(6, x2, x3, 20, Process.__xor(swap, bit))
+      TLS._t(3, f, a, x2, z2)
+      TLS._t(2, f, aa, a, a)
+      TLS._t(4, f, b, x2, z2)
+      TLS._t(2, f, bb, b, b)
+      TLS._t(4, f, ee, aa, bb)
+      TLS._t(3, f, c, x3, z3)
+      TLS._t(4, f, d, x3, z3)
+      TLS._t(2, f, d, d, a)
+      TLS._t(2, f, c, c, b)
+      TLS._t(3, f, x3, d, c)
+      TLS._t(2, f, x3, x3, x3)
+      TLS._t(4, f, z3, d, c)
+      TLS._t(2, f, z3, z3, z3)
+      TLS._t(2, f, z3, z3, x1)
+      TLS._t(2, f, x2, aa, bb)
+      TLS._t(2, f, z2, ee, f + 112)
+      TLS._t(3, f, z2, z2, aa)
+      TLS._t(2, f, z2, z2, ee)
+      TLS._xlad(f, e, k, i - 1, bit)
+    end
+  end
+# Ed25519 (RFC 8032). A point is four elements. Elements 16 to 19 are the
+# point p, 20 to 23 q, 24 to 32 what an addition works with, 33 the
+# constant 2d, 34 to 36 what packing works with.
+# p becomes p + q for the points at those addresses.
+#: _padd/3 needs _ga/3 _gm/4 _gz/3
+  def _padd(w: integer, p: integer, q: integer): integer do
+    a = w + 3072
+    b = w + 3200
+    c = w + 3328
+    d = w + 3456
+    e = w + 3584
+    f = w + 3712
+    g = w + 3840
+    h = w + 3968
+    t = w + 4096
+    TLS._gz(a, p + 128, p)
+    TLS._gz(t, q + 128, q)
+    TLS._gm(w, a, a, t)
+    TLS._ga(b, p, p + 128)
+    TLS._ga(t, q, q + 128)
+    TLS._gm(w, b, b, t)
+    TLS._gm(w, c, p + 384, q + 384)
+    TLS._gm(w, c, c, w + 4224)
+    TLS._gm(w, d, p + 256, q + 256)
+    TLS._ga(d, d, d)
+    TLS._gz(e, b, a)
+    TLS._gz(f, d, c)
+    TLS._ga(g, d, c)
+    TLS._ga(h, b, a)
+    TLS._gm(w, p, e, f)
+    TLS._gm(w, p + 128, h, g)
+    TLS._gm(w, p + 256, g, f)
+    TLS._gm(w, p + 384, e, h)
+  end
+#: _pswap/3 needs _sel/3
+  def _pswap(p: integer, q: integer, b: integer): integer do
+    TLS._sel(p, q, b)
+    TLS._sel(p + 128, q + 128, b)
+    TLS._sel(p + 256, q + 256, b)
+    TLS._sel(p + 384, q + 384, b)
+  end
+# The base point times the scalar whose 32 bytes stand, one to a word, at
+# s: its 32 bytes as text.
+#: _base/2 needs _gm/4 _inv/4 _pack/3 _pmul/3 _text/3 _words/2 _zero/2
+  def _base(w: integer, s: integer): string do
+    p = w + 2048
+    q = w + 2560
+    TLS._zero(p, 64)
+    Sys.poke(p + 128, 1)
+    Sys.poke(p + 256, 1)
+    TLS._zero(q, 64)
+    TLS._words(q, [0xd51a, 0x8f25, 0x2d60, 0xc956, 0xa7b2, 0x9525, 0xc760, 0x692c, 0xdc5c, 0xfdd6, 0xe231, 0xc0a4, 0x53fe, 0xcd6e, 0x36d3, 0x2169])
+    TLS._words(q + 128, [0x6658, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666])
+    Sys.poke(q + 256, 1)
+    TLS._gm(w, q + 384, q, q + 128)
+    TLS._words(w + 4224, [0xf159, 0x26b2, 0x9b94, 0xebd6, 0xb156, 0x8283, 0x149a, 0x00e0, 0xd130, 0xeef3, 0x80f2, 0x198e, 0xfce7, 0x56df, 0xd9dc, 0x2406])
+    TLS._pmul(w, s, 255)
+    zi = w + 4352
+    tx = w + 4480
+    ty = w + 4608
+    TLS._inv(w, zi, p + 256, 253)
+    TLS._gm(w, tx, p, zi)
+    TLS._gm(w, ty, p + 128, zi)
+    o = w + 21504
+    TLS._pack(w, o, ty)
+    TLS._pack(w, o + 512, tx)
+    Sys.poke(o + 248, Process.__xor(Sys.peek(o + 248), 128 * Process.__and(Sys.peek(o + 512), 1)))
+    TLS._text(w, o, 32)
+  end
+#: _pmul/3 needs _padd/3 _pswap/3
+  def _pmul(w: integer, s: integer, i: integer): integer do
+    if i < 0 do 0 else
+      b = Process.__and(Process.__shr(Sys.peek(s + 8 * div(i, 8)), rem(i, 8)), 1)
+      TLS._pswap(w + 2048, w + 2560, b)
+      TLS._padd(w, w + 2560, w + 2048)
+      TLS._padd(w, w + 2048, w + 2048)
+      TLS._pswap(w + 2048, w + 2560, b)
+      TLS._pmul(w, s, i - 1)
+    end
+  end
+# The bytes of a text, one to a word, from a on.
+#: _spread/2
+  def _spread(a: integer, s: string): integer do
+    Enum.reduce(0..(byte_size(s) - 1)//1, 0, fn i, z -> Sys.poke(a + 8 * i, Sys.byte(Sys.addr(s) + i)) * 0 end)
+  end
+# The 64 numbers at x, a number of 512 bits, the lowest first, reduced by
+# the order of the base point: 32 bytes, one to a word, at r.
+#: _modl/2 needs _asr/2 _modl1/2 _words/2
+  def _modl(w: integer, x: integer): integer do
+    l = w + 23552
+    TLS._words(l, [0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10])
+    TLS._modl1(w, 63)
+    top = TLS._asr(Sys.peek(x + 248), 4)
+    carry = Enum.reduce(0..31//1, 0, fn j, c ->
+      v = Sys.peek(x + 8 * j) + c - top * Sys.peek(l + 8 * j)
+      Sys.poke(x + 8 * j, Process.__and(v, 255))
+      TLS._asr(v, 8)
+    end)
+    Enum.reduce(0..31//1, 0, fn j, z -> Sys.poke(x + 8 * j, Sys.peek(x + 8 * j) - carry * Sys.peek(l + 8 * j)) * 0 end)
+    Enum.reduce(0..31//1, 0, fn i, z ->
+      v = Sys.peek(x + 8 * i)
+      Sys.poke(x + 8 * i + 8, Sys.peek(x + 8 * i + 8) + TLS._asr(v, 8))
+      Sys.poke(x + 8 * i, Process.__and(v, 255)) * 0
+    end)
+  end
+#: _modl1/2 needs _modl2/5
+  def _modl1(w: integer, i: integer): integer do
+    x = w + 22528
+    if i < 32 do 0 else
+      carry = TLS._modl2(w, i, i - 32, 0, Sys.peek(x + 8 * i))
+      Sys.poke(x + 8 * (i - 12), Sys.peek(x + 8 * (i - 12)) + carry)
+      Sys.poke(x + 8 * i, 0)
+      TLS._modl1(w, i - 1)
+    end
+  end
+#: _modl2/5 needs _asr/2
+  def _modl2(w: integer, i: integer, j: integer, carry: integer, xi: integer): integer do
+    x = w + 22528
+    if j >= i - 12 do carry else
+      v = Sys.peek(x + 8 * j) + carry - 16 * xi * Sys.peek(w + 23552 + 8 * (j - (i - 32)))
+      c = TLS._asr(v + 128, 8)
+      Sys.poke(x + 8 * j, v - c * 256)
+      TLS._modl2(w, i, j + 1, c, xi)
+    end
+  end
+# A key for signing from 32 bytes nobody knows: the bytes, the public key
+# and the scalar with what signing hashes first (64 bytes).
+#: _edkey/1 needs Crypto.run/6 _base/2 _spread/2 _w/0
+  def _edkey(seed: string): tuple[string, string, string] do
+    w = TLS._w()
+    d = Crypto.run(0, 5, "", seed, 0, 0)
+    s = w + 20480
+    TLS._spread(s, d)
+    Sys.poke(s, Process.__and(Sys.peek(s), 248))
+    Sys.poke(s + 248, Process.__or(Process.__and(Sys.peek(s + 248), 127), 64))
+    {seed, TLS._base(w, s), d}
+  end
+# The signature of m: 64 bytes.
+#: _edsign/2 needs Crypto.run/6 _base/2 _modl/2 _mula/4 _spread/2 _text/3 _w/0 _zero/2
+  def _edsign(key: tuple[string, string, string], m: string): string do
+    w = TLS._w()
+    {seed, pk, d} = key
+    x = w + 22528
+    r = Crypto.run(0, 5, "", Sys.text(Sys.addr(d) + 32, 32) <> m, 0, 0)
+    TLS._spread(x, r)
+    TLS._modl(w, x)
+    rs = TLS._text(w, x, 32)
+    big = TLS._base(w, x)
+    h = Crypto.run(0, 5, "", big <> pk <> m, 0, 0)
+    TLS._spread(x, h)
+    TLS._modl(w, x)
+    hs = TLS._text(w, x, 32)
+    TLS._zero(x, 64)
+    TLS._spread(x, rs)
+    a = w + 20480
+    TLS._spread(a, Sys.text(Sys.addr(d), 32))
+    Sys.poke(a, Process.__and(Sys.peek(a), 248))
+    Sys.poke(a + 248, Process.__or(Process.__and(Sys.peek(a + 248), 127), 64))
+    TLS._mula(x, Sys.addr(hs), a, 0)
+    TLS._modl(w, x)
+    big <> TLS._text(w, x, 32)
+  end
+# x[i + j] grows by h[i] * a[j] for the 32 bytes at h and the 32 words at a.
+#: _mula/4
+  def _mula(x: integer, h: integer, a: integer, i: integer): integer do
+    if i == 32 do 0 else
+      v = Sys.byte(h + i)
+      Enum.reduce(0..31//1, 0, fn j, z -> Sys.poke(x + 8 * (i + j), Sys.peek(x + 8 * (i + j)) + v * Sys.peek(a + 8 * j)) * 0 end)
+      TLS._mula(x, h, a, i + 1)
+    end
+  end
+# The bytes of a list as text.
+#: _bs/1
+  def _bs(vs: list[integer]): string do
+    t = String.duplicate("\x00", length(vs))
+    Enum.reduce(vs, Sys.addr(t), fn v, a -> Sys.poke(a, v + Process.__shl(Process.__shr(Sys.peek(a), 8), 8)) * 0 + a + 1 end)
+    t
+  end
+# ---- Bytes ----
+# Byte i of a text; 0 past its end.
+#: _b/2
+  def _b(s: string, i: integer): integer do
+    if i < 0 or i >= byte_size(s) do 0 else Sys.byte(Sys.addr(s) + i) end
+  end
+# The number in the two, and the three, bytes from i on.
+#: _u2/2
+  def _u2(s: string, i: integer): integer do
+    if i < 0 or i + 2 > byte_size(s) do 0 else Sys.byte(Sys.addr(s) + i) * 256 + Sys.byte(Sys.addr(s) + i + 1) end
+  end
+#: _u3/2
+  def _u3(s: string, i: integer): integer do
+    if i < 0 or i + 3 > byte_size(s) do 0 else Sys.byte(Sys.addr(s) + i) * 65536 + Sys.byte(Sys.addr(s) + i + 1) * 256 + Sys.byte(Sys.addr(s) + i + 2) end
+  end
+# n bytes of a text from i on, as much as there is.
+#: _sub/3
+  def _sub(s: string, i: integer, n: integer): string do
+    k = byte_size(s)
+    from = if i < 0 do 0 else if i > k do k else i end end
+    Sys.text(Sys.addr(s) + from, if n < 0 do 0 else if from + n > k do k - from else n end end)
+  end
+# What is left of a text from i on.
+#: _from/2 needs _sub/3
+  def _from(s: string, i: integer): string do
+    TLS._sub(s, i, byte_size(s) - i)
+  end
+# One byte is stored at a; the bytes after it stay.
+#: _pb/2
+  def _pb(a: integer, v: integer): integer do
+    Sys.poke(a, v + Process.__shl(Process.__shr(Sys.peek(a), 8), 8))
+  end
+# A number in two and in three bytes, and a text behind its length in
+# one, two and three.
+#: _n2/1 needs _bs/1
+  def _n2(v: integer): string do
+    TLS._bs([div(v, 256), rem(v, 256)])
+  end
+#: _n3/1 needs _bs/1
+  def _n3(v: integer): string do
+    TLS._bs([div(v, 65536), rem(div(v, 256), 256), rem(v, 256)])
+  end
+#: _v1/1 needs _bs/1
+  def _v1(m: string): string do
+    TLS._bs([byte_size(m)]) <> m
+  end
+#: _v2/1 needs _n2/1
+  def _v2(m: string): string do
+    TLS._n2(byte_size(m)) <> m
+  end
+#: _v3/1 needs _n3/1
+  def _v3(m: string): string do
+    TLS._n3(byte_size(m)) <> m
+  end
+# The bytes a text of hexadecimal digits writes.
+#: _hex/1 needs _hex1/4
+  def _hex(s: string): string do
+    n = div(byte_size(s), 2)
+    t = String.duplicate("\x00", n)
+    TLS._hex1(Sys.addr(s), Sys.addr(t), n, 0)
+    t
+  end
+#: _hex1/4 needs _hexd/1 _pb/2
+  def _hex1(p: integer, q: integer, n: integer, i: integer): integer do
+    if i == n do 0 else
+      TLS._pb(q + i, TLS._hexd(Sys.byte(p + 2 * i)) * 16 + TLS._hexd(Sys.byte(p + 2 * i + 1)))
+      TLS._hex1(p, q, n, i + 1)
+    end
+  end
+#: _hexd/1
+  def _hexd(c: integer): integer do
+    if c <= 57 do c - 48 else if c <= 70 do c - 55 else c - 87 end end
+  end
+# The two texts of one length, byte by byte, exclusive or.
+#: _xor/2 needs _xor1/4
+  def _xor(a: string, b: string): string do
+    t = String.duplicate("\x00", byte_size(a))
+    TLS._xor1(Sys.addr(a), Sys.addr(b), Sys.addr(t), byte_size(a))
+    t
+  end
+#: _xor1/4 needs _pb/2
+  def _xor1(p: integer, q: integer, o: integer, n: integer): integer do
+    if n == 0 do 0 else
+      TLS._pb(o, Process.__xor(Sys.byte(p), Sys.byte(q)))
+      TLS._xor1(p + 1, q + 1, o + 1, n - 1)
+    end
+  end
+# A text without the zero bytes it starts with.
+#: _strip/1 needs _from/2
+  def _strip(s: string): string do
+    if byte_size(s) > 0 and Sys.byte(Sys.addr(s)) == 0 do TLS._strip(TLS._from(s, 1)) else s end
+  end
+# A text with zero bytes before it up to n bytes; its last n when it is longer.
+#: _pad/2 needs _from/2
+  def _pad(s: string, n: integer): string do
+    k = byte_size(s)
+    if k >= n do TLS._from(s, k - n) else String.duplicate("\x00", n - k) <> s end
+  end
+# ---- Ed25519: checking a signature (RFC 8032, as TweetNaCl has it) ----
+# The point p is set to nothing and the constant 2d written.
+#: _edid/1 needs _words/2 _zero/2
+  def _edid(w: integer): integer do
+    p = w + 2048
+    TLS._zero(p, 64)
+    Sys.poke(p + 128, 1)
+    Sys.poke(p + 256, 1)
+    TLS._words(w + 4224, [0xf159, 0x26b2, 0x9b94, 0xebd6, 0xb156, 0x8283, 0x149a, 0x00e0, 0xd130, 0xeef3, 0x80f2, 0x198e, 0xfce7, 0x56df, 0xd9dc, 0x2406])
+  end
+# The 32 bytes of the point p.
+#: _edout/1 needs _gm/4 _inv/4 _pack/3 _text/3
+  def _edout(w: integer): string do
+    p = w + 2048
+    zi = w + 4352
+    tx = w + 4480
+    ty = w + 4608
+    TLS._inv(w, zi, p + 256, 253)
+    TLS._gm(w, tx, p, zi)
+    TLS._gm(w, ty, p + 128, zi)
+    o = w + 21504
+    TLS._pack(w, o, ty)
+    TLS._pack(w, o + 512, tx)
+    Sys.poke(o + 248, Process.__xor(Sys.peek(o + 248), 128 * Process.__and(Sys.peek(o + 512), 1)))
+    TLS._text(w, o, 32)
+  end
+# The 32 bytes of element a as text.
+#: _edel/2 needs _pack/3 _text/3
+  def _edel(w: integer, a: integer): string do
+    TLS._pack(w, w + 21504, a)
+    TLS._text(w, w + 21504, 32)
+  end
+# a to the power (p - 5) / 8, at o. Element 49 is used.
+#: _pow/4 needs _gm/4
+  def _pow(w: integer, o: integer, a: integer, k: integer): integer do
+    c = w + 6272
+    if k == 250 do Sys.copy(c, a, 128) end
+    if k < 0 do Sys.copy(o, c, 128) else
+      TLS._gm(w, c, c, c)
+      if k != 1 do TLS._gm(w, c, c, a) end
+      TLS._pow(w, o, a, k - 1)
+    end
+  end
+# The point q becomes the one the 32 bytes of pk name, with the other
+# sign: 1, or 0 when they name none.
+#: _edneg/2 needs _edel/2 _ga/3 _gm/4 _gz/3 _pow/4 _unpack/3 _words/2 _zero/2
+  def _edneg(w: integer, pk: string): integer do
+    q = w + 2560
+    num = w + 5120
+    den = w + 5248
+    den2 = w + 5376
+    den4 = w + 5504
+    den6 = w + 5632
+    t = w + 5760
+    chk = w + 5888
+    dd = w + 6016
+    ii = w + 6144
+    TLS._words(dd, [0x78a3, 0x1359, 0x4dca, 0x75eb, 0xd8ab, 0x4141, 0x0a4d, 0x0070, 0xe898, 0x7779, 0x4079, 0x8cc7, 0xfe73, 0x2b6f, 0x6cee, 0x5203])
+    TLS._words(ii, [0xa0b0, 0x4a0e, 0x1b27, 0xc4ee, 0xe478, 0xad2f, 0x1806, 0x2f43, 0xd7a7, 0x3dfb, 0x0099, 0x2b4d, 0xdf0b, 0x4fc1, 0x2480, 0x2b83])
+    TLS._zero(q, 64)
+    Sys.poke(q + 256, 1)
+    TLS._unpack(q + 128, Sys.addr(pk), 0)
+    TLS._gm(w, num, q + 128, q + 128)
+    TLS._gm(w, den, num, dd)
+    TLS._gz(num, num, q + 256)
+    TLS._ga(den, q + 256, den)
+    TLS._gm(w, den2, den, den)
+    TLS._gm(w, den4, den2, den2)
+    TLS._gm(w, den6, den4, den2)
+    TLS._gm(w, t, den6, num)
+    TLS._gm(w, t, t, den)
+    TLS._pow(w, t, t, 250)
+    TLS._gm(w, t, t, num)
+    TLS._gm(w, t, t, den)
+    TLS._gm(w, t, t, den)
+    TLS._gm(w, q, t, den)
+    TLS._gm(w, chk, q, q)
+    TLS._gm(w, chk, chk, den)
+    if TLS._edel(w, chk) != TLS._edel(w, num) do TLS._gm(w, q, q, ii) end
+    TLS._gm(w, chk, q, q)
+    TLS._gm(w, chk, chk, den)
+    if TLS._edel(w, chk) != TLS._edel(w, num) do 0 else
+      x = TLS._edel(w, q)
+      if Process.__and(Sys.byte(Sys.addr(x)), 1) == Process.__shr(Sys.byte(Sys.addr(pk) + 31), 7) do
+        TLS._zero(t, 16)
+        TLS._gz(q, t, q)
+      end
+      TLS._gm(w, q + 384, q, q + 128)
+      1
+    end
+  end
+# 1 when the 32 bytes at a, the lowest first, are a number under the order
+# of the base point.
+#: _edlow/2 needs Enum.at/3
+  def _edlow(a: integer, i: integer): integer do
+    l = [0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10]
+    if i < 0 do 0 else
+      v = Sys.byte(a + i)
+      m = Enum.at(l, i, 0)
+      if v < m do 1 else if v > m do 0 else TLS._edlow(a, i - 1) end end
+    end
+  end
+# Whether sig, 64 bytes, is the signature of m under the key pk, 32 bytes.
+#: _edverify/3 needs Crypto.run/6 _edid/1 _edlow/2 _edneg/2 _edout/1 _gm/4 _modl/2 _padd/3 _pmul/3 _spread/2 _w/0 _words/2 _zero/2
+  def _edverify(pk: string, m: string, sig: string): boolean do
+    w = TLS._w()
+    if byte_size(pk) != 32 or byte_size(sig) != 64 do false else
+      if TLS._edlow(Sys.addr(sig) + 32, 31) == 0 or TLS._edneg(w, pk) == 0 do false else
+        x = w + 22528
+        r = Sys.text(Sys.addr(sig), 32)
+        h = Crypto.run(0, 5, "", r <> pk <> m, 0, 0)
+        TLS._spread(x, h)
+        TLS._modl(w, x)
+        TLS._edid(w)
+        TLS._pmul(w, x, 255)
+        Sys.copy(w + 6400, w + 2048, 512)
+        q = w + 2560
+        TLS._zero(q, 64)
+        TLS._words(q, [0xd51a, 0x8f25, 0x2d60, 0xc956, 0xa7b2, 0x9525, 0xc760, 0x692c, 0xdc5c, 0xfdd6, 0xe231, 0xc0a4, 0x53fe, 0xcd6e, 0x36d3, 0x2169])
+        TLS._words(q + 128, [0x6658, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666, 0x6666])
+        Sys.poke(q + 256, 1)
+        TLS._gm(w, q + 384, q, q + 128)
+        s = w + 20480
+        TLS._spread(s, Sys.text(Sys.addr(sig) + 32, 32))
+        TLS._edid(w)
+        TLS._pmul(w, s, 255)
+        TLS._padd(w, w + 2048, w + 6400)
+        TLS._edout(w) == r
+      end
+    end
+  end
+# ---- Large numbers and the curves P-256, P-384 and P-521 ----
+# A number is limbs of 64 bits, the lowest first, at an address; the
+# runtime multiplies them (spec/tls-x86_64.s). A text of zero bytes for k
+# limbs, and its address.
+#: _lz/1
+  def _lz(k: integer): integer do
+    Sys.addr(String.duplicate("\x00", 8 * k + 8))
+  end
+# The limbs, k of them at a new address, of the number a text writes with
+# its highest byte first.
+#: _limbs/2 needs _lz/1 _t/5
+  def _limbs(s: string, k: integer): integer do
+    a = TLS._lz(k)
+    TLS._t(8, a, k, Sys.addr(s), byte_size(s))
+    a
+  end
+# And back: n bytes, the highest first.
+#: _bytes/3 needs _t/5
+  def _bytes(a: integer, k: integer, n: integer): string do
+    t = String.duplicate("\x00", n)
+    TLS._t(9, Sys.addr(t), n, a, k)
+    t
+  end
+# What the runtime keeps for a modulus of k limbs: a new one for m.
+#: _mont/2 needs _lz/1 _t/5
+  def _mont(m: integer, k: integer): integer do
+    c = TLS._lz(3 * k + 2)
+    TLS._t(1, c, m, k, 0)
+    c
+  end
+# r = base to the power e, of so many bits, for what the runtime keeps at c.
+#: _exp/5 needs _g/0 _t/5
+  def _exp(c: integer, r: integer, base: integer, e: integer, bits: integer): integer do
+    Sys.poke(TLS._g() + 104, bits)
+    TLS._t(5, c, r, base, e)
+  end
+# Working memory for the curves and RSA: slots of 80 bytes, mapped once.
+#: _e/0 needs _g/0
+  def _e(): integer do
+    t = TLS._g()
+    e = Sys.peek(t + 56)
+    if e != 0 do e else
+      m = Sys.call(9, 0, 16384, 3, 34, -1, 0)
+      if m < 0 do System.halt(71) end
+      Sys.poke(t + 56, m)
+    end
+  end
+# A curve by its number in TLS (23, 24, 25), made at first use: 0 the
+# limbs of a coordinate, 8 the bits of the order, 16 what the runtime
+# keeps for the field and 24 for the order, 32 b, 40 the base point, 48
+# the field's size less two and 56 the order's, 64 the order in one limb
+# more, 80 the bytes of a coordinate. 0 for a curve that is none of them.
+#: _curve/1 needs Process._g/0 Process._take/2 _g/0 _hex/1 _limbs/2 _mont/2 _t/5
+  def _curve(id: integer): integer do
+    t = TLS._g()
+    at = t + 32 + 8 * (id - 23)
+    if id < 23 or id > 25 do 0 else if Sys.peek(at) != 0 do Sys.peek(at) else
+      k = if id == 23 do 4 else if id == 24 do 6 else 9 end end
+      size = if id == 23 do 32 else if id == 24 do 48 else 66 end end
+      p = if id == 23 do "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff" else if id == 24 do "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff" else "01ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" end end
+      n = if id == 23 do "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551" else if id == 24 do "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973" else "01fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffa51868783bf2f966b7fcc0148f709a5d03bb5c9b8899c47aebb6fb71e91386409" end end
+      b = if id == 23 do "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b" else if id == 24 do "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef" else "0051953eb9618e1c9a1f929a21a0b68540eea2da725b99b315f3b8b489918ef109e156193951ec7e937b1652c0bd3bb1bf073573df883d2c34f1ef451fd46b503f00" end end
+      gx = if id == 23 do "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296" else if id == 24 do "aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7" else "00c6858e06b70404e9cd9e3ecb662395b4429c648139053fb521f828af606b4d3dbaa14b5e77efe75928fe1dc127a2ffa8de3348b3c1856a429bf97e7e31c2e5bd66" end end
+      gy = if id == 23 do "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5" else if id == 24 do "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f" else "011839296a789a3bc0045c8a5fb42c7d1bd998f54449579b446817afbd17273e662c97ee72995ef42640c550b9013fad0761353c7086a272c24088be94769fd16650" end end
+      c = Process._take(Process._g(), 96)
+      pl = TLS._limbs(TLS._hex(p), k)
+      nl = TLS._limbs(TLS._hex(n), k + 1)
+      f = TLS._mont(pl, k)
+      o = TLS._mont(nl, k)
+      rr = f + 16 + 8 * k
+      g = TLS._limbs("", 30)
+      bm = TLS._limbs(TLS._hex(b), k)
+      TLS._t(2, f, bm, bm, rr)
+      Sys.copy(g, TLS._limbs(TLS._hex(gx), k), 8 * k)
+      Sys.copy(g + 80, TLS._limbs(TLS._hex(gy), k), 8 * k)
+      TLS._t(2, f, g, g, rr)
+      TLS._t(2, f, g + 80, g + 80, rr)
+      Sys.copy(g + 160, f + 16 + 16 * k, 8 * k)
+      p2 = TLS._limbs(TLS._hex(p), k)
+      Sys.poke(p2, Process.__add(Sys.peek(p2), -2))
+      n2 = TLS._limbs(TLS._hex(n), k)
+      Sys.poke(n2, Process.__add(Sys.peek(n2), -2))
+      Sys.poke(c, k)
+      Sys.poke(c + 8, if id == 23 do 256 else if id == 24 do 384 else 521 end end)
+      Sys.poke(c + 16, f)
+      Sys.poke(c + 24, o)
+      Sys.poke(c + 32, bm)
+      Sys.poke(c + 40, g)
+      Sys.poke(c + 48, p2)
+      Sys.poke(c + 56, n2)
+      Sys.poke(c + 64, nl)
+      Sys.poke(c + 80, size)
+      Sys.poke(at, c)
+      c
+    end end
+  end
+# A point is three slots, X, Y and Z of Jacobian coordinates in the
+# runtime's form. The point at p is doubled where it stands (a = -3); five
+# slots from t on are used.
+#: _pd/3 needs _t/5
+  def _pd(f: integer, p: integer, t: integer): integer do
+    y = p + 80
+    z = p + 160
+    gamma = t + 80
+    beta = t + 160
+    alpha = t + 240
+    u = t + 320
+    TLS._t(2, f, t, z, z)
+    TLS._t(2, f, gamma, y, y)
+    TLS._t(2, f, beta, p, gamma)
+    TLS._t(4, f, u, p, t)
+    TLS._t(3, f, alpha, p, t)
+    TLS._t(2, f, alpha, alpha, u)
+    TLS._t(3, f, u, alpha, alpha)
+    TLS._t(3, f, alpha, u, alpha)
+    TLS._t(3, f, u, y, z)
+    TLS._t(2, f, u, u, u)
+    TLS._t(4, f, u, u, gamma)
+    TLS._t(4, f, z, u, t)
+    TLS._t(3, f, beta, beta, beta)
+    TLS._t(3, f, beta, beta, beta)
+    TLS._t(3, f, u, beta, beta)
+    TLS._t(2, f, p, alpha, alpha)
+    TLS._t(4, f, p, p, u)
+    TLS._t(4, f, u, beta, p)
+    TLS._t(2, f, u, alpha, u)
+    TLS._t(2, f, gamma, gamma, gamma)
+    TLS._t(3, f, gamma, gamma, gamma)
+    TLS._t(3, f, gamma, gamma, gamma)
+    TLS._t(3, f, gamma, gamma, gamma)
+    TLS._t(4, f, y, u, gamma)
+  end
+# r becomes p + q for points that are neither nothing nor equal nor
+# opposite; r is none of them. Eleven slots from t on are used; the
+# seventh is zero when the points have one x and the eleventh when they
+# have one y too.
+#: _pa/5 needs _t/5
+  def _pa(f: integer, r: integer, p: integer, q: integer, t: integer): integer do
+    z2z2 = t + 80
+    u1 = t + 160
+    u2 = t + 240
+    s1 = t + 320
+    s2 = t + 400
+    h = t + 480
+    i = t + 560
+    j = t + 640
+    v = t + 720
+    w = t + 800
+    TLS._t(2, f, t, p + 160, p + 160)
+    TLS._t(2, f, z2z2, q + 160, q + 160)
+    TLS._t(2, f, u1, p, z2z2)
+    TLS._t(2, f, u2, q, t)
+    TLS._t(2, f, s1, p + 80, q + 160)
+    TLS._t(2, f, s1, s1, z2z2)
+    TLS._t(2, f, s2, q + 80, p + 160)
+    TLS._t(2, f, s2, s2, t)
+    TLS._t(4, f, h, u2, u1)
+    TLS._t(3, f, i, h, h)
+    TLS._t(2, f, i, i, i)
+    TLS._t(2, f, j, h, i)
+    TLS._t(4, f, w, s2, s1)
+    TLS._t(3, f, w, w, w)
+    TLS._t(2, f, v, u1, i)
+    TLS._t(3, f, r + 160, p + 160, q + 160)
+    TLS._t(2, f, r + 160, r + 160, r + 160)
+    TLS._t(4, f, r + 160, r + 160, t)
+    TLS._t(4, f, r + 160, r + 160, z2z2)
+    TLS._t(2, f, r + 160, r + 160, h)
+    TLS._t(2, f, r, w, w)
+    TLS._t(4, f, r, r, j)
+    TLS._t(4, f, r, r, v)
+    TLS._t(4, f, r, r, v)
+    TLS._t(4, f, v, v, r)
+    TLS._t(2, f, r + 80, w, v)
+    TLS._t(2, f, s1, s1, j)
+    TLS._t(3, f, s1, s1, s1)
+    TLS._t(4, f, r + 80, r + 80, s1)
+  end
+# The ladder: r0 and r1, which differ by the point multiplied, take the
+# bits of the scalar at s from bit i down. The swaps do not show the bits.
+#: _lad/6 needs _pa/5 _pd/3 _t/5
+  def _lad(f: integer, r0: integer, r1: integer, s: integer, i: integer, t: integer): integer do
+    if i < 0 do 0 else
+      bit = Process.__and(Process.__shr(Sys.peek(s + 8 * div(i, 64)), rem(i, 64)), 1)
+      TLS._t(6, r0, r1, 30, bit)
+      TLS._pa(f, t + 960, r0, r1, t)
+      Sys.copy(r1, t + 960, 240)
+      TLS._pd(f, r0, t)
+      TLS._t(6, r0, r1, 30, bit)
+      TLS._lad(f, r0, r1, s, i - 1, t)
+    end
+  end
+# r = a + b over n limbs with the carry c: the carry out. No branch.
+#: _ad/5
+  def _ad(r: integer, a: integer, b: integer, n: integer, c: integer): integer do
+    if n == 0 do c else
+      x = Sys.peek(a)
+      y = Sys.peek(b)
+      s = Process.__add(Process.__add(x, y), c)
+      Sys.poke(r, s)
+      TLS._ad(r + 8, a + 8, b + 8, n - 1, Process.__shr(Process.__or(Process.__and(x, y), Process.__and(Process.__or(x, y), Process.__xor(s, -1))), 63))
+    end
+  end
+# The point at r (three slots) becomes the scalar at s (the curve's limbs,
+# under the order) times the point at p, which is on the curve. The scalar
+# grows by the order, or twice, to one length, so the ladder takes the
+# same steps for every scalar. Slots 0 to 19 of the working memory are used.
+#: _sm/4 needs _ad/5 _e/0 _lad/6 _pd/3 _t/5 _zero/2
+  def _sm(c: integer, r: integer, s: integer, p: integer): integer do
+    e = TLS._e()
+    k = Sys.peek(c)
+    bits = Sys.peek(c + 8)
+    f = Sys.peek(c + 16)
+    k0 = e
+    k1 = e + 80
+    k2 = e + 160
+    r1 = e + 240
+    TLS._zero(k0, 30)
+    Sys.copy(k0, s, 8 * k)
+    TLS._ad(k1, k0, Sys.peek(c + 64), k + 1, 0)
+    TLS._ad(k2, k1, Sys.peek(c + 64), k + 1, 0)
+    top = Process.__and(Process.__shr(Sys.peek(k1 + 8 * div(bits, 64)), rem(bits, 64)), 1)
+    TLS._t(6, k1, k2, 10, 1 - top)
+    Sys.copy(r, p, 240)
+    Sys.copy(r1, p, 240)
+    TLS._pd(f, r1, e + 480)
+    TLS._lad(f, r, r1, k1, bits - 1, e + 480)
+  end
+# 1 when the k limbs at a are all zero.
+#: _zero?/2
+  def _zero?(a: integer, k: integer): integer do
+    if k == 0 do 1 else if Sys.peek(a) != 0 do 0 else TLS._zero?(a + 8, k - 1) end end
+  end
+# The x and y of the point at p, as numbers of the curve's bytes each; ""
+# for the point that is nothing. Slots 30 to 35 are used.
+#: _affine/2 needs _bytes/3 _e/0 _exp/5 _t/5 _zero/2 _zero?/2
+  def _affine(c: integer, p: integer): string do
+    e = TLS._e() + 2400
+    k = Sys.peek(c)
+    f = Sys.peek(c + 16)
+    size = Sys.peek(c + 80)
+    if TLS._zero?(p + 160, k) == 1 do "" else
+      TLS._zero(e, 60)
+      Sys.poke(e, 1)
+      zi = e + 80
+      TLS._t(2, f, zi, p + 160, e)
+      TLS._exp(f, zi, zi, Sys.peek(c + 48), Sys.peek(c + 8))
+      TLS._t(2, f, zi, zi, f + 16 + 8 * k)
+      z2 = e + 160
+      TLS._t(2, f, z2, zi, zi)
+      x = e + 240
+      TLS._t(2, f, x, p, z2)
+      TLS._t(2, f, x, x, e)
+      y = e + 320
+      TLS._t(2, f, y, p + 80, z2)
+      TLS._t(2, f, y, y, zi)
+      TLS._t(2, f, y, y, e)
+      TLS._bytes(x, k, size) <> TLS._bytes(y, k, size)
+    end
+  end
+# The point of the bytes 4, x, y at three slots from r on: 1, or 0 when
+# they are no point of the curve. Slots 36 to 39 are used.
+#: _point/3 needs _e/0 _t/5 _zero/2
+  def _point(c: integer, r: integer, m: string): integer do
+    e = TLS._e() + 2880
+    k = Sys.peek(c)
+    f = Sys.peek(c + 16)
+    size = Sys.peek(c + 80)
+    rr = f + 16 + 8 * k
+    if byte_size(m) != 1 + 2 * size or Sys.byte(Sys.addr(m)) != 4 do 0 else
+      TLS._zero(r, 30)
+      big = TLS._t(8, r, k, Sys.addr(m) + 1, size) + TLS._t(8, r + 80, k, Sys.addr(m) + 1 + size, size)
+      if big != 0 or TLS._t(10, r, f + 16, k, 0) >= 0 or TLS._t(10, r + 80, f + 16, k, 0) >= 0 do 0 else
+        TLS._t(2, f, r, r, rr)
+        TLS._t(2, f, r + 80, r + 80, rr)
+        Sys.copy(r + 160, f + 16 + 16 * k, 8 * k)
+        TLS._t(2, f, e, r + 80, r + 80)
+        TLS._t(2, f, e + 80, r, r)
+        TLS._t(2, f, e + 80, e + 80, r)
+        TLS._t(4, f, e + 80, e + 80, r)
+        TLS._t(4, f, e + 80, e + 80, r)
+        TLS._t(4, f, e + 80, e + 80, r)
+        TLS._t(3, f, e + 80, e + 80, Sys.peek(c + 32))
+        if TLS._t(10, e, e + 80, k, 0) == 0 do 1 else 0 end
+      end
+    end
+  end
+# A scalar nobody knows: bytes as long as the order, above 0 and under it.
+#: _scalar/1 needs Crypto.strong_rand_bytes/1 _limbs/2 _pb/2 _t/5 _zero?/2
+  def _scalar(c: integer): string do
+    k = Sys.peek(c)
+    size = Sys.peek(c + 80)
+    s = Crypto.strong_rand_bytes(size)
+    if size == 66 do TLS._pb(Sys.addr(s), Process.__and(Sys.byte(Sys.addr(s)), 1)) end
+    l = TLS._limbs(s, k)
+    if TLS._zero?(l, k) == 1 or TLS._t(10, l, Sys.peek(c + 64), k, 0) >= 0 do TLS._scalar(c) else s end
+  end
+# The public point (4, x, y) of the private scalar d. Slots 40 to 42.
+#: _ecpub/2 needs _affine/2 _bs/1 _e/0 _limbs/2 _sm/4
+  def _ecpub(c: integer, d: string): string do
+    r = TLS._e() + 3200
+    TLS._sm(c, r, TLS._limbs(d, Sys.peek(c)), Sys.peek(c + 40))
+    TLS._bs([4]) <> TLS._affine(c, r)
+  end
+# What two ends share (ECDH): the x of d times the other end's point; ""
+# when that is no point of the curve.
+#: _ecdh/3 needs _affine/2 _e/0 _limbs/2 _point/3 _sm/4 _sub/3
+  def _ecdh(c: integer, d: string, theirs: string): string do
+    e = TLS._e()
+    q = e + 3440
+    r = e + 3200
+    if TLS._point(c, q, theirs) == 0 do "" else
+      TLS._sm(c, r, TLS._limbs(d, Sys.peek(c)), q)
+      TLS._sub(TLS._affine(c, r), 0, Sys.peek(c + 80))
+    end
+  end
+# The digest as a number under the order (its leftmost bits), at slot a.
+#: _ece/3 needs _limbs/2 _sub/3 _t/5
+  def _ece(c: integer, a: integer, digest: string): integer do
+    k = Sys.peek(c)
+    size = Sys.peek(c + 80)
+    cut = if byte_size(digest) > size do TLS._sub(digest, 0, size) else digest end
+    l = TLS._limbs(cut, k)
+    TLS._t(7, Sys.peek(c + 24), a, l, k)
+  end
+# ECDSA: whether r and s (numbers, the highest byte first) sign the digest
+# under the public point. Slots 43 to 60 are used.
+#: _ecverify/5 needs _affine/2 _e/0 _ece/3 _exp/5 _limbs/2 _pa/5 _pd/3 _point/3 _sm/4 _strip/1 _sub/3 _t/5 _zero?/2
+  def _ecverify(c: integer, pub: string, digest: string, rb: string, sb: string): boolean do
+    e = TLS._e()
+    k = Sys.peek(c)
+    f = Sys.peek(c + 16)
+    o = Sys.peek(c + 24)
+    size = Sys.peek(c + 80)
+    q = e + 3440
+    ev = e + 3680
+    w = e + 3760
+    u1 = e + 3840
+    u2 = e + 3920
+    p1 = e + 4000
+    p2 = e + 4240
+    sum = e + 4480
+    r = TLS._strip(rb)
+    s = TLS._strip(sb)
+    if byte_size(r) > size or byte_size(s) > size or byte_size(r) == 0 or byte_size(s) == 0 or TLS._point(c, q, pub) == 0 do false else
+      rl = TLS._limbs(r, k)
+      sl = TLS._limbs(s, k)
+      if TLS._t(10, rl, Sys.peek(c + 64), k, 0) >= 0 or TLS._t(10, sl, Sys.peek(c + 64), k, 0) >= 0 do false else
+        TLS._ece(c, ev, digest)
+        TLS._exp(o, w, sl, Sys.peek(c + 56), Sys.peek(c + 8))
+        rr = o + 16 + 8 * k
+        TLS._t(2, o, u1, ev, rr)
+        TLS._t(2, o, u1, u1, w)
+        TLS._t(2, o, u2, rl, rr)
+        TLS._t(2, o, u2, u2, w)
+        TLS._sm(c, p1, u1, Sys.peek(c + 40))
+        TLS._sm(c, p2, u2, q)
+        t = e + 480
+        if TLS._zero?(p1 + 160, k) == 1 do Sys.copy(sum, p2, 240) else
+          if TLS._zero?(p2 + 160, k) == 1 do Sys.copy(sum, p1, 240) else
+            TLS._pa(f, sum, p1, p2, t)
+            if TLS._zero?(t + 480, k) == 1 and TLS._zero?(t + 800, k) == 1 do
+              Sys.copy(sum, p1, 240)
+              TLS._pd(f, sum, t)
+            end
+          end
+        end
+        xy = TLS._affine(c, sum)
+        if xy == "" do false else
+          xl = TLS._limbs(TLS._sub(xy, 0, size), k)
+          TLS._t(7, o, ev, xl, k)
+          TLS._t(10, ev, rl, k, 0) == 0
+        end
+      end
+    end
+  end
+# ECDSA: the signature of the digest under the private scalar d, as the
+# two numbers r and s of the curve's bytes each.
+#: _ecsign/3 needs _affine/2 _bytes/3 _e/0 _ece/3 _exp/5 _limbs/2 _scalar/1 _sm/4 _sub/3 _t/5 _zero?/2
+  def _ecsign(c: integer, d: string, digest: string): string do
+    e = TLS._e()
+    k = Sys.peek(c)
+    o = Sys.peek(c + 24)
+    size = Sys.peek(c + 80)
+    ev = e + 3680
+    w = e + 3760
+    u1 = e + 3840
+    u2 = e + 3920
+    p1 = e + 4000
+    rr = o + 16 + 8 * k
+    kb = TLS._scalar(c)
+    kl = TLS._limbs(kb, k)
+    TLS._sm(c, p1, kl, Sys.peek(c + 40))
+    xy = TLS._affine(c, p1)
+    xl = TLS._limbs(TLS._sub(xy, 0, size), k)
+    TLS._t(7, o, u1, xl, k)
+    TLS._ece(c, ev, digest)
+    TLS._exp(o, w, kl, Sys.peek(c + 56), Sys.peek(c + 8))
+    dl = TLS._limbs(d, k)
+    TLS._t(2, o, u2, u1, rr)
+    TLS._t(2, o, u2, u2, dl)
+    TLS._t(3, o, u2, u2, ev)
+    TLS._t(2, o, u2, u2, rr)
+    TLS._t(2, o, u2, u2, w)
+    if TLS._zero?(u1, k) == 1 or TLS._zero?(u2, k) == 1 do TLS._ecsign(c, d, digest) else TLS._bytes(u1, k, size) <> TLS._bytes(u2, k, size) end
+  end
+# ---- RSA ----
+# The number of bits of the number a text writes.
+#: _bits/1 needs _bits1/2 _strip/1
+  def _bits(s: string): integer do
+    t = TLS._strip(s)
+    if t == "" do 0 else 8 * byte_size(t) - 8 + TLS._bits1(Sys.byte(Sys.addr(t)), 0) end
+  end
+#: _bits1/2
+  def _bits1(v: integer, n: integer): integer do
+    if v == 0 do n else TLS._bits1(div(v, 2), n + 1) end
+  end
+# m to the power e modulo n, all numbers written with the highest byte
+# first: as many bytes as the modulus has; "" when m is not under n.
+#: _rsa/3 needs _b/2 _bits/1 _bytes/3 _exp/5 _limbs/2 _lz/1 _mont/2 _strip/1 _t/5
+  def _rsa(n: string, e: string, m: string): string do
+    mod = TLS._strip(n)
+    size = byte_size(mod)
+    k = div(size + 7, 8)
+    if size == 0 or k > 128 or Process.__and(TLS._b(mod, size - 1), 1) == 0 or byte_size(TLS._strip(m)) > size do "" else
+      nl = TLS._limbs(mod, k)
+      ml = TLS._limbs(m, k)
+      if TLS._t(10, ml, nl, k, 0) >= 0 do "" else
+        c = TLS._mont(nl, k)
+        r = TLS._lz(k)
+        ex = TLS._strip(e)
+        TLS._exp(c, r, ml, TLS._limbs(ex, div(byte_size(ex) + 7, 8) + 1), TLS._bits(ex))
+        TLS._bytes(r, k, size)
+      end
+    end
+  end
+# What stands before a digest in a signature of PKCS #1 v1.5, by the
+# digest's algorithm.
+#: _dinfo/1 needs _hex/1
+  def _dinfo(alg: integer): string do
+    TLS._hex(if alg == 1 do "3021300906052b0e03021a05000414" else if alg == 3 do "3031300d060960864801650304020105000420" else if alg == 4 do "3041300d060960864801650304020205000430" else "3051300d060960864801650304020305000440" end end end)
+  end
+# The block a signature of PKCS #1 v1.5 holds for a digest, size bytes.
+#: _emsa/3 needs _bs/1 _dinfo/1
+  def _emsa(alg: integer, digest: string, size: integer): string do
+    t = TLS._dinfo(alg) <> digest
+    fill = size - byte_size(t) - 3
+    if fill < 8 do "" else TLS._bs([0, 1]) <> String.duplicate("\xff", fill) <> TLS._bs([0]) <> t end
+  end
+# The mask MGF1 makes of a seed, n bytes.
+#: _mgf/4 needs _bs/1 _h/2 _sub/3
+  def _mgf(alg: integer, seed: string, n: integer, i: integer): string do
+    if n <= 0 do "" else
+      part = TLS._h(alg, seed <> TLS._bs([0, 0, div(i, 256), rem(i, 256)]))
+      if byte_size(part) >= n do TLS._sub(part, 0, n) else part <> TLS._mgf(alg, seed, n - byte_size(part), i + 1) end
+    end
+  end
+# 1 when every byte from i up to stop is zero.
+#: _zeros?/3
+  def _zeros?(s: string, i: integer, stop: integer): integer do
+    if i >= stop do 1 else if Sys.byte(Sys.addr(s) + i) != 0 do 0 else TLS._zeros?(s, i + 1, stop) end end
+  end
+# Whether sig signs the digest under the key n, e: kind 1 is PKCS #1 v1.5
+# and 2 PSS with a salt as long as the digest (RFC 8017).
+#: _rsaverify/6 needs Crypto.secure_compare/2 _b/2 _bits/1 _emsa/3 _from/2 _h/2 _mgf/4 _pb/2 _rsa/3 _strip/1 _sub/3 _xor/2 _zeros?/3
+  def _rsaverify(n: string, e: string, kind: integer, alg: integer, digest: string, sig: string): boolean do
+    mod = TLS._strip(n)
+    size = byte_size(mod)
+    em = if byte_size(sig) != size do "" else TLS._rsa(mod, e, sig) end
+    if em == "" do false else
+      if kind == 1 do
+        want = TLS._emsa(alg, digest, size)
+        want != "" and Crypto.secure_compare(want, em)
+      else
+        bits = TLS._bits(mod) - 1
+        len = div(bits + 7, 8)
+        h = byte_size(digest)
+        lead = size - len
+        spare = 8 * len - bits
+        if len < 2 * h + 2 or TLS._zeros?(em, 0, lead) == 0 or TLS._b(em, size - 1) != 0xbc do false else
+          masked = TLS._sub(em, lead, len - h - 1)
+          hh = TLS._sub(em, lead + len - h - 1, h)
+          if Process.__shr(TLS._b(masked, 0), 8 - spare) != 0 do false else
+            db = TLS._xor(masked, TLS._mgf(alg, hh, len - h - 1, 0))
+            TLS._pb(Sys.addr(db), Process.__and(TLS._b(db, 0), Process.__shr(255, spare)))
+            ps = len - 2 * h - 2
+            if TLS._zeros?(db, 0, ps) == 0 or TLS._b(db, ps) != 1 do false else
+              Crypto.secure_compare(hh, TLS._h(alg, String.duplicate("\x00", 8) <> digest <> TLS._from(db, ps + 1)))
+            end
+          end
+        end
+      end
+    end
+  end
+# The signature of a digest under the private key n, e, d; "" when the
+# key is too small for it.
+#: _rsasign/4 needs Crypto.strong_rand_bytes/1 _b/2 _bits/1 _bs/1 _emsa/3 _h/2 _mgf/4 _pb/2 _rsa/3 _rsaverify/6 _strip/1 _xor/2
+  def _rsasign(key: tuple[string, string, string], kind: integer, alg: integer, digest: string): string do
+    {n, e, d} = key
+    mod = TLS._strip(n)
+    size = byte_size(mod)
+    em = if kind == 1 do TLS._emsa(alg, digest, size) else
+      bits = TLS._bits(mod) - 1
+      len = div(bits + 7, 8)
+      h = byte_size(digest)
+      if len < 2 * h + 2 do "" else
+        salt = Crypto.strong_rand_bytes(h)
+        hh = TLS._h(alg, String.duplicate("\x00", 8) <> digest <> salt)
+        db = TLS._xor(String.duplicate("\x00", len - 2 * h - 2) <> TLS._bs([1]) <> salt, TLS._mgf(alg, hh, len - h - 1, 0))
+        TLS._pb(Sys.addr(db), Process.__and(TLS._b(db, 0), Process.__shr(255, 8 * len - bits)))
+        String.duplicate("\x00", size - len) <> db <> hh <> TLS._bs([0xbc])
+      end
+    end
+    sig = if em == "" do "" else TLS._rsa(mod, d, em) end
+    if sig == "" do "" else if TLS._rsaverify(mod, e, kind, alg, digest, sig) do sig else "" end end
+  end
+# ---- DER and X.509 ----
+# The number in the c bytes from i on.
+#: _num/3
+  def _num(s: string, i: integer, c: integer): integer do
+    if c == 0 do 0 else TLS._num(s, i, c - 1) * 256 + Sys.byte(Sys.addr(s) + i + c - 1) end
+  end
+# The element of DER at i: its tag, where its content starts, the
+# content's length and where the next element starts; the tag is -1 when
+# no well-formed element stands there.
+#: _el/2 needs _num/3
+  def _el(s: string, i: integer): tuple[integer, integer, integer, integer] do
+    n = byte_size(s)
+    a = Sys.addr(s)
+    if i < 0 or i + 2 > n do {-1, 0, 0, 0} else
+      tag = Sys.byte(a + i)
+      l0 = Sys.byte(a + i + 1)
+      if Process.__and(tag, 31) == 31 do {-1, 0, 0, 0} else
+        if l0 < 128 do if i + 2 + l0 > n do {-1, 0, 0, 0} else {tag, i + 2, l0, i + 2 + l0} end else
+          c = l0 - 128
+          if c == 0 or c > 3 or i + 2 + c > n do {-1, 0, 0, 0} else
+            len = TLS._num(s, i + 2, c)
+            if len < 128 or Sys.byte(a + i + 2) == 0 or i + 2 + c + len > n do {-1, 0, 0, 0} else {tag, i + 2 + c, len, i + 2 + c + len} end
+          end
+        end
+      end
+    end
+  end
+# An element of DER: its tag, its length and the content.
+#: _der/2 needs _bs/1
+  def _der(tag: integer, m: string): string do
+    k = byte_size(m)
+    TLS._bs(if k < 128 do [tag, k] else if k < 256 do [tag, 0x81, k] else if k < 65536 do [tag, 0x82, div(k, 256), rem(k, 256)] else [tag, 0x83, div(k, 65536), rem(div(k, 256), 256), rem(k, 256)] end end end) <> m
+  end
+# An INTEGER of DER for a number written with its highest byte first.
+#: _derint/1 needs _b/2 _bs/1 _der/2 _strip/1
+  def _derint(v: string): string do
+    t = TLS._strip(v)
+    TLS._der(2, if t == "" or TLS._b(t, 0) >= 128 do TLS._bs([0]) <> t else t end)
+  end
+# The two numbers of the element at i (a SEQUENCE of two INTEGERs, as a
+# signature of ECDSA is and the start of an RSA key): "" for both when
+# that is not what stands there.
+#: _two/2 needs _el/2 _sub/3
+  def _two(s: string, i: integer): tuple[string, string] do
+    {t0, a0, l0, n0} = TLS._el(s, i)
+    {t1, a1, l1, n1} = TLS._el(s, a0)
+    {t2, a2, l2, n2} = TLS._el(s, n1)
+    if t0 != 0x30 or t1 != 2 or t2 != 2 or n2 > n0 or l1 == 0 or l2 == 0 do {"", ""} else {TLS._sub(s, a1, l1), TLS._sub(s, a2, l2)} end
+  end
+# A time of DER (UTCTime 23, GeneralizedTime 24) as seconds since 1970;
+# -1 when it is none.
+#: _time/4 needs _dig/3
+  def _time(s: string, tag: integer, a: integer, len: integer): integer do
+    wide = if tag == 24 do 2 else 0 end
+    if tag != 23 and tag != 24 or len != 13 + wide or Sys.byte(Sys.addr(s) + a + len - 1) != 90 do -1 else
+      yy = TLS._dig(s, a + wide, 2)
+      year = if tag == 24 do TLS._dig(s, a, 4) else if yy < 0 do -1 else if yy >= 50 do 1900 + yy else 2000 + yy end end end
+      month = TLS._dig(s, a + wide + 2, 2)
+      day = TLS._dig(s, a + wide + 4, 2)
+      hour = TLS._dig(s, a + wide + 6, 2)
+      minute = TLS._dig(s, a + wide + 8, 2)
+      second = TLS._dig(s, a + wide + 10, 2)
+      if year < 0 or month < 1 or month > 12 or day < 1 or day > 31 or hour < 0 or hour > 23 or minute < 0 or minute > 59 or second < 0 or second > 59 do -1 else
+        y = if month <= 2 do year - 1 else year end
+        era = div(y, 400)
+        yoe = y - era * 400
+        doy = div(153 * (if month > 2 do month - 3 else month + 9 end) + 2, 5) + day - 1
+        doe = yoe * 365 + div(yoe, 4) - div(yoe, 100) + doy
+        (era * 146097 + doe - 719468) * 86400 + hour * 3600 + minute * 60 + second
+      end
+    end
+  end
+# The number c decimal digits from i on write; -1 when they are not digits.
+#: _dig/3
+  def _dig(s: string, i: integer, c: integer): integer do
+    if c == 0 do 0 else
+      v = Sys.byte(Sys.addr(s) + i + c - 1) - 48
+      rest = TLS._dig(s, i, c - 1)
+      if v < 0 or v > 9 or rest < 0 do -1 else rest * 10 + v end
+    end
+  end
+# A time as RFC 3339 writes it in UTC.
+#: _stamp/1 needs _dd/2
+  def _stamp(s: integer): string do
+    z = div(s, 86400) + 719468
+    era = div(z, 146097)
+    doe = z - era * 146097
+    yoe = div(doe - div(doe, 1460) + div(doe, 36524) - div(doe, 146096), 365)
+    doy = doe - (365 * yoe + div(yoe, 4) - div(yoe, 100))
+    mp = div(5 * doy + 2, 153)
+    month = if mp < 10 do mp + 3 else mp - 9 end
+    year = yoe + era * 400 + (if month <= 2 do 1 else 0 end)
+    t = rem(s, 86400)
+    TLS._dd(year, 4) <> "-" <> TLS._dd(month, 2) <> "-" <> TLS._dd(doy - div(153 * mp + 2, 5) + 1, 2) <> "T" <> TLS._dd(div(t, 3600), 2) <> ":" <> TLS._dd(rem(div(t, 60), 60), 2) <> ":" <> TLS._dd(rem(t, 60), 2) <> "Z"
+  end
+#: _dd/2
+  def _dd(v: integer, n: integer): string do
+    t = Integer.to_string(v)
+    if byte_size(t) >= n do t else String.duplicate("0", n - byte_size(t)) <> t end
+  end
+# The algorithm of a signature, from the content of its AlgorithmIdentifier:
+# 16 times the kind (1 RSA PKCS #1 v1.5, 2 RSA-PSS, 3 ECDSA, 4 Ed25519) and
+# the digest as Crypto numbers it (0 MD5, 6 MD2); 0 for one not known.
+#: _sigalg/1 needs _el/2 _hex/1 _pss/1 _sub/3
+  def _sigalg(m: string): integer do
+    {t, a, l, n} = TLS._el(m, 0)
+    oid = if t != 6 do "" else TLS._sub(m, a, l) end
+    rest = TLS._sub(m, n, byte_size(m) - n)
+    plain = rest == "" or rest == TLS._hex("0500")
+    rsa = TLS._hex("2a864886f70d0101")
+    ec = TLS._hex("2a8648ce3d04")
+    if oid == TLS._hex("2b6570") do if rest == "" do 64 else 0 end else
+      if byte_size(oid) == 9 and TLS._sub(oid, 0, 8) == rsa do
+        v = Sys.byte(Sys.addr(oid) + 8)
+        if v == 10 do TLS._pss(rest) else
+          if not plain do 0 else if v == 5 do 17 else if v == 11 do 19 else if v == 12 do 20 else if v == 13 do 21 else if v == 4 do 16 else if v == 2 do 22 else 0 end end end end end end end
+        end
+      else
+        if oid == ec <> TLS._hex("01") do 49 else
+          if byte_size(oid) == 8 and TLS._sub(oid, 0, 7) == ec <> TLS._hex("03") do
+            v = Sys.byte(Sys.addr(oid) + 7)
+            if v == 2 do 51 else if v == 3 do 52 else if v == 4 do 53 else 0 end end end
+          else 0 end
+        end
+      end
+    end
+  end
+# The parameters of RSA-PSS, which must be one digest for the message and
+# the mask, a salt of its length and the usual trailer.
+#: _pss/1 needs _el/2 _hex/1 _num/3 _sub/3
+  def _pss(m: string): integer do
+    {t, a, l, n} = TLS._el(m, 0)
+    {t0, a0, l0, n0} = TLS._el(m, a)
+    {th, ah, lh, nh} = TLS._el(m, a0)
+    {to, ao, lo, no} = TLS._el(m, ah)
+    {t1, a1, l1, n1} = TLS._el(m, n0)
+    {tm, am, lm, nm} = TLS._el(m, a1)
+    {tf, af, lf, nf} = TLS._el(m, am)
+    {tg, ag, lg, ng} = TLS._el(m, nf)
+    {ti, ai, li, ni} = TLS._el(m, ag)
+    {t2, a2, l2, n2} = TLS._el(m, n1)
+    {ts, as2, ls, ns} = TLS._el(m, a2)
+    {t3, a3, l3, n3} = TLS._el(m, n2)
+    hash = TLS._sub(m, ao, lo)
+    base = TLS._hex("6086480165030402")
+    tail = n2 == n or t3 == 0xa3 and n3 == n and TLS._sub(m, a3, l3) == TLS._hex("020101")
+    nulls = (no == nh or TLS._sub(m, no, nh - no) == TLS._hex("0500")) and (ni == ng or TLS._sub(m, ni, ng - ni) == TLS._hex("0500"))
+    if t != 0x30 or t0 != 0xa0 or th != 0x30 or to != 6 or t1 != 0xa1 or tm != 0x30 or tf != 6 or tg != 0x30 or ti != 6 or t2 != 0xa2 or ts != 2 or not tail or not nulls do 0 else
+      if TLS._sub(m, af, lf) != TLS._hex("2a864886f70d010108") or TLS._sub(m, ai, li) != hash or byte_size(hash) != 9 or TLS._sub(hash, 0, 8) != base or ls > 2 do 0 else
+        v = Sys.byte(Sys.addr(hash) + 8)
+        salt = TLS._num(m, as2, ls)
+        if v == 1 and salt == 32 do 35 else if v == 2 and salt == 48 do 36 else if v == 3 and salt == 64 do 37 else 0 end end end
+      end
+    end
+  end
+# What Go calls the algorithm of a signature.
+#: _signame/1
+  def _signame(code: integer): string do
+    h = rem(code, 16)
+    k = div(code, 16)
+    hash = if h == 0 do "MD5" else if h == 6 do "MD2" else if h == 1 do "SHA1" else if h == 3 do "SHA256" else if h == 4 do "SHA384" else "SHA512" end end end end end
+    if k == 4 do "Ed25519" else if k == 3 do "ECDSA-" <> hash else if k == 2 do hash <> "-RSAPSS" else hash <> "-RSA" end end end
+  end
+# A parsed certificate is four lists. The texts: 0 its bytes, 1 the part
+# that is signed, 2 the signature, 3 the issuer and 4 the subject as they
+# stand, 5 the public key (the modulus of RSA, the point of a curve, the
+# 32 bytes of Ed25519) and 6 the exponent of RSA, 7 and 8 the key
+# identifiers of the subject and the authority, 9 the common name and 10
+# the first organisation of the subject, 11 the serial number, 12 the
+# name constraints, 13 the public key with its algorithm as it stands, 14
+# the alternative names as they stand. The numbers: 0 the version, 1 the
+# algorithm of the signature (_sigalg), 2 that of the key (1 RSA, 2 ECDSA,
+# 3 Ed25519, 0 unknown) and 3 its curve, 4 and 5 the times it is valid
+# from and to, 6 basic constraints present, 7 a CA, 8 the path length (-1:
+# none), 9 the key usage (the first byte times 256 and the second), 10
+# the extended usages (1 any, 2 server, 4 client, 8 others; 0 none), 11
+# alternative names present, 12 a critical extension not known, 13 name
+# constraints present. Then the DNS names and the addresses. No texts: the
+# bytes are no certificate this library reads.
+#: _nocert/0
+  def _nocert(): tuple[list[string], list[integer], list[string], list[string]] do
+    s: list[string] = []
+    n: list[integer] = []
+    {s, n, s, s}
+  end
+#: _cert/1 needs _el/2 _nocert/0 _sigalg/1 _sub/3 _tbs/5
+  def _cert(der: string): tuple[list[string], list[integer], list[string], list[string]] do
+    {t0, a0, l0, n0} = TLS._el(der, 0)
+    {t1, a1, l1, n1} = TLS._el(der, a0)
+    {t2, a2, l2, n2} = TLS._el(der, n1)
+    {t3, a3, l3, n3} = TLS._el(der, n2)
+    if t0 != 0x30 or n0 != byte_size(der) or t1 != 0x30 or t2 != 0x30 or t3 != 3 or n3 != n0 or l3 < 1 or Sys.byte(Sys.addr(der) + a3) != 0 do TLS._nocert() else
+      TLS._tbs(der, a1, n1, [der, TLS._sub(der, a0, n1 - a0), TLS._sub(der, a3 + 1, l3 - 1), TLS._sub(der, n1, n2 - n1)], TLS._sigalg(TLS._sub(der, a2, l2)))
+    end
+  end
+#: _tbs/5 needs _el/2 _exts/5 _key/1 _name/3 _nocert/0 _sub/3 _time/4
+  def _tbs(der: string, i: integer, stop: integer, held: list[string], sigcode: integer): tuple[list[string], list[integer], list[string], list[string]] do
+    [raw, tbs, sig, outer] = held
+    {tv, av, lv, nv} = TLS._el(der, i)
+    {tw, aw, lw, nw} = TLS._el(der, av)
+    explicit = tv == 0xa0
+    version = if not explicit do 1 else if tw != 2 or lw != 1 or nw != nv do 0 else Sys.byte(Sys.addr(der) + aw) + 1 end end
+    {ts, a1, ls, ns} = TLS._el(der, if explicit do nv else i end)
+    {tg, ag, lg, ng} = TLS._el(der, ns)
+    {tn, an, ln, nn} = TLS._el(der, ng)
+    {td, ad, ld, nd} = TLS._el(der, nn)
+    {tb, ab, lb, nb} = TLS._el(der, ad)
+    {te, ae, le, ne} = TLS._el(der, nb)
+    {tj, aj, lj, nj} = TLS._el(der, nd)
+    {tk, ak, lk, nk} = TLS._el(der, nj)
+    from = TLS._time(der, tb, ab, lb)
+    to = TLS._time(der, te, ae, le)
+    if version < 1 or version > 3 or ts != 2 or ls < 1 or tg != 0x30 or tn != 0x30 or td != 0x30 or tj != 0x30 or tk != 0x30 or ne != nd or from < 0 or to < 0 or nk > stop or TLS._sub(der, ns, ng - ns) != outer do TLS._nocert() else
+      {alg, curve, pk, e} = TLS._key(TLS._sub(der, ak, lk))
+      {cn, org, fine} = TLS._name(TLS._sub(der, aj, lj), 0, {"", "", 1})
+      if alg < 0 or fine == 0 do TLS._nocert() else
+        texts = [raw, tbs, sig, TLS._sub(der, ng, nn - ng), TLS._sub(der, nd, nj - nd), pk, e, "", "", cn, org, TLS._sub(der, a1, ls), "", TLS._sub(der, nj, nk - nj), ""]
+        TLS._exts(der, nk, stop, texts, [version, sigcode, alg, curve, from, to, 0, 0, -1, 0, 0, 0, 0, 0])
+      end
+    end
+  end
+# The key of a SubjectPublicKeyInfo's content: its algorithm (-1 when
+# the key is malformed), its curve, the key and RSA's exponent.
+#: _key/1 needs _el/2 _hex/1 _strip/1 _sub/3 _two/2
+  def _key(m: string): tuple[integer, integer, string, string] do
+    {t0, a0, l0, n0} = TLS._el(m, 0)
+    {t1, a1, l1, n1} = TLS._el(m, a0)
+    {t2, a2, l2, n2} = TLS._el(m, n0)
+    oid = TLS._sub(m, a1, l1)
+    params = TLS._sub(m, n1, n0 - n1)
+    bits = if l2 < 1 do "" else TLS._sub(m, a2 + 1, l2 - 1) end
+    if t0 != 0x30 or t1 != 6 or t2 != 3 or n2 != byte_size(m) or l2 < 1 or Sys.byte(Sys.addr(m) + a2) != 0 do {-1, 0, "", ""} else
+      if oid == TLS._hex("2a864886f70d010101") do
+        {n, e} = TLS._two(bits, 0)
+        if n == "" or params != TLS._hex("0500") or Sys.byte(Sys.addr(n)) >= 128 or byte_size(TLS._strip(e)) > 4 or TLS._strip(e) == "" do {-1, 0, "", ""} else {1, 0, TLS._strip(n), TLS._strip(e)} end
+      else
+        if oid == TLS._hex("2a8648ce3d0201") do
+          curve = if params == TLS._hex("06082a8648ce3d030107") do 23 else if params == TLS._hex("06052b81040022") do 24 else if params == TLS._hex("06052b81040023") do 25 else 0 end end end
+          if curve == 0 do {0, 0, "", ""} else {2, curve, bits, ""} end
+        else
+          if oid == TLS._hex("2b6570") do if byte_size(bits) != 32 or params != "" do {-1, 0, "", ""} else {3, 0, bits, ""} end else {0, 0, "", ""} end
+        end
+      end
+    end
+  end
+# The common name and the first organisation of a name's content, and 0
+# when the name is malformed.
+#: _name/3 needs _el/2 _name1/4
+  def _name(m: string, i: integer, got: tuple[string, string, integer]): tuple[string, string, integer] do
+    if i >= byte_size(m) do got else
+      {t, a, l, n} = TLS._el(m, i)
+      if t != 0x31 do {"", "", 0} else TLS._name(m, n, TLS._name1(m, a, n, got)) end
+    end
+  end
+#: _name1/4 needs _el/2 _hex/1 _sub/3
+  def _name1(m: string, i: integer, stop: integer, got: tuple[string, string, integer]): tuple[string, string, integer] do
+    if i >= stop do got else
+      {t, a, l, n} = TLS._el(m, i)
+      {to, ao, lo, no} = TLS._el(m, a)
+      {tv, av, lv, nv} = TLS._el(m, no)
+      {cn, org, fine} = got
+      oid = TLS._sub(m, ao, lo)
+      v = TLS._sub(m, av, lv)
+      if t != 0x30 or to != 6 or tv < 0 or nv != n do {"", "", 0} else
+        TLS._name1(m, n, stop, {if oid == TLS._hex("550403") do v else cn end, if oid == TLS._hex("55040a") and org == "" do v else org end, fine})
+      end
+    end
+  end
+# A list with v at index k.
+#: _set/3 needs Enum.drop/2 Enum.take/2
+  def _set(l: list[integer], k: integer, v: integer): list[integer] do
+    Enum.take(l, k) ++ [v] ++ Enum.drop(l, k + 1)
+  end
+#: _sets/3 needs Enum.drop/2 Enum.take/2
+  def _sets(l: list[string], k: integer, v: string): list[string] do
+    Enum.take(l, k) ++ [v] ++ Enum.drop(l, k + 1)
+  end
+# What follows the key in the signed part: the two identifiers nobody
+# uses, then the extensions.
+#: _exts/5 needs _el/2 _ext/7 _nocert/0
+  def _exts(der: string, i: integer, stop: integer, texts: list[string], nums: list[integer]): tuple[list[string], list[integer], list[string], list[string]] do
+    none: list[string] = []
+    if i >= stop do {texts, nums, none, none} else
+      {t, a, l, n} = TLS._el(der, i)
+      {t1, a1, l1, n1} = TLS._el(der, a)
+      if t == 0x81 or t == 0x82 do TLS._exts(der, n, stop, texts, nums) else
+        if t != 0xa3 or n != stop or t1 != 0x30 or n1 != n or hd(nums) != 3 do TLS._nocert() else TLS._ext(der, a1, n1, texts, nums, none, none) end
+      end
+    end
+  end
+#: _ext/7 needs _eku/4 _el/2 _hex/1 _nocert/0 _san/5 _set/3 _sets/3 _sub/3
+  def _ext(der: string, i: integer, stop: integer, texts: list[string], nums: list[integer], dns: list[string], ips: list[string]): tuple[list[string], list[integer], list[string], list[string]] do
+    if i >= stop do {texts, nums, dns, ips} else
+      {t, a, l, n} = TLS._el(der, i)
+      {to, ao, lo, no} = TLS._el(der, a)
+      {tc, ac, lc, nc} = TLS._el(der, no)
+      critical = tc == 1 and lc == 1 and Sys.byte(Sys.addr(der) + ac) != 0
+      {tv, av, lv, nv} = if tc == 1 do TLS._el(der, nc) else {tc, ac, lc, nc} end
+      oid = TLS._sub(der, ao, lo)
+      v = TLS._sub(der, av, lv)
+      {t1, a1, l1, n1} = TLS._el(v, 0)
+      {t2, a2, l2, n2} = TLS._el(v, a1)
+      {t3, a3, l3, n3} = TLS._el(v, n2)
+      if t != 0x30 or to != 6 or tv != 4 or nv != n do TLS._nocert() else
+        if byte_size(oid) != 3 or TLS._sub(oid, 0, 2) != TLS._hex("551d") do
+          known = oid == TLS._hex("2b06010505070101") or oid == TLS._hex("2b0601050507010b")
+          TLS._ext(der, n, stop, texts, if critical and not known do TLS._set(nums, 12, 1) else nums end, dns, ips)
+        else
+          k = Sys.byte(Sys.addr(oid) + 2)
+          if k == 19 do
+            ca = t2 == 1 and l2 == 1 and Sys.byte(Sys.addr(v) + a2) != 0
+            {tp, ap, lp, np} = if t2 == 1 do {t3, a3, l3, n3} else {t2, a2, l2, n2} end
+            path = if tp == 2 and lp >= 1 and lp <= 2 do Sys.byte(Sys.addr(v) + ap) * (if lp == 2 do 256 else 1 end) + (if lp == 2 do Sys.byte(Sys.addr(v) + ap + 1) else 0 end) else -1 end
+            if t1 != 0x30 or n1 != byte_size(v) do TLS._nocert() else TLS._ext(der, n, stop, texts, TLS._set(TLS._set(TLS._set(nums, 6, 1), 7, if ca do 1 else 0 end), 8, path), dns, ips) end
+          else if k == 15 do
+            if t1 != 3 or l1 < 1 do TLS._nocert() else TLS._ext(der, n, stop, texts, TLS._set(nums, 9, (if l1 > 1 do Sys.byte(Sys.addr(v) + a1 + 1) * 256 else 0 end) + (if l1 > 2 do Sys.byte(Sys.addr(v) + a1 + 2) else 0 end)), dns, ips) end
+          else if k == 37 do
+            if t1 != 0x30 do TLS._nocert() else TLS._ext(der, n, stop, texts, TLS._set(nums, 10, TLS._eku(v, a1, n1, 0)), dns, ips) end
+          else if k == 17 do
+            {names, addrs, fine} = TLS._san(v, a1, n1, dns, ips)
+            others = critical and names == [] and addrs == []
+            if t1 != 0x30 or fine == 0 do TLS._nocert() else TLS._ext(der, n, stop, TLS._sets(texts, 14, v), TLS._set(if others do TLS._set(nums, 12, 1) else nums end, 11, 1), names, addrs) end
+          else if k == 14 do
+            if t1 != 4 or critical do TLS._nocert() else TLS._ext(der, n, stop, TLS._sets(texts, 7, TLS._sub(v, a1, l1)), nums, dns, ips) end
+          else if k == 35 do
+            if t1 != 0x30 or critical do TLS._nocert() else TLS._ext(der, n, stop, TLS._sets(texts, 8, if t2 == 0x80 do TLS._sub(v, a2, l2) else "" end), nums, dns, ips) end
+          else if k == 30 do
+            if t1 != 0x30 do TLS._nocert() else TLS._ext(der, n, stop, TLS._sets(texts, 12, v), TLS._set(nums, 13, 1), dns, ips) end
+          else
+            known = k == 31 or k == 32 or k == 33 or k == 36 or k == 54
+            TLS._ext(der, n, stop, texts, if critical and not known do TLS._set(nums, 12, 1) else nums end, dns, ips)
+          end end end end end end end
+        end
+      end
+    end
+  end
+# The extended key usages from i up to stop, as bits.
+#: _eku/4 needs _el/2 _hex/1 _sub/3
+  def _eku(v: string, i: integer, stop: integer, got: integer): integer do
+    if i >= stop do got else
+      {t, a, l, n} = TLS._el(v, i)
+      oid = TLS._sub(v, a, l)
+      bit = if oid == TLS._hex("551d2500") do 1 else if oid == TLS._hex("2b06010505070301") do 2 else if oid == TLS._hex("2b06010505070302") do 4 else 8 end end end
+      if t != 6 do got else TLS._eku(v, n, stop, Process.__or(got, bit)) end
+    end
+  end
+# The DNS names and the addresses among alternative names, and 0 when one
+# is malformed.
+#: _san/5 needs _ascii?/2 _el/2 _hex/1 _sub/3
+  def _san(v: string, i: integer, stop: integer, dns: list[string], ips: list[string]): tuple[list[string], list[string], integer] do
+    if i >= stop do {dns, ips, 1} else
+      {t, a, l, n} = TLS._el(v, i)
+      x = TLS._sub(v, a, l)
+      if t < 0 do {dns, ips, 0} else
+        if t == 0x82 do if TLS._ascii?(x, 0) == 0 do {dns, ips, 0} else TLS._san(v, n, stop, dns ++ [x], ips) end else
+          if t == 0x87 do
+            mapped = l == 16 and TLS._sub(x, 0, 12) == TLS._hex("00000000000000000000ffff")
+            if l != 4 and l != 16 or mapped do {dns, ips, 0} else TLS._san(v, n, stop, dns, ips ++ [x]) end
+          else
+            if (t == 0x81 or t == 0x86) and TLS._ascii?(x, 0) == 0 do {dns, ips, 0} else TLS._san(v, n, stop, dns, ips) end
+          end
+        end
+      end
+    end
+  end
+#: _ascii?/2
+  def _ascii?(s: string, i: integer): integer do
+    if i >= byte_size(s) do 1 else if Sys.byte(Sys.addr(s) + i) > 127 do 0 else TLS._ascii?(s, i + 1) end end
+  end
+# ---- PEM ----
+# Where pat first stands in s from i on; -1 when nowhere.
+#: _find/3
+  def _find(s: string, pat: string, i: integer): integer do
+    n = byte_size(s)
+    k = byte_size(pat)
+    if k == 0 do i else if i < 0 or i + k > n do -1 else
+      j = Sys.find(Sys.addr(s) + i, n - k + 1 - i, Sys.byte(Sys.addr(pat)))
+      if j < 0 do -1 else if Sys.same(Sys.addr(s) + i + j, Sys.addr(pat), k) == 1 do i + j else TLS._find(s, pat, i + j + 1) end end
+    end end
+  end
+# The bytes base 64 writes, blanks passed over; "" when it writes none or
+# is malformed.
+#: _unb64/1 needs _unb1/6
+  def _unb64(s: string): string do
+    t = String.duplicate("\x00", div(byte_size(s) * 3, 4) + 16)
+    n = TLS._unb1(Sys.addr(s), byte_size(s), Sys.addr(t), 0, 0, 0)
+    if n <= 0 do "" else Sys.text(Sys.addr(t), n) end
+  end
+#: _unb1/6 needs _pb/2
+  def _unb1(p: integer, n: integer, o: integer, acc: integer, bits: integer, count: integer): integer do
+    if n == 0 do count else
+      c = Sys.byte(p)
+      v = if c >= 65 and c <= 90 do c - 65 else if c >= 97 and c <= 122 do c - 71 else if c >= 48 and c <= 57 do c + 4 else if c == 43 do 62 else if c == 47 do 63 else if c == 61 do -2 else if c == 10 or c == 13 or c == 32 or c == 9 do -1 else -3 end end end end end end end
+      if v == -3 do -1 else if v == -2 do count else if v == -1 do TLS._unb1(p + 1, n - 1, o, acc, bits, count) else
+        more = acc * 64 + v
+        if bits + 6 >= 8 do
+          TLS._pb(o + count, Process.__shr(more, bits - 2))
+          TLS._unb1(p + 1, n - 1, o, Process.__and(more, Process.__shl(1, bits - 2) - 1), bits - 2, count + 1)
+        else TLS._unb1(p + 1, n - 1, o, more, bits + 6, count) end
+      end end end
+    end
+  end
+# The blocks of a PEM text from i on (encoding/pem: Decode), each its
+# type, its bytes and 1 when it has headers.
+#: _pem/2 needs _find/3 _pem1/3 _sub/3 _unb64/1
+  def _pem(s: string, i: integer): list[tuple[string, string, integer]] do
+    b = TLS._find(s, "-----BEGIN ", i)
+    stop = if b < 0 do -1 else TLS._find(s, "-----", b + 11) end
+    eol = if stop < 0 do -1 else TLS._find(s, "\n", stop) end
+    none: list[tuple[string, string, integer]] = []
+    if b < 0 or stop < 0 or eol < 0 do none else
+      kind = TLS._sub(s, b + 11, stop - b - 11)
+      last = TLS._find(s, "-----END " <> kind <> "-----", eol)
+      first = b == 0 or Sys.byte(Sys.addr(s) + b - 1) == 10
+      blank = String.trim(TLS._sub(s, stop + 5, eol - stop - 5)) == ""
+      if last < 0 or not first or not blank or TLS._find(kind, "\n", 0) >= 0 do TLS._pem(s, b + 11) else
+        body = TLS._sub(s, eol + 1, last - eol - 1)
+        {text, headers} = TLS._pem1(body, 0, 0)
+        raw = TLS._unb64(text)
+        (if raw == "" do none else [{kind, raw, headers}] end) ++ TLS._pem(s, last + 9)
+      end
+    end
+  end
+# The base 64 of a block after its headers, and 1 when it has some.
+#: _pem1/3 needs _find/3 _from/2 _sub/3
+  def _pem1(body: string, i: integer, headers: integer): tuple[string, integer] do
+    eol = TLS._find(body, "\n", i)
+    line = if eol < 0 do TLS._from(body, i) else TLS._sub(body, i, eol - i) end
+    if TLS._find(line, ":", 0) >= 0 and eol >= 0 do TLS._pem1(body, eol + 1, 1) else {TLS._from(body, i), headers} end
+  end
+# ---- The certificates that are trusted ----
+# Where the subject of a certificate stands: the whole element, "" when
+# the bytes are not shaped like a certificate.
+#: _subject/1 needs _el/2 _sub/3
+  def _subject(der: string): string do
+    {t0, a0, l0, n0} = TLS._el(der, 0)
+    {t1, a1, l1, n1} = TLS._el(der, a0)
+    {tv, av, lv, nv} = TLS._el(der, a1)
+    {ts, a2, ls, ns} = TLS._el(der, if tv == 0xa0 do nv else a1 end)
+    {tg, ag, lg, ng} = TLS._el(der, ns)
+    {tn, an, ln, nn} = TLS._el(der, ng)
+    {td, ad, ld, nd} = TLS._el(der, nn)
+    {tj, aj, lj, nj} = TLS._el(der, nd)
+    if t0 != 0x30 or t1 != 0x30 or ts != 2 or tg != 0x30 or tn != 0x30 or td != 0x30 or tj != 0x30 do "" else TLS._sub(der, nd, nj - nd) end
+  end
+# A pool is a list of certificates, each its subject and its bytes. Those
+# of a PEM text join a pool (x509: AppendCertsFromPEM); one that does not
+# parse, or is there already, is left out.
+#: _pool/2 needs Enum.any?/2 _cert/1 _pem/2 _subject/1
+  def _pool(pool: list[tuple[string, string]], text: string): list[tuple[string, string]] do
+    Enum.reduce(TLS._pem(text, 0), pool, fn block, acc ->
+      {kind, der, headers} = block
+      if kind != "CERTIFICATE" or headers == 1 or Enum.any?(acc, fn x -> elem(x, 1) == der end) do acc else
+        {texts, nums, dns, ips} = TLS._cert(der)
+        if texts == [] do acc else acc ++ [{TLS._subject(der), der}] end
+      end
+    end)
+  end
+# The certificates the system trusts, as Go finds them on Linux
+# (crypto/x509: loadSystemRoots): the file SSL_CERT_FILE names or the
+# first of six that can be read, and every file of the directories
+# SSL_CERT_DIR names or of two, but for links to files beside them. Read
+# once.
+#: _roots/0 needs String.split/2 Sys.list/2 Sys.z/1 TCP._file/1 _find/3 _first/1 _g/0 _pool/2
+  def _roots(): list[tuple[string, string]] do
+    t = TLS._g()
+    if Sys.peek(t + 16) == 1 do Process.__any(Sys.peek(t + 8)) else
+      file = System.get_env("SSL_CERT_FILE", "")
+      dir = System.get_env("SSL_CERT_DIR", "")
+      files = if file != "" do [file] else ["/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem", "/etc/pki/tls/cacert.pem", "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", "/etc/ssl/cert.pem"] end
+      dirs = if dir != "" do String.split(dir, ":") else ["/etc/ssl/certs", "/etc/pki/tls/certs"] end
+      none: list[tuple[string, string]] = []
+      start = TLS._pool(none, TLS._first(files))
+      pool = Enum.reduce(dirs, start, fn d, acc ->
+        {e, what, names} = Sys.list(if d == "" do "." else d end, -1)
+        Enum.reduce(names, acc, fn name, held ->
+          path = d <> "/" <> name
+          buf = String.duplicate("\x00", 4104)
+          n = Sys.call(89, Sys.z(path), Sys.addr(buf), 4096)
+          if n > 0 and TLS._find(Sys.text(Sys.addr(buf), n), "/", 0) < 0 do held else TLS._pool(held, TCP._file(path)) end
+        end)
+      end)
+      Sys.poke(t + 8, Process.__word(pool))
+      Sys.poke(t + 16, 1)
+      pool
+    end
+  end
+# The text of the first file that can be opened; "" when none can.
+#: _first/1 needs Sys.open/3 TCP._file/1
+  def _first(files: list[string]): string do
+    case files do
+      [] -> ""
+      [f | rest] ->
+        fd = Sys.open(f, 0, 0)
+        if fd < 0 do TLS._first(rest) else
+          Sys.call(3, fd)
+          TCP._file(f)
+        end
+    end
+  end
+# The pool of a PEM file a program names (ca_file:), and "" or what Go
+# says when it cannot be read or holds no certificate.
+#: _cafile/1 needs Sys.open/3 TCP._file/1 _pool/2
+  def _cafile(path: string): tuple[list[tuple[string, string]], string] do
+    none: list[tuple[string, string]] = []
+    fd = Sys.open(path, 0, 0)
+    if fd < 0 do {none, "open " <> path <> ": " <> Sys.errno(0 - fd)} else
+      Sys.call(3, fd)
+      pool = TLS._pool(none, TCP._file(path))
+      if pool == [] do {none, "no certificates in " <> path} else {pool, ""} end
+    end
+  end
+# ---- Verification (crypto/x509: Verify) ----
+# "" when the signature sig of the algorithm code signs the text under
+# the key of a certificate's texts and numbers; else what Go says.
+#: _signed/6 needs Enum.at/3 _bits/1 _curve/1 _der/2 _derint/1 _ecverify/5 _edverify/3 _h/2 _rsaverify/6 _signame/1 _two/2
+  def _signed(texts: list[string], nums: list[integer], code: integer, text: string, sig: string, sha1: boolean): string do
+    kind = div(code, 16)
+    alg = rem(code, 16)
+    key = Enum.at(nums, 2, 0)
+    pk = Enum.at(texts, 5, "")
+    wanted = if kind == 3 do 2 else if kind == 4 do 3 else 1 end end
+    if code == 0 do "x509: cannot verify signature: algorithm unimplemented" else
+      if kind != 4 and (alg == 0 or alg == 6 or alg == 1 and not sha1) do "x509: cannot verify signature: insecure algorithm " <> TLS._signame(code) else
+        if key != wanted do "x509: signature algorithm specifies an " <> (if wanted == 1 do "RSA" else if wanted == 2 do "ECDSA" else "Ed25519" end end) <> " public key, but have public key of type " <> (if key == 1 do "*rsa.PublicKey" else if key == 2 do "*ecdsa.PublicKey" else "ed25519.PublicKey" end end) else
+          if kind == 4 do if TLS._edverify(pk, text, sig) do "" else "x509: Ed25519 verification failure" end else
+            digest = TLS._h(alg, text)
+            if kind == 3 do
+              {r, s} = TLS._two(sig, 0)
+              if r != "" and TLS._der(0x30, TLS._derint(r) <> TLS._derint(s)) == sig and TLS._ecverify(TLS._curve(Enum.at(nums, 3, 0)), pk, digest, r, s) do "" else "x509: ECDSA verification failure" end
+            else
+              if TLS._bits(pk) < 1024 do "crypto/rsa: #{TLS._bits(pk)}-bit keys are insecure (see https://go.dev/pkg/crypto/rsa#hdr-Minimum_key_size)" else
+                if TLS._rsaverify(pk, Enum.at(texts, 6, ""), kind, alg, digest, sig) do "" else "crypto/rsa: verification error" end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# The time now, seconds since 1970.
+#: _now/0 needs _g/0
+  def _now(): integer do
+    a = TLS._g() + 144
+    Sys.call(228, 0, a)
+    Sys.peek(a)
+  end
+# A time as Go writes time.Now() with RFC 3339: in local time.
+#: _local/1 needs Date.dl/2 Enum.at/3 _dd/2 _stamp/1 _sub/3
+  def _local(s: integer): string do
+    off = Enum.at(Date.dl(s, 0), 1, 0)
+    t = TLS._stamp(s + off)
+    a = if off < 0 do 0 - off else off end
+    if off == 0 do t else TLS._sub(t, 0, 19) <> (if off < 0 do "-" else "+" end) <> TLS._dd(div(a, 3600), 2) <> ":" <> TLS._dd(rem(div(a, 60), 60), 2) end
+  end
+# What is wrong with a certificate by itself at the time now (x509:
+# isValid), as the last of a chain of so many certificates before it, of
+# which it is a kind (0 the leaf, 1 between, 2 a root); "" for nothing.
+#: _valid/4 needs Enum.at/3 _local/1 _stamp/1
+  def _valid(nums: list[integer], kind: integer, before: integer, now: integer): string do
+    from = Enum.at(nums, 4, 0)
+    to = Enum.at(nums, 5, 0)
+    path = Enum.at(nums, 8, -1)
+    if Enum.at(nums, 12, 0) == 1 do "x509: unhandled critical extension" else
+      if now < from do "x509: certificate has expired or is not yet valid: current time " <> TLS._local(now) <> " is before " <> TLS._stamp(from) else
+        if now > to do "x509: certificate has expired or is not yet valid: current time " <> TLS._local(now) <> " is after " <> TLS._stamp(to) else
+          if kind == 1 and (Enum.at(nums, 6, 0) == 0 or Enum.at(nums, 7, 0) == 0) do "x509: certificate is not authorized to sign other certificates" else
+            if Enum.at(nums, 6, 0) == 1 and path >= 0 and before - 1 > path do "x509: too many intermediates for path length constraint" else "" end
+          end
+        end
+      end
+    end
+  end
+# The bytes of an address a host's text writes (4 or 16), brackets and a
+# zone passed over; "" when it is a name.
+#: _ip/1 needs TCP._ip4/2 TCP._ip6/2 _bs/1 _find/3 _sub/3
+  def _ip(host: string): string do
+    n = byte_size(host)
+    h = if n >= 3 and Sys.byte(Sys.addr(host)) == 91 and Sys.byte(Sys.addr(host) + n - 1) == 93 do TLS._sub(host, 1, n - 2) else host end
+    z = TLS._find(h, "%", 0)
+    bare = if z > 0 do TLS._sub(h, 0, z) else h end
+    v = TCP._ip4(Sys.addr(h), byte_size(h))
+    empty: list[integer] = []
+    if v >= 0 do TLS._bs([div(v, 16777216), rem(div(v, 65536), 256), rem(div(v, 256), 256), rem(v, 256)]) else
+      g = if TLS._find(bare, ":", 0) < 0 do empty else TCP._ip6(Sys.addr(bare), byte_size(bare)) end
+      if g == [] do "" else TLS._bs(Enum.reduce(g, empty, fn x, acc -> acc ++ [div(x, 256), rem(x, 256)] end)) end
+    end
+  end
+# An address as Go's net.IP writes it.
+#: _ipshow/1 needs TCP._run/4 TCP._six/4 _b/2 _hex/1 _sub/3 _u2/2
+  def _ipshow(a: string): string do
+    v = if byte_size(a) == 16 and TLS._sub(a, 0, 12) == TLS._hex("00000000000000000000ffff") do TLS._sub(a, 12, 4) else a end
+    if byte_size(v) == 4 do "#{TLS._b(v, 0)}.#{TLS._b(v, 1)}.#{TLS._b(v, 2)}.#{TLS._b(v, 3)}" else
+      g = [TLS._u2(v, 0), TLS._u2(v, 2), TLS._u2(v, 4), TLS._u2(v, 6), TLS._u2(v, 8), TLS._u2(v, 10), TLS._u2(v, 12), TLS._u2(v, 14)]
+      {at, run} = TCP._run(g, 0, {-1, 0}, {-1, 0})
+      TCP._six(g, 0, if run < 2 do -1 else at end, run)
+    end
+  end
+# 1 when two addresses are one, an IPv4 address being its own form in IPv6.
+#: _sameip/2 needs _hex/1
+  def _sameip(a: string, b: string): integer do
+    m = TLS._hex("00000000000000000000ffff")
+    x = if byte_size(a) == 4 do m <> a else a end
+    y = if byte_size(b) == 4 do m <> b else b end
+    if x == y do 1 else 0 end
+  end
+# Whether a host's name is one Go matches against patterns (x509:
+# validHostname).
+#: _hostok/2 needs String.split/2 _hostok1/3
+  def _hostok(host: string, pattern: boolean): boolean do
+    n = byte_size(host)
+    h = if not pattern and n > 0 and Sys.byte(Sys.addr(host) + n - 1) == 46 do Sys.text(Sys.addr(host), n - 1) else host end
+    if h == "" or h == "*" do false else TLS._hostok1(String.split(h, "."), 0, pattern) end
+  end
+#: _hostok1/3 needs _label/2
+  def _hostok1(parts: list[string], i: integer, pattern: boolean): boolean do
+    case parts do
+      [] -> true
+      [p | rest] -> if p == "" do false else if pattern and i == 0 and p == "*" do TLS._hostok1(rest, 1, pattern) else TLS._label(p, 0) == 1 and TLS._hostok1(rest, i + 1, pattern) end end
+    end
+  end
+#: _label/2
+  def _label(p: string, j: integer): integer do
+    if j >= byte_size(p) do 1 else
+      c = Sys.byte(Sys.addr(p) + j)
+      if c >= 97 and c <= 122 or c >= 48 and c <= 57 or c >= 65 and c <= 90 or c == 45 and j != 0 or c == 95 do TLS._label(p, j + 1) else 0 end
+    end
+  end
+# Whether a pattern of a certificate matches the parts of a host's name.
+#: _match/2 needs String.split/2 TCP._lower/1 _match1/3
+  def _match(pattern: string, parts: list[string]): boolean do
+    ps = String.split(TCP._lower(pattern), ".")
+    pattern != "" and length(ps) == length(parts) and TLS._match1(ps, parts, 0)
+  end
+#: _match1/3
+  def _match1(ps: list[string], parts: list[string], i: integer): boolean do
+    case ps do
+      [] -> true
+      [p | rest] -> (i == 0 and p == "*" or p == hd(parts)) and TLS._match1(rest, tl(parts), i + 1)
+    end
+  end
+# What is wrong with a certificate for a host (x509: VerifyHostname and
+# HostnameError); "" when it is for it.
+#: _host/5 needs Enum.any?/2 Enum.join/2 Enum.map/2 String.split/2 TCP._lower/1 _hostok/2 _ip/1 _ipshow/1 _match/2 _sameip/2
+  def _host(dns: list[string], ips: list[string], host: string, cn: string, san: integer): string do
+    ip = TLS._ip(host)
+    low = TCP._lower(host)
+    n = byte_size(low)
+    parts = String.split(if n > 0 and Sys.byte(Sys.addr(low) + n - 1) == 46 do Sys.text(Sys.addr(low), n - 1) else low end, ".")
+    fine = TLS._hostok(low, false)
+    found = if ip != "" do Enum.any?(ips, fn x -> TLS._sameip(x, ip) == 1 end) else
+      Enum.any?(dns, fn m -> if fine and TLS._hostok(m, true) do TLS._match(m, parts) else m != "" and m != "." and low != "" and low != "." and TCP._lower(m) == low end end)
+    end
+    shown = if ip != "" do TLS._ipshow(ip) else host end
+    if found do "" else
+      if san == 0 and TLS._match(cn, String.split(TCP._lower(shown), ".")) do "x509: certificate relies on legacy Common Name field, use SANs instead" else
+        if ip != "" do
+          if ips == [] do "x509: cannot validate certificate for " <> shown <> " because it doesn't contain any IP SANs" else
+            if length(ips) >= 100 do "x509: certificate is valid for #{length(ips)} IP SANs, but none matched " <> shown else "x509: certificate is valid for " <> Enum.join(Enum.map(ips, fn x -> TLS._ipshow(x) end), ", ") <> ", not " <> shown end
+          end
+        else
+          if length(dns) >= 100 do "x509: certificate is valid for #{length(dns)} names, but none matched " <> host else
+            valid = Enum.join(dns, ", ")
+            if valid == "" do "x509: certificate is not valid for any names, but wanted to match " <> host else "x509: certificate is valid for " <> valid <> ", not " <> host end
+          end
+        end
+      end
+    end
+  end
+# The certificates of a pool that may have issued one, parsed, those
+# whose key identifier is the one it names first (x509:
+# findPotentialParents).
+#: _parents/3 needs Enum.at/3 Enum.filter/2 Enum.map/2 _cert/1
+  def _parents(pool: list[tuple[string, string]], issuer: string, aki: string): list[tuple[list[string], list[integer], list[string], list[string]]] do
+    found = Enum.filter(Enum.map(Enum.filter(pool, fn x -> elem(x, 0) == issuer end), fn x -> TLS._cert(elem(x, 1)) end), fn c -> elem(c, 0) != [] end)
+    same = Enum.filter(found, fn c -> Enum.at(elem(c, 0), 7, "") == aki end)
+    one = Enum.filter(found, fn c -> Enum.at(elem(c, 0), 7, "") != aki and (Enum.at(elem(c, 0), 7, "") == "") != (aki == "") end)
+    other = Enum.filter(found, fn c -> Enum.at(elem(c, 0), 7, "") != aki and (Enum.at(elem(c, 0), 7, "") == "") == (aki == "") end)
+    same ++ one ++ other
+  end
+# A number written with its highest byte first, in decimal.
+#: _decimal/1 needs _b/2 _bs/1 _strip/1
+  def _decimal(v: string): string do
+    t = TLS._strip(v)
+    if t == "" do "0" else
+      {q, r} = Enum.reduce(0..(byte_size(t) - 1)//1, {"", 0}, fn i, acc ->
+        x = elem(acc, 1) * 256 + TLS._b(t, i)
+        {elem(acc, 0) <> TLS._bs([div(x, 10)]), rem(x, 10)}
+      end)
+      (if TLS._strip(q) == "" do "" else TLS._decimal(q) end) <> Integer.to_string(r)
+    end
+  end
+# What is wrong with a certificate as the issuer of another (x509:
+# CheckSignatureFrom); "" when it signed it.
+#: _issued/2 needs Enum.at/3 _signed/6
+  def _issued(child: tuple[list[string], list[integer], list[string], list[string]], parent: tuple[list[string], list[integer], list[string], list[string]]): string do
+    {pt, pn, pd, pi} = parent
+    {ct, cn, cd, ci} = child
+    basic = Enum.at(pn, 6, 0)
+    ca = Enum.at(pn, 7, 0)
+    usage = Enum.at(pn, 9, 0)
+    if Enum.at(pn, 0, 0) == 3 and basic == 0 or basic == 1 and ca == 0 or usage != 0 and Process.__and(usage, 0x0400) == 0 do "x509: invalid signature: parent certificate cannot sign this kind of certificate" else
+      if Enum.at(pn, 2, 0) == 0 do "x509: cannot verify signature: algorithm unimplemented" else TLS._signed(pt, pn, Enum.at(cn, 1, 0), Enum.at(ct, 1, ""), Enum.at(ct, 2, ""), false) end
+    end
+  end
+# The chains from a chain up to a root (x509: buildChains): the chains,
+# "" or what was wrong, and how many signatures were looked at.
+#: _build/4 needs Enum.at/3 Enum.map/2 _consider/5 _parents/3
+  def _build(chain: list[tuple[list[string], list[integer], list[string], list[string]]], pools: list[list[tuple[string, string]]], now: integer, checks: integer): tuple[list[list[tuple[list[string], list[integer], list[string], list[string]]]], string, integer] do
+    c = Enum.at(chain, length(chain) - 1, hd(chain))
+    issuer = Enum.at(elem(c, 0), 3, "")
+    aki = Enum.at(elem(c, 0), 8, "")
+    [roots, between] = pools
+    none: list[list[tuple[list[string], list[integer], list[string], list[string]]]] = []
+    cands = Enum.map(TLS._parents(roots, issuer, aki), fn x -> {2, x} end) ++ Enum.map(TLS._parents(between, issuer, aki), fn x -> {1, x} end)
+    TLS._consider(cands, chain, pools, now, {none, "", checks, ""})
+  end
+#: _consider/5 needs Enum.any?/2 Enum.at/3 _build/4 _decimal/1 _issued/2 _quote/1 _valid/4
+  def _consider(cands: list[tuple[integer, tuple[list[string], list[integer], list[string], list[string]]]], chain: list[tuple[list[string], list[integer], list[string], list[string]]], pools: list[list[tuple[string, string]]], now: integer, st: tuple[list[list[tuple[list[string], list[integer], list[string], list[string]]]], string, integer, string]): tuple[list[list[tuple[list[string], list[integer], list[string], list[string]]]], string, integer] do
+    {chains, err, checks, hint} = st
+    limit = "x509: signature check attempts limit reached while verifying certificate chain"
+    case cands do
+      [] -> {chains, if chains != [] do "" else if err != "" do err else "x509: certificate signed by unknown authority" <> hint end end, checks}
+      [{kind, cand} | rest] ->
+        if checks + 1 > 100 do {chains, if chains != [] do "" else limit end, checks + 1} else
+          {ct, cn, cd, ci} = cand
+          already = Enum.any?(chain, fn x -> Enum.at(elem(x, 0), 4, "") == Enum.at(ct, 4, "") and Enum.at(elem(x, 0), 13, "") == Enum.at(ct, 13, "") and Enum.at(elem(x, 1), 11, 0) == Enum.at(cn, 11, 0) and Enum.at(elem(x, 0), 14, "") == Enum.at(ct, 14, "") end)
+          if already do TLS._consider(rest, chain, pools, now, {chains, err, checks + 1, hint}) else
+            e1 = TLS._issued(Enum.at(chain, length(chain) - 1, hd(chain)), cand)
+            e2 = if e1 != "" do e1 else TLS._valid(cn, kind, length(chain), now) end
+            if e2 != "" do
+              who = if Enum.at(ct, 9, "") != "" do Enum.at(ct, 9, "") else if Enum.at(ct, 10, "") != "" do Enum.at(ct, 10, "") else "serial:" <> TLS._decimal(Enum.at(ct, 11, "")) end end
+              TLS._consider(rest, chain, pools, now, {chains, if e1 != "" do err else e2 end, checks + 1, if hint != "" do hint else " (possibly because of " <> TLS._quote(e2) <> " while trying to verify candidate authority certificate " <> TLS._quote(who) <> ")" end})
+            else
+              if kind == 2 do TLS._consider(rest, chain, pools, now, {chains ++ [chain ++ [cand]], "", checks + 1, hint}) else
+                {more, bad, done} = TLS._build(chain ++ [cand], pools, now, checks + 1)
+                if bad == limit do {chains ++ more, if chains ++ more != [] do "" else limit end, done} else TLS._consider(rest, chain, pools, now, {chains ++ more, bad, done, hint}) end
+              end
+            end
+          end
+        end
+    end
+  end
+# Whether every certificate of a chain allows the use by servers (x509:
+# checkChainForKeyUsage).
+#: _usable/1 needs Enum.all?/2 Enum.at/3
+  def _usable(chain: list[tuple[list[string], list[integer], list[string], list[string]]]): boolean do
+    Enum.all?(chain, fn c ->
+      u = Enum.at(elem(c, 1), 10, 0)
+      u == 0 or Process.__and(u, 3) != 0
+    end)
+  end
+# The certificates a server showed are verified for a host at the time
+# now against a pool of roots (crypto/tls: verifyServerCertificate; x509:
+# Verify): the leaf, and "" or what Go says. insecure: nothing but their
+# form is looked at.
+#: _verify/5 needs Enum.any?/2 Enum.at/3 Enum.drop/2 Enum.filter/2 Enum.map/2 _bits/1 _build/4 _cert/1 _host/5 _named/1 _nocert/0 _subject/1 _usable/1 _valid/4
+  def _verify(ders: list[string], roots: list[tuple[string, string]], host: string, now: integer, insecure: boolean): tuple[tuple[list[string], list[integer], list[string], list[string]], string] do
+    certs = Enum.map(ders, fn d -> TLS._cert(d) end)
+    if ders == [] do {TLS._nocert(), "tls: received empty certificates message"} else
+      if Enum.any?(certs, fn c -> elem(c, 0) == [] end) do {TLS._nocert(), "tls: failed to parse certificate from server: x509: malformed certificate"} else
+        if Enum.any?(certs, fn c -> Enum.at(elem(c, 1), 2, 0) == 1 and TLS._bits(Enum.at(elem(c, 0), 5, "")) > 8192 end) do {TLS._nocert(), "tls: server sent certificate containing RSA key larger than 8192 bits"} else
+          leaf = hd(certs)
+          {lt, ln, ld, li} = leaf
+          why = if insecure do "" else
+            e1 = TLS._valid(ln, 0, 0, now)
+            e2 = if e1 != "" or host == "" do e1 else TLS._host(ld, li, host, Enum.at(lt, 9, ""), Enum.at(ln, 11, 0)) end
+            if e2 != "" do e2 else
+              der = hd(ders)
+              {chains, bad, checks} = if Enum.any?(roots, fn x -> elem(x, 1) == der end) do {[[leaf]], "", 0} else TLS._build([leaf], [roots, Enum.map(Enum.drop(ders, 1), fn d -> {TLS._subject(d), d} end)], now, 0) end
+              if bad != "" do bad else
+                usable = Enum.filter(chains, fn c -> TLS._usable(c) end)
+                named = Enum.map(usable, fn c -> TLS._named(c) end)
+                if Enum.any?(named, fn x -> x == "" end) do "" else
+                  if named != [] do "x509: a root or intermediate certificate is not authorized to sign for this name: " <> hd(named) else "x509: certificate specifies an incompatible key usage" end
+                end
+              end
+            end
+          end
+          if why != "" do {leaf, "tls: failed to verify certificate: " <> why} else
+            if Enum.at(ln, 2, 0) == 0 do {leaf, "tls: server's certificate contains an unsupported type of public key"} else {leaf, ""} end
+          end
+        end
+      end
+    end
+  end
+# A text as Go's %q writes the ones met here.
+#: _quote/1 needs String.replace/3
+  def _quote(x: string): string do
+    "\"" <> String.replace(String.replace(x, "\\", "\\\\"), "\"", "\\\"") <> "\""
+  end
+# The names a certificate's name constraints permit (which 0xa0) or
+# exclude (0xa1), of one kind (0x82 DNS names, 0x87 addresses with masks).
+#: _subtrees/3 needs _el/2 _subtree/4
+  def _subtrees(v: string, which: integer, kind: integer): list[string] do
+    {t, a, l, n} = TLS._el(v, 0)
+    {t1, a1, l1, n1} = TLS._el(v, a)
+    {t2, a2, l2, n2} = TLS._el(v, n1)
+    none: list[string] = []
+    if t != 0x30 do none else
+      if t1 == which do TLS._subtree(v, a1, n1, kind) else if t1 >= 0 and n1 < n and t2 == which do TLS._subtree(v, a2, n2, kind) else none end end
+    end
+  end
+#: _subtree/4 needs _el/2 _sub/3
+  def _subtree(v: string, i: integer, stop: integer, kind: integer): list[string] do
+    none: list[string] = []
+    if i >= stop do none else
+      {t, a, l, n} = TLS._el(v, i)
+      {t1, a1, l1, n1} = TLS._el(v, a)
+      if t != 0x30 do none else (if t1 == kind do [TLS._sub(v, a1, l1)] else none end) ++ TLS._subtree(v, n, stop, kind) end
+    end
+  end
+# Whether a DNS name ends in a constraint (x509: dnsHasSuffix).
+#: _under/2 needs TCP._lower/1 _from/2
+  def _under(c: string, name: string): boolean do
+    a = byte_size(c)
+    b = byte_size(name)
+    if a > b do false else
+      if TCP._lower(c) != TCP._lower(TLS._from(name, b - a)) do false else
+        not (a > 0 and Sys.byte(Sys.addr(c)) != 46 and b > a and Sys.byte(Sys.addr(name) + b - a - 1) != 46)
+      end
+    end
+  end
+# Whether an address is in a network (the address and its mask).
+#: _within/2 needs _and/2 _sub/3
+  def _within(net: string, ip: string): boolean do
+    k = byte_size(ip)
+    byte_size(net) == 2 * k and TLS._and(ip, TLS._sub(net, k, k)) == TLS._and(TLS._sub(net, 0, k), TLS._sub(net, k, k))
+  end
+#: _and/2 needs Enum.map/2 _b/2 _bs/1
+  def _and(a: string, b: string): string do
+    TLS._bs(Enum.map(0..(byte_size(a) - 1)//1, fn i -> Process.__and(TLS._b(a, i), TLS._b(b, i)) end))
+  end
+# A network as Go writes it: the address, a stroke, the bits of its mask.
+#: _netshow/1 needs _b/2 _ipshow/1 _sub/3
+  def _netshow(net: string): string do
+    k = div(byte_size(net), 2)
+    ones = Enum.reduce(0..(k - 1)//1, 0, fn i, acc ->
+      m = TLS._b(net, k + i)
+      acc + (if m == 255 do 8 else if m == 254 do 7 else if m == 252 do 6 else if m == 248 do 5 else if m == 240 do 4 else if m == 224 do 3 else if m == 192 do 2 else if m == 128 do 1 else 0 end end end end end end end end)
+    end)
+    TLS._ipshow(TLS._sub(net, 0, k)) <> "/#{ones}"
+  end
+# What the name constraints of a chain's authorities have against the
+# names of the certificates under them (x509: checkChainConstraints); ""
+# for nothing.
+#: _named/1 needs Enum.at/3 Enum.drop/2 _named1/2
+  def _named(chain: list[tuple[list[string], list[integer], list[string], list[string]]]): string do
+    {why, i} = Enum.reduce(chain, {"", 0}, fn c, acc ->
+      {bad, at} = acc
+      {ct, cn, dns, ips} = c
+      above = Enum.drop(chain, at + 1)
+      {if bad != "" or Enum.at(cn, 11, 0) == 0 do bad else Enum.reduce(above, "", fn p, e -> if e != "" or Enum.at(elem(p, 1), 13, 0) == 0 do e else TLS._named1(Enum.at(elem(p, 0), 12, ""), c) end end) end, at + 1}
+    end)
+    why
+  end
+#: _named1/2 needs Enum.any?/2 Enum.find/2 TCP._lower/1 _find/3 _from/2 _ipshow/1 _netshow/1 _quote/1 _subtrees/3 _under/2 _within/2
+  def _named1(v: string, c: tuple[list[string], list[integer], list[string], list[string]]): string do
+    {ct, cn, dns, ips} = c
+    pd = TLS._subtrees(v, 0xa0, 0x82)
+    xd = TLS._subtrees(v, 0xa1, 0x82)
+    pi = TLS._subtrees(v, 0xa0, 0x87)
+    xi = TLS._subtrees(v, 0xa1, 0x87)
+    first = Enum.reduce(ips, "", fn ip, e ->
+      k = byte_size(ip)
+      some = Enum.any?(pi, fn x -> byte_size(x) == 2 * k end)
+      if e != "" do e else
+        if some and not Enum.any?(pi, fn x -> TLS._within(x, ip) end) do "IP address " <> TLS._quote(TLS._ipshow(ip)) <> " is not permitted by any constraint" else
+          case Enum.find(xi, fn x -> TLS._within(x, ip) end) do
+            some(x) -> "IP address " <> TLS._quote(TLS._ipshow(ip)) <> " is excluded by constraint " <> TLS._quote(TLS._netshow(x))
+            none -> ""
+          end
+        end
+      end
+    end)
+    Enum.reduce(dns, first, fn d, e ->
+      if e != "" do e else
+        if pd != [] and not Enum.any?(pd, fn x -> TLS._under(x, d) end) do "DNS name " <> TLS._quote(d) <> " is not permitted by any constraint" else
+          dot = TLS._find(d, ".", 0)
+          wild = byte_size(d) > 0 and Sys.byte(Sys.addr(d)) == 42 and dot >= 0
+          case Enum.find(xd, fn x -> TLS._under(x, d) or wild and TLS._find(x, ".", 0) >= 0 and TCP._lower(TLS._from(x, TLS._find(x, ".", 0))) == TCP._lower(TLS._from(d, dot)) end) do
+            some(x) -> "DNS name " <> TLS._quote(d) <> " is excluded by constraint " <> TLS._quote(x)
+            none -> ""
+          end
+        end
+      end
+    end)
+  end
+# ---- The connection ----
+# What is kept for a connection, a block t: 0 the version (0x0304,
+# 0x0303; 0 before it is known), 8 the cipher suite, 16 to 63 what is sent
+# and 64 to 111 what is received (0 the cipher: 0 none, 1 AES-GCM, 2
+# ChaCha20-Poly1305; 8 its key; 16 the nonce's fixed part; 24 the count of
+# records; 32 the secret the keys came from; 40 set when the nonce travels
+# with a record), 112 handshake bytes not yet read as messages, 128 what
+# went wrong, 136 set when the other end closed, 144 set when it asked for
+# new keys, 152 what exported secrets come from, 160 the digest (3
+# SHA-256, 4 SHA-384), 168 the socket, 176 the handshake messages so far,
+# 184 set for the dialling end, 192 the protocol agreed on (ALPN), 200 the
+# server's name, 224 set once this end said it closes, 232 what is asked
+# (1 nothing is verified, 2 version 1.3 alone, 4 http/1.1 is offered), 240
+# the roots (0: the system's), 248 a server's certificates and key, 264
+# the process that writes and 272 those that wait to, 280 set once the
+# handshake is over, 288 to 335 the cipher that is received after the
+# other end says it changes (TLS 1.2), 336 bytes read from the socket and
+# 344 how many of them are taken, 352 set once a record came, 360 the
+# first five bytes that came, 368 the master secret, 376 and 384 the
+# client's and the server's random bytes, 392 set with the extended
+# master secret, 400 the certificate the other end showed, 408 set after
+# a HelloRetryRequest, 416 set for a node's connection, 424 how many
+# records in a row brought nothing, 120 what was opened and not yet taken
+# by _get, 448 to 495 the cipher that is sent once this end says it
+# changes (TLS 1.2).
+#: _new/2 needs Process._take/2
+  def _new(g: integer, b: integer): integer do
+    t = Process._take(g, 512)
+    Sys.poke(t + 168, b)
+    Sys.poke(t + 176, Process.__word(""))
+    Sys.poke(t + 192, Process.__word(""))
+    Sys.poke(t + 200, Process.__word(""))
+    Sys.poke(t + 160, 3)
+    t
+  end
+# What went wrong is kept, the first thing only; "".
+#: _bad/2
+  def _bad(t: integer, why: string): string do
+    if Sys.peek(t + 128) == 0 do Sys.poke(t + 128, Process.__word(why)) end
+    ""
+  end
+#: _why/1
+  def _why(t: integer): string do
+    if Sys.peek(t + 128) == 0 do "" else Process.__any(Sys.peek(t + 128)) end
+  end
+# One process at a time writes records.
+#: _lock/2 needs Process._drop/3 Process._push/5 Process._wait/2
+  def _lock(g: integer, t: integer): integer do
+    c = Sys.peek(g)
+    if Sys.peek(t + 264) == 0 do Sys.poke(t + 264, c) else
+      Process._push(g, t + 272, c, 0, 0)
+      Process._wait(g, 0)
+      Process._drop(g, t + 272, c)
+      TLS._lock(g, t)
+    end
+  end
+#: _unlock/2 needs Process._wake/2
+  def _unlock(g: integer, t: integer): integer do
+    Sys.poke(t + 264, 0)
+    Process._wake(g, t + 272)
+  end
+# n bytes from the socket that were not taken are held before the time
+# d: 1, or 0 with the socket's reason at its word 120.
+#: _need/4 needs TCP._rawread/4 _from/2
+  def _need(g: integer, t: integer, n: integer, d: integer): integer do
+    held: string = if Sys.peek(t + 336) == 0 do "" else Process.__any(Sys.peek(t + 336)) end
+    off = Sys.peek(t + 344)
+    if byte_size(held) - off >= n do 1 else
+      more = TCP._rawread(g, Sys.peek(t + 168), d, 32768)
+      if more == "" do 0 else
+        Sys.poke(t + 336, Process.__word(TLS._from(held, off) <> more))
+        Sys.poke(t + 344, 0)
+        TLS._need(g, t, n, d)
+      end
+    end
+  end
+# n of the bytes held from i on, not taken; and n are taken.
+#: _peek/3
+  def _peek(t: integer, i: integer, n: integer): string do
+    held: string = Process.__any(Sys.peek(t + 336))
+    Sys.text(Sys.addr(held) + Sys.peek(t + 344) + i, n)
+  end
+#: _took/2
+  def _took(t: integer, n: integer): integer do
+    Sys.poke(t + 344, Sys.peek(t + 344) + n)
+  end
+# The n bytes at p go to the socket before the time d: "" or why not. A
+# connection of a node (word 416) goes on writing when its process is
+# asked to stop: half a record would leave the connection useless.
+#: _put/5 needs Process._fdwait/4 Process._now/1 TCP._fail/3 TCP._rawwrite/5
+  def _put(g: integer, t: integer, p: integer, n: integer, d: integer): string do
+    b = Sys.peek(t + 168)
+    if Sys.peek(t + 416) == 0 do TCP._rawwrite(g, b, p, n, d) else
+      if n == 0 do "" else if Sys.peek(b + 16) == 1 do "closed" else
+        r = Sys.call(44, Sys.peek(b), p, n, 0x4000, 0, 0)
+        if r >= 0 do TLS._put(g, t, p + r, n - r, d) else
+          if r != -11 and r != -4 do TCP._fail(b, "write", r) else
+            if d != 0 and Process._now(g) >= d do "timeout" else
+              if r == -11 do Process._fdwait(g, Sys.peek(b), 4, d) end
+              TLS._put(g, t, p, n, d)
+            end
+          end
+        end
+      end end
+    end
+  end
+# Bytes go to the socket as they are: "" or why not.
+#: _out/4 needs _lock/2 _put/5 _unlock/2
+  def _out(g: integer, t: integer, m: string, d: integer): string do
+    TLS._lock(g, t)
+    why = TLS._put(g, t, Sys.addr(m), byte_size(m), d)
+    TLS._unlock(g, t)
+    why
+  end
+# The nonce of the next record of a direction, at an address.
+#: _nonce/1 needs _g/0 _pb/2
+  def _nonce(dir: integer): integer do
+    a = TLS._g() + 152
+    iv = Sys.peek(dir + 16)
+    seq = Sys.peek(dir + 24)
+    explicit = Sys.peek(dir + 40)
+    Sys.poke(a, Sys.peek(iv))
+    Sys.poke(a + 8, 0)
+    Enum.reduce([0, 1, 2, 3, 4, 5, 6, 7], 0, fn i, z ->
+      v = Process.__and(Process.__shr(seq, 8 * (7 - i)), 255)
+      TLS._pb(a + 4 + i, if explicit == 1 do v else Process.__xor(v, Sys.byte(iv + 4 + i)) end) * 0
+    end)
+    a
+  end
+# The count of a direction's records as eight bytes, the kind of a
+# record, the version 3.3 and a length: what TLS 1.2 seals a record with.
+#: _aad/3 needs _bs/1
+  def _aad(seq: integer, kind: integer, n: integer): string do
+    TLS._bs([Process.__and(Process.__shr(seq, 56), 255), Process.__and(Process.__shr(seq, 48), 255), Process.__and(Process.__shr(seq, 40), 255), Process.__and(Process.__shr(seq, 32), 255), Process.__and(Process.__shr(seq, 24), 255), Process.__and(Process.__shr(seq, 16), 255), Process.__and(Process.__shr(seq, 8), 255), Process.__and(seq, 255), kind, 3, 3, div(n, 256), rem(n, 256)])
+  end
+# One record of a kind for up to 16384 bytes of m from i on, sealed when
+# the connection has a cipher for what it sends.
+#: _seal1/4 needs _aad/3 _bs/1 _cbcseal/3 _nonce/1 _sub/3 _t9/6
+  def _seal1(t: integer, kind: integer, m: string, i: integer): string do
+    dir = t + 16
+    cipher = Sys.peek(dir)
+    n = if byte_size(m) - i > 16384 do 16384 else byte_size(m) - i end
+    seq = Sys.peek(dir + 24)
+    if cipher == 0 do TLS._bs([kind, 3, if Sys.peek(t + 352) == 0 and Sys.peek(t + 184) == 1 do 1 else 3 end, div(n, 256), rem(n, 256)]) <> TLS._sub(m, i, n) else
+      if cipher == 3 do TLS._cbcseal(dir, kind, TLS._sub(m, i, n)) else
+      nonce = TLS._nonce(dir)
+      Sys.poke(dir + 24, seq + 1)
+      op = if cipher == 1 do 17 else 20 end
+      if Sys.peek(t) == 0x0304 do
+        head = TLS._bs([23, 3, 3, div(n + 17, 256), rem(n + 17, 256)])
+        o = head <> TLS._sub(m, i, n) <> TLS._bs([kind]) <> String.duplicate("\x00", 16)
+        TLS._t9(op, Sys.peek(dir + 8), nonce, head, [Sys.addr(o) + 5, n + 1, Sys.addr(o) + 5], Sys.addr(o) + 6 + n)
+        o
+      else
+        wide = if Sys.peek(dir + 40) == 1 do 8 else 0 end
+        aad = TLS._aad(seq, kind, n)
+        o = TLS._bs([kind, 3, 3, div(n + 16 + wide, 256), rem(n + 16 + wide, 256)]) <> TLS._sub(aad, 0, wide) <> TLS._sub(m, i, n) <> String.duplicate("\x00", 16)
+        TLS._t9(op, Sys.peek(dir + 8), nonce, aad, [Sys.addr(o) + 5 + wide, n, Sys.addr(o) + 5 + wide], Sys.addr(o) + 5 + wide + n)
+        o
+      end
+      end
+    end
+  end
+# TLS 1.2 with AES-CBC (RFC 5246, 6.2.3.2): a record of the text, its
+# HMAC of SHA-1 and its padding, enciphered behind sixteen bytes nobody
+# can foresee.
+#: _cbcseal/3 needs Crypto.strong_rand_bytes/1 _aad/3 _bs/1 _g/0 _hm/3
+  def _cbcseal(dir: integer, kind: integer, text: string): string do
+    seq = Sys.peek(dir + 24)
+    Sys.poke(dir + 24, seq + 1)
+    n = byte_size(text)
+    mac = TLS._hm(1, Process.__any(Sys.peek(dir + 16)), TLS._aad(seq, kind, n) <> text)
+    pad = 15 - rem(n + 20, 16)
+    iv = Crypto.strong_rand_bytes(16)
+    size = n + 20 + pad + 1
+    o = TLS._bs([kind, 3, 3, div(size + 16, 256), rem(size + 16, 256)]) <> iv <> text <> mac <> String.duplicate(TLS._bs([pad]), pad + 1)
+    k = TLS._g() + 64
+    Sys.poke(k, 22)
+    Sys.poke(k + 8, Sys.peek(dir + 8))
+    Sys.poke(k + 16, Sys.addr(iv))
+    Sys.poke(k + 24, Sys.addr(o) + 21)
+    Sys.poke(k + 32, size)
+    Sys.poke(k + 40, Sys.addr(o) + 21)
+    Sys.tls(k)
+    o
+  end
+# And what such a record holds: its kind and text; kind 0 when its
+# padding or its HMAC is wrong, which take the same steps to find.
+#: _cbcopen/3 needs Crypto.secure_compare/2 _aad/3 _b/2 _g/0 _h/2 _hm/3 _padded/4 _sub/3
+  def _cbcopen(dir: integer, kind: integer, body: string): tuple[integer, string] do
+    seq = Sys.peek(dir + 24)
+    Sys.poke(dir + 24, seq + 1)
+    size = byte_size(body) - 16
+    if size < 32 or rem(size, 16) != 0 do {0, ""} else
+      o = String.duplicate("\x00", size)
+      k = TLS._g() + 64
+      Sys.poke(k, 23)
+      Sys.poke(k + 8, Sys.peek(dir + 8))
+      Sys.poke(k + 16, Sys.addr(body))
+      Sys.poke(k + 24, Sys.addr(body) + 16)
+      Sys.poke(k + 32, size)
+      Sys.poke(k + 40, Sys.addr(o))
+      Sys.tls(k)
+      last = TLS._b(o, size - 1)
+      fits = if last + 21 > size do 0 else 1 end
+      good = fits * TLS._padded(o, size - 1, last, 1)
+      pad = good * last
+      n = size - 21 - pad
+      mac = TLS._hm(1, Process.__any(Sys.peek(dir + 16)), TLS._aad(seq, kind, n) <> TLS._sub(o, 0, n))
+      TLS._h(1, TLS._sub(o, n, size - n))
+      same = Crypto.secure_compare(mac, TLS._sub(o, n, 20))
+      if good == 1 and same do {kind, TLS._sub(o, 0, n)} else {0, ""} end
+    end
+  end
+# 1 when the bytes before the one at i that count as padding hold the
+# padding's length: 255 bytes are looked at whatever it is.
+#: _padded/4 needs _b/2
+  def _padded(o: string, i: integer, last: integer, good: integer): integer do
+    j = byte_size(o) - 1 - i
+    if j >= 255 or i < 0 do good else
+      inside = Process.__shr(j - last - 1, 63)
+      same = 1 - Process.__and(Process.__shr(0 - Process.__xor(TLS._b(o, i), last), 63), 1)
+      TLS._padded(o, i - 1, last, Process.__and(good, Process.__or(1 - inside, same)))
+    end
+  end
+# The records of a kind that hold m.
+#: _seal/3 needs _seal1/4 _seal2/4
+  def _seal(t: integer, kind: integer, m: string): string do
+    if byte_size(m) <= 16384 do TLS._seal1(t, kind, m, 0) else TLS._seal2(t, kind, m, 0) end
+  end
+#: _seal2/4 needs _seal1/4
+  def _seal2(t: integer, kind: integer, m: string, i: integer): string do
+    if i >= byte_size(m) do "" else TLS._seal1(t, kind, m, i) <> TLS._seal2(t, kind, m, i + 16384) end
+  end
+# What a sealed record of a kind holds: its kind and its text; kind 0
+# when it is not what the other end sealed.
+#: _open/3 needs _aad/3 _bs/1 _cbcopen/3 _nonce/1 _t9/6 _tkind/2
+  def _open(t: integer, kind: integer, body: string): tuple[integer, string] do
+    dir = t + 64
+    cipher = Sys.peek(dir)
+    seq = Sys.peek(dir + 24)
+    op = if cipher == 1 do 18 else 21 end
+    wide = if Sys.peek(dir + 40) == 1 do 8 else 0 end
+    n = byte_size(body) - 16 - wide
+    if cipher == 3 do TLS._cbcopen(dir, kind, body) else if n < 0 do {0, ""} else
+      nonce = TLS._nonce(dir)
+      if wide == 8 do Sys.poke(nonce + 4, Sys.peek(Sys.addr(body))) end
+      Sys.poke(dir + 24, seq + 1)
+      o = String.duplicate("\x00", n)
+      v13 = Sys.peek(t) == 0x0304
+      aad = if v13 do TLS._bs([23, 3, 3, div(n + 16, 256), rem(n + 16, 256)]) else TLS._aad(seq, kind, n) end
+      fine = TLS._t9(op, Sys.peek(dir + 8), nonce, aad, [Sys.addr(body) + wide, n, Sys.addr(o)], Sys.addr(body) + wide + n)
+      if fine != 1 do {0, ""} else
+        if not v13 do {kind, o} else
+          last = TLS._tkind(Sys.addr(o), n - 1)
+          if last < 0 do {0, ""} else {Sys.byte(Sys.addr(o) + last), Sys.text(Sys.addr(o), last)} end
+        end
+      end
+    end end
+  end
+# Where the kind stands in an opened record of TLS 1.3: the last byte
+# that is not 0.
+#: _tkind/2
+  def _tkind(a: integer, i: integer): integer do
+    if i < 0 do -1 else if Sys.byte(a + i) != 0 do i else TLS._tkind(a, i - 1) end end
+  end
+# What Go calls an alert.
+#: _alertname/1
+  def _alertname(k: integer): string do
+    known = [{0, "close notify"}, {10, "unexpected message"}, {20, "bad record MAC"}, {21, "decryption failed"}, {22, "record overflow"}, {30, "decompression failure"}, {40, "handshake failure"}, {42, "bad certificate"}, {43, "unsupported certificate"}, {44, "revoked certificate"}, {45, "expired certificate"}, {46, "unknown certificate"}, {47, "illegal parameter"}, {48, "unknown certificate authority"}, {49, "access denied"}, {50, "error decoding message"}, {51, "error decrypting message"}, {60, "export restriction"}, {70, "protocol version not supported"}, {71, "insufficient security level"}, {80, "internal error"}, {86, "inappropriate fallback"}, {90, "user canceled"}, {100, "no renegotiation"}, {109, "missing extension"}, {110, "unsupported extension"}, {111, "certificate unobtainable"}, {112, "unrecognized name"}, {113, "bad certificate status response"}, {114, "bad certificate hash value"}, {115, "unknown PSK identity"}, {116, "certificate required"}, {120, "no application protocol"}, {121, "encrypted client hello required"}]
+    Enum.reduce(known, "alert(#{k})", fn pair, found -> if elem(pair, 0) == k do elem(pair, 1) else found end end)
+  end
+# An alert is sent, as well as it goes; what went wrong is kept: why, or
+# that this end sent the alert when why is "". "".
+#: _alert/4 needs Process._due/2 _alertname/1 _bad/2 _bs/1 _out/4 _seal/3
+  def _alert(g: integer, t: integer, k: integer, why: string): string do
+    if Sys.peek(Sys.peek(t + 168) + 16) == 0 do TLS._out(g, t, TLS._seal(t, 21, TLS._bs([if k == 0 or k == 100 do 1 else 2 end, k])), Process._due(g, 5000)) end
+    TLS._bad(t, if why == "" do "local error: tls: " <> TLS._alertname(k) else why end)
+  end
+# Why the socket gave nothing, as the callers say it: the end of what
+# the other end sent is EOF.
+#: _gone/2 needs _bad/2
+  def _gone(t: integer, part: integer): string do
+    b = Sys.peek(t + 168)
+    r: string = if Sys.peek(b + 120) == 0 do "closed" else Process.__any(Sys.peek(b + 120)) end
+    TLS._bad(t, if r == "closed" do if part == 1 do "unexpected EOF" else "EOF" end else r end)
+  end
+# The next record: its kind and what it holds, opened when the connection
+# has a cipher for what it receives. Kind 0 when none came, with what
+# went wrong kept. Records that only say the cipher changes are taken
+# here: passed over in TLS 1.3, and in TLS 1.2 the cipher that was made
+# ready takes over.
+#: _rec/3 needs _alert/4 _alertname/1 _b/2 _bad/2 _gone/2 _need/4 _open/3 _peek/3 _took/2 _u2/2
+  def _rec(g: integer, t: integer, d: integer): tuple[integer, string] do
+    h = if TLS._need(g, t, 5, d) == 1 do TLS._peek(t, 0, 5) else "" end
+    kind = TLS._b(h, 0)
+    k = TLS._u2(h, 3)
+    first = Sys.peek(t + 352) == 0
+    if h == "" do {0, TLS._gone(t, 0)} else
+      if first do Sys.poke(t + 360, Process.__word(h)) end
+      if first and (kind != 22 and kind != 21 or TLS._u2(h, 1) >= 0x1000) do {0, TLS._bad(t, "tls: first record does not look like a TLS handshake")} else
+        if kind < 20 or kind > 23 or TLS._b(h, 1) != 3 and not first do {0, TLS._alert(g, t, 10, "")} else
+          if k > 16384 + (if Sys.peek(t + 64) == 0 do 0 else if Sys.peek(t) == 0x0304 do 256 else 2048 end end) do {0, TLS._alert(g, t, 22, "tls: oversized record received with length #{k}")} else
+            body = if TLS._need(g, t, 5 + k, d) == 1 do TLS._peek(t, 5, k) else "\x00" end
+            if byte_size(body) != k or k == 0 do {0, if k == 0 do TLS._alert(g, t, 10, "") else TLS._gone(t, 1) end} else
+              TLS._took(t, 5 + k)
+              Sys.poke(t + 352, 1)
+              v13 = Sys.peek(t) == 0x0304
+              sealed = Sys.peek(t + 64) != 0
+              Sys.poke(t + 424, if kind == 20 or kind == 23 and k <= 17 + (if sealed and not v13 do 40 else 0 end) do Sys.peek(t + 424) + 1 else 0 end)
+              if Sys.peek(t + 424) > 16 do {0, TLS._alert(g, t, 10, "tls: too many ignored records")} else
+              if kind == 20 and (not sealed or v13) do
+                pending: string = if Sys.peek(t + 112) == 0 do "" else Process.__any(Sys.peek(t + 112)) end
+                if body != "\x01" or pending != "" do {0, TLS._alert(g, t, 10, "")} else
+                  if v13 or Sys.peek(t) == 0 do TLS._rec(g, t, d) else
+                    if Sys.peek(t + 288) == 0 do {0, TLS._alert(g, t, 10, "")} else
+                      Sys.copy(t + 64, t + 288, 48)
+                      Sys.poke(t + 288, 0)
+                      TLS._rec(g, t, d)
+                    end
+                  end
+                end
+              else
+                {inner, text} = if not sealed do {kind, body} else if v13 and kind != 23 do {-1, ""} else TLS._open(t, kind, body) end end
+                if inner == -1 do {0, TLS._alert(g, t, 10, "")} else
+                  if inner == 0 do {0, TLS._alert(g, t, 20, "")} else
+                    if inner == 21 do
+                      code = TLS._b(text, 1)
+                      if byte_size(text) != 2 do {0, TLS._alert(g, t, 10, "")} else
+                        if code == 0 do
+                          Sys.poke(t + 136, 1)
+                          {0, TLS._bad(t, "EOF")}
+                        else {0, TLS._bad(t, "remote error: tls: " <> TLS._alertname(code))} end
+                      end
+                    else
+                      if text == "" and inner != 23 do {0, TLS._alert(g, t, 10, "")} else
+                        if text != "" do Sys.poke(t + 424, 0) end
+                        {inner, text}
+                      end
+                    end
+                  end
+                end
+              end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# The next handshake message, whole, with its four bytes of kind and
+# length; "" when none comes, with what went wrong kept.
+#: _hmsg/3 needs _alert/4 _from/2 _rec/3 _sub/3 _u3/2
+  def _hmsg(g: integer, t: integer, d: integer): string do
+    held: string = if Sys.peek(t + 112) == 0 do "" else Process.__any(Sys.peek(t + 112)) end
+    need = if byte_size(held) < 4 do 4 else 4 + TLS._u3(held, 1) end
+    if need > 262148 do TLS._alert(g, t, 80, "tls: handshake message of length #{need - 4} bytes exceeds maximum of 262144 bytes") else
+      if byte_size(held) >= need do
+        Sys.poke(t + 112, Process.__word(TLS._from(held, need)))
+        TLS._sub(held, 0, need)
+      else
+        {kind, text} = TLS._rec(g, t, d)
+        if kind == 0 do "" else
+          if kind != 22 do TLS._alert(g, t, 10, "") else
+            Sys.poke(t + 112, Process.__word(held <> text))
+            TLS._hmsg(g, t, d)
+          end
+        end
+      end
+    end
+  end
+# A handshake message of kind k; it joins the messages so far.
+#: _msg/3 needs _bs/1 _n3/1
+  def _msg(t: integer, k: integer, m: string): string do
+    whole = TLS._bs([k]) <> TLS._n3(byte_size(m)) <> m
+    was: string = Process.__any(Sys.peek(t + 176))
+    Sys.poke(t + 176, Process.__word(was <> whole))
+    whole
+  end
+# A message that came joins them too.
+#: _seen/2
+  def _seen(t: integer, m: string): integer do
+    was: string = Process.__any(Sys.peek(t + 176))
+    Sys.poke(t + 176, Process.__word(was <> m))
+  end
+# The digest of the messages so far.
+#: _th/1 needs _h/2
+  def _th(t: integer): string do
+    TLS._h(Sys.peek(t + 160), Process.__any(Sys.peek(t + 176)))
+  end
+# HKDF-Expand-Label and Derive-Secret (RFC 8446, 7.1).
+#: _hx/5 needs _bs/1 _hm/3 _sub/3
+  def _hx(alg: integer, secret: string, label: string, ctx: string, k: integer): string do
+    TLS._sub(TLS._hm(alg, secret, TLS._bs([0, k, 6 + byte_size(label)]) <> "tls13 " <> label <> TLS._bs([byte_size(ctx)]) <> ctx <> TLS._bs([1])), 0, k)
+  end
+# The pseudorandom function of TLS 1.2 (RFC 5246, 5): n bytes.
+#: _prf/5 needs _hm/3 _prf1/5 _sub/3
+  def _prf(alg: integer, secret: string, label: string, seed: string, n: integer): string do
+    TLS._sub(TLS._prf1(alg, secret, label <> seed, TLS._hm(alg, secret, label <> seed), n), 0, n)
+  end
+#: _prf1/5 needs _hm/3
+  def _prf1(alg: integer, secret: string, seed: string, a: string, n: integer): string do
+    if n <= 0 do "" else
+      part = TLS._hm(alg, secret, a <> seed)
+      part <> TLS._prf1(alg, secret, seed, TLS._hm(alg, secret, a), n - byte_size(part))
+    end
+  end
+# What a cipher suite is: its cipher (1 AES-GCM, 2 ChaCha20-Poly1305, 3
+# AES-CBC under an HMAC of SHA-1),
+# the bytes of its key, its digest and, for TLS 1.2, the kind of key its
+# server signs with (1 RSA, 2 ECDSA or Ed25519); [] for one not built.
+#: _suite/1
+  def _suite(id: integer): list[integer] do
+    if id == 0x1301 do [1, 16, 3, 0] else if id == 0x1302 do [1, 32, 4, 0] else if id == 0x1303 do [2, 32, 3, 0] else
+      if id == 0xc02b do [1, 16, 3, 2] else if id == 0xc02f do [1, 16, 3, 1] else if id == 0xc02c do [1, 32, 4, 2] else if id == 0xc030 do [1, 32, 4, 1] else
+        if id == 0xcca9 do [2, 32, 3, 2] else if id == 0xcca8 do [2, 32, 3, 1] else
+          if id == 0xc009 do [3, 16, 3, 2] else if id == 0xc013 do [3, 16, 3, 1] else if id == 0xc00a do [3, 32, 3, 2] else if id == 0xc014 do [3, 32, 3, 1] else [] end end end end
+        end end
+      end end end end
+    end end end
+  end
+# A direction (at dir) takes a cipher with its key and the fixed part of
+# its nonce; explicit: the rest of the nonce travels with each record.
+#: _key1/5 needs _t/5
+  def _key1(dir: integer, cipher: integer, key: string, iv: string, explicit: integer): integer do
+    held = iv <> String.duplicate("\x00", 16)
+    ctx = if cipher == 2 do key <> "" else String.duplicate("\x00", 512) end
+    if cipher != 2 do TLS._t(16, Sys.addr(ctx), Sys.addr(key), byte_size(key), 0) end
+    Sys.poke(dir + 8, Sys.addr(ctx))
+    Sys.poke(dir + 16, if cipher == 3 do Process.__word(iv) else Sys.addr(held) end)
+    Sys.poke(dir + 24, 0)
+    Sys.poke(dir + 40, explicit)
+    Sys.poke(dir, cipher)
+  end
+# TLS 1.3: a direction's keys from its traffic secret.
+#: _keys/3 needs Enum.at/3 _hx/5 _key1/5 _suite/1
+  def _keys(t: integer, dir: integer, secret: string): integer do
+    s = TLS._suite(Sys.peek(t + 8))
+    alg = Sys.peek(t + 160)
+    Sys.poke(dir + 32, Process.__word(secret))
+    TLS._key1(dir, Enum.at(s, 0, 0), TLS._hx(alg, secret, "key", "", Enum.at(s, 1, 0)), TLS._hx(alg, secret, "iv", "", 12), 0)
+  end
+# ---- The handshake: what both ends use ----
+# An extension of kind k.
+#: _x/2 needs _n2/1 _v2/1
+  def _x(k: integer, m: string): string do
+    TLS._n2(k) <> TLS._v2(m)
+  end
+# Where the extension of kind k starts among those from i up to stop (its
+# kind, two bytes of length, its bytes); -1 for none.
+#: _xf/4 needs _u2/2
+  def _xf(s: string, i: integer, stop: integer, k: integer): integer do
+    if i < 0 or i + 4 > stop do -1 else
+      if TLS._u2(s, i) == k do if i + 4 + TLS._u2(s, i + 2) > stop do -1 else i end else TLS._xf(s, i + 4 + TLS._u2(s, i + 2), stop, k) end
+    end
+  end
+# The bytes of that extension; "" for none.
+#: _xb/4 needs _sub/3 _u2/2 _xf/4
+  def _xb(s: string, i: integer, stop: integer, k: integer): string do
+    at = TLS._xf(s, i, stop, k)
+    if at < 0 do "" else TLS._sub(s, at + 4, TLS._u2(s, at + 2)) end
+  end
+# 1 when the two-byte number v is among those from i up to stop, step
+# bytes apart.
+#: _among/5 needs _u2/2
+  def _among(s: string, i: integer, stop: integer, v: integer, step: integer): integer do
+    if i + 2 > stop do 0 else if TLS._u2(s, i) == v do 1 else TLS._among(s, i + step, stop, v, step) end end
+  end
+# 1 when the processor has AES.
+#: _aes/0 needs _g/0 _t/5
+  def _aes(): integer do
+    t = TLS._g()
+    if Sys.peek(t + 24) == 0 do Sys.poke(t + 24, 1 + Process.__and(TLS._t(0, 0, 0, 0, 0), 1)) end
+    Sys.peek(t + 24) - 1
+  end
+# A key to agree with in a group (29 X25519, 23 to 25 the curves): what
+# is kept and what is sent; "" twice for a group that is not built.
+#: _share/1 needs Crypto.strong_rand_bytes/1 _bs/1 _curve/1 _ecpub/2 _scalar/1 _x25519/2
+  def _share(group: integer): tuple[string, string] do
+    if group == 29 do
+      mine = Crypto.strong_rand_bytes(32)
+      {mine, TLS._x25519(mine, TLS._bs([9]) <> String.duplicate("\x00", 31))}
+    else
+      c = TLS._curve(group)
+      if c == 0 do {"", ""} else
+        mine = TLS._scalar(c)
+        {mine, TLS._ecpub(c, mine)}
+      end
+    end
+  end
+# What the two ends then share; "" when the other end's key is no good.
+#: _shared/3 needs _curve/1 _ecdh/3 _x25519/2
+  def _shared(group: integer, mine: string, theirs: string): string do
+    if group == 29 do
+      s = if byte_size(theirs) != 32 do "" else TLS._x25519(mine, theirs) end
+      if s == String.duplicate("\x00", 32) do "" else s end
+    else TLS._ecdh(TLS._curve(group), mine, theirs) end
+  end
+# What Go calls the message of a kind.
+#: _msgname/2
+  def _msgname(k: integer, v13: boolean): string do
+    "*tls." <> (if k == 1 do "clientHelloMsg" else if k == 2 do "serverHelloMsg" else if k == 4 do if v13 do "newSessionTicketMsgTLS13" else "newSessionTicketMsg" end else if k == 8 do "encryptedExtensionsMsg" else if k == 11 do if v13 do "certificateMsgTLS13" else "certificateMsg" end else if k == 12 do "serverKeyExchangeMsg" else if k == 13 do if v13 do "certificateRequestMsgTLS13" else "certificateRequestMsg" end else if k == 14 do "serverHelloDoneMsg" else if k == 15 do "certificateVerifyMsg" else if k == 16 do "clientKeyExchangeMsg" else if k == 20 do "finishedMsg" else if k == 24 do "keyUpdateMsg" else if k == 0 do "helloRequestMsg" else if k == 22 do "certificateStatusMsg" else "endOfEarlyDataMsg" end end end end end end end end end end end end end end)
+  end
+# The next handshake message when it is of the kind wanted; else "" with
+# what Go says kept.
+#: _want/4 needs _alert/4 _b/2 _hmsg/3 _msgname/2
+  def _want(g: integer, t: integer, k: integer, d: integer): string do
+    m = TLS._hmsg(g, t, d)
+    v13 = Sys.peek(t) == 0x0304
+    if m == "" do "" else
+      if TLS._b(m, 0) == k do m else TLS._alert(g, t, 10, "tls: received unexpected handshake message of type " <> TLS._msgname(TLS._b(m, 0), v13) <> " when waiting for " <> TLS._msgname(k, v13)) end
+    end
+  end
+# The certificates of a Certificate message from i up to stop, each
+# behind three bytes of length; in TLS 1.3 two bytes of extensions follow
+# each.
+#: _chain/4 needs _sub/3 _u2/2 _u3/2
+  def _chain(m: string, i: integer, stop: integer, v13: boolean): list[string] do
+    none: list[string] = []
+    k = TLS._u3(m, i)
+    after = i + 3 + k + (if v13 do 2 + TLS._u2(m, i + 3 + k) else 0 end)
+    if i + 3 > stop or after > stop do none else [TLS._sub(m, i + 3, k)] ++ TLS._chain(m, after, stop, v13) end
+  end
+# The certificates the other end showed are verified (crypto/tls:
+# verifyServerCertificate): "" or what Go says, kept, after the alert.
+#: _trust/3 needs TCP._sub/3 _alert/4 _now/0 _roots/0 _verify/5
+  def _trust(g: integer, t: integer, ders: list[string]): string do
+    flags = Sys.peek(t + 232)
+    insecure = Process.__and(flags, 1) == 1
+    host: string = Process.__any(Sys.peek(t + 200))
+    roots: list[tuple[string, string]] = if insecure do [] else if Sys.peek(t + 240) != 0 do Process.__any(Sys.peek(t + 240)) else TLS._roots() end end
+    {leaf, why} = TLS._verify(ders, roots, host, TLS._now(), insecure)
+    Sys.poke(t + 400, Process.__word(leaf))
+    if why == "" do "ok" else TLS._alert(g, t, if TCP._sub(why, 0, 22) == "tls: failed to parse c" or ders == [] do 50 else if TCP._sub(why, 0, 22) == "tls: server's certific" do 43 else 42 end end, why) end
+  end
+# Whether sig signs m under the key of the certificate the other end
+# showed, by the scheme it names (crypto/tls: verifyHandshakeSignature):
+# "" for yes, "!" for a scheme that may not be used so, else Go's words.
+#: _sigok/4 needs Enum.at/3 TCP._sub/3 _signed/6
+  def _sigok(t: integer, scheme: integer, m: string, sig: string): string do
+    leaf: tuple[list[string], list[integer], list[string], list[string]] = Process.__any(Sys.peek(t + 400))
+    {texts, nums, dns, ips} = leaf
+    v13 = Sys.peek(t) == 0x0304
+    key = Enum.at(nums, 2, 0)
+    curve = Enum.at(nums, 3, 0)
+    code = if scheme == 0x0804 do 35 else if scheme == 0x0805 do 36 else if scheme == 0x0806 do 37 else if scheme == 0x0807 do 64 else
+      if scheme == 0x0403 do 51 else if scheme == 0x0503 do 52 else if scheme == 0x0603 do 53 else
+        if v13 do 0 else if scheme == 0x0401 do 19 else if scheme == 0x0501 do 20 else if scheme == 0x0601 do 21 else if scheme == 0x0201 do 17 else if scheme == 0x0203 do 49 else 0 end end end end end end
+      end end end
+    end end end end
+    kind = div(code, 16)
+    fits = kind == 4 and key == 3 or kind == 3 and key == 2 or (kind == 1 or kind == 2) and key == 1
+    tied = not v13 or kind != 3 or scheme == 0x0403 and curve == 23 or scheme == 0x0503 and curve == 24 or scheme == 0x0603 and curve == 25
+    if code == 0 or not fits or not tied do "!" else
+      why = TLS._signed(texts, nums, code, m, sig, true)
+      if TCP._sub(why, 0, 6) == "x509: " do TCP._sub(why, 6, byte_size(why) - 6) else why end
+    end
+  end
+# A text signed by a server's key with a scheme: the signature; "" when
+# it cannot be made.
+#: _sign/3 needs Enum.at/3 _curve/1 _der/2 _derint/1 _ecsign/3 _edsign/2 _h/2 _rsasign/4 _sub/3
+  def _sign(id: tuple[list[string], integer, integer, list[string]], scheme: integer, m: string): string do
+    {ders, kind, curve, key} = id
+    alg = if scheme == 0x0804 or scheme == 0x0401 or scheme == 0x0403 do 3 else if scheme == 0x0805 or scheme == 0x0501 or scheme == 0x0503 do 4 else if scheme == 0x0201 or scheme == 0x0203 do 1 else 5 end end end
+    if kind == 3 do TLS._edsign({Enum.at(key, 0, ""), Enum.at(key, 1, ""), Enum.at(key, 2, "")}, m) else
+      digest = TLS._h(alg, m)
+      if kind == 2 do
+        c = TLS._curve(curve)
+        rs = TLS._ecsign(c, Enum.at(key, 0, ""), digest)
+        n = div(byte_size(rs), 2)
+        TLS._der(0x30, TLS._derint(TLS._sub(rs, 0, n)) <> TLS._derint(TLS._sub(rs, n, n)))
+      else
+        TLS._rsasign({Enum.at(key, 0, ""), Enum.at(key, 1, ""), Enum.at(key, 2, "")}, if div(scheme, 256) == 8 do 2 else 1 end, alg, digest)
+      end
+    end
+  end
+# The scheme a server signs with: the first of those the client names
+# (two bytes each from i up to stop) that its key can use.
+#: _scheme/5 needs _u2/2
+  def _scheme(s: string, i: integer, stop: integer, id: tuple[list[string], integer, integer, list[string]], v13: boolean): integer do
+    {ders, kind, curve, key} = id
+    v = TLS._u2(s, i)
+    fits = if kind == 3 do v == 0x0807 else
+      if kind == 2 do if v13 do v == 0x0403 and curve == 23 or v == 0x0503 and curve == 24 or v == 0x0603 and curve == 25 else v == 0x0403 or v == 0x0503 or v == 0x0603 end else
+        v == 0x0804 or v == 0x0805 or v == 0x0806 or not v13 and (v == 0x0401 or v == 0x0501 or v == 0x0601)
+      end
+    end
+    if i + 2 > stop do 0 else if fits do v else TLS._scheme(s, i + 2, stop, id, v13) end end
+  end
+# TLS 1.3: the keys of the handshake after the hellos, from what the ends
+# share. mine: 16 for a client's block (it sends with the client's
+# secret), 64 for a server's.
+#: _hskeys/3 needs _h/2 _hm/3 _hx/5 _keys/3 _th/1
+  def _hskeys(t: integer, shared: string, mine: integer): string do
+    alg = Sys.peek(t + 160)
+    size = if alg == 4 do 48 else 32 end
+    zeros = String.duplicate("\x00", size)
+    empty = TLS._h(alg, "")
+    hs = TLS._hm(alg, TLS._hx(alg, TLS._hm(alg, zeros, zeros), "derived", empty, size), shared)
+    th = TLS._th(t)
+    TLS._keys(t, t + mine, TLS._hx(alg, hs, "c hs traffic", th, size))
+    TLS._keys(t, t + 80 - mine, TLS._hx(alg, hs, "s hs traffic", th, size))
+    TLS._hm(alg, TLS._hx(alg, hs, "derived", empty, size), zeros)
+  end
+# What a Finished of TLS 1.3 holds for the secret of its direction.
+#: _fin/2 needs _hm/3 _hx/5 _th/1
+  def _fin(t: integer, dir: integer): string do
+    alg = Sys.peek(t + 160)
+    TLS._hm(alg, TLS._hx(alg, Process.__any(Sys.peek(dir + 32)), "finished", "", if alg == 4 do 48 else 32 end), TLS._th(t))
+  end
+# TLS 1.3: the secrets after the server's Finished, the two of the
+# traffic and the one that is exported from.
+#: _apkeys/2 needs _hx/5 _th/1
+  def _apkeys(t: integer, master: string): tuple[string, string] do
+    alg = Sys.peek(t + 160)
+    size = if alg == 4 do 48 else 32 end
+    th = TLS._th(t)
+    Sys.poke(t + 152, Process.__word(TLS._hx(alg, master, "exp master", th, size)))
+    {TLS._hx(alg, master, "c ap traffic", th, size), TLS._hx(alg, master, "s ap traffic", th, size)}
+  end
+# What is exported under a label (RFC 8446, 7.5; RFC 5705 for TLS 1.2),
+# n bytes.
+#: _export/3 needs _h/2 _hx/5 _prf/5
+  def _export(t: integer, label: string, n: integer): string do
+    alg = Sys.peek(t + 160)
+    if Sys.peek(t) == 0x0304 do
+      TLS._hx(alg, TLS._hx(alg, Process.__any(Sys.peek(t + 152)), label, TLS._h(alg, ""), if alg == 4 do 48 else 32 end), "exporter", TLS._h(alg, ""), n)
+    else
+      cr: string = Process.__any(Sys.peek(t + 376))
+      sr: string = Process.__any(Sys.peek(t + 384))
+      TLS._prf(alg, Process.__any(Sys.peek(t + 368)), label, cr <> sr, n)
+    end
+  end
+# TLS 1.2: the master secret from what the ends share, and the two
+# ciphers from it. That of what is sent is at t + 448 until it takes over
+# (_turn) and that of what is received at t + 288 until the other end
+# says it changes. client: 1 for the dialling end.
+#: _keys12/3 needs Enum.at/3 _key1/5 _prf/5 _sub/3 _suite/1 _th/1
+  def _keys12(t: integer, shared: string, client: integer): integer do
+    s = TLS._suite(Sys.peek(t + 8))
+    alg = Sys.peek(t + 160)
+    cipher = Enum.at(s, 0, 0)
+    klen = Enum.at(s, 1, 0)
+    ivlen = if cipher == 1 do 4 else if cipher == 3 do 0 else 12 end end
+    mac = if cipher == 3 do 20 else 0 end
+    cr: string = Process.__any(Sys.peek(t + 376))
+    sr: string = Process.__any(Sys.peek(t + 384))
+    master = if Sys.peek(t + 392) == 1 do TLS._prf(alg, shared, "extended master secret", TLS._th(t), 48) else TLS._prf(alg, shared, "master secret", cr <> sr, 48) end
+    Sys.poke(t + 368, Process.__word(master))
+    block = TLS._prf(alg, master, "key expansion", sr <> cr, 2 * mac + 2 * klen + 2 * ivlen)
+    ck = TLS._sub(block, 2 * mac, klen)
+    sk = TLS._sub(block, 2 * mac + klen, klen)
+    ci = if cipher == 3 do TLS._sub(block, 0, mac) else TLS._sub(block, 2 * klen, ivlen) end
+    si = if cipher == 3 do TLS._sub(block, mac, mac) else TLS._sub(block, 2 * klen + ivlen, ivlen) end
+    explicit = if cipher == 1 do 1 else 0 end
+    TLS._key1(t + 448, cipher, if client == 1 do ck else sk end, if client == 1 do ci else si end, explicit)
+    TLS._key1(t + 288, cipher, if client == 1 do sk else ck end, if client == 1 do si else ci end, explicit)
+  end
+# TLS 1.2: this end says the cipher changes, and it does.
+#: _turn/1 needs _bs/1 _seal/3
+  def _turn(t: integer): string do
+    r = TLS._seal(t, 20, TLS._bs([1]))
+    Sys.copy(t + 16, t + 448, 48)
+    r
+  end
+# What a Finished of TLS 1.2 holds.
+#: _fin12/2 needs _prf/5 _th/1
+  def _fin12(t: integer, label: string): string do
+    TLS._prf(Sys.peek(t + 160), Process.__any(Sys.peek(t + 368)), label, TLS._th(t), 12)
+  end
+# ---- The dialling end (crypto/tls: handshake_client.go) ----
+# The suites offered, two bytes each: those of TLS 1.3, then those of 1.2
+# unless only 1.3 is spoken; AES first when the processor has it, as Go.
+#: _suites/1 needs _aes/0 _hex/1
+  def _suites(only13: boolean): string do
+    aes = TLS._aes() == 1
+    TLS._hex(if aes do "130113021303" else "130313011302" end) <> (if only13 do "" else TLS._hex((if aes do "c02bc02fc02cc030cca9cca8" else "cca9cca8c02bc02fc02cc030" end) <> "c009c013c00ac014") end)
+  end
+# The ClientHello's body: with a key for one group, and the cookie of a
+# HelloRetryRequest.
+#: _hello/5 needs _bs/1 _hex/1 _ip/1 _n2/1 _suites/1 _v1/1 _v2/1 _x/2
+  def _hello(t: integer, group: integer, pub: string, cookie: string, sid: string): string do
+    flags = Sys.peek(t + 232)
+    only13 = Process.__and(flags, 2) == 2
+    host: string = Process.__any(Sys.peek(t + 200))
+    n = byte_size(host)
+    name = if n > 0 and Sys.byte(Sys.addr(host) + n - 1) == 46 do Sys.text(Sys.addr(host), n - 1) else host end
+    sni = if name == "" or TLS._ip(name) != "" do "" else TLS._x(0, TLS._v2(TLS._bs([0]) <> TLS._v2(name))) end
+    old = if only13 do "" else TLS._x(11, TLS._bs([1, 0])) <> TLS._x(23, "") <> TLS._x(0xff01, TLS._bs([0])) end
+    alpn = if Process.__and(flags, 4) == 4 do TLS._x(16, TLS._v2(TLS._v1("http/1.1"))) else "" end
+    exts = sni <> TLS._x(10, TLS._v2(TLS._hex("001d001700180019"))) <> old <> TLS._x(13, TLS._v2(TLS._hex("080404030807080508060401050106010503060302010203"))) <> alpn <> TLS._x(43, TLS._v1(TLS._hex(if only13 do "0304" else "03040303" end))) <> (if cookie == "" do "" else TLS._x(44, cookie) end) <> TLS._x(51, TLS._v2(TLS._n2(group) <> TLS._v2(pub)))
+    random: string = Process.__any(Sys.peek(t + 376))
+    TLS._bs([3, 3]) <> random <> TLS._v1(sid) <> TLS._v2(TLS._suites(only13)) <> TLS._bs([1, 0]) <> TLS._v2(exts)
+  end
+# The handshake of the dialling end over the socket of t before the time
+# d: "" when it is over, else what went wrong.
+#: _client/3 needs Crypto.strong_rand_bytes/1 Enum.at/3 _alert/4 _b/2 _bad/2 _bs/1 _c1/5 _h/2 _hello/5 _hex/1 _msg/3 _out/4 _seal/3 _share/1 _sub/3 _suite/1 _u2/2 _want/4 _why/1 _xb/4 _xf/4
+  def _client(g: integer, t: integer, d: integer): string do
+    Sys.poke(t + 184, 1)
+    Sys.poke(t + 376, Process.__word(Crypto.strong_rand_bytes(32)))
+    sid = Crypto.strong_rand_bytes(32)
+    {mine, pub} = TLS._share(29)
+    ch = TLS._msg(t, 1, TLS._hello(t, 29, pub, "", sid))
+    sent = TLS._out(g, t, TLS._seal(t, 22, ch), d)
+    first = if sent != "" do TLS._bad(t, sent) else TLS._want(g, t, 2, d) end
+    retry = TLS._hex("cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c")
+    if first == "" do TLS._why(t) else
+      if TLS._sub(first, 6, 32) != retry do TLS._c1(g, t, d, [first, mine, sid], 29) else
+        e = 39 + TLS._b(first, 38) + 3
+        stop = e + 2 + TLS._u2(first, e)
+        group = TLS._u2(TLS._xb(first, e + 2, stop, 51), 0)
+        suite = TLS._u2(first, 39 + TLS._b(first, 38))
+        s = TLS._suite(suite)
+        {mine2, pub2} = if group == 23 or group == 24 or group == 25 do TLS._share(group) else {"", ""} end
+        if stop != byte_size(first) or TLS._xf(first, e + 2, stop, 43) < 0 or TLS._u2(TLS._xb(first, e + 2, stop, 43), 0) != 0x0304 do TLS._alert(g, t, 47, "tls: server sent an incorrect legacy version") <> TLS._why(t) else
+          if s == [] or suite < 0x1301 or suite > 0x1303 do TLS._alert(g, t, 47, "tls: server chose an unconfigured cipher suite") <> TLS._why(t) else
+            if TLS._xf(first, e + 2, stop, 51) < 0 and TLS._xf(first, e + 2, stop, 44) < 0 do TLS._alert(g, t, 47, "tls: server sent an unnecessary HelloRetryRequest message") <> TLS._why(t) else
+              if group == 29 do TLS._alert(g, t, 47, "tls: server sent an unnecessary HelloRetryRequest key_share") <> TLS._why(t) else
+                if mine2 == "" do TLS._alert(g, t, 47, "tls: server selected unsupported group") <> TLS._why(t) else
+                  alg = Enum.at(s, 2, 3)
+                  Sys.poke(t + 160, alg)
+                  Sys.poke(t + 176, Process.__word(TLS._bs([254, 0, 0, if alg == 4 do 48 else 32 end]) <> TLS._h(alg, ch) <> first))
+                  ch2 = TLS._msg(t, 1, TLS._hello(t, group, pub2, TLS._xb(first, e + 2, stop, 44), sid))
+                  Sys.poke(t + 408, 1)
+                  sent2 = TLS._out(g, t, TLS._bs([20, 3, 3, 0, 1, 1]) <> TLS._seal(t, 22, ch2), d)
+                  second = if sent2 != "" do TLS._bad(t, sent2) else TLS._want(g, t, 2, d) end
+                  if second == "" do TLS._why(t) else
+                    if TLS._sub(second, 6, 32) == retry do TLS._alert(g, t, 10, "tls: server sent two HelloRetryRequest messages") <> TLS._why(t) else
+                      if TLS._u2(second, 39 + TLS._b(second, 38)) != suite do TLS._alert(g, t, 47, "tls: server changed cipher suite after a HelloRetryRequest") <> TLS._why(t) else TLS._c1(g, t, d, [second, mine2, sid], group + 65536) end
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# The ServerHello sh came for the key mine of a group (65536 more after a
+# HelloRetryRequest): the version is found and the rest goes on by it.
+#: _c1/5 needs Enum.at/3 _alert/4 _among/5 _b/2 _c12/4 _c13/5 _hex/1 _seen/2 _sub/3 _suite/1 _suites/1 _u2/2 _why/1 _xb/4 _xf/4
+  def _c1(g: integer, t: integer, d: integer, held: list[string], group: integer): string do
+    [sh, mine, sid] = held
+    flags = Sys.peek(t + 232)
+    only13 = Process.__and(flags, 2) == 2
+    n = byte_size(sh)
+    k = TLS._b(sh, 38)
+    e = 39 + k + 3
+    stop = if n == e do e else e + 2 + TLS._u2(sh, e) end
+    whole = n >= 42 + k and stop == n
+    chosen = if whole do TLS._xb(sh, e + 2, stop, 43) else "" end
+    version = if byte_size(chosen) == 2 do TLS._u2(chosen, 0) else TLS._u2(sh, 4) end
+    suite = TLS._u2(sh, 39 + k)
+    s = TLS._suite(suite)
+    offered = TLS._suites(only13)
+    random = TLS._sub(sh, 6, 32)
+    TLS._seen(t, sh)
+    Sys.poke(t + 384, Process.__word(random))
+    if not whole do TLS._alert(g, t, 50, "tls: error decoding message") <> TLS._why(t) else
+      if version != 0x0304 and (version != 0x0303 or only13) or group >= 65536 and version != 0x0304 do TLS._alert(g, t, 70, "tls: server selected unsupported protocol version " <> String.downcase(Integer.to_string(version, 16))) <> TLS._why(t) else
+        if version == 0x0303 and (TLS._sub(random, 24, 8) == TLS._hex("444f574e47524401") or TLS._sub(random, 24, 8) == TLS._hex("444f574e47524400")) do TLS._alert(g, t, 47, "tls: downgrade attempt detected, possibly due to a MitM attack or a broken middlebox") <> TLS._why(t) else
+          if TLS._b(sh, 41 + k) != 0 do TLS._alert(g, t, 47, "tls: server selected unsupported compression format") <> TLS._why(t) else
+            if s == [] or TLS._among(offered, 0, byte_size(offered), suite, 2) == 0 or (version == 0x0304) != (Enum.at(s, 3, 0) == 0) do TLS._alert(g, t, if version == 0x0304 do 47 else 40 end, "tls: server chose an unconfigured cipher suite") <> TLS._why(t) else
+              Sys.poke(t, version)
+              Sys.poke(t + 8, suite)
+              Sys.poke(t + 160, Enum.at(s, 2, 3))
+              if version == 0x0304 do
+                if TLS._sub(sh, 39, k) != sid do TLS._alert(g, t, 47, "tls: server did not echo the legacy session ID") <> TLS._why(t) else TLS._c13(g, t, d, [TLS._xb(sh, e + 2, stop, 51), mine], rem(group, 65536)) end
+              else
+                if TLS._sub(sh, 39, k) == sid do TLS._alert(g, t, 47, "tls: server echoed TLS 1.3 compatibility session ID in TLS 1.2") <> TLS._why(t) else
+                  if TLS._xf(sh, e + 2, stop, 23) >= 0 do Sys.poke(t + 392, 1) end
+                  alpn = TLS._xb(sh, e + 2, stop, 16)
+                  if alpn != "" do Sys.poke(t + 192, Process.__word(TLS._sub(alpn, 3, TLS._b(alpn, 2)))) end
+                  if alpn != "" and (Process.__and(flags, 4) == 0 or TLS._sub(alpn, 3, TLS._b(alpn, 2)) != "http/1.1") do TLS._alert(g, t, 110, if Process.__and(flags, 4) == 0 do "tls: server advertised unrequested ALPN extension" else "tls: server selected unadvertised ALPN protocol" end) <> TLS._why(t) else TLS._c12(g, t, d, Enum.at(s, 3, 0)) end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# The protocol a server chose (ALPN) among the extensions from i up to
+# stop is kept: "" or what is wrong with it.
+#: _alpn/5 needs _alert/4 _b/2 _sub/3 _xb/4
+  def _alpn(g: integer, t: integer, m: string, i: integer, stop: integer): string do
+    alpn = TLS._xb(m, i, stop, 16)
+    asked = Process.__and(Sys.peek(t + 232), 4) == 4
+    name = TLS._sub(alpn, 3, TLS._b(alpn, 2))
+    if alpn == "" do "ok" else
+      Sys.poke(t + 192, Process.__word(name))
+      if not asked do TLS._alert(g, t, 110, "tls: server advertised unrequested ALPN extension") else if name != "http/1.1" do TLS._alert(g, t, 47, "tls: server selected unadvertised ALPN protocol") else "ok" end end
+    end
+  end
+# TLS 1.3 from the ServerHello on (handshake_client_tls13.go).
+#: _c13/5 needs _alert/4 _alpn/5 _apkeys/2 _b/2 _bad/2 _bs/1 _chain/4 _fin/2 _hmsg/3 _hskeys/3 _keys/3 _msg/3 _msgname/2 _n3/1 _out/4 _seal/3 _seen/2 _shared/3 _sigok/4 _sub/3 _th/1 _trust/3 _u2/2 _v1/1 _want/4 _why/1
+  def _c13(g: integer, t: integer, d: integer, held: list[string], group: integer): string do
+    [ext, mine] = held
+    shared = if TLS._u2(ext, 0) != group do "" else TLS._shared(group, mine, TLS._sub(ext, 4, TLS._u2(ext, 2))) end
+    if ext == "" do TLS._alert(g, t, 47, "tls: server did not send a key share") <> TLS._why(t) else
+      if TLS._u2(ext, 0) != group do TLS._alert(g, t, 47, "tls: server selected unsupported group") <> TLS._why(t) else
+        if shared == "" do TLS._alert(g, t, 47, "tls: invalid server key share") <> TLS._why(t) else
+          master = TLS._hskeys(t, shared, 16)
+          ee = TLS._want(g, t, 8, d)
+          if ee == "" do TLS._why(t) else
+            TLS._seen(t, ee)
+            if TLS._alpn(g, t, ee, 6, byte_size(ee)) == "" do TLS._why(t) else
+              m1 = TLS._hmsg(g, t, d)
+              asked = TLS._b(m1, 0) == 13
+              if asked do TLS._seen(t, m1) end
+              cert = if asked do TLS._hmsg(g, t, d) else m1 end
+              if cert == "" do TLS._why(t) else
+                if TLS._b(cert, 0) != 11 do TLS._alert(g, t, 10, "tls: received unexpected handshake message of type " <> TLS._msgname(TLS._b(cert, 0), true) <> " when waiting for *tls.certificateMsgTLS13") <> TLS._why(t) else
+                  TLS._seen(t, cert)
+                  c0 = 5 + TLS._b(cert, 4)
+                  ders = TLS._chain(cert, c0 + 3, byte_size(cert), true)
+                  if TLS._trust(g, t, ders) == "" do TLS._why(t) else
+                    cv = TLS._want(g, t, 15, d)
+                    if cv == "" do TLS._why(t) else
+                      said = TLS._sigok(t, TLS._u2(cv, 4), String.duplicate(" ", 64) <> "TLS 1.3, server CertificateVerify\x00" <> TLS._th(t), TLS._sub(cv, 8, TLS._u2(cv, 6)))
+                      if said != "" do TLS._alert(g, t, if said == "!" do 47 else 51 end, if said == "!" do "tls: certificate used with invalid signature algorithm" else "tls: invalid signature by the server certificate: " <> said end) <> TLS._why(t) else
+                        TLS._seen(t, cv)
+                        fin = TLS._want(g, t, 20, d)
+                        if fin == "" do TLS._why(t) else
+                          pending: string = Process.__any(Sys.peek(t + 112))
+                          if TLS._sub(fin, 4, byte_size(fin) - 4) != TLS._fin(t, t + 64) do TLS._alert(g, t, 51, "tls: invalid server finished hash") <> TLS._why(t) else
+                            if pending != "" do TLS._alert(g, t, 10, "") <> TLS._why(t) else
+                              TLS._seen(t, fin)
+                              {cap, sap} = TLS._apkeys(t, master)
+                              certmsg = if asked do TLS._msg(t, 11, TLS._v1(TLS._sub(m1, 5, TLS._b(m1, 4))) <> TLS._n3(0)) else "" end
+                              finmsg = TLS._msg(t, 20, TLS._fin(t, t + 16))
+                              flight = (if Sys.peek(t + 408) == 0 do TLS._bs([20, 3, 3, 0, 1, 1]) else "" end) <> TLS._seal(t, 22, certmsg <> finmsg)
+                              sent = TLS._out(g, t, flight, d)
+                              TLS._keys(t, t + 16, cap)
+                              TLS._keys(t, t + 64, sap)
+                              Sys.poke(t + 280, 1)
+                              if sent != "" do TLS._bad(t, sent) <> TLS._why(t) else "" end
+                            end
+                          end
+                        end
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# TLS 1.2 from the ServerHello on (handshake_client.go, key_agreement.go).
+# auth: the kind of key the suite's server signs with.
+#: _c12/4 needs Enum.at/3 _alert/4 _b/2 _bad/2 _chain/4 _fin12/2 _hmsg/3 _keys12/3 _msg/3 _msgname/2 _n3/1 _out/4 _seal/3 _seen/2 _share/1 _shared/3 _sigok/4 _sub/3 _trust/3 _turn/1 _u2/2 _v1/1 _want/4 _why/1
+  def _c12(g: integer, t: integer, d: integer, auth: integer): string do
+    cert = TLS._want(g, t, 11, d)
+    if cert == "" do TLS._why(t) else
+      TLS._seen(t, cert)
+      if TLS._trust(g, t, TLS._chain(cert, 7, byte_size(cert), false)) == "" do TLS._why(t) else
+        leaf: tuple[list[string], list[integer], list[string], list[string]] = Process.__any(Sys.peek(t + 400))
+        key = Enum.at(elem(leaf, 1), 2, 0)
+        ske = TLS._hmsg(g, t, d)
+        if ske == "" do TLS._why(t) else
+          if TLS._b(ske, 0) != 12 do TLS._alert(g, t, 10, if TLS._b(ske, 0) == 22 do "tls: received unexpected CertificateStatus message" else "tls: received unexpected handshake message of type " <> TLS._msgname(TLS._b(ske, 0), false) <> " when waiting for *tls.serverKeyExchangeMsg" end) <> TLS._why(t) else
+            TLS._seen(t, ske)
+            curve = TLS._u2(ske, 5)
+            k = TLS._b(ske, 7)
+            theirs = TLS._sub(ske, 8, k)
+            scheme = TLS._u2(ske, 8 + k)
+            sig = TLS._sub(ske, 12 + k, TLS._u2(ske, 10 + k))
+            cr: string = Process.__any(Sys.peek(t + 376))
+            sr: string = Process.__any(Sys.peek(t + 384))
+            {mine, pub} = if TLS._b(ske, 4) != 3 or byte_size(ske) != 12 + k + byte_size(sig) do {"", ""} else TLS._share(curve) end
+            if mine == "" do TLS._alert(g, t, 47, if TLS._b(ske, 4) == 3 and byte_size(ske) == 12 + k + byte_size(sig) do "tls: server selected unsupported curve" else "tls: invalid ServerKeyExchange message" end) <> TLS._why(t) else
+              said = if (auth == 1) != (key == 1) do "!" else TLS._sigok(t, scheme, cr <> sr <> TLS._sub(ske, 4, 4 + k), sig) end
+              if said != "" do TLS._alert(g, t, if said == "!" do 47 else 51 end, if said == "!" do "tls: certificate used with invalid signature algorithm" else "tls: invalid signature by the server certificate: " <> said end) <> TLS._why(t) else
+                m1 = TLS._hmsg(g, t, d)
+                asked = TLS._b(m1, 0) == 13
+                if asked do TLS._seen(t, m1) end
+                done = if asked do TLS._hmsg(g, t, d) else m1 end
+                shared = TLS._shared(curve, mine, theirs)
+                if done == "" do TLS._why(t) else
+                  if TLS._b(done, 0) != 14 do TLS._alert(g, t, 10, "tls: received unexpected handshake message of type " <> TLS._msgname(TLS._b(done, 0), false) <> " when waiting for *tls.serverHelloDoneMsg") <> TLS._why(t) else
+                    if shared == "" do TLS._alert(g, t, 47, "tls: invalid ServerKeyExchange message") <> TLS._why(t) else
+                      TLS._seen(t, done)
+                      certmsg = if asked do TLS._msg(t, 11, TLS._n3(0)) else "" end
+                      cke = TLS._msg(t, 16, TLS._v1(pub))
+                      TLS._keys12(t, shared, 1)
+                      r1 = TLS._seal(t, 22, certmsg <> cke)
+                      r2 = TLS._turn(t)
+                      r3 = TLS._seal(t, 22, TLS._msg(t, 20, TLS._fin12(t, "client finished")))
+                      sent = TLS._out(g, t, r1 <> r2 <> r3, d)
+                      fin = if sent != "" do TLS._bad(t, sent) else TLS._want(g, t, 20, d) end
+                      if fin == "" do TLS._why(t) else
+                        if Sys.peek(t + 64) == 0 do TLS._alert(g, t, 10, "") <> TLS._why(t) else
+                          if TLS._sub(fin, 4, byte_size(fin) - 4) != TLS._fin12(t, "server finished") do TLS._alert(g, t, 40, "tls: server's Finished message was incorrect") <> TLS._why(t) else
+                            TLS._seen(t, fin)
+                            Sys.poke(t + 280, 1)
+                            ""
+                          end
+                        end
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# ---- A connection in use ----
+# TLS 1.3: a direction's keys step on (RFC 8446, 7.2).
+#: _step/2 needs _hx/5 _keys/3
+  def _step(t: integer, dir: integer): integer do
+    alg = Sys.peek(t + 160)
+    TLS._keys(t, dir, TLS._hx(alg, Process.__any(Sys.peek(dir + 32)), "traffic upd", "", if alg == 4 do 48 else 32 end))
+  end
+# The handshake messages that come once the handshake is over: 1 when
+# they were taken, 0 with what went wrong kept.
+#: _after/2 needs Process._due/2 _alert/4 _b/2 _bs/1 _from/2 _lock/2 _put/5 _seal/3 _step/2 _u3/2 _unlock/2
+  def _after(g: integer, t: integer): integer do
+    held: string = if Sys.peek(t + 112) == 0 do "" else Process.__any(Sys.peek(t + 112)) end
+    need = if byte_size(held) < 4 do 4 else 4 + TLS._u3(held, 1) end
+    kind = TLS._b(held, 0)
+    if byte_size(held) < need do if need > 65540 do byte_size(TLS._alert(g, t, 10, "")) else 1 end else
+      Sys.poke(t + 112, Process.__word(TLS._from(held, need)))
+      if Sys.peek(t) != 0x0304 do byte_size(TLS._alert(g, t, if kind == 0 do 100 else 10 end, "")) else
+        if kind == 4 and Sys.peek(t + 184) == 1 do TLS._after(g, t) else
+          if kind != 24 or need != 5 or TLS._b(held, 4) > 1 or byte_size(held) != need do byte_size(TLS._alert(g, t, 10, "")) else
+            TLS._step(t, t + 64)
+            if TLS._b(held, 4) == 1 do
+              TLS._lock(g, t)
+              turn = TLS._seal(t, 22, TLS._bs([24, 0, 0, 1, 0]))
+              TLS._step(t, t + 16)
+              TLS._put(g, t, Sys.addr(turn), byte_size(turn), Process._due(g, 5000))
+              TLS._unlock(g, t)
+            end
+            1
+          end
+        end
+      end
+    end
+  end
+# What the other end sent, opened: the text of its next record, or "" with
+# the reason at the socket's word 120, as a read of the socket gives it.
+#: _read/3 needs TCP._why/2 _after/2 _alert/4 _rec/3 _why/1
+  def _read(g: integer, t: integer, d: integer): string do
+    b = Sys.peek(t + 168)
+    if Sys.peek(t + 128) != 0 do TCP._why(b, if TLS._why(t) == "EOF" do "closed" else TLS._why(t) end) else
+      {kind, text} = TLS._rec(g, t, d)
+      if kind == 23 do if text == "" do TLS._read(g, t, d) else text end else
+        if kind == 22 do
+          held: string = if Sys.peek(t + 112) == 0 do "" else Process.__any(Sys.peek(t + 112)) end
+          Sys.poke(t + 112, Process.__word(held <> text))
+          TLS._after(g, t)
+          TLS._read(g, t, d)
+        else
+          why = TLS._why(t)
+          if why == "timeout" do Sys.poke(t + 128, 0) end
+          if kind != 0 do TLS._alert(g, t, 10, "") end
+          TCP._why(b, if why == "EOF" do "closed" else if kind != 0 do TLS._why(t) else why end end)
+        end
+      end
+    end
+  end
+# The n bytes at p go out sealed before the time d: "" or why not. In TLS
+# 1.3 the keys of what is sent step on after 2**23 records, as Go's do
+# before a key has sealed too much.
+#: _write/5 needs _bs/1 _lock/2 _put/5 _seal/3 _seal1/4 _step/2 _unlock/2
+  def _write(g: integer, t: integer, p: integer, n: integer, d: integer): string do
+    if n <= 0 do "" else
+      k = if n > 16384 do 16384 else n end
+      TLS._lock(g, t)
+      why = if Sys.peek(t + 224) == 1 do "closed" else
+        fresh = if Sys.peek(t) == 0x0304 and Sys.peek(t + 40) >= 8388608 do TLS._seal(t, 22, TLS._bs([24, 0, 0, 1, 0])) else "" end
+        if fresh != "" do TLS._step(t, t + 16) end
+        r = fresh <> TLS._seal1(t, 23, Sys.text(p, k), 0)
+        TLS._put(g, t, Sys.addr(r), byte_size(r), d)
+      end
+      TLS._unlock(g, t)
+      if why != "" do why else TLS._write(g, t, p + k, n - k, d) end
+    end
+  end
+# This end says that it closes, as well as that goes (crypto/tls: Close).
+#: _shut/2 needs _bs/1 _seal/3
+  def _shut(g: integer, t: integer): integer do
+    b = Sys.peek(t + 168)
+    if Sys.peek(t + 224) == 0 and Sys.peek(t + 280) == 1 and Sys.peek(b + 16) == 0 and Sys.peek(t + 264) == 0 do
+      Sys.poke(t + 224, 1)
+      r = TLS._seal(t, 21, TLS._bs([1, 0]))
+      Sys.call(44, Sys.peek(b), Sys.addr(r), byte_size(r), 0x4000, 0, 0)
+    end
+    0
+  end
+# The socket of t is read, written and closed through t from here on.
+#: _attach/2 needs Process._g/0 _read/3 _shut/2 _write/5
+  def _attach(t: integer, b: integer): integer do
+    r: fn[integer, integer, string] = fn(d: integer, m: integer): string do TLS._read(Process._g(), t, d) end
+    w: fn[integer, integer, integer, string] = fn(p: integer, n: integer, d: integer): string do TLS._write(Process._g(), t, p, n, d) end
+    c: fn[integer] = fn(): integer do TLS._shut(Process._g(), t) end
+    Sys.poke(b + 176, t)
+    Sys.poke(b + 184, Process.__word(r))
+    Sys.poke(b + 192, Process.__word(w))
+    Sys.poke(b + 200, Process.__word(c))
+  end
+# A connection that was dialled starts to speak TLS (TCP.connect_tls,
+# https and wss addresses): what is kept for it and "", or 0 and what
+# went wrong. host: the name its certificate must be for; flags and
+# roots: words 232 and 240.
+#: _dial/5 needs _attach/2 _client/3 _new/2
+  def _dial(g: integer, b: integer, d: integer, host: string, ask: tuple[integer, list[tuple[string, string]]]): tuple[integer, string] do
+    t = TLS._new(g, b)
+    {flags, roots} = ask
+    Sys.poke(t + 200, Process.__word(host))
+    Sys.poke(t + 232, flags)
+    if roots != [] do Sys.poke(t + 240, Process.__word(roots)) end
+    why = if host == "" and Process.__and(flags, 1) == 0 do "tls: either ServerName or InsecureSkipVerify must be specified in the tls.Config" else TLS._client(g, t, d) end
+    if why != "" do {t, why} else
+      TLS._attach(t, b)
+      {t, ""}
+    end
+  end
+# ---- A server's certificates and key (crypto/tls: X509KeyPair) ----
+# The numbers of an RSA private key as PKCS #1 writes it: the modulus and
+# the two exponents; [] when the bytes are none.
+#: _pkcs1/1 needs _el/2 _strip/1 _sub/3
+  def _pkcs1(der: string): list[string] do
+    none: list[string] = []
+    {t0, a0, l0, n0} = TLS._el(der, 0)
+    {tv, av, lv, nv} = TLS._el(der, a0)
+    {tn, an, ln, nn} = TLS._el(der, nv)
+    {te, ae, le, ne} = TLS._el(der, nn)
+    {td, ad, ld, nd} = TLS._el(der, ne)
+    if t0 != 0x30 or tv != 2 or tn != 2 or te != 2 or td != 2 or nd > n0 or lv != 1 do none else [TLS._strip(TLS._sub(der, an, ln)), TLS._strip(TLS._sub(der, ae, le)), TLS._strip(TLS._sub(der, ad, ld))] end
+  end
+# The curve and the scalar of an EC private key as SEC 1 writes it; the
+# curve is the one given when the key names none, 0 when the bytes are
+# no such key.
+#: _sec1/2 needs _el/2 _hex/1 _sub/3
+  def _sec1(der: string, given: integer): tuple[integer, string] do
+    {t0, a0, l0, n0} = TLS._el(der, 0)
+    {tv, av, lv, nv} = TLS._el(der, a0)
+    {td, ad, ld, nd} = TLS._el(der, nv)
+    {tp, ap, lp, np} = TLS._el(der, nd)
+    oid = if tp == 0xa0 do TLS._sub(der, ap, lp) else "" end
+    curve = if oid == TLS._hex("06082a8648ce3d030107") do 23 else if oid == TLS._hex("06052b81040022") do 24 else if oid == TLS._hex("06052b81040023") do 25 else given end end end
+    if t0 != 0x30 or tv != 2 or lv != 1 or Sys.byte(Sys.addr(der) + av) != 1 or td != 4 do {0, ""} else {curve, TLS._sub(der, ad, ld)} end
+  end
+# A private key from the bytes of a PEM block (crypto/tls:
+# parsePrivateKey: PKCS #8, then PKCS #1, then SEC 1): its kind (1 RSA, 2
+# a curve, 3 Ed25519; 0 when the bytes are no key), its curve and its
+# numbers.
+#: _privkey/1 needs _edkey/1 _el/2 _hex/1 _pad/2 _pkcs1/1 _sec1/2 _sub/3
+  def _privkey(der: string): tuple[integer, integer, list[string]] do
+    none: list[string] = []
+    {t0, a0, l0, n0} = TLS._el(der, 0)
+    {tv, av, lv, nv} = TLS._el(der, a0)
+    {ta, aa, la, na} = TLS._el(der, nv)
+    {to, ao, lo, no} = TLS._el(der, aa)
+    {tk, ak, lk, nk} = TLS._el(der, na)
+    oid = TLS._sub(der, ao, lo)
+    inner = TLS._sub(der, ak, lk)
+    params = TLS._sub(der, no, na - no)
+    wrapped = t0 == 0x30 and tv == 2 and ta == 0x30 and to == 6 and tk == 4
+    given = if params == TLS._hex("06082a8648ce3d030107") do 23 else if params == TLS._hex("06052b81040022") do 24 else if params == TLS._hex("06052b81040023") do 25 else 0 end end end
+    {curve, d} = if wrapped and oid == TLS._hex("2a8648ce3d0201") do TLS._sec1(inner, given) else if wrapped do {0, ""} else TLS._sec1(der, 0) end end
+    rsa = if wrapped and oid == TLS._hex("2a864886f70d010101") do TLS._pkcs1(inner) else if wrapped do none else TLS._pkcs1(der) end end
+    size = if curve == 23 do 32 else if curve == 24 do 48 else 66 end end
+    if rsa != [] do {1, 0, rsa} else
+      if curve != 0 and byte_size(d) <= size do {2, curve, [TLS._pad(d, size)]} else
+        if wrapped and oid == TLS._hex("2b6570") and byte_size(inner) == 34 and TLS._sub(inner, 0, 2) == TLS._hex("0420") do
+          {seed, pk, dd} = TLS._edkey(TLS._sub(inner, 2, 32))
+          {3, 0, [seed, pk, dd]}
+        else {0, 0, none} end
+      end
+    end
+  end
+# The certificates of one PEM text and the key of another, as a server
+# shows and uses them: the certificates, the key's kind, its curve and
+# its numbers; and "" or what Go says is wrong.
+#: _pair/2 needs Enum.at/3 Enum.filter/2 Enum.join/2 Enum.map/2 String.ends_with?/2 _before/2 _cert/1 _curve/1 _ecpub/2 _p8why/1 _pem/2 _privkey/1
+  def _pair(certs: string, keys: string): tuple[tuple[list[string], integer, integer, list[string]], string] do
+    none: list[string] = []
+    blocks = TLS._pem(certs, 0)
+    ders = Enum.map(Enum.filter(blocks, fn x -> elem(x, 0) == "CERTIFICATE" end), fn x -> elem(x, 1) end)
+    other = Enum.map(Enum.filter(blocks, fn x -> elem(x, 0) != "CERTIFICATE" end), fn x -> elem(x, 0) end)
+    kb = TLS._pem(keys, 0)
+    found = Enum.filter(kb, fn x -> elem(x, 0) == "PRIVATE KEY" or String.ends_with?(elem(x, 0), " PRIVATE KEY") end)
+    skipped = TLS._before(kb, none)
+    bad = {{none, 0, 0, none}, ""}
+    if ders == [] do
+      {elem(bad, 0), if other == [] do "tls: failed to find any PEM data in certificate input" else if length(other) == 1 and String.ends_with?(hd(other), "PRIVATE KEY") do "tls: failed to find certificate PEM data in certificate input, but did find a private key; PEM inputs may have been switched" else "tls: failed to find \"CERTIFICATE\" PEM block in certificate input after skipping PEM blocks of the following types: [" <> Enum.join(other, " ") <> "]" end end}
+    else
+      if found == [] do
+        {elem(bad, 0), if skipped == [] do "tls: failed to find any PEM data in key input" else if skipped == ["CERTIFICATE"] do "tls: found a certificate rather than a key in the PEM for the private key" else "tls: failed to find PEM block with type ending in \"PRIVATE KEY\" in key input after skipping PEM blocks of the following types: [" <> Enum.join(skipped, " ") <> "]" end end}
+      else
+        {texts, nums, dns, ips} = TLS._cert(hd(ders))
+        {kind, curve, key} = TLS._privkey(elem(hd(found), 1))
+        alg = Enum.at(nums, 2, 0)
+        pk = Enum.at(texts, 5, "")
+        if texts == [] do {elem(bad, 0), "x509: malformed certificate"} else
+          if kind == 0 do {elem(bad, 0), "tls: failed to parse private key: " <> TLS._p8why(elem(hd(found), 1))} else
+            if alg == 0 do {elem(bad, 0), "tls: unknown public key algorithm"} else
+              if alg != kind do {elem(bad, 0), "tls: private key type does not match public key type"} else
+                same = if kind == 1 do Enum.at(key, 0, "") == pk and Enum.at(key, 1, "") == Enum.at(texts, 6, "") else if kind == 3 do Enum.at(key, 1, "") == pk else curve == Enum.at(nums, 3, 0) and TLS._ecpub(TLS._curve(curve), hd(key)) == pk end end
+                if not same do {elem(bad, 0), "tls: private key does not match public key"} else {{ders, kind, curve, key}, ""} end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# The kinds of the blocks before the first that holds a private key.
+#: _before/2 needs String.ends_with?/2
+  def _before(blocks: list[tuple[string, string, integer]], got: list[string]): list[string] do
+    case blocks do
+      [] -> got
+      [x | rest] -> if elem(x, 0) == "PRIVATE KEY" or String.ends_with?(elem(x, 0), " PRIVATE KEY") do got else TLS._before(rest, got ++ [elem(x, 0)]) end
+    end
+  end
+# The certificates and the key of two files (crypto/tls: LoadX509KeyPair).
+#: _keypair/2 needs Sys.open/3 TCP._file/1 _pair/2
+  def _keypair(certfile: string, keyfile: string): tuple[tuple[list[string], integer, integer, list[string]], string] do
+    none: list[string] = []
+    a = Sys.open(certfile, 0, 0)
+    if a >= 0 do Sys.call(3, a) end
+    b = if a < 0 do 0 else Sys.open(keyfile, 0, 0) end
+    if b > 0 do Sys.call(3, b) end
+    if a < 0 do {{none, 0, 0, none}, "open " <> certfile <> ": " <> Sys.errno(0 - a)} else
+      if b < 0 do {{none, 0, 0, none}, "open " <> keyfile <> ": " <> Sys.errno(0 - b)} else TLS._pair(TCP._file(certfile), TCP._file(keyfile)) end
+    end
+  end
+# ---- The accepting end (crypto/tls: handshake_server.go) ----
+# The two-byte numbers from i up to stop as Go's %x writes a list of them.
+#: _hexes/3 needs _u2/2
+  def _hexes(s: string, i: integer, stop: integer): string do
+    if i + 2 > stop do "" else String.downcase(Integer.to_string(TLS._u2(s, i), 16)) <> (if i + 4 > stop do "" else " " end) <> TLS._hexes(s, i + 2, stop) end
+  end
+# The first of the numbers in prefs (two bytes each) that is among those
+# of s from i up to stop, step bytes apart; 0 for none.
+#: _pick/5 needs _among/5 _u2/2
+  def _pick(prefs: string, s: string, i: integer, stop: integer, step: integer): integer do
+    if prefs == "" do 0 else
+      v = TLS._u2(prefs, 0)
+      if TLS._among(s, i, stop, v, step) == 1 do v else TLS._pick(Sys.text(Sys.addr(prefs) + 2, byte_size(prefs) - 2), s, i, stop, step) end
+    end
+  end
+# The key a client sends for a group among its key shares from i up to
+# stop; "" for none.
+#: _keyof/4 needs _sub/3 _u2/2
+  def _keyof(s: string, i: integer, stop: integer, group: integer): string do
+    k = TLS._u2(s, i + 2)
+    if i + 4 > stop or i + 4 + k > stop do "" else if TLS._u2(s, i) == group do TLS._sub(s, i + 4, k) else TLS._keyof(s, i + 4 + k, stop, group) end end
+  end
+# Where the parts of a ClientHello stand: its suites, their end, its
+# extensions and their end; the first is -1 for a malformed one.
+#: _chparts/1 needs _b/2 _u2/2
+  def _chparts(ch: string): list[integer] do
+    n = byte_size(ch)
+    k = TLS._b(ch, 38)
+    so = 39 + k
+    co = so + 2 + TLS._u2(ch, so)
+    e = co + 1 + TLS._b(ch, co)
+    stop = if e == n do e else e + 2 + TLS._u2(ch, e) end
+    if n < 43 or stop != n or TLS._b(ch, 0) != 1 or Process.__and(TLS._u2(ch, so), 1) == 1 do [-1, 0, 0, 0] else [so + 2, co, if e == n do e else e + 2 end, stop] end
+  end
+# The handshake of the accepting end over the socket of t before the
+# time d, with the certificates and key at word 248: "" when it is over,
+# else what went wrong.
+#: _server/3 needs Crypto.strong_rand_bytes/1 _alert/4 _among/5 _chparts/1 _hexes/3 _s12/4 _s13/4 _seen/2 _sub/3 _u2/2 _want/4 _why/1 _xb/4 _xf/4
+  def _server(g: integer, t: integer, d: integer): string do
+    ch = TLS._want(g, t, 1, d)
+    [so, co, e, stop] = TLS._chparts(ch)
+    only13 = Process.__and(Sys.peek(t + 232), 2) == 2
+    if ch == "" do TLS._why(t) else
+      if so < 0 do TLS._alert(g, t, 50, "") <> TLS._why(t) else
+        TLS._seen(t, ch)
+        Sys.poke(t + 376, Process.__word(TLS._sub(ch, 6, 32)))
+        Sys.poke(t + 384, Process.__word(Crypto.strong_rand_bytes(32)))
+        vs = TLS._xb(ch, e, stop, 43)
+        legacy = TLS._u2(ch, 4)
+        v13 = TLS._among(vs, 1, byte_size(vs), 0x0304, 2) == 1
+        v12 = not only13 and (if TLS._xf(ch, e, stop, 43) >= 0 do TLS._among(vs, 1, byte_size(vs), 0x0303, 2) == 1 else legacy >= 0x0303 end)
+        if v13 do TLS._s13(g, t, d, ch) else
+          if v12 do TLS._s12(g, t, d, ch) else
+            offered = if vs != "" do TLS._hexes(vs, 1, byte_size(vs)) else if legacy >= 0x0303 do "303 302 301" else if legacy == 0x0302 do "302 301" else if legacy == 0x0301 do "301" else "" end end end end
+            TLS._alert(g, t, 70, "tls: client offered only unsupported versions: [" <> offered <> "]") <> TLS._why(t)
+          end
+        end
+      end
+    end
+  end
+# The certificates of a server as a Certificate message holds them.
+#: _certs/2 needs Enum.join/2 Enum.map/2 _v3/1
+  def _certs(ders: list[string], v13: boolean): string do
+    TLS._v3(Enum.join(Enum.map(ders, fn x -> TLS._v3(x) <> (if v13 do "\x00\x00" else "" end) end), ""))
+  end
+# TLS 1.3 from the ClientHello on (handshake_server_tls13.go).
+#: _s13/4 needs Enum.at/3 TCP._opt/4 _aes/0 _alert/4 _apkeys/2 _b/2 _bad/2 _bs/1 _certs/2 _chparts/1 _fin/2 _first13/3 _h/2 _hex/1 _hexes/3 _hskeys/3 _keyof/4 _keys/3 _msg/3 _n2/1 _out/4 _pick/5 _scheme/5 _seal/3 _seen/2 _share/1 _shared/3 _sign/3 _sub/3 _suite/1 _th/1 _v1/1 _v2/1 _want/4 _why/1 _withkey/3 _x/2 _xb/4
+  def _s13(g: integer, t: integer, d: integer, ch: string): string do
+    [so, co, e, stop] = TLS._chparts(ch)
+    id: tuple[list[string], integer, integer, list[string]] = Process.__any(Sys.peek(t + 248))
+    chacha = TLS._aes() == 0 or TLS._pick(TLS._hex("130113021303"), ch, so, co, 2) == 0x1303 and TLS._first13(ch, so, co) == 0x1303
+    suite = TLS._pick(TLS._hex(if chacha do "130313011302" else "130113021303" end), ch, so, co, 2)
+    groups = TLS._xb(ch, e, stop, 10)
+    shares = TLS._xb(ch, e, stop, 51)
+    algs = TLS._xb(ch, e, stop, 13)
+    keyed = TLS._withkey(TLS._hex("001d001700180019"), groups, shares)
+    group = if keyed != 0 do keyed else TLS._pick(TLS._hex("001d001700180019"), groups, 2, byte_size(groups), 2) end
+    scheme = TLS._scheme(algs, 2, byte_size(algs), id, true)
+    sid = TLS._sub(ch, 38, 1 + TLS._b(ch, 38))
+    s = TLS._suite(suite)
+    if suite == 0 do TLS._alert(g, t, 40, "tls: no cipher suite supported by both client and server; client offered: [" <> TLS._hexes(ch, so, co) <> "]") <> TLS._why(t) else
+      if group == 0 do TLS._alert(g, t, 40, "tls: no key exchanges supported by both client and server") <> TLS._why(t) else
+        Sys.poke(t, 0x0304)
+        Sys.poke(t + 8, suite)
+        Sys.poke(t + 160, Enum.at(s, 2, 3))
+        ch2 = if keyed != 0 do ch else
+          alg = Enum.at(s, 2, 3)
+          Sys.poke(t + 176, Process.__word(TLS._bs([254, 0, 0, if alg == 4 do 48 else 32 end]) <> TLS._h(alg, ch)))
+          hrr = TLS._msg(t, 2, TLS._bs([3, 3]) <> TLS._hex("cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c") <> sid <> TLS._n2(suite) <> TLS._bs([0]) <> TLS._v2(TLS._x(43, TLS._hex("0304")) <> TLS._x(51, TLS._n2(group))))
+          sent = TLS._out(g, t, TLS._seal(t, 22, hrr) <> TLS._bs([20, 3, 3, 0, 1, 1]), d)
+          Sys.poke(t + 408, 1)
+          again = if sent != "" do TLS._bad(t, sent) else TLS._want(g, t, 1, d) end
+          if again != "" do TLS._seen(t, again) end
+          again
+        end
+        [so2, co2, e2, stop2] = TLS._chparts(ch2)
+        theirs = if so2 < 0 do "" else TLS._keyof(TLS._xb(ch2, e2, stop2, 51), 2, byte_size(TLS._xb(ch2, e2, stop2, 51)), group) end
+        if ch2 == "" do TLS._why(t) else
+          if theirs == "" do TLS._alert(g, t, 47, "tls: client didn't send one key share in second ClientHello") <> TLS._why(t) else
+            {mine, pub} = TLS._share(group)
+            shared = TLS._shared(group, mine, theirs)
+            if shared == "" do TLS._alert(g, t, 47, "tls: invalid client key share") <> TLS._why(t) else
+              if scheme == 0 do TLS._alert(g, t, 40, "tls: peer doesn't support any of the certificate's signature algorithms") <> TLS._why(t) else
+                sr: string = Process.__any(Sys.peek(t + 384))
+                sh = TLS._msg(t, 2, TLS._bs([3, 3]) <> sr <> sid <> TLS._n2(suite) <> TLS._bs([0]) <> TLS._v2(TLS._x(43, TLS._hex("0304")) <> TLS._x(51, TLS._n2(group) <> TLS._v2(pub))))
+                r1 = TLS._seal(t, 22, sh) <> (if Sys.peek(t + 408) == 1 do "" else TLS._bs([20, 3, 3, 0, 1, 1]) end)
+                master = TLS._hskeys(t, shared, 64)
+                ee = TLS._msg(t, 8, TLS._v2(""))
+                cert = TLS._msg(t, 11, TLS._v1("") <> TLS._certs(elem(id, 0), true))
+                sig = TLS._sign(id, scheme, String.duplicate(" ", 64) <> "TLS 1.3, server CertificateVerify\x00" <> TLS._th(t))
+                cv = TLS._msg(t, 15, TLS._n2(scheme) <> TLS._v2(sig))
+                fin = TLS._msg(t, 20, TLS._fin(t, t + 16))
+                r2 = TLS._seal(t, 22, ee <> cert <> cv <> fin)
+                {cap, sap} = TLS._apkeys(t, master)
+                sent = if sig == "" do "tls: failed to sign handshake" else TLS._out(g, t, r1 <> r2, d) end
+                TCP._opt(Sys.peek(Sys.peek(t + 168)), 6, 12, 1)
+                want = TLS._fin(t, t + 64)
+                TLS._keys(t, t + 16, sap)
+                theirfin = if sent != "" do TLS._bad(t, sent) else TLS._want(g, t, 20, d) end
+                pending: string = if Sys.peek(t + 112) == 0 do "" else Process.__any(Sys.peek(t + 112)) end
+                if theirfin == "" do TLS._why(t) else
+                  if TLS._sub(theirfin, 4, byte_size(theirfin) - 4) != want do TLS._alert(g, t, 51, "tls: invalid client finished hash") <> TLS._why(t) else
+                    if pending != "" do TLS._alert(g, t, 10, "") <> TLS._why(t) else
+                      TLS._keys(t, t + 64, cap)
+                      Sys.poke(t + 280, 1)
+                      ""
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# The first suite of TLS 1.3 a client names.
+#: _first13/3 needs _u2/2
+  def _first13(ch: string, i: integer, stop: integer): integer do
+    v = TLS._u2(ch, i)
+    if i + 2 > stop do 0 else if v >= 0x1301 and v <= 0x1303 do v else TLS._first13(ch, i + 2, stop) end end
+  end
+# The first group of prefs that a client supports and sent a key for.
+#: _withkey/3 needs _among/5 _keyof/4 _u2/2
+  def _withkey(prefs: string, groups: string, shares: string): integer do
+    if prefs == "" do 0 else
+      v = TLS._u2(prefs, 0)
+      if TLS._among(groups, 2, byte_size(groups), v, 2) == 1 and TLS._keyof(shares, 2, byte_size(shares), v) != "" do v else TLS._withkey(Sys.text(Sys.addr(prefs) + 2, byte_size(prefs) - 2), groups, shares) end
+    end
+  end
+# TLS 1.2 from the ClientHello on (handshake_server.go).
+#: _s12/4 needs Enum.at/3 _aes/0 _alert/4 _among/5 _b/2 _bad/2 _bs/1 _certs/2 _chparts/1 _fin12/2 _hex/1 _hexes/3 _keys12/3 _msg/3 _n2/1 _out/4 _pick/5 _scheme/5 _seal/3 _seen/2 _share/1 _shared/3 _sign/3 _sub/3 _suite/1 _turn/1 _v1/1 _v2/1 _want/4 _why/1 _x/2 _xb/4 _xf/4
+  def _s12(g: integer, t: integer, d: integer, ch: string): string do
+    [so, co, e, stop] = TLS._chparts(ch)
+    id: tuple[list[string], integer, integer, list[string]] = Process.__any(Sys.peek(t + 248))
+    rsa = elem(id, 1) == 1
+    aes = TLS._aes() == 1
+    prefs = if rsa do (if aes do "c02fc030cca8" else "cca8c02fc030" end) <> "c013c014" else (if aes do "c02bc02ccca9" else "cca9c02bc02c" end) <> "c009c00a" end
+    suite = TLS._pick(TLS._hex(prefs), ch, so, co, 2)
+    groups = TLS._xb(ch, e, stop, 10)
+    algs = TLS._xb(ch, e, stop, 13)
+    curve = TLS._pick(TLS._hex("001d001700180019"), groups, 2, byte_size(groups), 2)
+    scheme = TLS._scheme(algs, 2, byte_size(algs), id, false)
+    s = TLS._suite(suite)
+    if suite == 0 or curve == 0 do TLS._alert(g, t, 40, "tls: no cipher suite supported by both client and server; client offered: [" <> TLS._hexes(ch, so, co) <> "]") <> TLS._why(t) else
+      if scheme == 0 do TLS._alert(g, t, 40, "tls: peer doesn't support any of the certificate's signature algorithms") <> TLS._why(t) else
+        Sys.poke(t, 0x0303)
+        Sys.poke(t + 8, suite)
+        Sys.poke(t + 160, Enum.at(s, 2, 3))
+        ems = TLS._xf(ch, e, stop, 23) >= 0
+        if ems do Sys.poke(t + 392, 1) end
+        secure = TLS._xf(ch, e, stop, 0xff01) >= 0 or TLS._among(ch, so, co, 0x00ff, 2) == 1
+        cr: string = Process.__any(Sys.peek(t + 376))
+        sr = TLS._sub(Process.__any(Sys.peek(t + 384)), 0, 24) <> "DOWNGRD\x01"
+        Sys.poke(t + 384, Process.__word(sr))
+        exts = (if secure do TLS._x(0xff01, TLS._bs([0])) else "" end) <> (if ems do TLS._x(23, "") else "" end) <> (if TLS._xf(ch, e, stop, 11) >= 0 do TLS._x(11, TLS._bs([1, 0])) else "" end)
+        sh = TLS._msg(t, 2, TLS._bs([3, 3]) <> sr <> TLS._bs([0]) <> TLS._n2(suite) <> TLS._bs([0]) <> (if exts == "" do "" else TLS._v2(exts) end))
+        cert = TLS._msg(t, 11, TLS._certs(elem(id, 0), false))
+        {mine, pub} = TLS._share(curve)
+        params = TLS._bs([3]) <> TLS._n2(curve) <> TLS._v1(pub)
+        sig = TLS._sign(id, scheme, cr <> sr <> params)
+        ske = TLS._msg(t, 12, params <> TLS._n2(scheme) <> TLS._v2(sig))
+        done = TLS._msg(t, 14, "")
+        sent = if sig == "" do "tls: failed to sign handshake" else TLS._out(g, t, TLS._seal(t, 22, sh <> cert <> ske <> done), d) end
+        cke = if sent != "" do TLS._bad(t, sent) else TLS._want(g, t, 16, d) end
+        shared = if cke == "" or byte_size(cke) != 5 + TLS._b(cke, 4) do "" else TLS._shared(curve, mine, TLS._sub(cke, 5, TLS._b(cke, 4))) end
+        if cke == "" do TLS._why(t) else
+          if shared == "" do TLS._alert(g, t, 47, "tls: invalid ClientKeyExchange message") <> TLS._why(t) else
+            TLS._seen(t, cke)
+            TLS._keys12(t, shared, 0)
+            fin = TLS._want(g, t, 20, d)
+            if fin == "" do TLS._why(t) else
+              if Sys.peek(t + 64) == 0 do TLS._alert(g, t, 10, "") <> TLS._why(t) else
+                if TLS._sub(fin, 4, byte_size(fin) - 4) != TLS._fin12(t, "client finished") do TLS._alert(g, t, 40, "tls: client's Finished message is incorrect") <> TLS._why(t) else
+                  TLS._seen(t, fin)
+                  r1 = TLS._turn(t)
+                  r2 = TLS._seal(t, 22, TLS._msg(t, 20, TLS._fin12(t, "server finished")))
+                  Sys.poke(t + 280, 1)
+                  last = TLS._out(g, t, r1 <> r2, d)
+                  if last != "" do TLS._bad(t, last) <> TLS._why(t) else "" end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+# A connection that was accepted starts to speak TLS (HTTP.serve_tls):
+# what is kept for it and "", or 0 and what went wrong.
+#: _accept/5 needs _attach/2 _new/2 _server/3
+  def _accept(g: integer, b: integer, d: integer, id: tuple[list[string], integer, integer, list[string]], flags: integer): tuple[integer, string] do
+    t = TLS._new(g, b)
+    Sys.poke(t + 232, flags)
+    Sys.poke(t + 248, Process.__word(id))
+    why = TLS._server(g, t, d)
+    if why != "" do {t, why} else
+      TLS._attach(t, b)
+      {t, ""}
+    end
+  end
+# Exactly k bytes of what the other end sent, or "" when they did not come.
+#: _get/4 needs _from/2 _read/3 _sub/3
+  def _get(g: integer, t: integer, k: integer, d: integer): string do
+    held: string = if Sys.peek(t + 120) == 0 do "" else Process.__any(Sys.peek(t + 120)) end
+    if byte_size(held) >= k do
+      Sys.poke(t + 120, Process.__word(TLS._from(held, k)))
+      TLS._sub(held, 0, k)
+    else
+      more = TLS._read(g, t, d)
+      if more == "" do "" else
+        Sys.poke(t + 120, Process.__word(held <> more))
+        TLS._get(g, t, k, d)
+      end
+    end
+  end
+# ---- What Go says of a private key it cannot read ----
+# The tag and length at i as encoding/asn1 reads them (parseTagAndLength):
+# what is wrong, the class, the tag, 1 for a constructed element, the
+# length and where the content starts.
+#: _tl/2 needs _b/2 _tl1/4
+  def _tl(s: string, i: integer): tuple[string, list[integer]] do
+    n = byte_size(s)
+    b = TLS._b(s, i)
+    class = Process.__shr(b, 6)
+    compound = Process.__and(Process.__shr(b, 5), 1)
+    tag = Process.__and(b, 31)
+    j = i + 1
+    if tag == 31 do {"asn1: structure error: base 128 integer too large", [0, 0, 0, 0, 0]} else
+      if j >= n do {"asn1: syntax error: truncated tag or length", [0, 0, 0, 0, 0]} else
+        l = TLS._b(s, j)
+        if l < 128 do {"", [class, tag, compound, l, j + 1]} else
+          if l == 128 do {"asn1: syntax error: indefinite length found (not DER)", [0, 0, 0, 0, 0]} else
+            {why, len} = TLS._tl1(s, j + 1, l - 128, 0)
+            if why != "" do {why, [0, 0, 0, 0, 0]} else
+              if len < 128 do {"asn1: structure error: non-minimal length", [0, 0, 0, 0, 0]} else {"", [class, tag, compound, len, j + 1 + l - 128]} end
+            end
+          end
+        end
+      end
+    end
+  end
+#: _tl1/4 needs _b/2
+  def _tl1(s: string, i: integer, left: integer, len: integer): tuple[string, integer] do
+    if left == 0 do {"", len} else
+      if i >= byte_size(s) do {"asn1: syntax error: truncated tag or length", 0} else
+        if len >= 8388608 do {"asn1: structure error: length too large", 0} else
+          v = len * 256 + TLS._b(s, i)
+          if v == 0 do {"asn1: structure error: superfluous leading zeros in length", 0} else TLS._tl1(s, i + 1, left - 1, v) end
+        end
+      end
+    end
+  end
+# What encoding/asn1 says of the element at i when a field of a type
+# wants the tag (compound: 1 for a SEQUENCE): "" when it is one, and
+# where its content starts and its length.
+#: _field/5 needs _tl/2
+  def _field(s: string, i: integer, tag: integer, compound: integer, name: string): tuple[string, integer, integer] do
+    if i >= byte_size(s) do {"asn1: syntax error: sequence truncated", 0, 0} else
+      {why, f} = TLS._tl(s, i)
+      [c, t, cp, len, off] = f
+      if why != "" do {why, 0, 0} else
+        if c != 0 or t != tag or cp != compound do {"asn1: structure error: tags don't match (#{tag} vs {class:#{c} tag:#{t} length:#{len} isCompound:#{cp == 1}}) {optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} " <> name <> " @#{off}", 0, 0} else
+          if off + len > byte_size(s) do {"asn1: syntax error: data truncated", 0, 0} else {"", off, len} end
+        end
+      end
+    end
+  end
+# An object identifier's content with dots, as Go writes it.
+#: _dotted/3 needs _b/2 _first?/2
+  def _dotted(oid: string, i: integer, acc: integer): string do
+    if i >= byte_size(oid) do "" else
+      b = TLS._b(oid, i)
+      v = acc * 128 + Process.__and(b, 127)
+      if b >= 128 and v < 72057594037927936 do TLS._dotted(oid, i + 1, v) else
+        (if i == 0 or TLS._first?(oid, i) do (if v < 80 do "#{div(v, 40)}.#{rem(v, 40)}" else "2.#{v - 80}" end) else ".#{v}" end) <> TLS._dotted(oid, i + 1, 0)
+      end
+    end
+  end
+# 1 when every byte before i continues a number.
+#: _first?/2 needs _b/2
+  def _first?(oid: string, i: integer): boolean do
+    if i == 0 do true else TLS._b(oid, i - 1) >= 128 and TLS._first?(oid, i - 1) end
+  end
+# What x509.ParsePKCS8PrivateKey says of bytes that are no key this
+# library reads, as far as its words are followed here.
+#: _p8why/1 needs _dotted/3 _field/5 _hex/1 _sub/3
+  def _p8why(der: string): string do
+    {e0, a0, l0} = TLS._field(der, 0, 16, 1, "pkcs8")
+    inner = TLS._sub(der, a0, l0)
+    {e1, a1, l1} = if e0 != "" do {e0, 0, 0} else TLS._field(inner, 0, 2, 0, "int") end
+    {e2, a2, l2} = if e1 != "" do {e1, 0, 0} else TLS._field(inner, a1 + l1, 16, 1, "AlgorithmIdentifier") end
+    alg = TLS._sub(inner, a2, l2)
+    {e3, a3, l3} = if e2 != "" do {e2, 0, 0} else TLS._field(alg, 0, 6, 0, "ObjectIdentifier") end
+    {e4, a4, l4} = if e3 != "" do {e3, 0, 0} else TLS._field(inner, a2 + l2, 4, 0, "") end
+    oid = TLS._sub(alg, a3, l3)
+    if e4 != "" do e4 else
+      if oid == TLS._hex("2a864886f70d010101") do "x509: failed to parse RSA private key embedded in PKCS#8" else
+        if oid == TLS._hex("2a8648ce3d0201") do "x509: failed to parse EC private key embedded in PKCS#8" else
+          if oid == TLS._hex("2b6570") do "x509: invalid Ed25519 private key" else "x509: PKCS#8 wrapping contained private key with unknown algorithm: " <> TLS._dotted(oid, 0, 0) end
+        end
+      end
+    end
+  end

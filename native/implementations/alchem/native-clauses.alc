@@ -1,0 +1,702 @@
+defmodule NativeClauses do
+  # Function definitions as the pinned language has them: functions of one
+  # name with different numbers of parameters, default arguments, functions
+  # written as several clauses with patterns and guards, forms of a function
+  # for arguments of different types, return and raise
+  # (spec/alchem-clauses.md).
+  #
+  # A table record of a function keeps, after its flags: where its result
+  # type is written (3 bytes, 0 when it is left out), how many of its
+  # parameters have default values, and where its guard starts (3 bytes, 0
+  # for none). The first clause of a function has the function's record;
+  # every further clause has a record of its own with flags 40, which no
+  # lookup finds and which has no code.
+
+  # The position after the pattern of a parameter.
+  def nj_pattern_end(source: bytes, pos: integer): integer do
+    start = nc_start(source,pos)
+    if byte_at(source,start) == 58 do nc_end(source,start+1) else np_skip(source,start) end
+  end
+  # The parameter at pos: pattern, then ": type", then "\\ value", each of
+  # the last two optional. Where it ends (at its "," or ")"), where its
+  # default value starts (0 for none), where its pattern ends, then its type
+  # as written, empty when it has none.
+  def nj_param(source: bytes, pos: integer): bytes do
+    stop = nj_pattern_end(source,pos)
+    typed = if stop < 0 do 0 else nc_word(source,stop,b[58]) end
+    kind = if typed == 1 do nc_type(source,nc_end(source,stop)) else b[] end
+    after = if typed == 1 do nc_pos(kind) else stop end
+    mark = nc_start(source,after)
+    given = if after < 0 do 0 else if byte_at(source,mark)*256+byte_at(source,mark+1) == 23644 do 1 else 0 end end
+    value = if given == 1 do nc_start(source,mark+2) else 0 end
+    last = if given == 1 do nc_span(source,nc_span_state(value,0,0,0,0),16777216) else after end
+    if after < 0 do b[] else if last <= value do b[] else
+      nc_join(nc_join(nc_u24(last),nc_u24(value),nc_u24(stop)),nc_kind(kind),b[])
+    end end
+  end
+  # The position after a parameter's type: past its default value, if it has
+  # one, and its "," or ")".
+  def nj_after(source: bytes, pos: integer): integer do
+    start = nc_start(source,pos)
+    if byte_at(source,start) != 92 do nc_end(source,pos) else
+      if byte_at(source,start+1) != 92 do -1 else nc_end(source,nc_span(source,nc_span_state(nc_start(source,start+2),0,0,0,0),16777216)) end
+    end
+  end
+  # The parameters from pos to the ")": the position after it, how many
+  # there are and how many have a default value. One without a default
+  # cannot follow one that has it, only a parameter that is a name has one,
+  # and the value is a constant.
+  def nj_params(source: bytes, pos: integer, count: integer, defaults: integer): bytes do
+    item = nj_param(source,pos)
+    next = nc_pos(item)
+    given = if nc_cursor(item,3) > 0 do 1 else 0 end
+    sound = if given == 0 do 1 else nj_plain(source,nc_start(source,pos),b[0])*nj_constant(source,nc_cursor(item,3),next,16777216) end
+    if count >= 65535 do b[] else if next < 0 do b[] else if defaults*(1-given) > 0 do b[] else if sound == 0 do b[] else
+      if nc_word(source,next,b[41]) == 1 do nc_join(nc_u24(nc_end(source,next)),nc_u24(count+1),nc_u24(defaults+given)) else
+        if nc_word(source,next,b[44]) == 1 do nj_params(source,nc_end(source,next),count+1,defaults+given) else b[] end
+      end
+    end end end end
+  end
+  # The do that opens a body after the guard at pos.
+  def nj_guard_end(source: bytes, pos: integer, budget: integer): integer do
+    start = nc_start(source,pos)
+    if start < 0 do -1 else if budget == 0 do -1 else if start >= Enum.count(source) do -1 else
+      if nc_opens(source,start) == 1 do start else
+        if nc_word(source,start,b[101,110,100])+nc_word(source,start,b[100,101,102])+nc_word(source,start,b[100,101,102,112]) > 0 do -1 else nj_guard_end(source,nc_end(source,start),budget-1) end
+      end
+    end end end
+  end
+  # The rest of a definition after its parameters: ": type", "when guard",
+  # the body. head: the positions of the name, its end and the parameters,
+  # the position after them, their number and the number of defaults.
+  def nj_signature(source: bytes, pos: integer, owner: integer, head: bytes): bytes do
+    after = nc_cursor(head,9)
+    is_main = nc_word(source,nc_cursor(head,0),b[109,97,105,110])
+    typed = nc_word(source,after,b[58])
+    result = if typed == 1 do nc_type(source,nc_end(source,after)) else nc_value(after,b[],b[0]) end
+    rest = nc_pos(result)
+    guarded = if rest < 0 do 0 else nc_word(source,rest,b[119,104,101,110]) end
+    open = if guarded == 1 do nj_guard_end(source,nc_end(source,rest),16777216) else rest end
+    body = nc_expect(source,open,b[100,111])
+    stop = if body < 0 do -1 else nc_body_end(source,body,16777216) end
+    flags = if is_main == 1 do 1 else nc_word(source,pos,b[100,101,102,112])*16 end
+    # A record holds up to 255 defaults in a byte; more are counted again
+    # where they are needed (nj_defaulted).
+    word = nc_join(nc_u24(if typed == 1 do nc_start(source,nc_end(source,after)) else 0 end),b[if nc_cursor(head,15) > 255 do 255 else nc_cursor(head,15) end],nc_join(nc_u24(if guarded == 1 do nc_start(source,nc_end(source,rest)) else 0 end),b[Enum.at(head,13,0)],nc_u16(owner)))
+    if stop < 0 do b[] else if is_main*(nc_cursor(head,12)+typed+guarded+nc_word(source,pos,b[100,101,102,112])) != 0 do b[] else
+      nc_join(nc_slice(head,0,9),nc_join(nc_u24(body),nc_u24(stop),b[Enum.at(head,12,0),flags]),word)
+    end end
+  end
+  # Record index of the table when it is a function of module owner with the
+  # name at pos, -1 otherwise.
+  def nj_named(source: bytes, pos: integer, table: bytes, index: integer, owner: integer): integer do
+    start = nc_meta(table,index,0)
+    size = nc_meta(table,index,3)-start
+    if Enum.at(table,index*27+16,0) >= 32 do -1 else if nc_owner(table,index) != owner do -1 else
+      if nc_end(source,pos)-pos != size do -1 else if nc_equal(source,pos,start,size) == 1 do index else -1 end end
+    end end
+  end
+  # The first function from first up to stop with the name at pos in module
+  # owner, -1 when there is none.
+  def nj_scan(source: bytes, pos: integer, table: bytes, first: integer, stop: integer, owner: integer): integer do
+    if nc_indexed(table) == 0 do nj_scan_plain(source,pos,table,first,stop,owner) else
+      found = if first >= stop do -1 else nc_index_find(source,table,nc_index_key(table,pos,nc_end(source,pos)-pos,owner,first),0) end
+      if found >= stop do -1 else found end
+    end
+  end
+  def nj_scan_plain(source: bytes, pos: integer, table: bytes, first: integer, stop: integer, owner: integer): integer do
+    middle = first+nc_half(stop-first)
+    if first >= stop do -1 else if stop-first == 1 do nj_named(source,pos,table,first,owner) else
+      left = nj_scan_plain(source,pos,table,first,middle,owner)
+      if left >= 0 do left else nj_scan_plain(source,pos,table,middle,stop,owner) end
+    end end
+  end
+  # 1 when function id takes count arguments: all its parameters, or all but
+  # some of those with defaults. exact 1 asks for all of them.
+  def nj_takes(source: bytes, table: bytes, id: integer, count: integer, exact: integer): integer do
+    total = nc_argc(table,id)
+    if count > total do 0 else if count < total-nj_defaulted(source,table,id*27)*(1-exact) do 0 else 1 end end
+  end
+  # How many parameters of the record at offset have a default value.
+  def nj_defaulted(source: bytes, table: bytes, at: integer): integer do
+    if Enum.at(table,at+20,0) < 255 do Enum.at(table,at+20,0) else nc_cursor(nj_params(source,nc_cursor(table,at+6),0,0),6) end
+  end
+  # The function with the name and module of function target that takes
+  # count arguments, -1 when none does.
+  def nj_fit(source: bytes, table: bytes, target: integer, count: integer): integer do
+    if target < 0 do -1 else if nj_takes(source,table,target,count,0) == 1 do target else nj_fit_from(source,table,target,count,b[0,0,0,0]) end end
+  end
+  # plan: where to look from (3 bytes) and exact.
+  def nj_fit_from(source: bytes, table: bytes, target: integer, count: integer, plan: bytes): integer do
+    other = nj_scan(source,nc_meta(table,target,0),table,nc_cursor(plan,0),nc_records(Enum.count(table)),nc_owner(table,target))
+    if other < 0 do -1 else if nj_takes(source,table,other,count,Enum.at(plan,3,0)) == 1 do other else
+      nj_fit_from(source,table,target,count,Enum.concat(nc_u24(other+1),b[Enum.at(plan,3,0)]))
+    end end
+  end
+  # 1 when no other function has the name and module of function id.
+  def nj_alone(source: bytes, table: bytes, id: integer): integer do
+    count = nc_records(Enum.count(table))
+    first = nj_scan(source,nc_meta(table,id,0),table,0,count,nc_owner(table,id))
+    if nj_scan(source,nc_meta(table,id,0),table,first+1,count,nc_owner(table,id)) < 0 do 1 else 0 end
+  end
+  # 1 when record index of the table is a clause of a function with the name,
+  # module and number of parameters of record.
+  def nj_same(source: bytes, table: bytes, index: integer, record: bytes): integer do
+    flags = if index < 0 do 1 else Enum.at(table,index*27+16,0) end
+    start = nc_meta(table,index,0)
+    size = nc_meta(table,index,3)-start
+    if flags*(flags-16)*(flags-40) != 0 do 0 else if nc_owner(table,index) != nc_read(record,25) do 0 else
+      if nc_argc(table,index) != nc_argc(record,0) do 0 else
+        if nc_cursor(record,3)-nc_cursor(record,0) != size do 0 else nc_equal(source,nc_cursor(record,0),start,size) end
+      end
+    end end
+  end
+  # The first clause of the function that clause index belongs to.
+  def nj_head(table: bytes, index: integer): integer do
+    if Enum.at(table,index*27+16,0) >= 40 do nj_head(table,index-1) else index end
+  end
+  # The clause after clause id of its function, -1 when it is the last. The
+  # records of structs and sum types declared between two clauses lie
+  # between theirs, since records are in source order.
+  def nj_more(table: bytes, id: integer): integer do
+    flags = Enum.at(table,id*27+43,0)
+    if flags == 40 do id+1 else if flags >= 64 do nj_more(table,id+1) else -1 end end
+  end
+  # 1 when a function from record first on has the record's name and takes
+  # a number of arguments that the record's function takes too.
+  def nj_clash(source: bytes, table: bytes, record: bytes, first: integer): integer do
+    nj_clash_before(source,table,record,first,nc_records(Enum.count(table)))
+  end
+  # The same among the records before record stop.
+  def nj_clash_before(source: bytes, table: bytes, record: bytes, first: integer, stop: integer): integer do
+    other = nj_scan(source,nc_cursor(record,0),table,first,stop,nc_read(record,25))
+    high = nc_argc(record,0)
+    top = nc_argc(table,other)
+    if other < 0 do 0 else
+      if high-nj_defaulted(source,record,0) > top do nj_clash_before(source,table,record,other+1,stop) else
+        if top-nj_defaulted(source,table,other*27) > high do nj_clash_before(source,table,record,other+1,stop) else 1 end
+      end
+    end
+  end
+  # The last record up to index that is no struct or sum type: those may
+  # stand between the clauses of a function.
+  def nj_last_clause(table: bytes, index: integer): integer do
+    if index < 0 do -1 else if Enum.at(table,index*27+16,0) >= 64 do nj_last_clause(table,index-1) else index end end
+  end
+  # The table of count records with the record added, b[] when it may not
+  # stand where it does: as it is for a new function or one that begins
+  # another form, with flags 40 as a further clause of the function declared
+  # last. Clauses are adjacent, have parameters and are all def or all defp;
+  # two functions of one name take different numbers of arguments.
+  def nj_place(source: bytes, table: bytes, record: bytes, count: integer): bytes do
+    last = nj_last_clause(table,count-1)
+    if nj_same(source,table,last,record) == 1 do
+      if nc_argc(record,0) == 0 do b[] else if Enum.at(table,nj_head(table,last)*27+16,0) != Enum.at(record,16,0) do b[] else
+        # A clause that declares another type for a parameter begins another form.
+        Enum.concat(table,if nj_other_form(source,table,nj_head(table,last),record,0) == 1 do record else nc_join(nc_slice(record,0,16),b[40],nc_slice(record,17,27)) end)
+      end end
+    else
+      if nj_clash(source,table,record,0) == 1 do b[] else Enum.concat(table,record) end
+    end
+  end
+  # A function may be defined for arguments of different types: clauses of
+  # one name and number of parameters whose declared types differ are forms
+  # of it, each a function with a record of its own, one after another. A
+  # call takes the first form its arguments fit.
+  #
+  # What the clause whose parameters start at pos declares of parameter
+  # index: where its type is written (3 bytes, 0 when a literal gives it),
+  # then the type; empty when the clause declares none.
+  def nj_declared(source: bytes, pos: integer, index: integer): bytes do
+    item = nj_param(source,pos)
+    written = nc_slice(item,9,Enum.count(item))
+    kind = if Enum.count(written) == 0 do nj_literal(source,pos) else written end
+    if Enum.count(item) == 0 do b[] else
+      if index > 0 do nj_declared(source,nc_end(source,nc_pos(item)),index-1) else
+        if Enum.count(kind) == 0 do b[] else Enum.concat(nc_u24(if Enum.count(written) == 0 do 0 else nc_start(source,nc_end(source,nc_cursor(item,6))) end),kind) end
+      end
+    end
+  end
+  # 1 when the texts from first up to stop and from other up to last hold the
+  # same tokens.
+  def nj_same_text(source: bytes, first: integer, stop: integer, other: integer, last: integer): integer do
+    left = nc_start(source,first)
+    right = nc_start(source,other)
+    size = nc_end(source,left)-left
+    if left >= nc_start(source,stop) do if right >= nc_start(source,last) do 1 else 0 end else if right >= nc_start(source,last) do 0 else
+      if nc_end(source,right)-right != size do 0 else if nc_equal(source,left,right,size) == 0 do 0 else nj_same_text(source,nc_end(source,left),stop,nc_end(source,right),last) end end
+    end end
+  end
+  # 1 when two declared types are one type: the same text when both are
+  # written, as the pinned compiler compares them.
+  def nj_alike(source: bytes, one: bytes, two: bytes): integer do
+    first = nc_cursor(one,0)
+    second = nc_cursor(two,0)
+    if first*second == 0 do nt_same(nc_slice(one,3,Enum.count(one)),nc_slice(two,3,Enum.count(two))) else
+      nj_same_text(source,first,nc_pos(nc_type(source,first)),second,nc_pos(nc_type(source,second)))
+    end
+  end
+  # What the clauses of a form from clause on declare of parameter index.
+  def nj_form_declared(source: bytes, table: bytes, clause: integer, index: integer): bytes do
+    own = nj_declared(source,nc_meta(table,clause,6),index)
+    if Enum.count(own) > 0 do own else if nj_more(table,clause) < 0 do b[] else nj_form_declared(source,table,nj_more(table,clause),index) end end
+  end
+  # 1 when the record's clause declares, from parameter index on, another
+  # type than the clauses of the form at head declare.
+  def nj_other_form(source: bytes, table: bytes, head: integer, record: bytes, index: integer): integer do
+    mine = if index >= nc_argc(record,0) do b[] else nj_declared(source,nc_cursor(record,6),index) end
+    theirs = if Enum.count(mine) == 0 do b[] else nj_form_declared(source,table,head,index) end
+    if index >= nc_argc(record,0) do 0 else
+      if Enum.count(theirs) == 0 do nj_other_form(source,table,head,record,index+1) else
+        if nj_alike(source,mine,theirs) == 1 do nj_other_form(source,table,head,record,index+1) else 1 end
+      end
+    end
+  end
+  def nj_record(table: bytes, id: integer): bytes do nc_slice(table,id*27,id*27+27) end
+  # The last clause of the function whose clause id is.
+  def nj_last_of(table: bytes, id: integer): integer do
+    if nj_more(table,id) < 0 do id else nj_last_of(table,nj_more(table,id)) end
+  end
+  # The first record from index on that is no struct or sum type.
+  def nj_next_clause(table: bytes, index: integer): integer do
+    if Enum.at(table,index*27+16,0) >= 64 do nj_next_clause(table,index+1) else index end
+  end
+  # The form after form id of its function, -1 when it is the last.
+  def nj_next_form(source: bytes, table: bytes, id: integer): integer do
+    next = nj_next_clause(table,nj_last_of(table,id)+1)
+    if next >= nc_records(Enum.count(table)) do -1 else if Enum.at(table,next*27+16,0) == 40 do -1 else if nj_same(source,table,next,nj_record(table,id)) == 1 do next else -1 end end end
+  end
+  # The first form of the function that form id belongs to.
+  def nj_first_form(source: bytes, table: bytes, id: integer): integer do
+    before = nj_last_clause(table,id-1)
+    if nj_same(source,table,before,nj_record(table,id)) == 1 do nj_first_form(source,table,nj_head(table,before)) else id end
+  end
+  # 1 when function id is one of several forms.
+  def nj_formed(source: bytes, table: bytes, id: integer): integer do
+    if nj_first_form(source,table,id) != id do 1 else if nj_next_form(source,table,id) < 0 do 0 else 1 end end
+  end
+  # The first form from form id on that takes the arguments, by their number
+  # and types; an argument that is a function still to be typed fits.
+  def nj_form_from(source: bytes, table: bytes, id: integer, args: bytes): integer do
+    if id < 0 do -1 else
+      if nj_takes(source,table,id,nc_arg_count(args),0)*Enum.count(nu_arguments(nj_cells(source,table,id),args,b[],0))*nf_arities(source,nj_cells(source,table,id),args,0) > 0 do id else
+        nj_form_from(source,table,nj_next_form(source,table,id),args)
+      end
+    end
+  end
+  # The form of function id that the arguments fit: id when it has one form.
+  def nj_form(source: bytes, table: bytes, id: integer, args: bytes): integer do
+    if id < 0 do -1 else if nj_formed(source,table,id) == 0 do id else nj_form_from(source,table,nj_first_form(source,table,id),args) end end
+  end
+  # What a trace adds to the name of form id: nothing for the first form of
+  # a function, #2 for the second and so on, as the pinned runtime names them.
+  def nj_form_suffix(source: bytes, table: bytes, id: integer): bytes do
+    first = nj_first_form(source,table,id)
+    if first == id do b[] else Enum.concat(b[35],ny_digits(nj_form_number(source,table,first,id,1))) end
+  end
+  def nj_form_number(source: bytes, table: bytes, form: integer, id: integer, number: integer): integer do
+    if form < 0 do number else if form >= id do number else nj_form_number(source,table,nj_next_form(source,table,form),id,number+1) end end
+  end
+  # 1 when a form before form id, from form other on, declares the same
+  # parameter types.
+  def nj_twice(source: bytes, table: bytes, id: integer, other: integer): integer do
+    if other < 0 do 0 else if other >= id do 0 else
+      if nt_same(nj_cells(source,table,other),nj_cells(source,table,id)) == 1 do 1 else nj_twice(source,table,id,nj_next_form(source,table,other)) end
+    end end
+  end
+  # The function of the name of function id with exactly count parameters,
+  # for a reference that gives its arity; id itself when it gives none.
+  def nj_aimed(source: bytes, table: bytes, id: integer, count: integer): integer do
+    if id < 0 do -1 else if count < 0 do id else nj_fit_from(source,table,id,count,b[0,0,0,1]) end end
+  end
+  # 1 for the flags of a record that has no code: a module header or a
+  # further clause.
+  def nj_silent(flags: integer): integer do
+    if (flags-32)*(flags-40) == 0 do 1 else 0 end
+  end
+  # Where the result type of function id is written, in its first clause
+  # that has one; 0 when none has.
+  def nj_result(table: bytes, id: integer): integer do
+    own = nc_cursor(table,id*27+17)
+    if own > 0 do own else if nj_more(table,id) < 0 do 0 else nj_result(table,nj_more(table,id)) end end
+  end
+  # The type a literal pattern gives its parameter, none for other patterns.
+  def nj_literal(source: bytes, pos: integer): bytes do
+    start = nc_start(source,pos)
+    value = byte_at(source,start)
+    if is_digit(value) == 1 do b[0] else if value == 45 do b[0] else if value == 34 do b[2] else if value == 58 do b[22] else
+      if nc_word(source,start,b[116,114,117,101])+nc_word(source,start,b[102,97,108,115,101]) == 1 do b[3] else b[] end
+    end end end end
+  end
+  # The types of the count parameters from pos on as one clause gives them,
+  # as a type list: an entry is empty for a parameter the clause gives none.
+  def nj_clause_cells(source: bytes, pos: integer, count: integer, table: bytes, owner: integer): bytes do
+    item = if count == 0 do b[] else nj_param(source,pos) end
+    written = nc_slice(item,9,Enum.count(item))
+    kind = if Enum.count(written) == 0 do nj_literal(source,pos) else nd_resolve(source,table,owner,written) end
+    if count == 0 do b[] else if Enum.count(item) == 0 do b[] else
+      Enum.concat(nt_cell(kind),nj_clause_cells(source,nc_end(source,nc_pos(item)),count-1,table,owner))
+    end end
+  end
+  # Two type lists as one: each entry from first, or from second where first
+  # has none.
+  def nj_merge(first: bytes, second: bytes, at: integer, other: integer): bytes do
+    one = nt_read(first,at)
+    two = nt_read(second,other)
+    if at >= Enum.count(first) do b[] else
+      Enum.concat(nt_cell(if Enum.count(one) == 0 do two else one end),nj_merge(first,second,nt_after(first,at),nt_after(second,other)))
+    end
+  end
+  def nj_fill(source: bytes, table: bytes, clause: integer, cells: bytes): bytes do
+    if clause < 0 do cells else
+      nj_fill(source,table,nj_more(table,clause),nj_merge(cells,nj_clause_cells(source,nc_meta(table,clause,6),nc_argc(table,clause),table,nc_owner(table,clause)),0,0))
+    end
+  end
+  # The types of the parameters of function id, as a type list: each from the
+  # first clause that gives it one.
+  def nj_cells(source: bytes, table: bytes, id: integer): bytes do
+    first = nj_clause_cells(source,nc_meta(table,id,6),nc_argc(table,id),table,nc_owner(table,id))
+    if nj_more(table,id) < 0 do first else nj_fill(source,table,nj_more(table,id),first) end
+  end
+  # 1 when each argument of the packet fits its parameter's type.
+  def nj_check(cells: bytes, args: bytes, index: integer): integer do
+    if index == nc_arg_count(args) do 1 else
+      if no_compatible(nt_item(cells,index),nc_arg_kind(args,index)) == 0 do 0 else nj_check(cells,args,index+1) end
+    end
+  end
+  # 1 when the text from pos up to stop is a constant as a default value may
+  # be: literals and operators, with no name but true, false, none, some, ok
+  # and error, so nothing is called and no binding read. A name before a
+  # colon is a key, one after a colon an atom, one after @ a constant, one
+  # after % or a dot the name of a struct.
+  def nj_constant(source: bytes, pos: integer, stop: integer, budget: integer): integer do
+    start = nc_start(source,pos)
+    value = byte_at(source,start)
+    next = nc_end(source,start)
+    words = nc_word(source,start,b[116,114,117,101])+nc_word(source,start,b[102,97,108,115,101])+nc_word(source,start,b[110,111,110,101])+nc_word(source,start,b[115,111,109,101])+nc_word(source,start,b[111,107])+nc_word(source,start,b[101,114,114,111,114])+nc_word(source,start,b[110,111,116])+nc_word(source,start,b[97,110,100])+nc_word(source,start,b[111,114])+nc_word(source,start,b[105,110])
+    named = if classify_ascii(value) != 2 do 0 else if (byte_at(source,start-1)-58)*(byte_at(source,start-1)-64)*(byte_at(source,start-1)-37)*(byte_at(source,start-1)-46) == 0 do 0 else if byte_at(source,next) == 58 do 0 else 1-words end end end
+    text = if value == 34 do nj_text_constant(source,start+1,next) else if value == 126 do sg_sigil_constant(source,start,0) else 1 end end
+    if start < 0 do 0 else if start >= stop do 1 else if budget == 0 do 0 else
+      if named == 1 do 0 else if text == 0 do 0 else nj_constant(source,next,stop,budget-1) end end
+    end end end
+  end
+  # The same for the text of a string from pos up to stop: every #{...} in
+  # it holds a constant.
+  def nj_text_constant(source: bytes, pos: integer, stop: integer): integer do
+    at = ns_plain_run(source,pos,64)
+    value = byte_at(source,at)
+    close = if value == 35 do if byte_at(source,at+1) == 123 do np_close(source,at+2,1,100000) else at+1 end else at+1 end
+    if at >= stop-1 do 1 else if close < 0 do 0 else
+      if value == 92 do nj_text_constant(source,at+2,stop) else
+        if value != 35 do nj_text_constant(source,if at == pos do at+1 else at end,stop) else
+          if close == at+1 do nj_text_constant(source,close,stop) else
+            if nj_constant(source,at+2,close-1,16777216) == 0 do 0 else nj_text_constant(source,close,stop) end
+          end
+        end
+      end
+    end end
+  end
+  # 1 when no name from pos up to stop starts with a capital: a struct or a
+  # sum variant is no default value at a call.
+  def nj_lower(source: bytes, pos: integer, stop: integer, budget: integer): integer do
+    start = nc_start(source,pos)
+    value = byte_at(source,start)
+    if start < 0 do 0 else if start >= stop do 1 else if budget == 0 do 0 else
+      if (value-65)*(90-value) >= 0 do 0 else nj_lower(source,nc_end(source,start),stop,budget-1) end
+    end end end
+  end
+  # The default values of the parameters of a function from one of them on,
+  # as arguments: the length of their types (2 bytes), their types as a type
+  # list, then the code that pushes them. plan: the parameter at pos, the
+  # first to give, their number, and the function (2 bytes).
+  def nj_defaults(source: bytes, pos: integer, table: bytes, plan: bytes): bytes do
+    index = nc_cursor(plan,0)
+    wanted = if index < nc_cursor(plan,3) do 0 else 1 end
+    item = if index == nc_cursor(plan,6) do b[] else nj_param(source,pos) end
+    begin = nc_cursor(item,3)
+    value = if wanted == 0 do b[] else if begin == 0 do b[] else if nj_lower(source,begin,nc_pos(item),16777216) == 0 do b[] else nc_expression(source,begin,nc_slice(plan,9,11),table,0) end end end
+    whole = if wanted == 0 do 1 else if nc_pos(value) < 0 do 0 else if nc_start(source,nc_pos(value)) == nc_pos(item) do 1 else 0 end end end
+    if index == nc_cursor(plan,6) do b[0,0,0,0] else if Enum.count(item) == 0 do b[] else if whole == 0 do b[] else
+      rest = nj_defaults(source,nc_end(source,nc_pos(item)),table,Enum.concat(nc_u24(index+1),nc_slice(plan,3,11)))
+      cell = if wanted == 0 do b[] else nt_cell(nc_kind(value)) end
+      push = if wanted == 0 do b[] else Enum.concat(nc_code(value),b[80]) end
+      if Enum.count(rest) == 0 do b[] else
+        nc_join(nc_u32(Enum.count(cell)+nc_long(rest,0)),Enum.concat(cell,nc_slice(rest,4,4+nc_long(rest,0))),Enum.concat(push,nc_slice(rest,4+nc_long(rest,0),Enum.count(rest))))
+      end
+    end end end
+  end
+  # Where the name of a call starts whose name ends at pos: Module.name is
+  # one name.
+  def nj_back(source: bytes, pos: integer): integer do
+    value = byte_at(source,pos-1)
+    if pos <= 0 do 0 else
+      if is_identifier_continue(value) == 1 do nj_back(source,pos-1) else if (value-46)*(value-63)*(value-33) == 0 do nj_back(source,pos-1) else pos end end
+    end
+  end
+  # The table for compiling a default value at a call: a failure in the
+  # value names the call, whose position the first record keeps.
+  def nj_from(table: bytes, pos: integer): bytes do
+    nc_join(nc_slice(table,0,21),nc_u24(pos),nc_slice(table,24,Enum.count(table)))
+  end
+  # The argument packet with the default values of the parameters of
+  # function target it leaves out. at: where the call's name ends.
+  def nj_full(source: bytes, table: bytes, target: integer, args: bytes, at: integer): bytes do
+    count = nc_arg_count(args)
+    total = nc_argc(table,target)
+    types = nc_arg_types(args)
+    extra = if count == total do b[] else nj_defaults(source,nc_meta(table,target,6),nj_from(table,nj_back(source,at)),nc_join(nc_u24(0),Enum.concat(nc_u24(count),nc_u24(total)),nc_u16(target))) end
+    size = nc_long(extra,0)
+    if count == total do args else if Enum.count(extra) == 0 do b[] else
+      nc_arg_packet(nc_pos(args),total,nc_join(nc_slice(types,0,nt_skip(types,0,count)),nc_slice(extra,4,4+size),nt_cell(Enum.concat(nw_marks(args),nc_zeros(total-count)))),Enum.concat(nc_arg_code(args),nc_slice(extra,4+size,Enum.count(extra))))
+    end end
+  end
+  # A direct call whose argument list opens at pos: to function target, or
+  # to the function of its name that takes the number of arguments given.
+  # plan: target (2 bytes), then 1 when the call is from another module,
+  # which only reaches a def.
+  def nj_enter(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, plan: bytes): bytes do
+    target = nc_read(plan,0)
+    parsed = if Enum.at(table,target*27+16,0) == 1 do b[] else nc_arguments_open(source,nc_end(source,pos),env,table,depth) end
+    first = if nc_pos(parsed) < 0 do -1 else nj_fit(source,table,target,nc_arg_count(parsed)) end
+    given = nn_ranged(source,table,first,parsed,0)
+    fit = nj_form(source,table,first,given)
+    hidden = if fit < 0 do 1 else Enum.at(plan,2,0)*Enum.at(table,fit*27+16,0) end
+    full = if hidden != 0 do b[] else nj_full(source,table,fit,given,pos) end
+    if nc_pos(full) < 0 do b[] else nj_call(source,pos,env,table,depth,Enum.concat(nc_u16(fit),full)) end
+  end
+  # plan: the function (2 bytes), then its arguments.
+  def nj_call(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, plan: bytes): bytes do
+    target = nc_read(plan,0)
+    parsed = nc_slice(plan,2,Enum.count(plan))
+    if nu_generic(source,table,target) == 1 do nf_postfix(source,nu_call(source,env,table,depth,parsed,Enum.concat(nc_u16(target),nw_seed(source,nc_start(source,pos),env,table,target))),env,table,depth) else
+      cells = nj_cells(source,table,target)
+      args = if nf_has_pending(parsed,0) == 0 do parsed else nf_typed_all(source,env,table,depth,parsed,Enum.concat(nc_u24(nc_arg_count(parsed)-1),cells)) end
+      if nc_pos(args) < 0 do b[] else if nj_check(cells,args,0) == 0 do b[] else
+        tail = tl_at(env,nc_pos(args),target)
+        called = nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),tl_passed(source,env,table,nc_pos(args),nc_arg_count(args),target)),nc_return_kind(source,table,target))
+        nf_postfix(source,if tail == 1 do called else ne_called(source,table,target,called) end,env,table,depth)
+      end end
+    end
+  end
+  # 1 when function id is compiled clause by clause: it has more than one,
+  # or its only one has a guard.
+  def nj_clausal(table: bytes, id: integer): integer do
+    if nj_more(table,id) >= 0 do 1 else if nc_cursor(table,id*27+21) > 0 do 1 else 0 end end
+  end
+  # 1 when the parameter at start is a plain name, which is the parameter's
+  # own slot: not _, a literal, a constructor or, for an option, none.
+  def nj_plain(source: bytes, start: integer, kind: bytes): integer do
+    next = nc_end(source,start)
+    first = byte_at(source,start)
+    if nc_identifier(source,start) == 0 do 0 else if nc_word(source,start,b[95]) == 1 do 0 else if (first-65)*(90-first) >= 0 do 0 else
+      if nc_word(source,next,b[40])+nc_word(source,next,b[46]) > 0 do 0 else
+        if nc_word(source,start,b[110,111,110,101]) == 1 do if nt_tag(kind) == 4 do 0 else 1 end else 1 end
+      end
+    end end end
+  end
+  # The environment with a slot for each parameter of a clause: under its
+  # name for a plain name, under no name for a pattern. plan: the parameter
+  # at pos and their number, then their types.
+  def nj_slots(source: bytes, pos: integer, env: bytes, plan: bytes): bytes do
+    index = nc_cursor(plan,0)
+    kind = nt_item(nc_slice(plan,6,Enum.count(plan)),index)
+    item = if index == nc_cursor(plan,3) do b[] else nj_param(source,pos) end
+    start = nc_start(source,pos)
+    if index == nc_cursor(plan,3) do env else if Enum.count(item) == 0 do b[] else
+      bound = if nj_plain(source,start,kind) == 1 do nc_bind(source,start,env,kind) else np_hidden(env,start,kind) end
+      if Enum.count(bound) == 0 do b[] else nj_slots(source,nc_end(source,nc_pos(item)),bound,Enum.concat(nc_u24(index+1),nc_slice(plan,3,Enum.count(plan)))) end
+    end end
+  end
+  # Matched parameters travel as: the length of their trees (2 bytes), the
+  # trees one after another, then the code that matches them, which leaves 1
+  # or 0 in AL and is empty when they match everything.
+  def nj_trees(packed: bytes): bytes do nc_slice(packed,4,4+nc_long(packed,0)) end
+  def nj_match(packed: bytes): bytes do nc_slice(packed,4+nc_long(packed,0),Enum.count(packed)) end
+  def nj_both(left: bytes, right: bytes): bytes do
+    first = nj_match(left)
+    second = nj_match(right)
+    code = if Enum.count(first) == 0 do second else if Enum.count(second) == 0 do first else nc_join(first,Enum.concat(b[132,192,15,132],nc_u32(Enum.count(second))),second) end end
+    nc_join(nc_u32(nc_long(left,0)+nc_long(right,0)),Enum.concat(nj_trees(left),nj_trees(right)),code)
+  end
+  # One parameter of a clause against its slot. spec: its index, then its
+  # type. A type written here must be the parameter's.
+  def nj_pattern(source: bytes, pos: integer, env: bytes, table: bytes, spec: bytes): bytes do
+    kind = nc_slice(spec,3,Enum.count(spec))
+    start = nc_start(source,pos)
+    item = nj_param(source,pos)
+    agrees = if Enum.count(item) <= 9 do 1 else nt_same(nd_resolve(source,table,nc_owner(table,nc_read(env,0)),nc_slice(item,9,Enum.count(item))),kind) end
+    parsed = if Enum.count(item) == 0 do b[] else if nj_plain(source,start,kind) == 1 do np_pack(nc_cursor(item,6),b[0],env) else np_parse(source,start,env,table,kind) end end
+    tree = np_tree(parsed)
+    whole = if nc_pos(parsed) < 0 do 0 else if nc_start(source,nc_pos(parsed)) != nc_start(source,nc_cursor(item,6)) do 0 else agrees end end
+    test = if whole == 0 do b[] else if Enum.at(tree,0,0) == 0 do b[176,1] else np_emit(source,np_env(parsed),table,tree,0) end end
+    match = if Enum.at(tree,0,0) == 0 do b[] else Enum.concat(nc_slot(b[72,139,69],nc_cursor(spec,0)),test) end
+    if Enum.count(test) == 0 do b[] else
+      np_pack(nc_end(source,nc_pos(item)),nc_join(nc_u32(Enum.count(tree)),tree,match),np_env(parsed))
+    end
+  end
+  # The parameters of a clause from pos on. plan as for nj_slots.
+  def nj_patterns(source: bytes, pos: integer, env: bytes, table: bytes, plan: bytes): bytes do
+    index = nc_cursor(plan,0)
+    if index == nc_cursor(plan,3) do np_pack(pos,b[0,0,0,0],env) else
+      one = nj_pattern(source,pos,env,table,Enum.concat(nc_u24(index),nt_item(nc_slice(plan,6,Enum.count(plan)),index)))
+      rest = if nc_pos(one) < 0 do b[] else nj_patterns(source,nc_pos(one),np_env(one),table,Enum.concat(nc_u24(index+1),nc_slice(plan,3,Enum.count(plan)))) end
+      if nc_pos(rest) < 0 do b[] else np_pack(nc_pos(rest),nj_both(np_tree(one),np_tree(rest)),np_env(rest)) end
+    end
+  end
+  # A clause of function head: its parameters matched, with the environment
+  # that holds their names. A generic function keeps the comparators of its
+  # type variables after its parameters.
+  def nj_shape(source: bytes, table: bytes, head: integer, clause: integer, extra: bytes): bytes do
+    plan = nc_join(nc_u24(0),nc_u24(nc_argc(table,head)),nj_cells(source,table,head))
+    named = nj_slots(source,nc_meta(table,clause,6),nc_u16(head),plan)
+    wide = if Enum.count(named) == 0 do b[] else nu_barring(nu_hidden(named,nu_signature(source,table,head),0),extra) end
+    if Enum.count(wide) == 0 do b[] else nj_patterns(source,nc_meta(table,clause,6),wide,table,plan) end
+  end
+  # The body of a clause: it ends in a value of the function's result type,
+  # and a result type written on the clause is the function's. ids: the
+  # function and the clause (2 bytes each).
+  def nj_body(source: bytes, table: bytes, ids: bytes, scope: bytes): bytes do
+    clause = nc_read(ids,2)
+    result = nc_return_kind(source,table,nc_read(ids,0))
+    own = nc_cursor(table,clause*27+17)
+    agrees = if own == 0 do 1 else nt_same(nd_resolve(source,table,nc_owner(table,clause),nc_kind(nc_type(source,own))),result) end
+    body = if agrees == 0 do b[] else nn_expected(nc_body(source,nc_meta(table,clause,9),nf_bodied(source,table,nc_read(ids,0),scope),table,16777216),result,table) end
+    if nc_pos(body) < 0 do b[] else if no_compatible(result,nc_kind(body)) == 0 do b[] else
+      if nc_start(source,nc_pos(body)) != nc_meta(table,clause,12) do b[] else body end
+    end end
+  end
+  # match; jz past the clause; guard; jz past the clause; body; jmp past the
+  # rest; rest.
+  def nj_join(match: bytes, check: bytes, body: bytes, rest: bytes): bytes do
+    taken = Enum.concat(nc_code(body),Enum.concat(b[233],nc_u32(Enum.count(nc_code(rest)))))
+    guarded = if Enum.count(check) == 0 do b[] else Enum.concat(check,nc_u32(Enum.count(taken))) end
+    tested = if Enum.count(match) == 0 do b[] else nc_join(match,b[132,192,15,132],nc_u32(Enum.count(guarded)+Enum.count(taken))) end
+    nc_value(0,nc_join(nc_join(tested,guarded,taken),nc_code(rest),b[]),b[0])
+  end
+  # One clause and those after it. While a guard runs the function is at
+  # the line of its first clause, as the pinned runtime shows it; a clause
+  # with a guard does not count towards covering every value.
+  def nj_clause(source: bytes, table: bytes, ids: bytes, shaped: bytes, matrix: bytes): bytes do
+    clause = nc_read(ids,2)
+    scope = np_env(shaped)
+    row = nj_trees(np_tree(shaped))
+    at = nc_cursor(table,clause*27+21)
+    guard = if at == 0 do nc_value(0,b[],b[3]) else nc_condition(source,at,scope,table,1) end
+    opened = if at == 0 do 1 else if nc_expect(source,nc_pos(guard),b[100,111]) == nc_meta(table,clause,9) do 1 else 0 end end
+    body = if opened == 0 do b[] else nj_body(source,table,ids,scope) end
+    rest = if nc_pos(body) < 0 do b[] else nj_clauses(source,table,Enum.concat(nc_u16(nc_read(ids,0)),nc_slice(ids,4,Enum.count(ids))),nj_more(table,clause),if at == 0 do nc_join(matrix,nc_u32(Enum.count(row)),row) else matrix end) end
+    check = if at == 0 do b[] else nc_join(nz_at(table,nc_meta(table,nc_read(ids,0),0)),nc_code(guard),b[72,133,192,15,132]) end
+    if nc_pos(rest) < 0 do b[] else nj_join(nj_match(np_tree(shaped)),check,body,rest) end
+  end
+  # The clauses of function head from clause on (-1 after the last), tried in
+  # order. matrix: the rows of the clauses before that have no guard. A
+  # clause no value can reach is an error, and so are clauses that leave a
+  # value unmatched.
+  def nj_clauses(source: bytes, table: bytes, heading: bytes, clause: integer, matrix: bytes): bytes do
+    head = nc_read(heading,0)
+    count = nc_argc(table,head)
+    more = if clause < 0 do 0 else 1 end
+    shaped = if more == 0 do b[] else nj_shape(source,table,head,clause,nc_slice(heading,2,Enum.count(heading))) end
+    if more == 0 do
+      if np_useful(source,matrix,np_wilds(count),count) == 1 do b[] else nc_value(0,b[],b[9]) end
+    else
+      if nc_pos(shaped) < 0 do b[] else
+        if np_useful(source,matrix,nj_trees(np_tree(shaped)),count) == 0 do b[] else nj_clause(source,table,nc_join(nc_u16(head),nc_u16(clause),nc_slice(heading,2,Enum.count(heading))),shaped,matrix) end
+      end
+    end
+  end
+  # A function written as clauses: its parameters stay in their slots and
+  # each clause matches them in turn.
+  def nj_function(source: bytes, table: bytes, id: integer, extra: bytes): bytes do
+    count = nc_argc(table,id)
+    names = nu_signature(source,table,id)
+    body = if nj_result(table,id) == 0 do b[] else pc_clauses(source,table,id,extra) end
+    enter = tl_enter(source,table,id)
+    # The pinned compiler makes the clauses, or the patterns of one, a case: a statement where the function stands (coverage: zf_cover_in).
+    inside = nc_join(Enum.concat(nc_store_params(count+nu_name_count(names,0),0),enter),Enum.concat(zf_cover_in(source,table,id,nc_meta(table,id,0)),nc_code(body)),tl_leave(source,table,id))
+    if nc_pos(body) < 0 do b[] else Enum.concat(nc_guard(inside),inside) end
+  end
+  # return value leaves the function or fn it stands in. Two kinds of record
+  # with no name say where a statement stands: one of type 40 inside an if,
+  # case or cond whose value is used, where return may not stand; one of
+  # type 41 and a result type at the start of a fn. The last of them counts.
+  def nj_mark(env: bytes, kind: bytes): bytes do
+    Enum.concat(env,nc_env_record(0,0,kind))
+  end
+  def nj_valued(env: bytes): bytes do nj_mark(env,b[40]) end
+  def nj_context(env: bytes, offset: integer, found: bytes): bytes do
+    kind = nt_read(env,offset+7)
+    if offset >= Enum.count(env) do found else
+      nj_context(env,nc_env_next(env,offset),if (nt_tag(kind)-40)*(nt_tag(kind)-41) == 0 do kind else found end)
+    end
+  end
+  # The environment of a fn: spec holds its declared result type, unknown
+  # (9) when its body is to give it.
+  def nj_scoped(env: bytes, spec: bytes): bytes do
+    if Enum.count(env) == 0 do b[] else nj_mark(env,Enum.concat(b[41],if nc_tag(spec) == 9 do if Enum.count(nc_kind(spec)) > 5 do nc_slice(nc_kind(spec),5,Enum.count(nc_kind(spec))) else b[9] end else nc_kind(spec) end)) end
+  end
+  # The body of a fn. When its result type comes from its body and it holds
+  # a return, the body is compiled again with that type for each return to
+  # meet.
+  def nj_lambda_body(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    first = nc_branch(source,pos,env,table,depth)
+    open = if nt_tag(nc_slice(nj_context(env,2,b[]),1,2)) == 9 do 1 else 0 end
+    if nc_pos(first) < 0 do first else if open == 0 do first else
+      if ny_has(source,pos,nc_pos(first),b[114,101,116,117,114,110]) == 0 do first else
+        nj_typed(nc_branch(source,pos,nj_mark(env,Enum.concat(b[41],nc_kind(first))),table,depth),nc_kind(first))
+      end
+    end end
+  end
+  # The value with type kind when it has none of its own: a body that ends
+  # in return has the type its returns were held to.
+  def nj_typed(value: bytes, kind: bytes): bytes do
+    if nc_tag(value) != 9 do value else nc_join(nc_slice(value,0,4),nt_cell(kind),nc_code(value)) end
+  end
+  # The statement return value at start: the value, then the way out of the
+  # frame. Its block ends with it, and it leaves a value of no known type
+  # (9, with a 1 that says a return left it), which agrees with what the
+  # other branches give. In a fn whose result type
+  # is not known yet it leaves its value's type, which gives the fn its type.
+  def nj_return(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
+    scope = nj_context(env,2,b[])
+    id = nc_read(env,0)
+    wanted = if Enum.count(scope) > 0 do if Enum.at(scope,0,0) == 40 do b[] else nc_slice(scope,1,Enum.count(scope)) end else
+      if Enum.at(table,id*27+16,0) == 1 do b[] else if nj_result(table,id) == 0 do b[] else nc_return_kind(source,table,id) end end
+    end
+    value = if Enum.count(wanted) == 0 do b[] else nc_expression(source,nc_end(source,start),if nt_tag(wanted) == 9 do env else if nw_whole_call(source,nc_end(source,start)) == 1 do nw_expect(env,nf_pipe_target(source,nc_start(source,nc_end(source,start))),wanted) else nf_expecting(source,env,nc_end(source,start),wanted) end end,table,depth) end
+    stop = nc_pos(value)
+    fits = if stop < 0 do 0 else if nc_tag(value) == 12 do 0 else if nt_tag(wanted) == 9 do 1 else no_compatible(wanted,nc_kind(value)) end end end
+    if fits == 0 do b[] else if ty_ends(source,stop,env) == 0 do b[] else
+      nx_pack(stop,1,Enum.concat(nc_code(tl_return(source,nc_end(source,start),env,table,depth,value)),tl_leave(source,table,nc_read(env,0))),nx_tail(if nt_tag(wanted) == 9 do nc_kind(value) else b[9,1] end,env))
+    end end
+  end
+  # 1 for the value of an if or case that returns on every path.
+  def nj_left(value: bytes): integer do
+    if nc_tag(value) != 9 do 0 else if Enum.count(nc_kind(value)) != 2 do 0 else if Enum.at(nc_kind(value),1,0) == 1 do 1 else 0 end end end
+  end
+  # 1 for what stands after the last arm of a case or cond (9, 2): it adds
+  # nothing to the type of the arms.
+  def nj_ended(value: bytes): integer do
+    if nc_tag(value) != 9 do 0 else if Enum.count(nc_kind(value)) != 2 do 0 else if Enum.at(nc_kind(value),1,0) == 2 do 1 else 0 end end end
+  end
+  # The type of two branches that both leave a value of no known type: left
+  # by return only when both are.
+  def nj_both_left(first: bytes, second: bytes): bytes do
+    if nj_left(first)*nj_left(second) == 1 do b[9,1] else b[9] end
+  end
+  # raise(message) at pos ends the program with the message and the active
+  # calls. It stands for a value of any type.
+  def nj_raise(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    begin = nc_expect(source,nc_end(source,pos),b[40])
+    value = if begin < 0 do b[] else nc_expression(source,begin,env,table,depth+1) end
+    stop = if nc_tag(value) != 2 do -1 else nc_expect(source,nc_pos(value),b[41]) end
+    fail = if nz_on(table) == 0 do nc_exit_code(70) else nc_join(b[72,137,198],Enum.concat(b[191],nc_u32(nc_start(source,pos))),nc_call(nz_slot(table))) end
+    if stop < 0 do b[] else nc_value(stop,Enum.concat(nc_code(value),fail),b[9]) end
+  end
+  # 1 for a value an operator takes as an integer: one, or a raise.
+  def nj_integer(value: bytes): integer do
+    if nc_tag(value) == 0 do 1 else if nc_tag(value) != 9 do 0 else if Enum.count(nc_kind(value)) == 1 do 1 else 0 end end end
+  end
+  # Native smoke test; assembled with the compiler.
+  def main() do System.halt(0) end
+end

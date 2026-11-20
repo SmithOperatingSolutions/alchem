@@ -1,0 +1,60 @@
+{
+  "version": 3,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "const.i64",
+              "dest": "a",
+              "value": 7
+            },
+            {
+              "op": "const.i64",
+              "dest": "b",
+              "value": 7
+            },
+            {
+              "op": "const.i64",
+              "dest": "yes",
+              "value": 42
+            },
+            {
+              "op": "const.i64",
+              "dest": "no",
+              "value": 7
+            },
+            {
+              "op": "ge.i64",
+              "dest": "c",
+              "lhs": "a",
+              "rhs": "b"
+            },
+            {
+              "op": "if.i64",
+              "dest": "r",
+              "cond": "c",
+              "then": {
+                "instructions": [],
+                "value": "yes"
+              },
+              "else": {
+                "instructions": [],
+                "value": "no"
+              }
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    }
+  ]
+}

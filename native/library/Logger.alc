@@ -1,0 +1,391 @@
+# Logger, after the pinned runtime: leveled messages on standard error and
+# to handlers. What the logger keeps for the whole program is in a mapped
+# page that word 88 of the library's state block points at
+# (spec/alchem-system.md): 8 the level (0 debug to 4 none), 16 1 when the
+# console is turned off, 24 the format, 32 the metadata keys to show, 40
+# the handlers (name and function), 48 the metadata; each of the four the
+# word of a value in the arena. 56, 64 and 72 are the offset of local time
+# from UTC and the moments between which it holds, 80 1 once they are
+# known; 96 to 120 the level, the text and the metadata of the message
+# being written. A line is put together in the library's pad and written
+# with one call, so a message costs nothing of the arena unless it has
+# metadata or a handler; 128 and 136 are an empty list and {} for that.
+#: rec/0 needs Sys.state/0 made/1
+  def rec(): integer do
+    s = Sys.state()
+    r = Sys.peek(s + 88)
+    if r != 0 do r else Logger.made(s) end
+  end
+# The level starts at what ALCHEM_LOG_LEVEL names, or at debug.
+#: made/1 needs index/1
+  def made(s: integer): integer do
+    m = Sys.call(9, 0, 4096, 3, 34, -1, 0)
+    shown: list[string] = []
+    handlers: list[tuple[atom, integer]] = []
+    held: list[tuple[atom, string]] = []
+    if m < 0 and m > -4096 do System.halt(71) end
+    Sys.poke(s + 88, m)
+    Sys.poke(m + 8, max(Logger.index(System.get_env("ALCHEM_LOG_LEVEL", "")), 0))
+    Sys.poke(m + 24, Logger.__word("$time $metadata[$level] $message"))
+    Sys.poke(m + 32, Logger.__word(shown))
+    Sys.poke(m + 40, Logger.__word(handlers))
+    Sys.poke(m + 48, Logger.__word(held))
+    Sys.poke(m + 128, Logger.__word(held))
+    Sys.poke(m + 136, Logger.__word({}))
+    m
+  end
+#: index/1
+  def index(n: string): integer do
+    if n == "debug" do 0 else if n == "info" do 1 else if n == "warning" do 2 else if n == "error" do 3 else if n == "none" do 4 else -1 end end end end end
+  end
+#: level/0 needs rec/0
+  def level(): string do
+    l = Sys.peek(Logger.rec() + 8)
+    if l == 0 do "debug" else if l == 1 do "info" else if l == 2 do "warning" else if l == 3 do "error" else "none" end end end end
+  end
+#: set/1 needs index/1 rec/0
+  def set(l: string): integer do
+    if Logger.index(l) < 0 do raise("the log level is debug, info, warning, error or none, not " <> inspect(l)) end
+    Sys.poke(Logger.rec() + 8, Logger.index(l))
+  end
+#: configure/1 needs set/1
+  def configure(l: string): tuple[] do
+    Logger.set(l)
+    {}
+  end
+# level:, format: (with $time, $date, $level, $metadata and $message) and
+# metadata: (the keys to show, with commas between, or all), each as it comes.
+#: configure/1 form 2 needs setting/2
+  def configure(o: list[tuple[atom, string]]): tuple[] do
+    Logger.setting(o, 0)
+    {}
+  end
+#: setting/2 needs Enum.at/3 Enum.map/2 String.split/2 rec/0 set/1 setting/2
+  def setting(o: list[tuple[atom, string]], i: integer): integer do
+    k = if i < length(o) do elem(Enum.at(o, i, {:level, ""}), 0) else :level end
+    v = if i < length(o) do elem(Enum.at(o, i, {:level, ""}), 1) else "" end
+    if i >= length(o) do 0 else
+      if k == :level do Logger.set(v) else if k == :format do Sys.poke(Logger.rec() + 24, Logger.__word(v)) else
+        if k == :metadata do Sys.poke(Logger.rec() + 32, Logger.__word(Enum.map(String.split(v, ","), fn t -> String.trim(t) end))) else raise("Logger.configure takes level:, format: and metadata:") end
+      end end
+      Logger.setting(o, i + 1)
+    end
+  end
+# A key given again takes its new value and the last place.
+#: metadata/1 needs Enum.reject/2 keep/2 mine/1 rec/0
+  def metadata(m: list[tuple[atom, string]]): tuple[] do
+    r = Logger.rec()
+    held: list[tuple[atom, string]] = Logger.__cast(Logger.mine(r))
+    Logger.keep(r, Logger.__word(Enum.reduce(m, held, fn e, all -> Enum.reject(all, fn p -> elem(p, 0) == elem(e, 0) end) ++ [e] end)))
+    {}
+  end
+# Each process has metadata of its own. The main process's is word 48 of
+# the page; any other's hangs from word 144, a chain of three words: the
+# next, the process (its record, library/Process.alc) and its metadata. A
+# process's record is never given to another, so what one that ended left
+# is in nobody's way. who: the running process, 0 for the main one and for
+# a program without processes.
+#: who/0 needs Sys.state/0
+  def who(): integer do
+    g = Sys.peek(Sys.state() + 96)
+    if g == 0 do 0 else if Sys.peek(g) == Sys.peek(g + 128) do 0 else Sys.peek(g) end end
+  end
+#: mine/1 needs found/2 who/0
+  def mine(r: integer): integer do
+    p = Logger.who()
+    c = if p == 0 do 0 else Logger.found(Sys.peek(r + 144), p) end
+    if p == 0 do Sys.peek(r + 48) else if c == 0 do Sys.peek(r + 128) else Sys.peek(c + 16) end end
+  end
+#: found/2 needs found/2
+  def found(c: integer, p: integer): integer do
+    if c == 0 do 0 else if Sys.peek(c + 8) == p do c else Logger.found(Sys.peek(c), p) end end
+  end
+# The chain without the records of processes that are over.
+#: live/1 needs live/1
+  def live(c: integer): integer do
+    if c == 0 do 0 else
+      next = Logger.live(Sys.peek(c))
+      if Sys.peek(Sys.peek(c + 8) + 376) == 1 do next else
+        Sys.poke(c, next)
+        c
+      end
+    end
+  end
+#: keep/2 needs found/2 live/1 who/0
+  def keep(r: integer, w: integer): integer do
+    p = Logger.who()
+    c = if p == 0 do 0 else Logger.found(Sys.peek(r + 144), p) end
+    if p == 0 do Sys.poke(r + 48, w) else if c != 0 do Sys.poke(c + 16, w) else
+      n = Sys.addr(String.duplicate("\x00", 24))
+      Sys.poke(n, Logger.live(Sys.peek(r + 144)))
+      Sys.poke(n + 8, p)
+      Sys.poke(n + 16, w)
+      Sys.poke(r + 144, n)
+    end end
+  end
+#: metadata/0 needs mine/1 rec/0
+  def metadata(): list[tuple[atom, string]] do
+    held: list[tuple[atom, string]] = Logger.__cast(Logger.mine(Logger.rec()))
+    held
+  end
+# :console is the console itself. A handler is kept as the word of its
+# function: its result, of any type, is not looked at.
+#: add_handler/2 needs Enum.any?/2 rec/0
+  def add_handler(n: atom, f: fn[atom, string, list[tuple[atom, string]], b]): boolean do
+    r = Logger.rec()
+    hs: list[tuple[atom, integer]] = Logger.__cast(Sys.peek(r + 40))
+    off = Sys.peek(r + 16)
+    if n == :console do
+      Sys.poke(r + 16, 0)
+      off == 1
+    else
+      if Enum.any?(hs, fn h -> elem(h, 0) == n end) do false else
+        Sys.poke(r + 40, Logger.__word(hs ++ [{n, Logger.__word(f)}]))
+        true
+      end
+    end
+  end
+#: remove_handler/1 needs Enum.any?/2 Enum.reject/2 rec/0
+  def remove_handler(n: atom): boolean do
+    r = Logger.rec()
+    hs: list[tuple[atom, integer]] = Logger.__cast(Sys.peek(r + 40))
+    off = Sys.peek(r + 16)
+    if n == :console do
+      Sys.poke(r + 16, 1)
+      off == 0
+    else
+      Sys.poke(r + 40, Logger.__word(Enum.reject(hs, fn h -> elem(h, 0) == n end)))
+      Enum.any?(hs, fn h -> elem(h, 0) == n end)
+    end
+  end
+#: log/2 needs emit/3 index/1
+  def log(l: atom, t: string): tuple[] do
+    i = Logger.index(to_string(l))
+    if i < 0 or i == 4 do raise("the log level is :debug, :info, :warning or :error, not :#{l}") end
+    Logger.emit(i, t, 1)
+  end
+# A message at level l: to the handlers, then to the console. own 1 puts
+# the metadata of Logger.metadata before what came with the message; the
+# functions of one text leave it out, as the pinned runtime does. The empty
+# list and the {} that is given back are the record's own (128 and 136):
+# one written here would be made anew for every message.
+#: emit/3 needs rec/0 send/5
+  def emit(l: integer, t: string, own: integer): tuple[] do
+    r = Logger.rec()
+    empty: list[tuple[atom, string]] = Logger.__cast(Sys.peek(r + 128))
+    unit: tuple[] = Logger.__cast(Sys.peek(r + 136))
+    if l >= Sys.peek(r + 8) do Logger.send(r, l, t, own, empty) end
+    unit
+  end
+#: emit/4 needs rec/0 send/5
+  def emit(l: integer, t: string, own: integer, extra: list[tuple[atom, string]]): tuple[] do
+    r = Logger.rec()
+    unit: tuple[] = Logger.__cast(Sys.peek(r + 136))
+    if l >= Sys.peek(r + 8) do Logger.send(r, l, t, own, extra) end
+    unit
+  end
+#: send/5 needs handle/5 line/4 mine/1
+  def send(r: integer, l: integer, t: string, own: integer, extra: list[tuple[atom, string]]): integer do
+    held: list[tuple[atom, string]] = Logger.__cast(Logger.mine(r))
+    meta = if own == 1 and length(held) > 0 do held ++ extra else extra end
+    hs = Sys.peek(r + 40)
+    if Sys.peek(hs) > 0 do Logger.handle(hs, 0, l, t, meta) end
+    if Sys.peek(r + 16) == 0 do Logger.line(r, l, t, Logger.__word(meta)) else 0 end
+  end
+#: handle/5 needs handle/5
+  def handle(hs: integer, i: integer, l: integer, t: string, meta: list[tuple[atom, string]]): integer do
+    f: fn[atom, string, list[tuple[atom, string]], integer] = Logger.__cast(Sys.peek(Sys.peek(hs + 8 + 16 * (if i < Sys.peek(hs) do i else 0 end)) + 16))
+    if i >= Sys.peek(hs) do 0 else
+      given = f.((if l == 0 do :debug else if l == 1 do :info else if l == 2 do :warning else :error end end end), t, meta)
+      Logger.handle(hs, i + 1, l, t, meta)
+    end
+  end
+# The line of a message by the format, without line breaks at its end and
+# with one after it.
+#: line/4 needs Sys.pad/0 Sys.push/2 Sys.put/3 Sys.state/0 bare/2 format/4
+  def line(r: integer, l: integer, t: string, meta: integer): integer do
+    f: string = Logger.__cast(Sys.peek(r + 24))
+    s = Sys.state()
+    Sys.pad()
+    Sys.poke(r + 96, l)
+    Sys.poke(r + 104, Sys.addr(t))
+    Sys.poke(r + 112, byte_size(t))
+    Sys.poke(r + 120, meta)
+    Logger.format(r, Sys.addr(f), byte_size(f), 0)
+    Sys.push(10, 1)
+    n = Logger.bare(Sys.peek(s + 56), Sys.peek(s + 64) - 1)
+    Sys.poke(Sys.peek(s + 56) + n, 10)
+    Sys.put(2, Sys.peek(s + 56), n + 1)
+  end
+#: bare/2 needs bare/2
+  def bare(a: integer, n: integer): integer do
+    if n > 0 and Sys.byte(a + n - 1) == 10 do Logger.bare(a, n - 1) else n end
+  end
+# The format from i on: text as it stands, and for $time, $date, $level,
+# $metadata, $message and $node what they stand for, tried in that order
+# as Go's strings.Replacer tries them.
+#: format/4 needs Sys.keep/2 Sys.push/2 format/4 low/2 part/2
+  def format(r: integer, a: integer, n: integer, i: integer): integer do
+    d = Sys.find(a + i, n - i, 36)
+    j = if d < 0 do n else i + d end
+    v = if j >= n do 0 else Logger.low(a + j, if n - j > 8 do 8 else n - j end) end
+    k = if rem(v, 1099511627776) == 435627324452 do 1 else if rem(v, 1099511627776) == 435744236580 do 2 else if rem(v, 281474976710656) == 119183033855012 do 3 else
+      if v == 8386094350867983652 and n - j > 8 and Sys.byte(a + j + 8) == 97 do 4 else if v == 7306916068917079332 do 5 else if rem(v, 1099511627776) == 435476721188 do 6 else 0 end end end
+    end end end
+    Sys.keep(a + i, j - i)
+    if j >= n do 0 else
+      if k == 0 do Sys.push(36, 1) else Logger.part(r, k) end
+      Logger.format(r, a, n, j + (if k == 0 do 1 else if k == 4 do 9 else if k == 5 do 8 else if k == 3 do 6 else 5 end end end end))
+    end
+  end
+# The m bytes at a (8 at most) as a number, the first the lowest.
+#: low/2 needs low/2
+  def low(a: integer, m: integer): integer do
+    if m == 0 do 0 else Sys.byte(a) + 256 * Logger.low(a + 1, m - 1) end
+  end
+#: part/2 needs Sys.keep/2 Sys.push/2 clock/1 day/1 pairs/1
+  def part(r: integer, k: integer): integer do
+    l = Sys.peek(r + 96)
+    if k == 1 do Logger.clock(r) else if k == 2 do Logger.day(r) else if k == 4 do Logger.pairs(r) else if k == 5 do Sys.keep(Sys.peek(r + 104), Sys.peek(r + 112)) else
+      if k == 3 do Sys.push((if l == 0 do 444351014244 else if l == 1 do 1868983913 else if l == 2 do 29113321704808823 else 491496043109 end end end), if l == 1 do 4 else if l == 2 do 7 else 5 end end) else 0 end
+    end end end end
+  end
+# Local time as Go's Format("15:04:05.000") and the date as
+# Format("2006-01-02") write them.
+#: clock/1 needs Sys.push/2 offset/2 two/1
+  def clock(r: integer): integer do
+    t = System.system_time()
+    c = rem(rem(div(t, 1000000000) + Logger.offset(r, div(t, 1000000000)), 86400) + 86400, 86400)
+    Logger.two(div(c, 3600))
+    Sys.push(58, 1)
+    Logger.two(rem(div(c, 60), 60))
+    Sys.push(58, 1)
+    Logger.two(rem(c, 60))
+    Sys.push(46, 1)
+    Sys.push(48 + rem(div(t, 100000000), 10), 1)
+    Logger.two(rem(div(t, 1000000), 100))
+  end
+#: day/1 needs Sys.push/2 offset/2 two/1
+  def day(r: integer): integer do
+    t = div(System.system_time(), 1000000000)
+    c = t + Logger.offset(r, t)
+    z = (if c < 0 do div(c - 86399, 86400) else div(c, 86400) end) + 719468
+    e = z - div(z, 146097) * 146097
+    y = div(e - div(e, 1460) + div(e, 36524) - div(e, 146096), 365)
+    i = e - (365 * y + div(y, 4) - div(y, 100))
+    p = div(5 * i + 2, 153)
+    m = if p < 10 do p + 3 else p - 9 end
+    year = y + div(z, 146097) * 400 + (if m < 3 do 1 else 0 end)
+    Logger.two(div(year, 100))
+    Logger.two(rem(year, 100))
+    Sys.push(45, 1)
+    Logger.two(m)
+    Sys.push(45, 1)
+    Logger.two(i - div(153 * p + 2, 5) + 1)
+  end
+#: two/1 needs Sys.push/2
+  def two(v: integer): integer do
+    Sys.push(48 + div(v, 10) + 256 * (48 + rem(v, 10)), 2)
+  end
+# What local time is ahead of UTC at s seconds since 1970 (Date.dl reads
+# $TZ and the zone file as Go's time.Local does), asked once for each span
+# of one offset.
+#: offset/2 needs Date.dl/2 Enum.at/3
+  def offset(r: integer, s: integer): integer do
+    if Sys.peek(r + 80) == 1 and s >= Sys.peek(r + 64) and s < Sys.peek(r + 72) do Sys.peek(r + 56) else
+      z = Date.dl(s, 0)
+      Sys.poke(r + 56, Enum.at(z, 1, 0))
+      Sys.poke(r + 64, Enum.at(z, 2, 0))
+      Sys.poke(r + 72, Enum.at(z, 3, 0))
+      Sys.poke(r + 80, 1)
+      Enum.at(z, 1, 0)
+    end
+  end
+# key=value of each piece of metadata whose key is among those to show (or
+# when all is among them), a space between and a space after the last.
+#: pairs/1 needs Sys.push/2 every/2 pair/5
+  def pairs(r: integer): integer do
+    m = Sys.peek(r + 120)
+    shown = Sys.peek(r + 32)
+    if Logger.pair(m, 0, shown, Logger.every(shown, 0), 0) > 0 do Sys.push(32, 1) else 0 end
+  end
+# 1 when all is among the keys to show.
+#: every/2 needs every/2
+  def every(shown: integer, i: integer): integer do
+    t = if i < Sys.peek(shown) do Sys.peek(shown + 8 + 16 * i) else 0 end
+    if i >= Sys.peek(shown) do 0 else if Sys.peek(t) == 3 and rem(Sys.peek(t + 8), 16777216) == 7105633 do 1 else Logger.every(shown, i + 1) end end
+  end
+#: pair/5 needs Sys.keep/2 Sys.push/2 among/4 pair/5
+  def pair(m: integer, i: integer, shown: integer, all: integer, done: integer): integer do
+    e = Sys.peek(m + 8 + 16 * (if i < Sys.peek(m) do i else 0 end))
+    k = if i < Sys.peek(m) do Sys.peek(e + 8) else 0 end
+    v = if i < Sys.peek(m) do Sys.peek(e + 16) else 0 end
+    if i >= Sys.peek(m) do done else
+      if all == 1 or Logger.among(shown, 0, k + 8, Sys.peek(k)) == 1 do
+        if done > 0 do Sys.push(32, 1) end
+        Sys.keep(k + 8, Sys.peek(k))
+        Sys.push(61, 1)
+        Sys.keep(v + 8, Sys.peek(v))
+        Logger.pair(m, i + 1, shown, all, done + 1)
+      else Logger.pair(m, i + 1, shown, all, done) end
+    end
+  end
+# 1 when one of the texts of the list from i on is the n bytes at a.
+#: among/4 needs among/4
+  def among(shown: integer, i: integer, a: integer, n: integer): integer do
+    t = if i < Sys.peek(shown) do Sys.peek(shown + 8 + 16 * i) else 0 end
+    if i >= Sys.peek(shown) do 0 else if Sys.peek(t) == n and Sys.same(t + 8, a, n) == 1 do 1 else Logger.among(shown, i + 1, a, n) end end
+  end
+#: debug/1 needs emit/3
+  def debug(t: string): tuple[] do Logger.emit(0, t, 0) end
+#: debug/1 form 2 needs emit/3 rec/0
+  def debug(f: fn[string]): tuple[] do
+    if Sys.peek(Logger.rec() + 8) <= 0 do Logger.emit(0, f.(), 1) else Logger.emit(-1, "", 0) end
+  end
+# A function that only fails gives no text: it is called for its failure.
+#: debug/1 form 3 needs emit/3 rec/0
+  def debug(f: fn[tuple[]]): tuple[] do
+    if Sys.peek(Logger.rec() + 8) <= 0 do f.() else Logger.emit(-1, "", 0) end
+  end
+#: debug/2 needs emit/4
+  def debug(t: string, m: list[tuple[atom, string]]): tuple[] do Logger.emit(0, t, 1, m) end
+#: info/1 needs emit/3
+  def info(t: string): tuple[] do Logger.emit(1, t, 0) end
+#: info/1 form 2 needs emit/3 rec/0
+  def info(f: fn[string]): tuple[] do
+    if Sys.peek(Logger.rec() + 8) <= 1 do Logger.emit(1, f.(), 1) else Logger.emit(-1, "", 0) end
+  end
+# A function that only fails gives no text: it is called for its failure.
+#: info/1 form 3 needs emit/3 rec/0
+  def info(f: fn[tuple[]]): tuple[] do
+    if Sys.peek(Logger.rec() + 8) <= 1 do f.() else Logger.emit(-1, "", 0) end
+  end
+#: info/2 needs emit/4
+  def info(t: string, m: list[tuple[atom, string]]): tuple[] do Logger.emit(1, t, 1, m) end
+#: warning/1 needs emit/3
+  def warning(t: string): tuple[] do Logger.emit(2, t, 0) end
+#: warning/1 form 2 needs emit/3 rec/0
+  def warning(f: fn[string]): tuple[] do
+    if Sys.peek(Logger.rec() + 8) <= 2 do Logger.emit(2, f.(), 1) else Logger.emit(-1, "", 0) end
+  end
+# A function that only fails gives no text: it is called for its failure.
+#: warning/1 form 3 needs emit/3 rec/0
+  def warning(f: fn[tuple[]]): tuple[] do
+    if Sys.peek(Logger.rec() + 8) <= 2 do f.() else Logger.emit(-1, "", 0) end
+  end
+#: warning/2 needs emit/4
+  def warning(t: string, m: list[tuple[atom, string]]): tuple[] do Logger.emit(2, t, 1, m) end
+#: error/1 needs emit/3
+  def error(t: string): tuple[] do Logger.emit(3, t, 0) end
+#: error/1 form 2 needs emit/3 rec/0
+  def error(f: fn[string]): tuple[] do
+    if Sys.peek(Logger.rec() + 8) <= 3 do Logger.emit(3, f.(), 1) else Logger.emit(-1, "", 0) end
+  end
+# A function that only fails gives no text: it is called for its failure.
+#: error/1 form 3 needs emit/3 rec/0
+  def error(f: fn[tuple[]]): tuple[] do
+    if Sys.peek(Logger.rec() + 8) <= 3 do f.() else Logger.emit(-1, "", 0) end
+  end
+#: error/2 needs emit/4
+  def error(t: string, m: list[tuple[atom, string]]): tuple[] do Logger.emit(3, t, 1, m) end
+

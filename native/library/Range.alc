@@ -1,0 +1,99 @@
+# Range: the functions written in Alchem.
+#: size/1 needs _size/3
+  def size(range: Range): integer do
+    Range._size(range.first, range.last, range.step)
+  end
+# How many integers first..last//step holds, as the pinned runtime counts:
+# (last - first) / step + 1 in 64 bits that wrap around.
+#: _size/3 needs _plus/2 _minus/2
+  def _size(first: integer, last: integer, step: integer): integer do
+    if (step > 0 and last < first) or (step < 0 and last > first) do 0 else
+      d = Range._minus(last, first)
+      Range._plus(if step == -1 do Range._minus(0, d) else div(d, step) end, 1)
+    end
+  end
+#: _plus/2
+  def _plus(a: integer, b: integer): integer do
+    if b > 0 and a > 9223372036854775807 - b do (a - 9223372036854775807 - 1) + (b - 9223372036854775807 - 1) else
+      if b < 0 and a < -9223372036854775807 - 1 - b do (a + 9223372036854775807 + 1) + (b + 9223372036854775807 + 1) else a + b end
+    end
+  end
+#: _minus/2 needs _plus/2
+  def _minus(a: integer, b: integer): integer do
+    if b == -9223372036854775807 - 1 do Range._plus(Range._plus(a, 9223372036854775807), 1) else Range._plus(a, 0 - b) end
+  end
+#: _times/2 needs _plus/2
+  def _times(a: integer, b: integer): integer do
+    cond do
+      b == 0 -> 0
+      rem(b, 2) == 0 -> Range._times(Range._plus(a, a), div(b, 2))
+      b > 0 -> Range._plus(a, Range._times(a, b - 1))
+      a == -9223372036854775807 - 1 -> a
+      true -> Range._plus(Range._times(a, b + 1), 0 - a)
+    end
+  end
+# The least and the greatest integer of a range that holds any.
+#: _low/1 needs _size/3 _plus/2 _times/2
+  def _low(range: Range): integer do
+    min(range.first, Range._plus(range.first, Range._times(Range._plus(Range._size(range.first, range.last, range.step), -1), range.step)))
+  end
+#: _high/1 needs _size/3 _plus/2 _times/2
+  def _high(range: Range): integer do
+    max(range.first, Range._plus(range.first, Range._times(Range._plus(Range._size(range.first, range.last, range.step), -1), range.step)))
+  end
+#: _holds/2 needs _size/3 _low/1 _high/1 _minus/2
+  def _holds(range: Range, n: integer): boolean do
+    Range._size(range.first, range.last, range.step) != 0 and n >= Range._low(range) and n <= Range._high(range) and
+      (range.step == 1 or range.step == -1 or rem(Range._minus(n, range.first), range.step) == 0)
+  end
+# Whether no integer from i on, by step up to last, is in other.
+#: _apart/4 needs _holds/2
+  def _apart(i: integer, last: integer, step: integer, other: Range): boolean do
+    if (step > 0 and i > last) or (step < 0 and i < last) do true else
+      if Range._holds(other, i) do false else
+        if (step > 0 and i > 9223372036854775807 - step) or (step < 0 and i < -9223372036854775807 - 1 - step) do true else
+          Range._apart(i + step, last, step, other)
+        end
+      end
+    end
+  end
+#: to_list/1
+  def to_list(range: Range): list[integer] do
+    Enum.take(range, Enum.count(range))
+  end
+#: new/2
+  def new(first: integer, last: integer): Range do
+    first..last
+  end
+#: new/3
+  def new(first: integer, last: integer, step: integer): Range do
+    if step == 0 do raise("a range's step cannot be 0") end
+    first..last//step
+  end
+#: shift/2 needs _plus/2 _times/2
+# By a number of steps. The sums and the product wrap around as the pinned
+# runtime's do.
+  def shift(range: Range, by: integer): Range do
+    d = Range._times(by, range.step)
+    Range._plus(range.first, d)..Range._plus(range.last, d)//range.step
+  end
+#: disjoint?/2 needs _size/3 _low/1 _high/1 _apart/4
+# The pinned runtime walks the smaller range, and only past 65536 integers
+# compares the bounds first.
+  def disjoint?(left: Range, right: Range): boolean do
+    swap = Range._size(left.first, left.last, left.step) > Range._size(right.first, right.last, right.step)
+    a = if swap do right else left end
+    b = if swap do left else right end
+    if Range._size(a.first, a.last, a.step) > 65536 and (Range._high(a) < Range._low(b) or Range._high(b) < Range._low(a)) do true else
+      if Range._size(a.first, a.last, a.step) > 65536 and (a.step == 1 or a.step == -1) and (b.step == 1 or b.step == -1) do false else
+        Range._apart(a.first, a.last, a.step, b)
+      end
+    end
+  end
+#: split/2 needs _size/3 _plus/2 _times/2 _minus/2
+  def split(range: Range, count: integer): tuple[Range, Range] do
+    size = Range._size(range.first, range.last, range.step)
+    at = min(if count < 0 do max(Range._plus(size, count), 0) else count end, size)
+    cut = Range._plus(range.first, Range._times(at, range.step))
+    {range.first..Range._minus(cut, range.step)//range.step, cut..range.last//range.step}
+  end

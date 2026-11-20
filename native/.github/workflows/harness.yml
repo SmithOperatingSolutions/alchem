@@ -1,0 +1,13 @@
+name: Harness validation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate fixtures and harness
+        run: python3 -m unittest discover -s harness -p 'test_*.py' -v

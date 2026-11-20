@@ -1,0 +1,52 @@
+{
+  "version": 2,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "const.i64",
+              "dest": "a",
+              "value": 42
+            },
+            {
+              "op": "call",
+              "dest": "r",
+              "callee": "identity",
+              "args": null
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    },
+    {
+      "name": "identity",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [],
+          "terminator": {
+            "op": "ret",
+            "value": "x"
+          }
+        }
+      ]
+    }
+  ]
+}

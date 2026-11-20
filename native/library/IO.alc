@@ -1,0 +1,94 @@
+# IO: the functions written in Alchem on the Sys primitives
+# (spec/alchem-system.md). IO.puts, write and warn of one string, inspect,
+# read_line and read_all are the compiler's own.
+#: puts/2 exact needs Sys.put/3
+  def puts(d: atom, t: string): tuple[] do
+    l = t <> "\n"
+    Sys.put(if d == :stderr do 2 else if d == :stdio do 1 else raise("IO.puts writes to :stdio or :stderr, not :#{d}") end end, Sys.addr(l), byte_size(l))
+    {}
+  end
+#: puts/2 form 2 exact needs write/2
+  def puts(f: file, t: string): result[tuple[], string] do
+    IO.write(f, t <> "\n")
+  end
+#: write/2 exact needs Sys.put/3 Sys.why/3
+  def write(f: file, t: string): result[tuple[], string] do
+    r = if Sys.peek(f.at + 8) == 1 do 0 else Sys.put(Sys.peek(f.at), Sys.addr(t), byte_size(t)) end
+    if Sys.peek(f.at + 8) == 1 do error("closed") else if r < 0 do error(Sys.why("write", f.path, r)) else ok({}) end end
+  end
+# Standard input: a line with its line break, or all of it.
+#: read/1 needs Sys.busy/0 Sys.getl/0 Sys.got/0 Sys.pad/0 Sys.rest/0
+  def read(how: atom): option[string] do
+    Sys.pad()
+    if how != :line and how != :eof and how != :all do raise("IO.read takes :line, :eof or a number of characters") end
+    if how == :line do Sys.getl() end
+    if how != :line and Sys.busy() == 1 do Sys.rest() end
+    t = if how == :line or Sys.busy() == 1 do Sys.got() else IO.read_all() end
+    if byte_size(t) > 16777216 do raise("input exceeds 16777216 bytes") end
+    if how != :line and Sys.busy() == 1 do if not String.valid?(t) do System.halt(73) end end
+    if t == "" do none else some(t) end
+  end
+#: read/1 form 2 needs Sys.chars/1 Sys.got/0 Sys.pad/0
+  def read(c: integer): option[string] do
+    if c < 0 do raise("IO.read needs a nonnegative count") end
+    Sys.pad()
+    Sys.chars(c)
+    t = Sys.got()
+    if t == "" and c > 0 do none else some(t) end
+  end
+#: read/2 needs read/1
+  def read(d: atom, how: atom): option[string] do
+    if d != :stdio do raise("IO.read reads :stdio, or a file opened with File.open") end
+    IO.read(how)
+  end
+#: read/2 form 2 needs Sys.got/0 Sys.line/1 Sys.load/1 Sys.pad/0 Sys.take/2
+  def read(f: file, how: atom): option[string] do
+    h = f.at
+    if Sys.peek(h + 8) == 1 do raise("the file is closed") end
+    if how != :line and how != :eof and how != :all do raise("IO.read takes :line, :eof or a number") end
+    Sys.pad()
+    if how == :line do Sys.line(h) else Sys.take(h, Sys.peek(h + 24) - Sys.peek(h + 16)) end
+    if how != :line do Sys.load(Sys.peek(h)) end
+    t = Sys.got()
+    if t == "" do none else some(t) end
+  end
+#: read/2 form 3 needs Sys.got/0 Sys.pad/0 Sys.runes/2
+  def read(f: file, c: integer): option[string] do
+    if c < 0 do raise("the count must not be negative") end
+    if Sys.peek(f.at + 8) == 1 do raise("the file is closed") end
+    Sys.pad()
+    Sys.runes(f.at, c)
+    t = Sys.got()
+    if t == "" and c > 0 do none else some(t) end
+  end
+#: binread/1 needs Sys.bin/1 Sys.got/0 Sys.pad/0
+  def binread(c: integer): option[string] do
+    if c < 0 do raise("IO.binread needs a nonnegative count") end
+    Sys.pad()
+    Sys.bin(c)
+    t = Sys.got()
+    if t == "" and c > 0 do none else some(t) end
+  end
+#: binread/2 needs Sys.got/0 Sys.pad/0 Sys.take/2
+  def binread(f: file, c: integer): option[string] do
+    if c < 0 do raise("the count must not be negative") end
+    if Sys.peek(f.at + 8) == 1 do raise("the file is closed") end
+    Sys.pad()
+    Sys.take(f.at, c)
+    t = Sys.got()
+    if t == "" and c > 0 do none else some(t) end
+  end
+#: gets/1
+  def gets(p: string): option[string] do
+    IO.write(p)
+    IO.read_line()
+  end
+# The lines of standard input without their line breaks, each read when it
+# is asked for.
+#: stream/0
+  def stream(): stream[string] do
+    Stream.__make(fn c -> lines() end)
+  end
+  defp lines(): fn[option[string]] do
+    fn -> IO.read_line() end
+  end

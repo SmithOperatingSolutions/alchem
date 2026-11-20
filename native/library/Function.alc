@@ -1,0 +1,2 @@
+#: identity/1
+  def identity(x: a): a do x end

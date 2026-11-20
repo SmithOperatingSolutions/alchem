@@ -1,0 +1,235 @@
+# Version: the functions written in Alchem. The private functions (defp) of
+# the two-argument functions are entries of their own under /2 whatever they
+# take, so that they are appended to the module of those functions.
+#: parse/1
+  def parse(text: string): result[Version, string] do
+    built = String.split(text, "+")
+    dashed = String.split(hd(built), "-")
+    pre = Enum.join(tl(dashed), "-")
+    fields = String.split(hd(dashed), ".")
+    numbers = Enum.map(fields, fn field -> version_number(field) end)
+    if length(fields) != 3 or -1 in numbers or (length(dashed) > 1 and pre == "") do error("invalid version " <> inspect(text)) else
+      start: list[string] = []
+      ok(%Version{major: Enum.at(numbers, 0, 0), minor: Enum.at(numbers, 1, 0), patch: Enum.at(numbers, 2, 0),
+        pre: if pre == "" do start else String.split(pre, ".") end,
+        build: if length(built) > 1 do some(Enum.join(tl(built), "+")) else none end})
+    end
+  end
+# A number of a version, -1 for text that is not one.
+  defp version_number(field: string): integer do
+    case Integer.parse(field) do
+      ok(number) -> if number < 0 or (byte_size(field) > 1 and String.starts_with?(field, "0")) do -1 else number end
+      error(_) -> -1
+    end
+  end
+#: parse!/1 needs parse/1
+  def parse!(text: string): Version do
+    case Version.parse(text) do
+      ok(version) -> version
+      error(reason) -> raise(reason)
+    end
+  end
+#: to_string/1 needs parse/1
+  def to_string(version: Version): string do
+    build = case version.build do
+      some(text) -> "+" <> text
+      none -> ""
+    end
+    Integer.to_string(version.major) <> "." <> Integer.to_string(version.minor) <> "." <> Integer.to_string(version.patch) <>
+      (if length(version.pre) > 0 do "-" <> Enum.join(version.pre, ".") else "" end) <> build
+  end
+#: match?/2 needs version_code/2
+  def match?(version: string, requirement: string): boolean do
+    met = Version.version_code(version, requirement)
+    if met == 2 do raise("invalid requirement " <> inspect(requirement)) end
+    if met == 3 do raise("invalid version " <> inspect(version)) end
+    met == 1
+  end
+#: match?/2 form 2 needs match?/2 to_string/1
+  def match?(version: Version, requirement: string): boolean do
+    Version.match?(Version.to_string(version), requirement)
+  end
+#: match?/2 form 3 needs match?/2
+  def match?(version: string, requirement: Requirement): boolean do
+    Version.match?(version, requirement.source)
+  end
+#: match?/2 form 4 needs match?/2 to_string/1
+  def match?(version: Version, requirement: Requirement): boolean do
+    Version.match?(Version.to_string(version), requirement.source)
+  end
+#: parse_requirement/1 needs version_code/2
+  def parse_requirement(text: string): result[Requirement, string] do
+    if Version.version_code("0.0.0", text) > 1 do error("invalid requirement " <> inspect(text)) else ok(%Requirement{source: text}) end
+  end
+#: parse_requirement!/1 needs version_code/2
+  def parse_requirement!(text: string): Requirement do
+    if Version.version_code("0.0.0", text) > 1 do raise("invalid requirement " <> inspect(text)) end
+    %Requirement{source: text}
+  end
+#: version_code/2 needs version_met/2 version_words/2
+# 1 or 0 as a version meets a requirement or not, 2 for an invalid
+# requirement and 3 for an invalid version, whichever is met first. It is
+# public so that the one-argument functions reach it.
+  def version_code(version: string, requirement: string): integer do
+    words = version_words(requirement)
+    if length(words) == 0 do 2 else version_all(version, words, 0, false, true) end
+  end
+# The same from the word at index on, the comparisons joined by "and" and "or".
+  defp version_all(version: string, words: list[string], index: integer, any: boolean, all: boolean): integer do
+    met = if index + 1 >= length(words) do 2 else version_met(version, Enum.at(words, index, ""), Enum.at(words, index + 1, "")) end
+    joiner = Enum.at(words, index + 2, "")
+    if met > 1 do met else
+      if index + 2 == length(words) do (if any or (all and met == 1) do 1 else 0 end) else
+        if joiner == "and" do version_all(version, words, index + 3, any, all and met == 1) else
+          if joiner == "or" do version_all(version, words, index + 3, any or (all and met == 1), true) else 2 end
+        end
+      end
+    end
+  end
+#: version_words/2
+# The words of a requirement, which white space separates.
+  defp version_words(text: string): list[string] do
+    spaces = ["\t", "\n", "\v", "\f", "\r", "\u0085", " ", " ", " ", " ", " ", " ", " ", " ", " ",
+      " ", " ", " ", " ", " ", " ", " ", " ", "　"]
+    Enum.filter(String.split(Enum.reduce(spaces, text, fn space, plain -> String.replace(plain, space, " ") end), " "), fn word -> word != "" end)
+  end
+#: version_met/2 needs version_order/2 version_core/2
+# Whether a version meets one comparison: 1 or 0, 2 for an invalid
+# comparison, 3 for an invalid version.
+  defp version_met(version: string, operator: string, target: string): integer do
+    order = if length(version_core(target)) == 0 do 2 else version_order(version, target) end
+    if operator == "~>" do version_near(version, target) else
+      if length(version_core(target)) == 0 do 2 else if order == 2 do 3 else
+        cond do
+          operator == "==" -> version_bit(order == 0)
+          operator == "!=" -> version_bit(order != 0)
+          operator == ">" -> version_bit(order > 0)
+          operator == ">=" -> version_bit(order >= 0)
+          operator == "<" -> version_bit(order < 0)
+          operator == "<=" -> version_bit(order <= 0)
+          true -> 2
+        end
+      end end
+    end
+  end
+  defp version_bit(met: boolean): integer do
+    if met do 1 else 0 end
+  end
+# ~> 2.1 allows 2.1 and later within 2, ~> 2.1.3 allows 2.1.3 and later within 2.1.
+  defp version_near(version: string, target: string): integer do
+    parts = String.split(hd(String.split(target, "-")), ".")
+    count = length(parts)
+    lower = if count == 2 do target <> ".0" else target end
+    case Integer.parse(Enum.at(parts, max(count - 2, 0), "")) do
+      error(_) -> 2
+      ok(number) ->
+        if count < 2 or count > 3 or length(version_core(lower)) == 0 do 2 else
+          least = version_order(version, lower)
+          next = if number == 9223372036854775807 do "-9223372036854775808" else Integer.to_string(number + 1) end
+          upper = if count == 2 do next <> ".0.0" else hd(parts) <> "." <> next <> ".0" end
+          if least == 2 do 3 else if least < 0 do 0 else
+            if length(version_core(upper)) == 0 do raise("invalid version " <> inspect(upper)) end
+            version_bit(version_order(version, upper) < 0)
+          end end
+        end
+    end
+  end
+#: version_core/2
+# The three numbers of a version, none for text that is not one.
+  defp version_core(text: string): list[integer] do
+    dashed = String.split(hd(String.split(text, "+")), "-")
+    numbers = Enum.map(String.split(hd(dashed), "."), fn field -> version_part(field) end)
+    if length(numbers) != 3 or -1 in numbers or (length(dashed) > 1 and Enum.join(tl(dashed), "-") == "") do Enum.take(numbers, 0) else numbers end
+  end
+  defp version_part(field: string): integer do
+    case Integer.parse(field) do
+      ok(number) -> if number < 0 or (byte_size(field) > 1 and String.starts_with?(field, "0")) do -1 else number end
+      error(_) -> -1
+    end
+  end
+#: version_order/2 needs version_core/2 version_ids/2
+# -1, 0 or 1 as the first version is lower than, equal to or higher than
+# the second, 2 when one is not a version.
+  defp version_order(left: string, right: string): integer do
+    first = version_core(left)
+    second = version_core(right)
+    before = Enum.join(tl(String.split(hd(String.split(left, "+")), "-")), "-")
+    after_it = Enum.join(tl(String.split(hd(String.split(right, "+")), "-")), "-")
+    if length(first) == 0 or length(second) == 0 do 2 else
+      cond do
+        Enum.at(first, 0, 0) != Enum.at(second, 0, 0) -> version_sign(Enum.at(first, 0, 0) < Enum.at(second, 0, 0))
+        Enum.at(first, 1, 0) != Enum.at(second, 1, 0) -> version_sign(Enum.at(first, 1, 0) < Enum.at(second, 1, 0))
+        Enum.at(first, 2, 0) != Enum.at(second, 2, 0) -> version_sign(Enum.at(first, 2, 0) < Enum.at(second, 2, 0))
+        before == after_it -> 0
+        before == "" -> 1
+        after_it == "" -> -1
+        true -> version_ids(String.split(before, "."), String.split(after_it, "."), 0)
+      end
+    end
+  end
+  defp version_sign(lower: boolean): integer do
+    if lower do -1 else 1 end
+  end
+#: version_ids/2
+# The order of two pre-releases by their identifiers from index on.
+  defp version_ids(left: list[string], right: list[string], index: integer): integer do
+    if index >= length(left) or index >= length(right) do (if length(left) < length(right) do -1 else 1 end) else
+      order = version_id(Enum.at(left, index, ""), Enum.at(right, index, ""))
+      if order != 0 do order else version_ids(left, right, index + 1) end
+    end
+  end
+# Numbers order as numbers and before text. The difference of two numbers
+# wraps around as the pinned runtime's does.
+  defp version_id(left: string, right: string): integer do
+    case {Integer.parse(left), Integer.parse(right)} do
+      {ok(first), ok(second)} ->
+        cond do
+          first == second -> 0
+          first >= 0 and second < 0 -> if first > 9223372036854775807 + second do -1 else 1 end
+          first < 0 and second >= 0 -> if first < -9223372036854775807 - 1 + second do 1 else -1 end
+          first < second -> -1
+          true -> 1
+        end
+      {ok(_), error(_)} -> -1
+      {error(_), ok(_)} -> 1
+      _ -> if left < right do -1 else if left > right do 1 else 0 end end
+    end
+  end
+#: compare/2 needs version_order/2 version_core/2
+  def compare(a: string, b: string): atom do
+    if length(version_core(a)) == 0 do raise("invalid version " <> inspect(a)) end
+    if length(version_core(b)) == 0 do raise("invalid version " <> inspect(b)) end
+    o = version_order(a, b)
+    if o < 0 do :lt else if o > 0 do :gt else :eq end end
+  end
+#: compare/2 form 2 needs compare/2 to_string/1
+  def compare(a: Version, b: Version): atom do
+    Version.compare(Version.to_string(a), Version.to_string(b))
+  end
+#: match?/3 needs match?/2 parse/1
+  def match?(v: string, r: string, o: list[tuple[atom, boolean]]): boolean do
+    pre = case Version.parse(v) do
+      ok(_) -> String.contains?(hd(String.split(v, "+")), "-")
+      error(_) -> false
+    end
+    hit = Enum.reduce(o, false, fn p, h ->
+      if h do h else
+        if elem(p, 0) != :allow_pre do raise("Version.match? takes allow_pre:") end
+        pre and not elem(p, 1) and not String.contains?(r, "-")
+      end
+    end)
+    if hit do Version.match?("0.0.0", r) and false else Version.match?(v, r) end
+  end
+#: struct Version
+  struct Version do
+    major: integer
+    minor: integer
+    patch: integer
+    pre: list[string] = []
+    build: option[string] = none
+  end
+# Version.Requirement of the pinned compiler: a type name here is one word.
+#: struct Requirement
+  struct Requirement do
+    source: string
+  end

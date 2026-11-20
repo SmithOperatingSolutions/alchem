@@ -1,0 +1,168 @@
+# Kernel: the functions called without a module name that are written in
+# Alchem.
+#: concat/2
+  def concat(left: list[a], right: list[a]): list[a] do
+    left ++ right
+  end
+#: filter/2
+  def filter(items: list[a], f: fn[a, boolean]): list[a] do
+    Enum.filter(items, f)
+  end
+#: map/2
+  def map(items: list[a], f: fn[a, b]): list[b] do
+    Enum.map(items, f)
+  end
+#: reduce/3
+  def reduce(items: list[a], start: b, f: fn[b, a, b]): b do
+    Enum.reduce(items, start, fn x, acc -> f(acc, x) end)
+  end
+#: get/3
+  def get(m0: map[k, v], key: k, default: v): v do
+    Map.get(m0, key, default)
+  end
+#: has_key/2
+  def has_key(m0: map[k, v], key: k): boolean do
+    Map.has_key?(m0, key)
+  end
+#: put/3
+  def put(m0: map[k, v], key: k, value: v): map[k, v] do
+    Map.put(m0, key, value)
+  end
+#: prepend/2
+  def prepend(items: list[a], value: a): list[a] do
+    [value | items]
+  end
+#: tap/2
+  def tap(value: a, f: fn[a, b]): a do
+    done = f(value)
+    value
+  end
+#: then/2
+  def then(value: a, f: fn[a, b]): b do
+    f(value)
+  end
+#: halt/1
+  def halt(value: a): tuple[boolean, a] do
+    {true, value}
+  end
+#: cont/1
+  def cont(value: a): tuple[boolean, a] do
+    {false, value}
+  end
+#: binary_part/3
+  def binary_part(text: string, start: integer, count: integer): string do
+    # The pinned runtime adds in 64 bits that wrap around; a sum past them
+    # that is not refused is its panic.
+    least = -9223372036854775807 - 1
+    if count < 0 and (count == least or start < least - count) do raise("binary_part: the part is outside the string") end
+    from = if count < 0 do start + count else start end
+    size = abs(count)
+    if from >= 0 and size > 9223372036854775807 - from do Sys.panic("panic: runtime error: slice bounds out of range [:#{(from - 9223372036854775807 - 1) + (size - 9223372036854775807 - 1)}]") end
+    if from < 0 or from + size > byte_size(text) do raise("binary_part: the part is outside the string") end
+    elem(cut(elem(cut(text, from), 1), size), 0)
+  end
+  defp table(): list[string] do
+    ["\x00", "\x01", "\x02", "\x03", "\x04", "\x05", "\x06", "\x07", "\x08", "\x09", "\x0A", "\x0B", "\x0C", "\x0D", "\x0E", "\x0F", "\x10", "\x11", "\x12", "\x13", "\x14", "\x15", "\x16", "\x17", "\x18", "\x19", "\x1A", "\x1B", "\x1C", "\x1D", "\x1E", "\x1F", "\x20", "\x21", "\x22", "\x23", "\x24", "\x25", "\x26", "\x27", "\x28", "\x29", "\x2A", "\x2B", "\x2C", "\x2D", "\x2E", "\x2F", "\x30", "\x31", "\x32", "\x33", "\x34", "\x35", "\x36", "\x37", "\x38", "\x39", "\x3A", "\x3B", "\x3C", "\x3D", "\x3E", "\x3F", "\x40", "\x41", "\x42", "\x43", "\x44", "\x45", "\x46", "\x47", "\x48", "\x49", "\x4A", "\x4B", "\x4C", "\x4D", "\x4E", "\x4F", "\x50", "\x51", "\x52", "\x53", "\x54", "\x55", "\x56", "\x57", "\x58", "\x59", "\x5A", "\x5B", "\x5C", "\x5D", "\x5E", "\x5F", "\x60", "\x61", "\x62", "\x63", "\x64", "\x65", "\x66", "\x67", "\x68", "\x69", "\x6A", "\x6B", "\x6C", "\x6D", "\x6E", "\x6F", "\x70", "\x71", "\x72", "\x73", "\x74", "\x75", "\x76", "\x77", "\x78", "\x79", "\x7A", "\x7B", "\x7C", "\x7D", "\x7E", "\x7F", "\x80", "\x81", "\x82", "\x83", "\x84", "\x85", "\x86", "\x87", "\x88", "\x89", "\x8A", "\x8B", "\x8C", "\x8D", "\x8E", "\x8F", "\x90", "\x91", "\x92", "\x93", "\x94", "\x95", "\x96", "\x97", "\x98", "\x99", "\x9A", "\x9B", "\x9C", "\x9D", "\x9E", "\x9F", "\xA0", "\xA1", "\xA2", "\xA3", "\xA4", "\xA5", "\xA6", "\xA7", "\xA8", "\xA9", "\xAA", "\xAB", "\xAC", "\xAD", "\xAE", "\xAF", "\xB0", "\xB1", "\xB2", "\xB3", "\xB4", "\xB5", "\xB6", "\xB7", "\xB8", "\xB9", "\xBA", "\xBB", "\xBC", "\xBD", "\xBE", "\xBF", "\xC0", "\xC1", "\xC2", "\xC3", "\xC4", "\xC5", "\xC6", "\xC7", "\xC8", "\xC9", "\xCA", "\xCB", "\xCC", "\xCD", "\xCE", "\xCF", "\xD0", "\xD1", "\xD2", "\xD3", "\xD4", "\xD5", "\xD6", "\xD7", "\xD8", "\xD9", "\xDA", "\xDB", "\xDC", "\xDD", "\xDE", "\xDF", "\xE0", "\xE1", "\xE2", "\xE3", "\xE4", "\xE5", "\xE6", "\xE7", "\xE8", "\xE9", "\xEA", "\xEB", "\xEC", "\xED", "\xEE", "\xEF", "\xF0", "\xF1", "\xF2", "\xF3", "\xF4", "\xF5", "\xF6", "\xF7", "\xF8", "\xF9", "\xFA", "\xFB", "\xFC", "\xFD", "\xFE", "\xFF"]
+  end
+  defp lead(text: string, table: list[string], low: integer, high: integer): integer do
+    if low >= high do low else
+      mid = (low + high + 1) / 2
+      if Enum.at(table, mid, "") <= text do lead(text, table, mid, high) else lead(text, table, low, mid - 1) end
+    end
+  end
+  defp after(text: string, part: string): string do
+    Enum.join(tl(String.split(text, part)), part)
+  end
+  defp front(text: string, count: integer, table: list[string], done: string): tuple[string, string] do
+    if count <= 0 do {done, text} else
+      b = Enum.at(table, lead(text, table, 0, 255), "")
+      front(after(text, b), count - 1, table, done <> b)
+    end
+  end
+  defp cut(text: string, count: integer): tuple[string, string] do
+    head = String.slice(text, 0, count)
+    if count <= 0 do {"", text} else if byte_size(head) == count do {head, after(text, head)} else front(text, count, table(), "") end end
+  end
+#: refute/1
+  def refute(c: boolean): tuple[] do
+    if c do raise("refute failed: the expression is true") end
+    {}
+  end
+#: flunk/1
+  def flunk(m: string): tuple[] do
+    if m == m do raise(m) end
+    {}
+  end
+# min and max of two values of any type with an order; the compiler has code
+# of its own for integers, booleans, strings and floats.
+#: min/2
+  def min(x: ord, y: ord): ord do if y < x do y else x end end
+#: max/2
+  def max(x: ord, y: ord): ord do if x < y do y else x end end
+# Testing: more of the assertions that are functions, called without a
+# module name. on_exit keeps the function with the process that
+# registered it, in a list at word 104 of the state block: next, process,
+# function. The test runner (library/Testing.alc) takes a test's off it;
+# in an ordinary program nothing runs them, as upstream.
+#: on_exit/1 needs Sys.state/0
+  def on_exit(f: fn[a]): tuple[] do
+    s = Sys.state()
+    g = Sys.peek(s + 96)
+    x = Sys.addr(String.duplicate("\x00", 24))
+    Sys.poke(x, Sys.peek(s + 104))
+    Sys.poke(x + 8, if g == 0 do 0 else Sys.peek(g) end)
+    Sys.poke(x + 16, Sys.__word(f))
+    Sys.poke(s + 104, x)
+    {}
+  end
+# The function runs in a process of its own, as the pinned runtime runs
+# it: whatever ends that process (a failure, an uncaught throw) is the
+# reason. A failure with an empty message counts as none, as there.
+#: assert_raise/2 needs String.contains?/2 Testing._spawn/1 Testing._ran/1 Task._yield/2 Process._reason/1
+  def assert_raise(e: string, f: fn[a]): tuple[] do
+    w: fn[integer] = fn(): integer do Testing._ran(f) end
+    t = Testing._spawn(w)
+    r = if Task._yield(t, -1) == 1 do "" else Process._reason(t) end
+    if r == "" do raise("expected a failure containing " <> inspect(e) <> ", but the function returned") end
+    if not String.contains?(r, e) do raise("expected a failure containing " <> inspect(e) <> ", got " <> inspect(r)) end
+    {}
+  end
+# What the function writes to standard output goes to a file in memory
+# (memfd_create) that descriptor 1 names meanwhile. The record c: 1 once
+# the function is over, the descriptor that was 1, the file; then the word
+# of the text. When the function fails the text is written where it would
+# have gone, and the failure passes on.
+#: capture_io/1 needs capture_end/1
+  def capture_io(f: fn[a]): string do
+    c = Sys.addr(String.duplicate("\x00", 24))
+    fd = Sys.call(319, Sys.addr("capture_io\x00"), 0)
+    if fd < 0 do System.halt(74) end
+    Sys.poke(c + 8, Sys.call(32, 1))
+    Sys.poke(c + 16, fd)
+    Sys.call(33, fd, 1)
+    try do
+      v = f.()
+      Sys.poke(c, 1)
+    after
+      capture_end(c)
+    end
+    t: string = Sys.__cast(Sys.peek(c))
+    t
+  end
+#: capture_end/1 needs capture_read/4 Sys.put/3
+  def capture_end(c: integer): integer do
+    fd = Sys.peek(c + 16)
+    n = Sys.call(8, fd, 0, 2)
+    t = String.duplicate("\x00", if n < 0 do 0 else n end)
+    Sys.call(33, Sys.peek(c + 8), 1)
+    Sys.call(3, Sys.peek(c + 8))
+    capture_read(fd, Sys.addr(t), n, 0)
+    Sys.call(3, fd)
+    if Sys.peek(c) == 0 do Sys.put(1, Sys.addr(t), byte_size(t)) end
+    Sys.poke(c, Sys.__word(t))
+  end
+#: capture_read/4
+  def capture_read(fd: integer, a: integer, n: integer, got: integer): integer do
+    r = if got >= n do 0 else Sys.call(17, fd, a + got, n - got, got) end
+    if r == -4 do capture_read(fd, a, n, got) else if r <= 0 do got else capture_read(fd, a, n, got + r) end end
+  end

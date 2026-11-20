@@ -1,0 +1,290 @@
+defmodule NativeArm64 do
+  # ARM64 (AArch64) machine code, for the compiler built for linux/arm64
+  # (spec/arm64.md). nc_arm() is 1 in that compiler and 0 here; an emitter
+  # that differs between the targets asks it.
+  def nc_arm(): integer do 0 end
+
+  # An instruction: one 32-bit word, little-endian.
+  def a4(word: integer): bytes do nc_u32(word) end
+  # A field of a word that holds value in bits bits, negative values as
+  # their two's complement.
+  def a_field(value: integer, bits: integer): integer do
+    # A value past the field (a branch of garbage decoded as code) is cut to
+    # it, so that every word made is an instruction.
+    span = a_pow(bits)
+    if value < 0 do (if value+span < 0 do a_field(value+span*(1+a_div(0-value,span)),bits) else value+span end) else
+      if value >= span do value-span*a_div(value,span) else value end
+    end
+  end
+  def a_pow(bits: integer): integer do
+    if bits >= 16 do 65536*a_pow(bits-16) else if bits >= 4 do 16*a_pow(bits-4) else if bits > 0 do 2*a_pow(bits-1) else 1 end end end
+  end
+  # value divided by d, rounded down, for value >= 0 and d > 0, in as many
+  # steps as the quotient has bits.
+  def a_div(value: integer, d: integer): integer do
+    if value < d do 0 else
+      if value-d < d do 1 else
+        q = 2*a_div(value,d+d)
+        if value-q*d >= d do q+1 else q end
+      end
+    end
+  end
+
+  # The ARM64 register that stands for x86-64 register r (0 RAX, 1 RCX,
+  # 2 RDX, 3 RBX, 4 RSP, 5 RBP, 6 RSI, 7 RDI, 8 to 15 R8 to R15).
+  def ar(r: integer): integer do
+    if r == 4 do 28 else if r == 5 do 29 else if r == 6 do 4 else if r == 7 do 5 else r end end end end
+  end
+
+  # Moves.
+  def a_movz(rd: integer, imm: integer, hw: integer): bytes do a4(3531603968+hw*2097152+imm*32+rd) end
+  def a_movk(rd: integer, imm: integer, hw: integer): bytes do a4(4068474880+hw*2097152+imm*32+rd) end
+  def a_movn(rd: integer, imm: integer, hw: integer): bytes do a4(2457862144+hw*2097152+imm*32+rd) end
+  # rd = value, any 64-bit integer: movz (or movn for a negative value) and a
+  # movk for each further sixteen bits that are not those of the first.
+  def a_mov_imm(rd: integer, value: integer): bytes do
+    negative = if value < 0 do 1 else 0 end
+    v = if negative == 1 do 0-value-1 else value end
+    c1 = a_div(v,65536)
+    c2 = a_div(c1,65536)
+    c3 = a_div(c2,65536)
+    first = if negative == 1 do a_movn(rd,v-c1*65536,0) else a_movz(rd,v-c1*65536,0) end
+    nc_join(first,a_movk_part(rd,c1-c2*65536,1,negative),Enum.concat(a_movk_part(rd,c2-c3*65536,2,negative),a_movk_part(rd,c3,3,negative)))
+  end
+  def a_movk_part(rd: integer, chunk: integer, hw: integer, negative: integer): bytes do
+    if chunk == 0 do b[] else a_movk(rd,if negative == 1 do 65535-chunk else chunk end,hw) end
+  end
+  def a_mov(rd: integer, rm: integer): bytes do a4(2852127712+rm*65536+rd) end
+
+  # Arithmetic and logic on 64 bits. s: 1 for the form that sets the flags.
+  def a_add_imm(rd: integer, rn: integer, imm: integer, s: integer): bytes do a4(2432696320+s*536870912+imm*1024+rn*32+rd) end
+  def a_sub_imm(rd: integer, rn: integer, imm: integer, s: integer): bytes do a4(3506438144+s*536870912+imm*1024+rn*32+rd) end
+  def a_add(rd: integer, rn: integer, rm: integer, s: integer): bytes do a4(2332033024+s*536870912+rm*65536+rn*32+rd) end
+  def a_sub(rd: integer, rn: integer, rm: integer, s: integer): bytes do a4(3405774848+s*536870912+rm*65536+rn*32+rd) end
+  def a_and(rd: integer, rn: integer, rm: integer, s: integer): bytes do a4(2315255808+s*1610612736+rm*65536+rn*32+rd) end
+  def a_orr(rd: integer, rn: integer, rm: integer): bytes do a4(2852126720+rm*65536+rn*32+rd) end
+  def a_eor(rd: integer, rn: integer, rm: integer): bytes do a4(3388997632+rm*65536+rn*32+rd) end
+  def a_mul(rd: integer, rn: integer, rm: integer): bytes do a4(2600500224+rm*65536+rn*32+rd) end
+  def a_smulh(rd: integer, rn: integer, rm: integer): bytes do a4(2604694528+rm*65536+rn*32+rd) end
+  def a_sdiv(rd: integer, rn: integer, rm: integer): bytes do a4(2596277248+rm*65536+rn*32+rd) end
+  def a_lsl(rd: integer, rn: integer, rm: integer): bytes do a4(2596282368+rm*65536+rn*32+rd) end
+  def a_lsr(rd: integer, rn: integer, rm: integer): bytes do a4(2596283392+rm*65536+rn*32+rd) end
+  def a_asr(rd: integer, rn: integer, rm: integer): bytes do a4(2596284416+rm*65536+rn*32+rd) end
+  def a_cmp(rn: integer, rm: integer): bytes do a_sub(31,rn,rm,1) end
+  def a_tst(rn: integer, rm: integer): bytes do a_and(31,rn,rm,1) end
+  # rd = rn + value, with X16 for a value past twelve bits; s as above.
+  def a_add_value(rd: integer, rn: integer, value: integer, s: integer): bytes do
+    if value >= 0 do if value < 4096 do a_add_imm(rd,rn,value,s) else Enum.concat(a_mov_imm(16,value),a_add(rd,rn,16,s)) end else
+      if value > -4096 do a_sub_imm(rd,rn,0-value,s) else Enum.concat(a_mov_imm(16,value),a_add(rd,rn,16,s)) end
+    end
+  end
+  # Compare rn with value (cmp rn, value): subs, or adds of the negation
+  # (cmn) for a small negative value, which leaves the same flags; a value
+  # past twelve bits through X16.
+  def a_cmp_value(rn: integer, value: integer): bytes do
+    if value >= 0 do if value < 4096 do a_sub_imm(31,rn,value,1) else Enum.concat(a_mov_imm(16,value),a_cmp(rn,16)) end else
+      if value > -4096 do a_add_imm(31,rn,0-value,1) else Enum.concat(a_mov_imm(16,value),a_cmp(rn,16)) end
+    end
+  end
+  # rd = 1 when cond holds, else 0 (cset).
+  def a_cset(rd: integer, cc: integer): bytes do a4(2594113504+a_invert(cc)*4096+rd) end
+  def a_csel(rd: integer, rn: integer, rm: integer, cc: integer): bytes do a4(2592079872+rm*65536+cc*4096+rn*32+rd) end
+  def a_invert(cc: integer): integer do
+    if cc-2*a_div(cc,2) == 0 do cc+1 else cc-1 end
+  end
+
+  # Loads and stores of 64 bits at rn+offset, through X17 when the offset
+  # has no form of its own.
+  def a_ldr(rt: integer, rn: integer, offset: integer): bytes do
+    if a_scaled(offset) == 1 do a4(4181721088+a_div(offset,8)*1024+rn*32+rt) else
+      if a_near(offset) == 1 do a4(4164943872+a_field(offset,9)*4096+rn*32+rt) else Enum.concat(a_mov_imm(17,offset),a4(4167067648+17*65536+rn*32+rt)) end
+    end
+  end
+  def a_str(rt: integer, rn: integer, offset: integer): bytes do
+    if a_scaled(offset) == 1 do a4(4177526784+a_div(offset,8)*1024+rn*32+rt) else
+      if a_near(offset) == 1 do a4(4160749568+a_field(offset,9)*4096+rn*32+rt) else Enum.concat(a_mov_imm(17,offset),a4(4162873344+17*65536+rn*32+rt)) end
+    end
+  end
+  def a_scaled(offset: integer): integer do
+    if offset < 0 do 0 else if offset > 32760 do 0 else if offset-8*a_div(offset,8) != 0 do 0 else 1 end end end
+  end
+  def a_near(offset: integer): integer do if offset < -256 do 0 else if offset > 255 do 0 else 1 end end end
+  def a_ldrb(rt: integer, rn: integer, offset: integer): bytes do a4(960495616+offset*1024+rn*32+rt) end
+  def a_strb(rt: integer, rn: integer, offset: integer): bytes do a4(956301312+offset*1024+rn*32+rt) end
+
+  # The stack of x86-64 code is X28 (spec/arm64.md).
+  def a_push(rt: integer): bytes do a4(4160752640+a_field(-8,9)*4096+28*32+rt) end
+  def a_pop(rt: integer): bytes do a4(4164944896+8*4096+28*32+rt) end
+
+  # Branches; offsets in bytes from the branch.
+  def a_b(offset: integer): bytes do a4(335544320+a_field(a_quarter(offset),26)) end
+  def a_bl(offset: integer): bytes do a4(2483027968+a_field(a_quarter(offset),26)) end
+  def a_bcond(cc: integer, offset: integer): bytes do a4(1409286144+a_field(a_quarter(offset),19)*32+cc) end
+  def a_br(rn: integer): bytes do a4(3592355840+rn*32) end
+  def a_quarter(offset: integer): integer do if offset < 0 do 0-a_div(0-offset,4) else a_div(offset,4) end end
+  def a_adr(rd: integer, offset: integer): bytes do
+    field = a_field(offset,21)
+    high = a_div(field,4)
+    a4(268435456+(field-high*4)*536870912+high*32+rd)
+  end
+  def a_svc(): bytes do a4(3556769793) end
+  # x86-64's call: the return address on the stack, then to target, an
+  # offset from the start of these 12 bytes.
+  def a_call(offset: integer): bytes do nc_join(a_adr(30,12),a_push(30),a_b(offset-8)) end
+  # call [address]: the address held at an absolute address.
+  def a_call_at(address: integer): bytes do
+    nc_join(Enum.concat(a_mov_imm(16,address),a_ldr(16,16,0)),a_adr(30,12),Enum.concat(a_push(30),a_br(16)))
+  end
+  def a_ret(): bytes do Enum.concat(a_pop(30),a_br(30)) end
+  # Conditions: eq 0, ne 1, hs 2, lo 3, mi 4, pl 5, vs 6, vc 7, hi 8, ls 9,
+  # ge 10, lt 11, gt 12, le 13.
+
+  # Linux system calls: the number of the ARM64 call for an x86-64 one, -1
+  # for one ARM64 does not have (fork, dup2: clone and dup3 take other
+  # arguments, so their callers say them).
+  def a_sysno(n: integer): integer do
+    if n == 0 do 63 else if n == 1 do 64 else if n == 3 do 57 else if n == 9 do 222 else if n == 11 do 215 else if n == 60 do 93 else if n == 231 do 94 else if n == 10 do 226 else if n == 12 do 214 else if n == 13 do 134 else if n == 14 do 135 else if n == 39 do 172 else if n == 62 do 129 else a_sysno_more(n) end end end end end end end end end end end end end
+  end
+  def a_sysno_more(n: integer): integer do
+    if n == 257 do 56 else if n == 262 do 79 else if n == 263 do 35 else if n == 293 do 59 else if n == 59 do 221 else if n == 61 do 260 else if n == 72 do 25 else if n == 80 do 49 else if n == 228 do 113 else if n == 35 do 101 else if n == 230 do 115 else -1 end end end end end end end end end end end
+  end
+  # A system call whose x86-64 number is known: the arguments moved from
+  # RDI, RSI, RDX, R10, R8, R9 to X0 to X5, the registers x86-64 keeps
+  # (RCX and R11 aside, which it does not) held in X19 to X24, and the
+  # result in RAX.
+  def a_syscall(n: integer): bytes do
+    save = nc_join(Enum.concat(a_mov(19,1),a_mov(20,2)),Enum.concat(a_mov(21,3),a_mov(22,4)),Enum.concat(a_mov(23,5),a_mov(24,8)))
+    args = nc_join(Enum.concat(a_mov(0,5),a_mov(1,4)),Enum.concat(a_mov(3,10),a_mov(4,8)),Enum.concat(a_mov(5,9),a_mov_imm(8,a_sysno(n))))
+    back = nc_join(Enum.concat(a_mov(2,20),a_mov(3,21)),Enum.concat(a_mov(4,22),a_mov(5,23)),a_mov(8,24))
+    nc_join(save,Enum.concat(args,a_svc()),Enum.concat(back,a_mov(1,19)))
+  end
+  def a_lsr_imm(rd: integer, rn: integer, shift: integer): bytes do a4(3544186880+shift*65536+64512+rn*32+rd) end
+  # exit(status).
+  def a_exit(status: integer): bytes do nc_join(a_mov_imm(0,status),a_mov_imm(8,93),a_svc()) end
+
+  # ---- the program's entry (nc_entry) ----
+  # X14 keeps the initial stack pointer (argc, argv, envp); SP moves below
+  # what the program keeps under it (the collector's 1536 bytes, the entry's
+  # words at R14-8 and R14-16), where a signal frame would otherwise go.
+  # rest: what the x86-64 entry does once the arena and stack are there,
+  # translated as a function is (native-x86arm.alc); padded to the 1024
+  # bytes of the entry, which must hold it.
+  def a_entry(rest: bytes): bytes do
+    start = Enum.concat(a_add_imm(14,31,0,0),a_sub_imm(31,31,2048,0))
+    made = nc_join(nc_join(start,a_arena_init(),a_stack_init()),xa_function(rest),b[])
+    if Enum.count(made) > 928 do b[] else Enum.concat(made,nc_zeros(1024-Enum.count(made))) end
+  end
+  # mmap(0, size in X1, read and write, private, anonymous, no reserve).
+  def a_mmap(): bytes do
+    nc_join(Enum.concat(a_mov_imm(0,0),a_mov_imm(2,3)),Enum.concat(a_mov_imm(3,16418),a_mov_imm(4,-1)),nc_join(a_mov_imm(5,0),a_mov_imm(8,222),a_svc()))
+  end
+  # Ask for size in register r, halving it down to floor while the system
+  # refuses (exit 71 below it); the mapping is in X0 after.
+  def a_reserve(r: integer, extra: integer, floor: integer): bytes do
+    ask = Enum.concat(a_add_value(1,r,extra,0),a_mmap())
+    fail = nc_join(a_lsr_imm(r,r,1),a_cmp_value(r,floor),b[])
+    back = 0-(Enum.count(ask)+8+Enum.count(fail))
+    nc_join(nc_join(ask,a_cmp_value(0,-4095),a_bcond(3,4+Enum.count(fail)+4+Enum.count(a_exit(71)))),fail,Enum.concat(a_bcond(2,back),a_exit(71)))
+  end
+  # The arena: 16 GiB reserved lazily, or the largest half the system grants
+  # down to 4 MiB. X12 is the cursor and X13 the end; the word at the end
+  # holds the size (System.memory).
+  def a_arena_init(): bytes do
+    nc_join(a_mov_imm(13,17179869184),a_reserve(13,4096,4194304),nc_join(a_mov(12,0),a4(4162873344+13*65536+13),a_add(13,13,0,0)))
+  end
+  # The stack: 1 GiB, or a half of it down to 1 MiB; its limit, 64 KiB above
+  # its bottom, at R14-8; no active calls and no frame; then the collector
+  # starts.
+  def a_stack_init(): bytes do
+    made = nc_join(a_add(28,0,15,0),a_add_value(0,0,65536,0),a_str(0,14,-8))
+    nc_join(nc_join(a_mov_imm(15,1073741824),a_reserve(15,0,1048576),made),nc_join(a_mov_imm(15,0),a_mov_imm(29,0),a_str(29,14,-16)),a_call_at(4195424))
+  end
+
+  # ---- more encoders, for the translator (native-x86arm.alc) ----
+  # sf: 1 for 64 bits (X registers), 0 for 32 (W registers, which zero the
+  # upper half as x86-64's 32-bit operations do).
+  def a_sf(size: integer): integer do if size == 8 do 2147483648 else 0 end end
+  def a_alu(base: integer, rd: integer, rn: integer, rm: integer, size: integer): bytes do a4(base-2147483648+a_sf(size)+rm*65536+rn*32+rd) end
+  # base: the 64-bit opcode of add 0x8B000000, adds 0xAB.., sub 0xCB.., subs
+  # 0xEB.., and 0x8A.., ands 0xEA.., orr 0xAA.., eor 0xCA.., adcs 0xBA..,
+  # sbcs 0xFA..; bic 0x8A200000, orn 0xAA200000.
+  def a_add_shift(rd: integer, rn: integer, rm: integer, shift: integer): bytes do a4(2332033024+rm*65536+shift*1024+rn*32+rd) end
+  def a_movw(rd: integer, rm: integer): bytes do a4(704644064+rm*65536+rd) end
+  # UBFM/SBFM: lsl, lsr, asr by an immediate, the extensions and bfxil.
+  def a_bfm(base: integer, rd: integer, rn: integer, immr: integer, imms: integer, size: integer): bytes do
+    n = if size == 8 do 4194304 else 0 end
+    a4(base-2147483648+a_sf(size)+n+immr*65536+imms*1024+rn*32+rd)
+  end
+  def a_lsl_n(rd: integer, rn: integer, shift: integer, size: integer): bytes do
+    bits = size*8
+    a_bfm(3539992576,rd,rn,bits-shift-a_div(bits-shift,bits)*bits,bits-1-shift,size)
+  end
+  def a_lsr_n(rd: integer, rn: integer, shift: integer, size: integer): bytes do a_bfm(3539992576,rd,rn,shift,size*8-1,size) end
+  def a_asr_n(rd: integer, rn: integer, shift: integer, size: integer): bytes do a_bfm(2466250752,rd,rn,shift,size*8-1,size) end
+  # Zero- or sign-extend the low from bytes of rn into rd (64 bits).
+  def a_uxt(rd: integer, rn: integer, width: integer): bytes do
+    if width == 8 do a_mov(rd,rn) else if width == 4 do a_movw(rd,rn) else a_bfm(3539992576,rd,rn,0,width*8-1,4) end end
+  end
+  def a_sxt(rd: integer, rn: integer, width: integer): bytes do
+    if width == 8 do a_mov(rd,rn) else a_bfm(2466250752,rd,rn,0,width*8-1,8) end
+  end
+  # The low bits bytes of rd from the low of rn, the rest of rd kept.
+  def a_bfxil(rd: integer, rn: integer, bits: integer): bytes do a_bfm(3003121664,rd,rn,0,bits-1,8) end
+  def a_bfi(rd: integer, rn: integer, lsb: integer, bits: integer): bytes do a_bfm(3003121664,rd,rn,64-lsb-a_div(64-lsb,64)*64,bits-1,8) end
+  # Shifts by a register (lslv, lsrv, asrv, rorv) of size.
+  def a_shiftv(kind: integer, rd: integer, rn: integer, rm: integer, size: integer): bytes do a4(448798720+a_sf(size)+rm*65536+kind*1024+rn*32+rd) end
+  def a_ror_n(rd: integer, rn: integer, shift: integer, size: integer): bytes do
+    n = if size == 8 do 4194304 else 0 end
+    a4(327155712+a_sf(size)+n+rn*65536+shift*1024+rn*32+rd)
+  end
+  def a_clz(rd: integer, rn: integer, size: integer): bytes do a4(1522536448+a_sf(size)+rn*32+rd) end
+  def a_rbit(rd: integer, rn: integer, size: integer): bytes do a4(1522532352+a_sf(size)+rn*32+rd) end
+  def a_umulh(rd: integer, rn: integer, rm: integer): bytes do a4(2613083136+rm*65536+rn*32+rd) end
+  def a_smull(rd: integer, rn: integer, rm: integer): bytes do a4(2602597376+rm*65536+rn*32+rd) end
+  def a_mul_s(rd: integer, rn: integer, rm: integer, size: integer): bytes do a4(453016576+a_sf(size)+rm*65536+rn*32+rd) end
+  def a_udiv(rd: integer, rn: integer, rm: integer, size: integer): bytes do a4(448792576+a_sf(size)+rm*65536+rn*32+rd) end
+  def a_sdiv_s(rd: integer, rn: integer, rm: integer, size: integer): bytes do a4(448793600+a_sf(size)+rm*65536+rn*32+rd) end
+  # rd = ra - rn*rm.
+  def a_msub(rd: integer, rn: integer, rm: integer, ra: integer, size: integer): bytes do a4(453017600+a_sf(size)+rm*65536+ra*1024+rn*32+rd) end
+  # csel, csinc, csinv on size.
+  def a_csel_s(rd: integer, rn: integer, rm: integer, cc: integer, size: integer): bytes do a4(444596224+a_sf(size)+rm*65536+cc*4096+rn*32+rd) end
+  def a_csetm(rd: integer, cc: integer): bytes do a4(3667854304+a_invert(cc)*4096+rd) end
+  def a_cbz(rt: integer, offset: integer, size: integer): bytes do a4(872415232+a_sf(size)+a_field(a_quarter(offset),19)*32+rt) end
+  def a_cbnz(rt: integer, offset: integer, size: integer): bytes do a4(889192448+a_sf(size)+a_field(a_quarter(offset),19)*32+rt) end
+  # Loads and stores of size bytes at rn plus an offset of -256..255
+  # (ldur/stur); signed: the load sign-extends to 64 bits.
+  def a_ldur(rt: integer, rn: integer, offset: integer, size: integer, sign: integer): bytes do
+    plain = if size == 8 do 4164943872 else if size == 4 do 3091202048 else if size == 2 do 2017460224 else 943718400 end end end
+    # The signed forms are opc 10 where the plain ones are 01 (bit 23 for 22).
+    base = if sign == 1 do if size == 8 do plain else plain+4194304 end else plain end
+    a4(base+a_field(offset,9)*4096+rn*32+rt)
+  end
+  def a_stur(rt: integer, rn: integer, offset: integer, size: integer): bytes do
+    base = if size == 8 do 4160749568 else if size == 4 do 3087007744 else if size == 2 do 2013265920 else 939524096 end end end
+    a4(base+a_field(offset,9)*4096+rn*32+rt)
+  end
+  # Post-increment forms for the string instructions: ldr/str rt, [rn], #step.
+  def a_ldr_post(rt: integer, rn: integer, step: integer, size: integer): bytes do
+    base = if size == 8 do 4164944896 else if size == 4 do 3091203072 else if size == 2 do 2017461248 else 943719424 end end end
+    a4(base+a_field(step,9)*4096+rn*32+rt)
+  end
+  def a_str_post(rt: integer, rn: integer, step: integer, size: integer): bytes do
+    base = if size == 8 do 4160750592 else if size == 4 do 3087008768 else if size == 2 do 2013266944 else 939525120 end end end
+    a4(base+a_field(step,9)*4096+rn*32+rt)
+  end
+  def a_udf(): bytes do a4(0) end
+  # Floating point on doubles: fmov d<-x, x<-d, d<-d; fcmp; arithmetic.
+  def a_fmov_dx(rd: integer, rn: integer): bytes do a4(2657550336+rn*32+rd) end
+  def a_fmov_xd(rd: integer, rn: integer): bytes do a4(2657484800+rn*32+rd) end
+  def a_fmov_dd(rd: integer, rn: integer): bytes do a4(509624320+rn*32+rd) end
+  def a_fcmp(rn: integer, rm: integer): bytes do a4(509616128+rm*65536+rn*32) end
+  # kind: fmul 0, fdiv 1, fadd 2, fsub 3.
+  def a_farith(kind: integer, rd: integer, rn: integer, rm: integer): bytes do a4(509609984+kind*4096+rm*65536+rn*32+rd) end
+  def a_fsqrt(rd: integer, rn: integer): bytes do a4(509722624+rn*32+rd) end
+  def a_scvtf(rd: integer, rn: integer, size: integer): bytes do a4(509739008+a_sf(size)+rn*32+rd) end
+  def a_fcvtzs(rd: integer, rn: integer, size: integer): bytes do a4(511180800+a_sf(size)+rn*32+rd) end
+  def a_ldr_d(rt: integer, rn: integer, offset: integer): bytes do a4(4232052736+a_field(offset,9)*4096+rn*32+rt) end
+  def a_str_d(rt: integer, rn: integer, offset: integer): bytes do a4(4227858432+a_field(offset,9)*4096+rn*32+rt) end
+  # Native smoke test; the encoders.
+  def main() do System.halt(0) end
+end

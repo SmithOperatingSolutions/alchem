@@ -1,0 +1,17 @@
+defmodule StructuralTypesDemo do
+  def classify(value: integer): result[tuple[integer,string],option[integer]] do
+    if value < 0 do error(some(-value)) else ok({value,"accepted"}) end
+  end
+  def ready(): result[tuple[],string] do ok({}) end
+  def describe(value: integer): string do
+    case classify(value) do
+      ok(pair) -> elem(pair,1) <> ": " <> Integer.to_string(elem(pair,0))
+      error(reason) -> case reason do some(number) -> "negative: " <> Integer.to_string(number) none -> "unknown" end
+    end
+  end
+  def main() do
+    IO.puts(describe(42))
+    IO.puts(describe(-7))
+    System.halt(0)
+  end
+end

@@ -1,0 +1,63 @@
+# Integer: the functions written in Alchem.
+#: gcd/2
+  def gcd(a: integer, b: integer): integer do
+    if b == 0 do abs(a) else Integer.gcd(b, rem(a, b)) end
+  end
+#: is_even/1
+  def is_even(n: integer): boolean do
+    rem(n, 2) == 0
+  end
+#: is_odd/1
+  def is_odd(n: integer): boolean do
+    rem(n, 2) != 0
+  end
+#: pow/2
+  def pow(base: integer, exponent: integer): integer do
+    base ** exponent
+  end
+#: floor_div/2
+  def floor_div(a: integer, b: integer): integer do
+    q = div(a, b)
+    if rem(a, b) != 0 and (a < 0) != (b < 0) do q - 1 else q end
+  end
+#: ceil_div/2
+  def ceil_div(a: integer, b: integer): integer do
+    q = div(a, b)
+    if rem(a, b) != 0 and (a < 0) == (b < 0) do q + 1 else q end
+  end
+#: mod/2
+  def mod(a: integer, b: integer): integer do
+    r = rem(a, b)
+    if r != 0 and (r < 0) != (b < 0) do r + b else r end
+  end
+#: extended_gcd/2
+  def extended_gcd(a: integer, b: integer): tuple[integer, integer, integer] do
+    bezout(a, b, 1, 0, 0, 1)
+  end
+  defp bezout(old_r: integer, r: integer, old_s: integer, s: integer, old_t: integer, t: integer): tuple[integer, integer, integer] do
+    if r == 0 do bezout_done(old_r, old_s, old_t) else
+      if r == -1 or r == 1 do bezout_done(r, s, t) else
+        q = div(old_r, r)
+        left = old_r - q * r
+        if left == 0 do bezout_done(r, s, t) else
+          bezout(r, left, s, old_s - q * s, t, old_t - q * t)
+        end
+      end
+    end
+  end
+  defp bezout_done(r: integer, s: integer, t: integer): tuple[integer, integer, integer] do
+    if r < 0 do
+      if r == -9223372036854775807 - 1 do {r, 0 - s, 0 - t} else {0 - r, 0 - s, 0 - t} end
+    else
+      {r, s, t}
+    end
+  end
+# For a set, a stream or a range of digits: a list has the compiler's code.
+#: undigits/1
+  def undigits(digits: list[integer]): integer do
+    Integer.undigits(digits)
+  end
+#: undigits/2
+  def undigits(digits: list[integer], base: integer): integer do
+    Integer.undigits(digits, base)
+  end

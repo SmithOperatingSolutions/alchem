@@ -1,0 +1,156 @@
+# OptionParser: the functions written in Alchem, after the pinned runtime's.
+# scan is public so that the functions of every number of arguments reach it:
+# the switches of the arguments from index i on, given c (the type of each
+# switch by name, the name of each alias, whether an unknown switch is
+# invalid, whether to stop at the first argument that is not a switch) and s
+# (the switches read so far in order, the other arguments, and the invalid
+# switches with their values).
+#: scan/4 needs String.trim_leading/2
+  def scan(all: list[string], i: integer, c: tuple[map[string, string], map[string, string], boolean, boolean], s: tuple[list[tuple[string, string]], list[string], list[tuple[string, option[string]]]]): tuple[list[tuple[string, string]], list[string], list[tuple[string, option[string]]]] do
+    a = Enum.at(all, i, "")
+    k = String.split(a, "=")
+    w = hd(k)
+    v = Enum.join(tl(k), "=")
+    has = length(k) > 1
+    t = elem(c, 0)
+    u = String.replace(String.trim_leading(w, "-"), "-", "_")
+    long = String.starts_with?(w, "--")
+    n = if long do u else Map.get(elem(c, 1), u, "") end
+    r = Enum.join(tl(String.split(n, "no_")), "no_")
+    neg = not Map.has_key?(t, n) and String.starts_with?(n, "no_") and Map.get(t, r, "") == "boolean"
+    name = if neg do r else n end
+    known = neg or Map.has_key?(t, n)
+    kind = if known do Map.get(t, name, "") else if has or (i + 1 < length(all) and not String.starts_with?(Enum.at(all, i + 1, ""), "-")) do "string" else "boolean" end end
+    x = if has do v else Enum.at(all, i + 1, "") end
+    next = if has do i + 1 else i + 2 end
+    p = elem(s, 0)
+    cond do
+      i >= length(all) -> {p, Enum.reverse(elem(s, 1)), Enum.reverse(elem(s, 2))}
+      a == "--" -> {p, Enum.reverse(elem(s, 1)) ++ Enum.drop(all, i + 1), Enum.reverse(elem(s, 2))}
+      a == "-" or not String.starts_with?(a, "-") -> if elem(c, 3) do {p, Enum.reverse(elem(s, 1)) ++ Enum.drop(all, i), Enum.reverse(elem(s, 2))} else OptionParser.scan(all, i + 1, c, {p, [a | elem(s, 1)], elem(s, 2)}) end
+      true ->
+# 1 with a value to set, 2 with an invalid value, 3 for a switch without one.
+        o = cond do
+          (not long and not Map.has_key?(elem(c, 1), u)) or (not known and elem(c, 2)) -> {if has do 2 else 3 end, v, i + 1}
+          kind == "boolean" -> if has and v != "true" and v != "false" do {2, v, i + 1} else {1, if has do v else if neg do "false" else "true" end end, i + 1} end
+          kind == "count" -> {1, Integer.to_string(Enum.reduce(p, 0, fn e, z -> if elem(e, 0) == name do counted(elem(e, 1)) else z end end) + 1), i + 1}
+          not has and i + 1 >= length(all) -> {3, "", i + 1}
+          (kind == "integer" and counted(x <> "1") == 0) or (kind == "float" and not float?(x)) -> {2, x, next}
+          true -> {1, x, next}
+        end
+        val: option[string] = if elem(o, 0) == 2 do some(elem(o, 1)) else none end
+        OptionParser.scan(all, elem(o, 2), c, if elem(o, 0) == 1 do {Enum.filter(p, fn e -> kind == "keep" or elem(e, 0) != name end) ++ [{name, elem(o, 1)}], elem(s, 1), elem(s, 2)} else {p, elem(s, 1), [{w, val} | elem(s, 2)]} end)
+    end
+  end
+# The integer of a text, 0 when it is not one.
+  defp counted(text: string): integer do
+    case Integer.parse(text) do
+      ok(n) -> n
+      error(_) -> 0
+    end
+  end
+# Whether Go's strconv.ParseFloat takes the text: a decimal or hexadecimal
+# number, with underscores between digits, or inf, infinity or nan, and not a
+# number that rounds to infinity (from 2 ** 1024 - 2 ** 970 on).
+  defp float?(x: string): boolean do
+    t = String.downcase(x)
+    u = unsigned(t)
+    hex = String.starts_with?(u, "0x") and byte_size(u) > 2
+    b = if hex do String.slice(u, 2, String.length(u)) else u end
+    k = String.split(b, if hex do "p" else "e" end)
+    m = String.split(hd(k), ".")
+    g = String.replace(Enum.join(m, ""), "_", "")
+    e = Enum.at(k, 1, "0")
+    y = unsigned(e)
+    d = String.trim_leading(g, "0")
+    z = String.trim_leading(String.replace(y, "_", ""), "0")
+    n = (if String.starts_with?(e, "-") do -1 else 1 end) * (if String.length(z) > 5 do 10000 else counted(z) end)
+    p = String.length(String.replace(hd(m), "_", "")) - String.length(g) + String.length(d)
+    h = String.slice(d, 0, 1)
+    w = if h < "2" do {3, "1fffffffffffff8"} else if h < "4" do {2, "3fffffffffffff"} else if h < "8" do {1, "7ffffffffffffe"} else {0, "fffffffffffffc"} end end end
+    cond do
+      u == "inf" or u == "infinity" or t == "nan" -> true
+      length(k) > 2 or (hex and length(k) < 2) or length(m) > 2 or g == "" or left(g, if hex do ["a", "b", "c", "d", "e", "f"] else ["0"] end) != "" -> false
+      y == "" or String.starts_with?(y, "_") or left(y, ["_"]) != "" -> false
+      String.ends_with?(b, "_") or (String.starts_with?(b, "_") and not hex) or String.contains?(b, "_.") or String.contains?(b, "._") or String.contains?(b, "__") or String.contains?(b, if hex do "_p" else "_e" end) -> false
+      d == "" -> true
+      hex -> 4 * p + n - elem(w, 0) < 1024 or (4 * p + n - elem(w, 0) == 1024 and d < elem(w, 1))
+      true -> p + n < 309 or (p + n == 309 and d < "179769313486231580793728971405303415079934132710037826936173778980444968292764750946649017977587207096330286416692887910946555547851940402630657488671505820681908902000708383676273854845817711531764475730270069855571366959622842914819860834936475292719074168444365510704342711559699508093042880177904174497792")
+    end
+  end
+# A text without the sign it starts with.
+  defp unsigned(t: string): string do
+    if String.starts_with?(t, "+") or String.starts_with?(t, "-") do String.slice(t, 1, String.length(t)) else t end
+  end
+# A text without its digits and the characters of a set.
+  defp left(t: string, set: list[string]): string do
+    Enum.reduce(set ++ ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"], t, fn c, r -> String.replace(r, c, "") end)
+  end
+#: parse/3 needs scan/4
+  def parse(all: list[string], t: map[string, string], al: map[string, string]): tuple[map[string, string], list[string], list[tuple[string, string]]] do
+    Enum.each(Map.to_list(t), fn e -> if not (elem(e, 1) in ["boolean", "string", "integer", "float", "count"]) do raise("the type of switch " <> inspect(elem(e, 0)) <> " is boolean, string, integer, float or count, not " <> inspect(elem(e, 1))) end end)
+    r = OptionParser.scan(all, 0, {t, al, true, false}, {[], [], []})
+    {Map.new(elem(r, 0)), elem(r, 1), Enum.map(elem(r, 2), fn e -> {elem(e, 0), case elem(e, 1) do
+      some(x) -> x
+      none -> ""
+    end} end)}
+  end
+#: parse/2 form 2 needs parse/3
+  def parse(all: list[string], t: map[string, string]): tuple[map[string, string], list[string], list[tuple[string, string]]] do
+    OptionParser.parse(all, t, %{})
+  end
+#: run/2 needs scan/4
+# OptionParser.parse with strict: or switches: and aliases:.
+  defp run(all: list[string], o: list[tuple[atom, list[tuple[atom, atom]]]], head: boolean): tuple[list[tuple[atom, string]], list[string], list[tuple[string, option[string]]]] do
+    start: map[string, string] = %{}
+    c = Enum.reduce(o, {start, start, false, false}, fn e, z ->
+      k = elem(e, 0)
+      if k != :strict and k != :switches and k != :aliases do raise("OptionParser.parse takes strict:, switches: and aliases:") end
+      if k != :aliases and elem(z, 3) do raise("OptionParser.parse takes strict: or switches:, not both") end
+      m = Enum.reduce(elem(e, 1), if k == :aliases do elem(z, 1) else elem(z, 0) end, fn q, m ->
+        if k != :aliases and not (elem(q, 1) in [:boolean, :string, :integer, :float, :count, :keep]) do raise("the type of :#{elem(q, 0)} is :boolean, :string, :integer, :float, :count or :keep") end
+        Map.put(m, "#{elem(q, 0)}", "#{elem(q, 1)}")
+      end)
+      if k == :aliases do {elem(z, 0), m, elem(z, 2), elem(z, 3)} else {m, elem(z, 1), k == :strict, true} end
+    end)
+    r = OptionParser.scan(all, 0, {elem(c, 0), elem(c, 1), elem(c, 2), head}, {[], [], []})
+    {Enum.map(elem(r, 0), fn e -> {String.to_atom(elem(e, 0)), elem(e, 1)} end), elem(r, 1), elem(r, 2)}
+  end
+#: parse/2 needs run/2
+  def parse(all: list[string], o: list[tuple[atom, list[tuple[atom, atom]]]]): tuple[list[tuple[atom, string]], list[string], list[tuple[string, option[string]]]] do
+    run(all, o, false)
+  end
+#: parse_head/2 needs run/2
+  def parse_head(all: list[string], o: list[tuple[atom, list[tuple[atom, atom]]]]): tuple[list[tuple[atom, string]], list[string], list[tuple[string, option[string]]]] do
+    run(all, o, true)
+  end
+#: to_argv/1 needs Enum.flat_map/2
+  def to_argv(o: list[tuple[atom, string]]): list[string] do
+    Enum.flat_map(o, fn e ->
+      n = String.replace("#{elem(e, 0)}", "_", "-")
+      if elem(e, 1) == "true" do ["--" <> n] else if elem(e, 1) == "false" do ["--no-" <> n] else ["--" <> n, elem(e, 1)] end end
+    end)
+  end
+# A character that starts with a quote, a backslash or white space and goes
+# on (with combining marks, or a carriage return with its line feed) is taken
+# apart: the pinned runtime reads bytes.
+#: split/1 needs String.graphemes/1 Enum.flat_map/2
+  def split(line: string): list[string] do
+    start: list[string] = []
+    units = Enum.flat_map(String.graphemes(line), fn g ->
+      f = Enum.filter(["\\", "\"", "'", " ", "\t", "\n", "\r"], fn x -> g != x and String.starts_with?(g, x) end)
+      if f == [] do [g] else [hd(f), Enum.join(tl(String.split(g, hd(f))), hd(f))] end
+    end)
+    r = Enum.reduce(units, {start, "", "", false, false}, fn ch, z ->
+      q = elem(z, 2)
+      cond do
+        elem(z, 4) -> {elem(z, 0), elem(z, 1) <> ch, q, true, false}
+        ch == "\\" and q != "'" -> {elem(z, 0), elem(z, 1), q, elem(z, 3), true}
+        q != "" and ch == q -> {elem(z, 0), elem(z, 1), "", elem(z, 3), false}
+        q == "" and (ch == "\"" or ch == "'") -> {elem(z, 0), elem(z, 1), ch, true, false}
+        q == "" and (ch == " " or ch == "\t" or ch == "\n") -> if elem(z, 3) do {[elem(z, 1) | elem(z, 0)], "", "", false, false} else z end
+        true -> {elem(z, 0), elem(z, 1) <> ch, q, true, false}
+      end
+    end)
+    Enum.reverse(if elem(r, 3) or elem(r, 4) do [elem(r, 1) <> (if elem(r, 4) do "\\" else "" end) | elem(r, 0)] else elem(r, 0) end)
+  end

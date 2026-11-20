@@ -1,0 +1,138 @@
+# Task: a function run in a process of its own, whose result is awaited
+# (compiler/actor/task.go). A task is its process; the result waits in
+# the process's record.
+#: struct task also Process Agent Task Server Supervisor Registry Port _receive Node Stream.publish
+  struct task[a] do
+    at: integer
+    k: option[fn[a, a]]
+  end
+#: _start/1 needs Process._fresh/2 Process._g/0 Process._start/3 _run/1
+  def _start(f: fn[a]): task[a] do
+    g = Process._g()
+    p = Process._fresh(g, 1)
+    Sys.poke(p + 328, 1)
+    w: fn[integer] = fn(): integer do Task._run(f) end
+    Process._start(g, p, Process.__word(w))
+    r: task[a] = %task{at: p, k: none}
+    r
+  end
+#: _run/1 needs Process._check/1 Process._ended/0 Process._g/0 Process._note/1 Process._result/1
+  def _run(f: fn[a]): integer do
+    try do
+      Process._check(Process._g())
+      Process.__depth(1)
+      Process._result(Process.__word(f()))
+    rescue
+      m when Process._note(m) -> 0
+    after
+      Process._ended()
+    end
+  end
+#: async/1 needs Process._g/0 Process._link/3 _start/1
+  def async(f: fn[a]): task[a] do
+    t = Task._start(f)
+    g = Process._g()
+    Process._link(g, Sys.peek(g), t.at)
+    t
+  end
+#: start/1 needs _start/1
+  def start(f: fn[a]): task[a] do
+    Task._start(f)
+  end
+#: start_link/1 needs async/1
+  def start_link(f: fn[a]): task[a] do
+    Task.async(f)
+  end
+# The task of process q after up to ms milliseconds: 0 still running, 1
+# over with its result, 2 over without one.
+#: _yield/2 needs Process._check/1 Process._g/0 Process._joined/3 Process._reason/1
+  def _yield(q: integer, ms: integer): integer do
+    g = Process._g()
+    Process._check(g)
+    if q == Sys.peek(g) do raise("a task cannot await itself") end
+    if Process._joined(g, q, ms) == 0 do 0 else if Process._reason(q) == "normal" do 1 else 2 end end
+  end
+#: await/2 needs Process._reason/1 _yield/2
+  def await(t: task[a], ms: integer): a do
+    k = Task._yield(t.at, ms)
+    if k == 0 do raise("task timed out") end
+    if k == 2 do raise("task failed: " <> Process._reason(t.at)) end
+    Process.__any(Sys.peek(t.at + 304))
+  end
+#: await/1 needs await/2
+  def await(t: task[a]): a do
+    Task.await(t, 5000)
+  end
+#: yield/2 needs Process._reason/1 _yield/2
+  def yield(t: task[a], ms: integer): option[result[a, string]] do
+    k = Task._yield(t.at, ms)
+    if k == 0 do none else if k == 2 do some(error(Process._reason(t.at))) else some(ok(Process.__any(Sys.peek(t.at + 304)))) end end
+  end
+#: shutdown/1 needs Process._halt/1
+  def shutdown(t: task[a]): boolean do
+    Process._halt(t.at)
+  end
+#: await_many/2 needs Enum.map/2 Process._g/0 Process._now/1 _left/3 await/2
+  def await_many(ts: list[task[a]], ms: integer): list[a] do
+    g = Process._g()
+    s = Process._now(g)
+    Enum.map(ts, fn t -> Task.await(t, Task._left(g, s, ms)) end)
+  end
+# What is left of ms milliseconds since the time s.
+#: _left/3 needs Process._now/1
+  def _left(g: integer, s: integer, ms: integer): integer do
+    e = div(Process._now(g) - s, 1000000)
+    if ms <= 0 do ms else if e >= ms do 0 else ms - e end end
+  end
+#: await_many/1 needs await_many/2
+  def await_many(ts: list[task[a]]): list[a] do
+    Task.await_many(ts, 5000)
+  end
+# The function over each element in a task of its own, at most n at a time,
+# the results in the order of the elements. A task that fails is named
+# where the stream was made.
+#: async_stream/3 needs Enum.each/2 Process._halt/1 Process._reason/1 _yield/2 async/1
+  def async_stream(s: stream[a], f: fn[a, b], n: integer): stream[b] do
+    if n < 1 do raise("async_stream needs a concurrency of at least 1") end
+    w = Stream.__where()
+    Stream.__make(fn c -> spread(c, Stream.__start(s, c), f, {n, w}, {some([]), some(false), some(false)}) end)
+  end
+  defp spread(c: option[fn[integer]], it: fn[option[a]], f: fn[a, b], nw: tuple[integer, integer], cells: tuple[option[list[task[b]]], option[boolean], option[boolean]]): fn[option[b]] do
+    fn -> spread_step(c, it, f, nw, cells) end
+  end
+  defp spread_step(c: option[fn[integer]], it: fn[option[a]], f: fn[a, b], nw: tuple[integer, integer], cells: tuple[option[list[task[b]]], option[boolean], option[boolean]]): option[b] do
+    o = if Stream.__get(elem(cells, 2)) do 0 else spread_open(c, cells, Stream.__get(c)) end
+    running = spread_fill(it, f, elem(nw, 0), cells, Stream.__get(elem(cells, 0)))
+    case running do
+      [] -> Stream.__then(Stream.__put(elem(cells, 0), running), none)
+      [first | rest] -> spread_take(first, rest, elem(nw, 1), cells)
+    end
+  end
+  defp spread_open(c: option[fn[integer]], cells: tuple[option[list[task[b]]], option[boolean], option[boolean]], old: fn[integer]): integer do
+    close: fn[integer] = fn -> spread_close(old(), cells) end
+    v = Stream.__put(c, close)
+    u = Stream.__put(elem(cells, 2), true)
+    0
+  end
+  defp spread_close(w: integer, cells: tuple[option[list[task[b]]], option[boolean], option[boolean]]): integer do
+    Enum.each(Stream.__get(elem(cells, 0)), fn t -> Process._halt(t.at) end)
+    0
+  end
+  defp spread_fill(it: fn[option[a]], f: fn[a, b], n: integer, cells: tuple[option[list[task[b]]], option[boolean], option[boolean]], running: list[task[b]]): list[task[b]] do
+    if length(running) >= n or Stream.__get(elem(cells, 1)) do running else
+      case it() do
+        some(x) -> spread_fill(it, f, n, cells, running ++ [Task.async(fn -> f(x) end)])
+        none -> Stream.__then(Stream.__put(elem(cells, 1), true), running)
+      end
+    end
+  end
+  defp spread_take(first: task[b], rest: list[task[b]], w: integer, cells: tuple[option[list[task[b]]], option[boolean], option[boolean]]): option[b] do
+    k = Task._yield(first.at, -1)
+    if k == 2 do Stream.__fail(w, "task failed: " <> Process._reason(first.at)) end
+    v = Stream.__put(elem(cells, 0), rest)
+    some(Process.__any(Sys.peek(first.at + 304)))
+  end
+#: async_stream/2 needs async_stream/3
+  def async_stream(s: stream[a], f: fn[a, b]): stream[b] do
+    Task.async_stream(s, f, 16)
+  end

@@ -1,0 +1,24 @@
+defmodule NativeNetwork do
+  # The network and storage modules (spec/alchem-network.md) are written in
+  # Alchem (library/TCP.alc, UDP.alc, HTTP.alc, WebSocket.alc,
+  # DiskStore.alc). The compiler only knows the names of their handle types,
+  # which the pinned compiler writes in lowercase, and what inspect writes
+  # for a value of each.
+  # socket, http_server, websocket and disk_store, each behind its length;
+  # a zero ends them.
+  def sk_words(): bytes do
+    b[6,115,111,99,107,101,116,11,104,116,116,112,95,115,101,114,118,101,114,9,119,101,98,115,111,99,107,101,116,10,100,105,115,107,95,115,116,111,114,101,0]
+  end
+  # 1 for a lowercase word that names one of these types.
+  def sk_word(source: bytes, pos: integer, at: integer): integer do
+    words = sk_words()
+    size = Enum.at(words,at,0)
+    if size == 0 do 0 else if nc_word(source,pos,nc_slice(words,at+1,at+1+size)) == 1 do 1 else sk_word(source,pos,at+1+size) end end
+  end
+  # Each type's name and what is written for it, each behind its length.
+  def sk_shows(): bytes do
+    b[6,115,111,99,107,101,116,15,35,115,111,99,107,101,116,72,97,110,100,108,101,60,62,11,104,116,116,112,95,115,101,114,118,101,114,13,35,104,116,116,112,83,101,114,118,101,114,60,62,9,119,101,98,115,111,99,107,101,116,9,35,119,115,67,111,110,110,60,62,10,100,105,115,107,95,115,116,111,114,101,14,35,115,116,111,114,101,72,97,110,100,108,101,60,62,0]
+  end
+  # Native smoke test; assembled with the compiler.
+  def main() do System.halt(0) end
+end

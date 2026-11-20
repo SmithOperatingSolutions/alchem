@@ -1,0 +1,174 @@
+# Registry: keys to the processes that registered under them, each with a
+# value (compiler/actor/services.go). A registry is a block: 0 its entries
+# (a list of {key, process, value, serial}, oldest first), 8 set when a key
+# has one entry at most, 16 the values put with put_meta (a list of {name,
+# type, value}), 24 the last serial, 32 its partitions. An entry goes when
+# its process ends.
+#: struct registry also Process Agent Task Server Supervisor Registry Port _receive
+  struct registry[k, v] do
+    at: integer
+    u: option[fn[k, v]]
+  end
+# 1 for keys: :unique, 0 for keys: :duplicate.
+#: _keys/2 needs Atom.to_string/1
+  def _keys(o: list[tuple[atom, atom]], u: integer): integer do
+    case o do
+      [] -> if u < 0 do raise("Registry.start_link needs keys: :unique or keys: :duplicate") else u end
+      [{k, v} | rest] ->
+        if k != :keys do raise("unknown option :" <> Atom.to_string(k) <> "; Registry.start_link takes keys:") end
+        if v == :unique do Registry._keys(rest, 1) else
+          if v == :duplicate do Registry._keys(rest, 0) else raise("keys: is :unique or :duplicate, not :" <> Atom.to_string(v)) end
+        end
+    end
+  end
+#: _parts/2 needs Atom.to_string/1
+  def _parts(o: list[tuple[atom, integer]], n: integer): integer do
+    case o do
+      [] -> n
+      [{k, v} | rest] ->
+        if k != :partitions do raise("unknown option :" <> Atom.to_string(k) <> "; the numbers Registry.start_link takes are partitions:") end
+        if v < 1 or v > 1024 do raise("partitions: is from 1 to 1024") end
+        Registry._parts(rest, v)
+    end
+  end
+#: _new/2 needs Process._g/0 Process._take/2
+  def _new(u: integer, n: integer): integer do
+    b = Process._take(Process._g(), 40)
+    e: list[integer] = []
+    Sys.poke(b, Process.__word(e))
+    Sys.poke(b + 8, u)
+    Sys.poke(b + 16, Process.__word(e))
+    Sys.poke(b + 32, n)
+    b
+  end
+#: _set/2
+  def _set(r: registry[k, v], l: list[tuple[k, integer, v, integer]]): integer do
+    Sys.poke(r.at, Process.__word(l))
+  end
+#: start_link/1 needs _keys/2 _new/2
+  def start_link(o: list[tuple[atom, atom]]): registry[k, v] do
+    r: registry[k, v] = %registry{at: Registry._new(Registry._keys(o, -1), 1), u: none}
+    r
+  end
+#: start_link/2 needs _keys/2 _new/2 _parts/2
+  def start_link(o: list[tuple[atom, atom]], n: list[tuple[atom, integer]]): registry[k, v] do
+    u = Registry._keys(o, -1)
+    r: registry[k, v] = %registry{at: Registry._new(u, Registry._parts(n, 1)), u: none}
+    r
+  end
+#: _all/1
+  def _all(r: registry[k, v]): list[tuple[k, integer, v, integer]] do
+    Process.__any(Sys.peek(r.at))
+  end
+# 1 while process p is neither over nor asked to stop.
+#: _living/1
+  def _living(p: integer): boolean do
+    Sys.peek(p + 56) + Sys.peek(p + 376) == 0
+  end
+#: register/3 needs Enum.any?/2 Enum.filter/2 Process._check/1 Process._g/0 Process._onend/3 _all/1 _living/1 _set/2
+  def register(r: registry[k, v], key: k, value: v): result[tuple[], string] do
+    g = Process._g()
+    Process._check(g)
+    c = Sys.peek(g)
+    all = Enum.filter(Registry._all(r), fn e -> elem(e, 0) != key or Registry._living(elem(e, 1)) end)
+    if Sys.peek(r.at + 8) == 1 and Enum.any?(all, fn e -> elem(e, 0) == key end) do error("already_registered") else
+      n = Sys.peek(r.at + 24) + 1
+      Sys.poke(r.at + 24, n)
+      Registry._set(r, all ++ [{key, c, value, n}])
+      f: fn[string, integer] = fn(why: string): integer do Registry._set(r, Enum.filter(Registry._all(r), fn e -> elem(e, 1) != c end)) end
+      Process._onend(g, c, Process.__word(f))
+      ok({})
+    end
+  end
+#: unregister_match/3 needs Enum.filter/2 Enum.map/2 Process._g/0 _all/1 _set/2
+  def unregister_match(r: registry[k, v], key: k, f: fn[v, boolean]): integer do
+    c = Sys.peek(Process._g())
+    all = Registry._all(r)
+    gone = Enum.filter(all, fn e -> elem(e, 0) == key and elem(e, 1) == c and f(elem(e, 2)) end)
+    serials = Enum.map(gone, fn e -> elem(e, 3) end)
+    Registry._set(r, Enum.filter(Registry._all(r), fn e -> not (elem(e, 3) in serials) end))
+    length(gone)
+  end
+#: unregister/2 needs unregister_match/3
+  def unregister(r: registry[k, v], key: k): boolean do
+    Registry.unregister_match(r, key, fn x -> true end) > 0
+  end
+#: entries/2 needs Enum.filter/2 Enum.map/2 _all/1 _living/1
+  def entries(r: registry[k, v], key: k): list[tuple[integer, v]] do
+    Enum.map(Enum.filter(Registry._all(r), fn e -> elem(e, 0) == key and Registry._living(elem(e, 1)) end), fn e -> {Sys.peek(elem(e, 1) + 40), elem(e, 2)} end)
+  end
+#: lookup/2 needs Enum.map/2 entries/2
+  def lookup(r: registry[k, v], key: k): list[v] do
+    Enum.map(Registry.entries(r, key), fn e -> elem(e, 1) end)
+  end
+#: match/3 needs Enum.filter/2 entries/2
+  def match(r: registry[k, v], key: k, f: fn[v, boolean]): list[tuple[integer, v]] do
+    Enum.filter(Registry.entries(r, key), fn e -> f(elem(e, 1)) end)
+  end
+#: count_match/3 needs match/3
+  def count_match(r: registry[k, v], key: k, f: fn[v, boolean]): integer do
+    length(Registry.match(r, key, f))
+  end
+#: values/3 needs Enum.filter/2 Enum.map/2 _all/1 _living/1
+  def values(r: registry[k, v], key: k, p: pid[a]): list[v] do
+    o = p.at
+    Enum.map(Enum.filter(Registry._all(r), fn e -> elem(e, 0) == key and elem(e, 1) == o and Registry._living(o) end), fn e -> elem(e, 2) end)
+  end
+#: keys/2 needs Enum.filter/2 Enum.map/2 Enum.uniq/1 _all/1
+  def keys(r: registry[k, v], p: pid[a]): list[k] do
+    o = p.at
+    Enum.uniq(Enum.map(Enum.filter(Registry._all(r), fn e -> elem(e, 1) == o end), fn e -> elem(e, 0) end))
+  end
+#: count/1 needs Enum.filter/2 _all/1 _living/1
+  def count(r: registry[k, v]): integer do
+    length(Enum.filter(Registry._all(r), fn e -> Registry._living(elem(e, 1)) end))
+  end
+#: dispatch/3 needs entries/2
+  def dispatch(r: registry[k, v], key: k, f: fn[list[tuple[integer, v]], b]): atom do
+    es = Registry.entries(r, key)
+    if length(es) > 0 do
+      x = f(es)
+    end
+    :ok
+  end
+#: select/2 needs Enum.filter/2 Enum.map/2 _all/1 _living/1
+  def select(r: registry[k, v], f: fn[k, integer, v, boolean]): list[tuple[k, integer, v]] do
+    live = Enum.filter(Registry._all(r), fn e -> Registry._living(elem(e, 1)) end)
+    Enum.filter(Enum.map(live, fn e -> {elem(e, 0), Sys.peek(elem(e, 1) + 40), elem(e, 2)} end), fn e -> f(elem(e, 0), elem(e, 1), elem(e, 2)) end)
+  end
+#: update_value/3 needs Enum.any?/2 Enum.find/2 Enum.map/2 Process._g/0 _all/1 _set/2
+  def update_value(r: registry[k, v], key: k, f: fn[v, v]): result[tuple[v, v], string] do
+    c = Sys.peek(Process._g())
+    case Enum.find(Registry._all(r), fn e -> elem(e, 0) == key and elem(e, 1) == c end) do
+      none -> error("not_registered")
+      some(old) ->
+        new = f(elem(old, 2))
+        s = elem(old, 3)
+        if Enum.any?(Registry._all(r), fn e -> elem(e, 3) == s end) do
+          Registry._set(r, Enum.map(Registry._all(r), fn e -> if elem(e, 3) == s do {elem(e, 0), elem(e, 1), new, s} else e end end))
+          ok({new, elem(old, 2)})
+        else error("not_registered") end
+    end
+  end
+#: partitions/1
+  def partitions(r: registry[k, v]): integer do
+    Sys.peek(r.at + 32)
+  end
+#: put_meta/3 needs Atom.to_string/1 Enum.filter/2
+  def put_meta(r: registry[k, v], n: atom, value: m): atom do
+    t = Sys.peek(Sys.stack() - 48)
+    name = Atom.to_string(n)
+    old: list[tuple[string, integer, integer]] = Process.__any(Sys.peek(r.at + 16))
+    Sys.poke(r.at + 16, Process.__word(Enum.filter(old, fn e -> elem(e, 0) != name end) ++ [{name, t, Process.__word(value)}]))
+    :ok
+  end
+#: meta/2 needs Atom.to_string/1 Enum.find/2 Process._same/2
+  def meta(r: registry[k, v], n: atom): option[m] do
+    t = Sys.peek(Sys.stack() - 48)
+    name = Atom.to_string(n)
+    all: list[tuple[string, integer, integer]] = Process.__any(Sys.peek(r.at + 16))
+    case Enum.find(all, fn e -> elem(e, 0) == name end) do
+      none -> none
+      some(e) -> if Process._same(elem(e, 1), t) == 1 do some(Process.__any(elem(e, 2))) else none end
+    end
+  end

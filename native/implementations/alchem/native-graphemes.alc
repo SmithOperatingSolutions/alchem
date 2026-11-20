@@ -1,0 +1,36 @@
+defmodule NativeGraphemes do
+  def ng_builtin(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    dot = nc_expect(source,nc_end(source,pos),b[46])
+    op = if nc_word(source,dot,b[108,101,110,103,116,104]) == 1 do 1 else
+      if nc_word(source,dot,b[115,108,105,99,101]) == 1 do 2 else
+        if nc_word(source,dot,b[102,105,114,115,116]) == 1 do 3 else
+          if nc_word(source,dot,b[108,97,115,116]) == 1 do 4 else 0 end
+        end
+      end
+    end
+    if op == 0 do na_string(source,pos,env,table,depth) else
+      begin = nc_expect(source,nc_end(source,dot),b[40])
+      args = if begin < 0 do b[] else nc_arguments(source,begin,env,table,depth) end
+      if nc_pos(args) < 0 do b[] else ng_arguments(args,op,nc_records(Enum.count(table))) end
+    end
+  end
+  # The grapheme runtime is shared: slot functions+3, EAX selecting its operation.
+  def ng_call(op: integer, functions: integer): bytes do
+    Enum.concat(b[184,op,0,0,0],nc_call(functions+3))
+  end
+  def ng_arguments(args: bytes, op: integer, functions: integer): bytes do
+    if functions+3 >= nc_slot_limit() do b[] else if nt_tag(nc_arg_kind(args,0)) != 2 do b[] else
+      count = nc_arg_count(args)
+      valid = if op == 2 do
+        if count != 3 do 0 else if nt_tag(nc_arg_kind(args,1)) != 0 do 0 else if nt_tag(nc_arg_kind(args,2)) == 0 do 1 else 0 end end end
+      else if count == 1 do 1 else 0 end end
+      if valid == 0 do b[] else
+        pops = if op == 2 do Enum.concat(b[90,94,95,87,86,82],Enum.concat(zf_slice_check(),b[90,94,95])) else b[95] end
+        kind = if op == 1 do b[0] else if op == 2 do b[2] else b[4,2] end end
+        nc_value(nc_pos(args),nc_join(nc_arg_code(args),pops,ng_call(op,functions)),kind)
+      end
+    end end
+  end
+  # Native smoke test; assembled with the compiler.
+  def main() do System.halt(0) end
+end

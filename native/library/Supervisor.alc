@@ -1,0 +1,381 @@
+# Supervisor: children restarted by policy and strategy
+# (compiler/actor/supervisor.go). A supervisor is a block: 0 its own
+# process, 8 its children, 16 how many, 24 the strategy (0 one for one, 1
+# one for all, 2 rest for one), 32 the restarts allowed within 40
+# nanoseconds, 48 the children's mailbox capacity, 56 the restarts so far,
+# 64 when the recent ones were, 72 set once the children have started, 80
+# the children's message type, 88 where the program started it, 96 the
+# process that waits for its children to start. A child is
+# six words: its name, its policy (0 permanent, 1 transient, 2 temporary),
+# its function, its process (0: none yet), 1 once its end was seen.
+#: struct supervisor also Process Agent Task Server Supervisor Registry Port _receive
+  struct supervisor[t] do
+    at: integer
+    k: option[fn[t, t]]
+  end
+#: _policy/1
+  def _policy(p: string): integer do
+    if p == "permanent" do 0 else if p == "transient" do 1 else if p == "temporary" do 2 else -1 end end end
+  end
+#: _run/1 needs Process._ended/0 Process._note/1 _down/1 _main/1
+  def _run(v: integer): integer do
+    try do
+      Supervisor._main(v)
+    rescue
+      m when Process._note(m) -> 0
+    after
+      Supervisor._down(v)
+      Process._ended()
+    end
+  end
+#: _main/1 needs Process._check/1 Process._g/0 _starts/4 _turn/1 _up/2
+  def _main(v: integer): integer do
+    g = Process._g()
+    Process._check(g)
+    Process.__depth(1)
+    Supervisor._starts(g, v, 0, Sys.peek(v + 16))
+    Supervisor._up(g, v)
+    st: fn[integer, integer] = fn(a: integer): integer do Supervisor._turn(a) end
+    Process.__until(st, v)
+  end
+# The supervisor ends: its children are stopped and awaited.
+#: _down/1 needs Process._drop/3 Process._g/0 _joins/4 _stops/4 _up/2
+  def _down(v: integer): integer do
+    g = Process._g()
+    t = Sys.peek(v)
+    Process._drop(g, g + 144, t)
+    Supervisor._stops(g, v, 0, Sys.peek(v + 16))
+    Supervisor._joins(g, v, 0, Sys.peek(v + 16))
+    Supervisor._up(g, v)
+  end
+# One turn of the supervisor: a child that ended is seen to.
+#: _turn/1 needs Process._check/1 Process._g/0 Process._wait/2 _failed/3 _mend/4
+  def _turn(v: integer): integer do
+    g = Process._g()
+    Process._check(g)
+    n = Sys.peek(v + 16)
+    i = Supervisor._failed(v, 0, n)
+    if i < 0 do Process._wait(g, 0) else Supervisor._mend(g, v, i, n) end
+    0
+  end
+#: _valid/2 needs _policy/1
+  def _valid(specs: list[tuple[string, string, fn[pid[t], integer]]], seen: list[string]): integer do
+    case specs do
+      [] -> 0
+      [{n, p, f} | rest] -> if n == "" or n in seen or Supervisor._policy(p) < 0 do raise("invalid or duplicate child specification") else Supervisor._valid(rest, [n | seen]) end
+    end
+  end
+# The running process waits until the supervisor's children have started.
+#: _ready/2 needs Process._check/1 Process._wait/2
+  def _ready(g: integer, v: integer): integer do
+    if Sys.peek(v + 72) == 1 or Sys.peek(Sys.peek(v) + 376) == 1 do 0 else
+      Process._wait(g, 0)
+      Process._check(g)
+      Supervisor._ready(g, v)
+    end
+  end
+# The children have started, or will not: whoever waits for that goes on.
+#: _up/2 needs Process._ready/2 Process._stir/2
+  def _up(g: integer, v: integer): integer do
+    Sys.poke(v + 72, 1)
+    Process._ready(g, Sys.peek(v + 96))
+    Process._stir(g, Sys.peek(g + 144))
+  end
+#: _started/2 needs Process._check/1 Process._wait/2
+  def _started(g: integer, q: integer): integer do
+    if Sys.peek(q + 288) == 2 or Sys.peek(q + 376) == 1 do 0 else
+      Process._wait(g, 0)
+      Process._check(g)
+      Supervisor._started(g, q)
+    end
+  end
+# The task of f starts under the supervisor d: the task's process, or the
+# failure's text behind a 0 at g + 184.
+#: _under/2 needs DynamicSupervisor._add/3 Process._cell/4 Process._free/2 Process._g/0 Task._start/1
+  def _under(d: integer, f: fn[a]): integer do
+    g = Process._g()
+    x = Process._cell(g, 0, 0, 0)
+    s: fn[integer] = fn(): integer do Sys.poke(x + 8, Task._start(f).at) end
+    k = DynamicSupervisor._add(d, Process.__word(s), "temporary")
+    p = Sys.peek(x + 8)
+    Process._free(g, x)
+    if k == 0 do p else 0 - k end
+  end
+#: _fill/3 needs _policy/1
+  def _fill(a: integer, i: integer, specs: list[tuple[string, string, fn[pid[t], integer]]]): integer do
+    case specs do
+      [] -> i
+      [{n, p, f} | rest] ->
+        Sys.poke(a + 48 * i, Process.__word(n))
+        Sys.poke(a + 48 * i + 8, Supervisor._policy(p))
+        Sys.poke(a + 48 * i + 16, Process.__word(f))
+        Supervisor._fill(a, i + 1, rest)
+    end
+  end
+# Child i starts. One whose function says when it has started (a server
+# under a name) is waited for.
+#: _child/3 needs Process._has/2 Process._spawn/4 Process._stir/2 _started/2
+  def _child(g: integer, v: integer, i: integer): integer do
+    e = Sys.peek(v + 8) + 48 * i
+    w = Sys.peek(e + 16)
+    q = Process._spawn(g, w, Sys.peek(v + 48), Sys.peek(v + 80))
+    Sys.poke(e + 24, q)
+    Sys.poke(e + 32, 0)
+    Process._stir(g, Sys.peek(g + 144))
+    if Process._has(g + 264, w) == 0 do 0 else
+      Sys.poke(q + 280, Sys.peek(g))
+      Sys.poke(q + 288, 1)
+      Supervisor._started(g, q)
+    end
+  end
+# The first child whose end has not been seen, now seen; -1 for none.
+#: _failed/3
+  def _failed(v: integer, i: integer, n: integer): integer do
+    if i >= n do -1 else
+      e = Sys.peek(v + 8) + 48 * i
+      q = Sys.peek(e + 24)
+      if q != 0 and Sys.peek(q + 376) == 1 and Sys.peek(e + 32) == 0 do
+        Sys.poke(e + 32, 1)
+        i
+      else Supervisor._failed(v, i + 1, n) end
+    end
+  end
+# The supervisor gives up when more restarts were needed than allowed,
+# named where the program started it.
+#: _intense/3
+  def _intense(k: integer, limit: integer, w: integer): integer do
+    if k >= limit do Stream.__fail(w, "restart_intensity") else 0 end
+  end
+#: _list/3
+  def _list(v: integer, i: integer, n: integer): list[tuple[string, integer]] do
+    if i >= n do [] else
+      e = Sys.peek(v + 8) + 48 * i
+      s: string = Process.__any(Sys.peek(e))
+      q = Sys.peek(e + 24)
+      [{s, if q == 0 do 0 else Sys.peek(q + 40) end} | Supervisor._list(v, i + 1, n)]
+    end
+  end
+# A supervisor of the process c starts: nums are the restarts allowed, the
+# window in milliseconds, the capacity and 1 for a link; w is where the
+# program asked and t the children's message type.
+#: _begin/6 needs Process._check/1 Process._g/0 Process._new/2 Process._own/3 Process._pair/3 Process._push/5 Process._start/3 Process._take/2 _fill/3 _ready/2 _run/1 _valid/2
+  def _begin(c: integer, w: integer, t: integer, st: string, nums: tuple[integer, integer, integer, integer], specs: list[tuple[string, string, fn[pid[a], integer]]]): integer do
+    g = Process._g()
+    Process._check(g)
+    {limit, window, cap, linked} = nums
+    s = if st == "one_for_one" do 0 else if st == "one_for_all" do 1 else if st == "rest_for_one" do 2 else raise("invalid supervision strategy") end end end
+    if limit < 0 or window <= 0 or window > 86400000 or cap < 1 or cap > 1000000 or length(specs) == 0 do raise("invalid supervision limits, capacity or empty children") end
+    Supervisor._valid(specs, [])
+    if Sys.peek(g + 112) == 1 do raise("runtime shutting down") end
+    task = Process._new(g, 0)
+    Process._own(g, c, task)
+    if linked == 1 do
+      Process._pair(g, c, task)
+    end
+    Process._push(g, g + 144, task, 0, 0)
+    v = Process._take(g, 104)
+    Sys.poke(v + 96, Sys.peek(g))
+    n = length(specs)
+    a = Process._take(g, 48 * n)
+    Supervisor._fill(a, 0, specs)
+    Sys.poke(v, task)
+    Sys.poke(v + 8, a)
+    Sys.poke(v + 16, n)
+    Sys.poke(v + 24, s)
+    Sys.poke(v + 32, limit)
+    Sys.poke(v + 40, window * 1000000)
+    Sys.poke(v + 48, cap)
+    Sys.poke(v + 80, t)
+    Sys.poke(v + 88, w)
+    r: fn[integer] = fn(): integer do Supervisor._run(v) end
+    Process._start(g, task, Process.__word(r))
+    Supervisor._ready(g, v)
+    v
+  end
+#: _stops/4 needs Process._cancel/4
+  def _stops(g: integer, v: integer, i: integer, n: integer): integer do
+    if i >= n do 0 else
+      q = Sys.peek(Sys.peek(v + 8) + 48 * i + 24)
+      if q != 0 do Process._cancel(g, q, Process.__word("shutdown"), 0) end
+      Supervisor._stops(g, v, i + 1, n)
+    end
+  end
+#: _joins/4 needs Process._await/3
+  def _joins(g: integer, v: integer, i: integer, n: integer): integer do
+    if i >= n do 0 else
+      q = Sys.peek(Sys.peek(v + 8) + 48 * i + 24)
+      if q != 0 do Process._await(g, Sys.peek(g), q) end
+      Supervisor._joins(g, v, i + 1, n)
+    end
+  end
+# As _joins, but a stop of the supervisor itself ends the wait.
+#: _waits/4 needs Process._join/4
+  def _waits(g: integer, v: integer, i: integer, n: integer): integer do
+    if i >= n do 0 else
+      q = Sys.peek(Sys.peek(v + 8) + 48 * i + 24)
+      if q != 0 do Process._join(g, Sys.peek(g), q, 0) end
+      Supervisor._waits(g, v, i + 1, n)
+    end
+  end
+#: _starts/4 needs _child/3
+  def _starts(g: integer, v: integer, i: integer, n: integer): integer do
+    if i >= n do 0 else
+      Supervisor._child(g, v, i)
+      Supervisor._starts(g, v, i + 1, n)
+    end
+  end
+# The restarts of the last d nanoseconds, of the list at h: how many.
+#: _recent/4 needs Process._free/2
+  def _recent(g: integer, h: integer, now: integer, d: integer): integer do
+    x = Sys.peek(h)
+    if x == 0 do 0 else
+      if now - Sys.peek(x + 8) < d do 1 + Supervisor._recent(g, x, now, d) else
+        Sys.poke(h, Sys.peek(x))
+        Process._free(g, x)
+        Supervisor._recent(g, h, now, d)
+      end
+    end
+  end
+#: _restarts/4 needs _child/3
+  def _restarts(g: integer, v: integer, i: integer, n: integer): integer do
+    if i >= n do 0 else
+      if Sys.peek(Sys.peek(v + 8) + 48 * i + 8) != 2 do Supervisor._child(g, v, i) end
+      Supervisor._restarts(g, v, i + 1, n)
+    end
+  end
+# Child i of n ended: by its policy it is left, or the children its
+# strategy names are stopped, awaited and started again.
+#: _mend/4 needs Process._abnormal/1 Process._check/1 Process._now/1 Process._push/5 _intense/3 _recent/4 _restarts/4 _stops/4 _waits/4
+  def _mend(g: integer, v: integer, i: integer, n: integer): integer do
+    e = Sys.peek(v + 8) + 48 * i
+    p = Sys.peek(e + 8)
+    bad = Process._abnormal(Sys.peek(Sys.peek(e + 24) + 160))
+    if p == 2 or p - bad == 1 do 0 else
+      now = Process._now(g)
+      Supervisor._intense(Supervisor._recent(g, v + 64, now, Sys.peek(v + 40)), Sys.peek(v + 32), Sys.peek(v + 88))
+      Process._push(g, v + 64, now, 0, 0)
+      s = Sys.peek(v + 24)
+      a = if s == 1 do 0 else i end
+      b = if s == 0 do i + 1 else n end
+      Supervisor._stops(g, v, a, b)
+      Supervisor._waits(g, v, a, b)
+      Process._check(g)
+      Sys.poke(v + 56, Sys.peek(v + 56) + 1)
+      Supervisor._restarts(g, v, a, b)
+    end
+  end
+# The process of the child named n, or the failure the pinned runtime has.
+#: _find/4
+  def _find(v: integer, n: string, i: integer, k: integer): integer do
+    if i >= k do raise("unknown supervised child: " <> n) else
+      e = Sys.peek(v + 8) + 48 * i
+      s: string = Process.__any(Sys.peek(e))
+      if s != n do Supervisor._find(v, n, i + 1, k) else
+        if Sys.peek(e + 24) == 0 do raise("child has not started") else Sys.peek(e + 24) end
+      end
+    end
+  end
+#: start/5 needs Process._g/0 _begin/6
+  def start(st: string, limit: integer, window: integer, specs: list[tuple[string, string, fn[pid[t], integer]]], cap: integer): supervisor[t] do
+    t = Sys.peek(Sys.stack() - 48)
+    w = Stream.__where()
+    r: supervisor[t] = %supervisor{at: Supervisor._begin(Sys.peek(Process._g()), w, t, st, {limit, window, cap, 0}, specs), k: none}
+    r
+  end
+#: start_link/5 needs Process._g/0 _begin/6
+  def start_link(st: string, limit: integer, window: integer, specs: list[tuple[string, string, fn[pid[t], integer]]], cap: integer): supervisor[t] do
+    t = Sys.peek(Sys.stack() - 48)
+    w = Stream.__where()
+    r: supervisor[t] = %supervisor{at: Supervisor._begin(Sys.peek(Process._g()), w, t, st, {limit, window, cap, 1}, specs), k: none}
+    r
+  end
+#: child/2 needs Process._check/1 Process._g/0 _find/4
+  def child(s: supervisor[t], n: string): pid[t] do
+    Process._check(Process._g())
+    r: pid[t] = %pid{at: Supervisor._find(s.at, n, 0, Sys.peek(s.at + 16)), k: none}
+    r
+  end
+#: children/1 needs Process._check/1 Process._g/0 _list/3
+  def children(s: supervisor[t]): list[tuple[string, integer]] do
+    Process._check(Process._g())
+    Supervisor._list(s.at, 0, Sys.peek(s.at + 16))
+  end
+#: restarts/1
+  def restarts(s: supervisor[t]): integer do
+    Sys.peek(s.at + 56)
+  end
+#: alive/1 needs Process._check/1 Process._g/0
+  def alive(s: supervisor[t]): boolean do
+    Process._check(Process._g())
+    q = Sys.peek(s.at)
+    Sys.peek(q + 56) + Sys.peek(q + 376) == 0
+  end
+#: stop/2 needs Process._cancel/4 Process._check/1 Process._g/0 Process._joined/3
+  def stop(s: supervisor[t], ms: integer): boolean do
+    g = Process._g()
+    Process._check(g)
+    q = Sys.peek(s.at)
+    Process._cancel(g, q, Process.__word("shutdown"), 0)
+    Process._joined(g, q, ms) == 1
+  end
+#: await/2 needs Process._check/1 Process._g/0 Process._joined/3 Process._reason/1
+  def await(s: supervisor[t], ms: integer): tuple[boolean, string] do
+    g = Process._g()
+    Process._check(g)
+    q = Sys.peek(s.at)
+    if Process._joined(g, q, ms) == 1 do {true, Process._reason(q)} else {false, ""} end
+  end
+#: server/4 needs Atom.to_string/1 Process._g/0 Process._push/5 Server._kid/2 _policy/1
+  def server(n: atom, policy: string, state: s, handle: fn[s, q, tuple[s, r]]): tuple[string, string, fn[pid[tuple[]], integer]] do
+    t = Sys.peek(Sys.stack() - 48)
+    place = Stream.__where()
+    if Supervisor._policy(policy) < 0 do raise("Supervisor.server: the restart policy is \"permanent\", \"transient\" or \"temporary\", not " <> inspect(policy)) end
+    name = Atom.to_string(n)
+    x = {Process.__word(state), Process.__word(handle), t, place}
+    body: fn[pid[tuple[]], integer] = fn(me: pid[tuple[]]): integer do Server._kid(name, x) end
+    g = Process._g()
+    Process._push(g, g + 264, Process.__word(body), 0, 0)
+    {name, policy, body}
+  end
+# Task.Supervisor: tasks as temporary children of a dynamic supervisor (the
+# compiler looks Task.Supervisor.name up as Supervisor.name).
+#: start_link/0 needs DynamicSupervisor._begin/4 DynamicSupervisor._made/1 Process._g/0
+  def start_link(): dynamic_supervisor do
+    DynamicSupervisor._made(DynamicSupervisor._begin(Sys.peek(Process._g()), 3, 5000, Stream.__where()))
+  end
+#: start_link/1 needs DynamicSupervisor._made/1 DynamicSupervisor._options/3
+  def start_link(o: list[tuple[atom, integer]]): dynamic_supervisor do
+    DynamicSupervisor._made(DynamicSupervisor._options(o, {3, 5, 0}, Stream.__where()))
+  end
+#: async/2 needs DynamicSupervisor._problem/1 Process._g/0 Process._link/3 _under/2
+  def async(s: dynamic_supervisor, f: fn[a]): task[a] do
+    p = Supervisor._under(s.at, f)
+    if p < 0 do raise("Task.Supervisor.async: " <> DynamicSupervisor._problem(0 - p)) end
+    g = Process._g()
+    Process._link(g, Sys.peek(g), p)
+    r: task[a] = %task{at: p, k: none}
+    r
+  end
+#: async_nolink/2 needs DynamicSupervisor._problem/1 _under/2
+  def async_nolink(s: dynamic_supervisor, f: fn[a]): task[a] do
+    p = Supervisor._under(s.at, f)
+    if p < 0 do raise("Task.Supervisor.async_nolink: " <> DynamicSupervisor._problem(0 - p)) end
+    r: task[a] = %task{at: p, k: none}
+    r
+  end
+#: start_child/2 needs DynamicSupervisor._problem/1 _under/2
+  def start_child(s: dynamic_supervisor, f: fn[a]): result[task[a], string] do
+    p = Supervisor._under(s.at, f)
+    if p < 0 do error(DynamicSupervisor._problem(0 - p)) else
+      r: task[a] = %task{at: p, k: none}
+      ok(r)
+    end
+  end
+#: children/1 form 2 needs DynamicSupervisor.which_children/1
+  def children(s: dynamic_supervisor): list[integer] do
+    DynamicSupervisor.which_children(s)
+  end
+#: terminate_child/2 needs DynamicSupervisor._end/2
+  def terminate_child(s: dynamic_supervisor, t: task[a]): boolean do
+    DynamicSupervisor._end(s.at, Sys.peek(t.at + 40))
+  end

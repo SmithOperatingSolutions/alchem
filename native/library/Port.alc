@@ -1,0 +1,352 @@
+# Port: an external program whose output arrives as messages (the pinned
+# runtime's portHandle, compiler/library.go.txt). A port is a block: 0 the
+# program's process number, 8 the descriptor its input is written to, 16
+# the one its output is read from, 24 set once the input is closed, 32 its
+# name, 40 the bytes of a packet's length (0: none), 48 and 56 the bytes
+# written and read, 64 set once it has ended, 72 who else hears of that, 80
+# a buffer of 65536 bytes, 88 what is read of a line or packet not yet
+# whole.
+#: struct port also PortEvent
+  struct port do
+    at: integer
+    k: option[fn[integer, integer]]
+  end
+  struct Port.Info do
+    name: string
+    os_pid: integer
+    input: integer
+    output: integer
+  end
+  type PortEvent do
+    data(text: string)
+    exit(status: integer)
+  end
+# The program at p starts with the arguments a and the environment e, its
+# input and output on pipes; m says where its errors go (0 with its output,
+# 1 nowhere, 2 where the program's own go). The process or the error, the
+# descriptor to write to and the one to read from.
+#: _spawn/4 needs Sys.state/0 Sys.wait/4
+  def _spawn(p: integer, a: integer, e: integer, m: integer): tuple[integer, integer, integer] do
+    s = Sys.state() + 512
+    Sys.call(293, s, 0x80000)
+    Sys.call(293, s + 8, 0x80000)
+    Sys.call(293, s + 32, 0x80000)
+    o = rem(div(Sys.peek(s), 4294967296), 4294967296)
+    r = rem(Sys.peek(s), 4294967296)
+    w = rem(div(Sys.peek(s + 8), 4294967296), 4294967296)
+    x = rem(Sys.peek(s + 8), 4294967296)
+    i = rem(Sys.peek(s + 32), 4294967296)
+    j = rem(div(Sys.peek(s + 32), 4294967296), 4294967296)
+    c = Sys.call(57)
+    if c == 0 do
+      y = Sys.call(72, o, 1030, 3)
+      Sys.call(33, Sys.call(72, i, 1030, 3), 0)
+      Sys.call(33, y, 1)
+      if m == 0 do Sys.call(33, y, 2) end
+      if m == 1 do Sys.call(33, Sys.call(257, -100, Sys.addr("/dev/null\x00"), 0x80001, 0), 2) end
+      f = Sys.call(59, p, a, e)
+      Sys.poke(s + 16, 0 - f)
+      Sys.call(1, w, s + 16, 8)
+      Sys.call(60, 253)
+    end
+    Sys.call(3, i)
+    Sys.call(3, o)
+    Sys.call(3, w)
+    n = if c < 0 do 0 else Sys.wait(0, x, s + 16, 8) end
+    Sys.call(3, x)
+    if c < 0 or n > 0 do
+      Sys.call(3, r)
+      Sys.call(3, j)
+    end
+    if n > 0 do Sys.wait(61, c, s + 24, 0) end
+    {if c < 0 do c else if n > 0 do 0 - Sys.peek(s + 16) else c end end, j, r}
+  end
+# exec.Command(c, a...) started as a port of the process o; h and m as
+# above, k how its output is cut (0 lines, 1 as it comes, 2 packets).
+#: _start/4 needs Enum.any?/2 String.contains?/2 Sys.env/0 Sys.fail/3 Sys.keep/2 Sys.pad/0 Sys.push/2 Sys.which/1 Sys.z/1 _opened/4 _spawn/4
+  def _start(c: string, a: list[string], o: integer, v: tuple[integer, integer, integer]): result[port, string] do
+    {k, h, m} = v
+    w = if c == "" or String.contains?(c, "/") do {0, c} else Sys.which(c) end
+    if c == "" do error("exec: no command") else
+      if elem(w, 0) == 2 do error("exec: " <> inspect(c) <> ": executable file not found in $PATH") else
+        if elem(w, 0) == 1 do error("exec: " <> inspect(c) <> ": cannot run executable found relative to current directory") else
+          g = [c] ++ a
+          s = Sys.pad()
+          Enum.reduce(g, 0, fn x, i -> Sys.push(Sys.z(x), 8) end)
+          Sys.push(0, 8)
+          n = Sys.peek(Sys.env() + 8)
+          Sys.keep(Sys.peek(s), n * 8)
+          Sys.push(0, 8)
+          y = Sys.peek(s + 56) + 8 * length(g) + 8
+          z = Sys.z(elem(w, 1))
+          f = if z == 0 or Enum.any?(g, fn x -> Sys.z(x) == 0 end) do {-22, 0, 0} else Port._spawn(z, Sys.peek(s + 56), y, m) end
+          if elem(f, 0) < 0 do error(Sys.fail("fork/exec", elem(w, 1), elem(f, 0))) else ok(Port._opened(c, f, o, {k, h})) end
+        end
+      end
+    end
+  end
+#: _opened/4 needs Process._g/0 Process._go/2 Process._spawn/4 Process._take/2 _read/3 _watch/3
+  def _opened(c: string, f: tuple[integer, integer, integer], o: integer, v: tuple[integer, integer]): port do
+    g = Process._g()
+    b = Process._take(g, 96)
+    Sys.poke(b, elem(f, 0))
+    Sys.poke(b + 8, elem(f, 1))
+    Sys.poke(b + 16, elem(f, 2))
+    Sys.poke(b + 32, Process.__word(c))
+    Sys.poke(b + 40, elem(v, 1))
+    m = Sys.call(9, 0, 65536, 3, 34, -1, 0)
+    if m < 0 do System.halt(71) end
+    Sys.poke(b + 80, m)
+    Sys.poke(b + 88, Process.__word(""))
+    cut = elem(v, 0)
+    body: fn[pid[integer], integer] = fn(me: pid[integer]): integer do Port._read(b, o, cut) end
+    r = Process._spawn(g, Process.__word(body), 1, 0)
+    watch: fn[integer] = fn(): integer do Port._watch(b, r, o) end
+    Process._go(g, Process.__word(watch))
+    made: port = %port{at: b, k: none}
+    made
+  end
+# The whole packets of text are sent: each stands behind its length in h
+# bytes, the highest first.
+#: _packets/4 needs _big/3 _send/3
+  def _packets(g: integer, x: integer, text: string, h: integer): string do
+    n = byte_size(text)
+    size = if n < h do -1 else Port._big(Sys.addr(text), h, 0) end
+    if size < 0 or n < h + size do text else
+      Port._send(g, x, Sys.text(Sys.addr(text) + h, size))
+      Port._packets(g, x, Sys.text(Sys.addr(text) + h + size, n - h - size), h)
+    end
+  end
+# The program ends with the process its output goes to, and with the one
+# that reads it: it is interrupted, and killed if it has not gone half a
+# second later.
+#: _watch/3 needs Process._g/0 Process._has/2 Process._push/5 Process._wait/2 _end/2
+  def _watch(b: integer, r: integer, o: integer): integer do
+    g = Process._g()
+    c = Sys.peek(g)
+    if Sys.peek(b + 64) == 1 do 0 else
+      if Sys.peek(o + 376) + Sys.peek(r + 376) > 0 do Port._end(g, b) else
+        if Process._has(o + 248, c) == 0 do Process._push(g, o + 248, c, 0, 0) end
+        if Process._has(r + 248, c) == 0 do Process._push(g, r + 248, c, 0, 0) end
+        Process._wait(g, 0)
+        Port._watch(b, r, o)
+      end
+    end
+  end
+# The running process waits until the program has ended or the time d comes.
+#: _gone/3 needs Process._due/2 Process._now/1 Process._sleep/2
+  def _gone(g: integer, b: integer, d: integer): integer do
+    if Sys.peek(b + 64) == 1 or Process._now(g) >= d do 0 else
+      Process._sleep(g, Process._due(g, 1))
+      Port._gone(g, b, d)
+    end
+  end
+# What the process that reads the program's output does: each line, piece
+# or packet goes to the owner o, and the exit status after the last.
+#: _read/3 needs Process._cell/4 Process._g/0 Process._send/4 _heard/3 _status/2 _turn/1
+  def _read(b: integer, o: integer, k: integer): integer do
+    g = Process._g()
+    x = Process._cell(g, b, o, k)
+    st: fn[integer, integer] = fn(a: integer): integer do Port._turn(a) end
+    Process.__until(st, x)
+    t = Port._status(g, b)
+    Sys.poke(b + 64, 1)
+    Sys.call(3, Sys.peek(b + 16))
+    Process._send(g, o, Process.__word(PortEvent.exit(t)), -1)
+    Port._heard(g, Sys.peek(b + 72), t)
+    0
+  end
+#: _heard/3 needs Process._send/4
+  def _heard(g: integer, x: integer, t: integer): integer do
+    if x == 0 do 0 else
+      Process._send(g, Sys.peek(x + 8), Process.__word(PortEvent.exit(t)), 1000)
+      Port._heard(g, Sys.peek(x), t)
+    end
+  end
+#: _send/3 needs Process._send/4
+  def _send(g: integer, x: integer, text: string): integer do
+    b = Sys.peek(x + 8)
+    Sys.poke(b + 56, Sys.peek(b + 56) + byte_size(text))
+    Process._send(g, Sys.peek(x + 16), Process.__word(PortEvent.data(text)), -1)
+  end
+#: _took/3 needs _lines/3 _packets/4 _send/3
+  def _took(g: integer, x: integer, text: string): integer do
+    b = Sys.peek(x + 8)
+    k = Sys.peek(x + 24)
+    left: string = Process.__any(Sys.peek(b + 88))
+    if k == 1 do Port._send(g, x, text) else
+      Sys.poke(b + 88, Process.__word(if k == 0 do Port._lines(g, x, left <> text) else Port._packets(g, x, left <> text, Sys.peek(b + 40)) end))
+    end
+  end
+# The whole lines of text are sent, each without the line ends it closes
+# with; what follows the last is kept.
+#: _lines/3 needs _bare/1 _send/3
+  def _lines(g: integer, x: integer, text: string): string do
+    i = Sys.find(Sys.addr(text), byte_size(text), 10)
+    if i < 0 do text else
+      Port._send(g, x, Port._bare(Sys.text(Sys.addr(text), i)))
+      Port._lines(g, x, Sys.text(Sys.addr(text) + i + 1, byte_size(text) - i - 1))
+    end
+  end
+#: _big/3
+  def _big(a: integer, h: integer, v: integer): integer do
+    if h == 0 do v else Port._big(a + 1, h - 1, v * 256 + Sys.byte(a)) end
+  end
+# The bytes of a packet's length before text.
+#: _head/3 needs _byte/1
+  def _head(n: integer, h: integer, text: string): string do
+    if h == 0 do text else Port._head(div(n, 256), h - 1, Port._byte(rem(n, 256)) <> text) end
+  end
+#: _end/2 needs Process._due/2 _gone/3
+  def _end(g: integer, b: integer): integer do
+    if Sys.call(62, Sys.peek(b), 2) == 0 do Port._gone(g, b, Process._due(g, 500)) end
+    if Sys.peek(b + 64) == 0 do Sys.call(62, Sys.peek(b), 9) end
+    0
+  end
+# The exit status of the program, awaited without holding the others up:
+# -1 when a signal ended it.
+#: _status/2 needs Process._nap/1
+  def _status(g: integer, b: integer): integer do
+    r = Sys.call(61, Sys.peek(b), g + 200, 1, 0)
+    if r == 0 do
+      Process._nap(g)
+      Port._status(g, b)
+    else
+      t = rem(Sys.peek(g + 200), 65536)
+      if r < 0 do -1 else if rem(t, 128) == 0 do div(t, 256) else -1 end end
+    end
+  end
+# The output ended: a last line without its end is sent as it is.
+#: _rest/2 needs String.trim_trailing/2 _send/3
+  def _rest(g: integer, x: integer): integer do
+    b = Sys.peek(x + 8)
+    left: string = Process.__any(Sys.peek(b + 88))
+    if Sys.peek(x + 24) == 0 and left != "" do Port._send(g, x, String.trim_trailing(String.trim_trailing(left, "\r"), "\n")) end
+    1
+  end
+#: _modes/2
+  def _modes(o: list[tuple[atom, atom]], v: tuple[integer, integer, integer]): tuple[integer, integer, integer] do
+    case o do
+      [] -> v
+      [{k, x} | rest] ->
+        mode = if k != :mode do -1 else if x == :line do 0 else if x == :binary do 1 else -1 end end end
+        errors = if k != :stderr do -1 else if x == :merge do 0 else if x == :discard do 1 else if x == :inherit do 2 else -1 end end end end
+        if mode + errors == -2 do raise("Port.open takes mode: :line or :binary and stderr: :merge, :discard or :inherit") end
+        Port._modes(rest, {if mode >= 0 do mode else elem(v, 0) end, 0, if errors >= 0 do errors else elem(v, 2) end})
+    end
+  end
+#: _packet/2
+  def _packet(o: list[tuple[atom, integer]], h: integer): integer do
+    case o do
+      [] -> h
+      [{k, x} | rest] -> if k == :packet and x * (x - 3) * (x - 5) * (x - 6) * (x - 7) != 0 and x > 0 and x < 5 do Port._packet(rest, x) else raise("Port.open takes packet: 1, 2 or 4") end
+    end
+  end
+# One look at the program's output: 1 at its end.
+#: _turn/1 needs Process._g/0 Process._nap/1 _rest/2 _took/3
+  def _turn(x: integer): integer do
+    g = Process._g()
+    b = Sys.peek(x + 8)
+    fd = Sys.peek(b + 16)
+    Sys.poke(g + 200, fd + 4294967296)
+    Sys.poke(g + 208, 0)
+    Sys.poke(g + 216, 0)
+    r = Sys.call(271, g + 200, 1, g + 208, 0, 8)
+    if r == 0 do
+      Process._nap(g)
+      0
+    else
+      n = Sys.call(0, fd, Sys.peek(b + 80), 65536)
+      if n == -4 do 0 else
+        if n <= 0 do Port._rest(g, x) else
+          Port._took(g, x, Sys.text(Sys.peek(b + 80), n))
+          0
+        end
+      end
+    end
+  end
+#: _bare/1
+  def _bare(line: string): string do
+    n = byte_size(line)
+    last = if n == 0 do 0 else Sys.byte(Sys.addr(line) + n - 1) end
+    if last == 13 or last == 10 do Port._bare(Sys.text(Sys.addr(line), n - 1)) else line end
+  end
+# A string of the one byte v.
+#: _byte/1 needs Process._g/0
+  def _byte(v: integer): string do
+    g = Process._g()
+    Sys.poke(g + 200, v)
+    Sys.text(g + 200, 1)
+  end
+#: open/3 needs Process._check/1 Process._g/0 _start/4
+  def open(c: string, a: list[string], o: pid[PortEvent]): result[port, string] do
+    Process._check(Process._g())
+    Port._start(c, a, o.at, {0, 0, 0})
+  end
+#: open/4 needs Process._check/1 Process._g/0 _modes/2 _start/4
+  def open(c: string, a: list[string], o: pid[PortEvent], s: list[tuple[atom, atom]]): result[port, string] do
+    Process._check(Process._g())
+    Port._start(c, a, o.at, Port._modes(s, {0, 0, 0}))
+  end
+#: open/4 form 2 needs Process._check/1 Process._g/0 _packet/2 _start/4
+  def open(c: string, a: list[string], o: pid[PortEvent], s: list[tuple[atom, integer]]): result[port, string] do
+    Process._check(Process._g())
+    h = Port._packet(s, 0)
+    Port._start(c, a, o.at, {if h == 0 do 0 else 2 end, h, 0})
+  end
+#: command/2 needs Process._g/0 Sys.put/3 _head/3
+  def command(p: port, text: string): boolean do
+    b = p.at
+    h = Sys.peek(b + 40)
+    n = byte_size(text)
+    if Sys.peek(b + 24) == 1 do false else
+      most = if h == 1 do 256 else if h == 2 do 65536 else n + 1 end end
+      if h > 0 and n >= most do false else
+        out = Port._head(n, h, text)
+        g = Process._g()
+        Sys.poke(g + 2048, 1)
+        Sys.call(13, 13, g + 2048, 0, 8)
+        r = Sys.put(Sys.peek(b + 8), Sys.addr(out), byte_size(out))
+        Sys.poke(g + 2048, 0)
+        Sys.call(13, 13, g + 2048, 0, 8)
+        if r == 0 do Sys.poke(b + 48, Sys.peek(b + 48) + byte_size(out)) end
+        r == 0
+      end
+    end
+  end
+#: close/1
+  def close(p: port): boolean do
+    b = p.at
+    if Sys.peek(b + 24) == 1 do false else
+      Sys.poke(b + 24, 1)
+      Sys.call(3, Sys.peek(b + 8))
+      true
+    end
+  end
+#: kill/1 needs Process._due/2 Process._g/0 _end/2 _gone/3
+  def kill(p: port): boolean do
+    b = p.at
+    g = Process._g()
+    if Sys.peek(b + 64) == 1 do false else
+      Port._end(g, b)
+      Port._gone(g, b, Process._due(g, 2000))
+      true
+    end
+  end
+#: os_pid/1
+  def os_pid(p: port): integer do
+    Sys.peek(p.at)
+  end
+#: info/1
+  def info(p: port): option[Port.Info] do
+    b = p.at
+    if Sys.peek(b + 64) == 1 do none else some(%Port.Info{name: Process.__any(Sys.peek(b + 32)), os_pid: Sys.peek(b), input: Sys.peek(b + 48), output: Sys.peek(b + 56)}) end
+  end
+#: monitor/2 needs Process._g/0 Process._push/5
+  def monitor(p: port, w: pid[PortEvent]): boolean do
+    b = p.at
+    if Sys.peek(b + 64) == 1 do false else
+      Process._push(Process._g(), b + 72, w.at, 0, 0)
+      true
+    end
+  end

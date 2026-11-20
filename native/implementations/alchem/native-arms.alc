@@ -1,0 +1,473 @@
+defmodule NativeArms do
+  # The arms of a case, compiled one after another instead of each inside
+  # the one before it (np_arms): an arm's code stands apart, with the length
+  # of the jump that ends it left out, and the arms are put together once
+  # all are known. So a case of fifty thousand arms copies its code about
+  # sixteen times, not once an arm, and no arm is compared with every arm
+  # before it as it is read: that no arm is unreachable and that every value
+  # is matched is decided at the end, for arms without parts (literals,
+  # variants without fields, true and false, names) by sorting them.
+  #
+  # What np_arms does beyond that, an arm that waits for the type of the
+  # arms after it or gives them the type to expect (nf_trial, nf_led), is
+  # left to it: the arms from such an arm on are compiled by np_arms, and
+  # when arms it would have given a type to do not compile, so is the whole
+  # case.
+  #
+  # A run of arms: where the next arm starts (3 bytes), a status (0 arms may
+  # follow, 1 the end that closes the case was met, 2 the arm there is left
+  # to np_arms), 1 when an arm's value holds a function type, the number of
+  # arms (4 bytes), then four parts, each behind its length (4 bytes): the
+  # code of the arms; for each arm the lengths of its code, its value and
+  # its pattern record (4 bytes each); the values (position, marks and
+  # type, without code); the pattern records (1 for a guard, the length of
+  # the tree, the tree).
+  def pa_head(pos: integer, status: integer, holds: integer, count: integer): bytes do
+    nc_join(nc_u24(pos),b[status,holds],nc_u32(count))
+  end
+  def pa_run(head: bytes, codes: bytes, sizes: bytes, values: bytes, trees: bytes): bytes do
+    nc_join(nc_join(head,nc_u32(Enum.count(codes)),codes),Enum.concat(nc_u32(Enum.count(sizes)),sizes),nc_join(Enum.concat(nc_u32(Enum.count(values)),values),nc_u32(Enum.count(trees)),trees))
+  end
+  def pa_at(run: bytes, index: integer, offset: integer): integer do
+    if index == 0 do offset else pa_at(run,index-1,offset+4+nc_long(run,offset)) end
+  end
+  def pa_part(run: bytes, index: integer): bytes do
+    at = pa_at(run,index,9)
+    nc_slice(run,at+4,at+4+nc_long(run,at))
+  end
+  def pa_joined(first: bytes, second: bytes): bytes do
+    if Enum.count(first) == 0 do b[] else if Enum.count(second) == 0 do b[] else
+      pa_run(nc_join(nc_slice(second,0,4),b[if Enum.at(first,4,0)+Enum.at(second,4,0) > 0 do 1 else 0 end],nc_u32(nc_long(first,5)+nc_long(second,5))),Enum.concat(pa_part(first,0),pa_part(second,0)),Enum.concat(pa_part(first,1),pa_part(second,1)),Enum.concat(pa_part(first,2),pa_part(second,2)),Enum.concat(pa_part(first,3),pa_part(second,3)))
+    end end
+  end
+  # The arm where before says the next one starts. plan: the nesting, the
+  # slot the value waits in and where the arms begin.
+  def pa_step(source: bytes, before: bytes, env: bytes, table: bytes, plan: bytes): bytes do
+    start = nc_start(source,nc_cursor(before,0))
+    if nc_word(source,start,b[101,110,100]) == 1 do pa_run(pa_head(nc_end(source,start),1,0,0),b[],b[],b[],b[]) else
+      parsed = np_parse(source,start,env,table,nt_read(env,nc_env_offset(env,nc_cursor(plan,1))+7))
+      if nc_pos(parsed) < 0 do b[] else pa_arm(source,parsed,env,table,Enum.concat(nc_slice(plan,0,4),nc_u24(start))) end
+    end
+  end
+  # plan: the nesting, the slot, where the arm starts.
+  def pa_arm(source: bytes, parsed: bytes, env: bytes, table: bytes, plan: bytes): bytes do
+    depth = Enum.at(plan,0,0)
+    scope = np_env(parsed)
+    tree = np_tree(parsed)
+    guarded = nc_word(source,nc_pos(parsed),b[119,104,101,110])
+    guard = if guarded == 0 do nc_value(nc_pos(parsed),b[],b[3]) else nc_condition(source,nc_end(source,nc_pos(parsed)),sg_conditional(scope),table,depth+1) end
+    arrow = nc_expect(source,nc_pos(guard),b[45,62])
+    first = if arrow < 0 do b[] else nc_branch(source,arrow,scope,table,depth+1) end
+    match = if nc_pos(first) < 0 do b[] else np_emit(source,scope,table,tree,0) end
+    taken = Enum.count(nc_code(first))+5
+    check = if guarded == 0 do b[] else nc_join(nc_code(guard),b[72,133,192,15,132],nc_u32(taken)) end
+    code = nc_join(nc_join(nc_slot(b[72,139,69],nc_cursor(plan,1)),match,b[132,192,15,132]),nc_u32(Enum.count(check)+taken),nc_join(check,nc_code(first),b[233]))
+    value = nc_slice(first,0,nt_after(first,4))
+    record = nc_join(b[guarded],nc_u32(Enum.count(tree)),tree)
+    if arrow < 0 do b[] else if nc_pos(first) < 0 do pa_run(pa_head(nc_cursor(plan,4),2,0,0),b[],b[],b[],b[]) else if Enum.count(match) == 0 do b[] else
+      pa_run(pa_head(nc_pos(first),0,nu_has(nc_kind(first),10,0,Enum.count(nc_kind(first))),1),code,nc_join(nc_u32(Enum.count(code)),nc_u32(Enum.count(value)),nc_u32(Enum.count(record))),value,record)
+    end end end
+  end
+  def pa_more(source: bytes, before: bytes, env: bytes, table: bytes, plan: bytes, level: integer): bytes do
+    if level == 0 do pa_step(source,before,env,table,plan) else
+      first = pa_more(source,before,env,table,plan,level-1)
+      if Enum.count(first) == 0 do b[] else if Enum.at(first,3,0) != 0 do first else pa_joined(first,pa_more(source,first,env,table,plan,level-1)) end end
+    end
+  end
+  def pa_grow(source: bytes, done: bytes, env: bytes, table: bytes, plan: bytes, level: integer): bytes do
+    if Enum.count(done) == 0 do b[] else if Enum.at(done,3,0) != 0 do done else
+      pa_grow(source,pa_joined(done,pa_more(source,done,env,table,plan,level)),env,table,plan,level+1)
+    end end
+  end
+  # Where each of the arms first up to stop ends in its part, as the sum of
+  # the lengths before it and its own: column 0 the code, 1 the values, 2
+  # the pattern records. base: the sum before the first.
+  def pa_sums(sizes: bytes, column: integer, first: integer, stop: integer, base: integer): bytes do
+    middle = first+nc_half(stop-first)
+    if stop-first <= 0 do b[] else if stop-first == 1 do nc_u32(base+nc_long(sizes,first*12+column*4)) else
+      left = pa_sums(sizes,column,first,middle,base)
+      Enum.concat(left,pa_sums(sizes,column,middle,stop,nc_long(left,(middle-first-1)*4)))
+    end end
+  end
+  def pa_from(ends: bytes, index: integer): integer do
+    if index <= 0 do 0 else nc_long(ends,index*4-4) end
+  end
+  # The code of the arms first up to stop with the jumps that end them:
+  # after bytes of code follow the last of them.
+  def pa_assemble(codes: bytes, ends: bytes, first: integer, stop: integer, after: integer): bytes do
+    middle = first+nc_half(stop-first)
+    if stop-first <= 0 do b[] else if stop-first == 1 do Enum.concat(nc_slice(codes,pa_from(ends,first),nc_long(ends,first*4)),nc_u32(after)) else
+      Enum.concat(pa_assemble(codes,ends,first,middle,after+nc_long(ends,stop*4-4)-nc_long(ends,middle*4-4)+(stop-middle)*4),pa_assemble(codes,ends,middle,stop,after))
+    end end
+  end
+  # The value of arm index and those after it, whose value is rest: the
+  # type they join in and their marks (np_join). strict: 1 where two open
+  # types may not meet (nf_both_open).
+  def pa_fold(values: bytes, ends: bytes, index: integer, rest: bytes, strict: integer): bytes do
+    body = if index < 0 do b[] else nc_slice(values,pa_from(ends,index),nc_long(ends,index*4)) end
+    kind = if index < 0 do b[] else if nc_pos(rest) < 0 do b[] else nx_join(body,rest) end end
+    open = if strict == 0 do 0 else if nc_tag(body) == 9 do 0 else if nc_tag(rest) == 9 do 0 else nu_holes(nc_kind(body),0)*nu_holes(nc_kind(rest),0) end end end
+    if index < 0 do rest else if nc_pos(rest) < 0 do b[] else if open == 1 do b[] else if nt_tag(kind) < 0 do b[] else
+      pa_fold(values,ends,index-1,nw_keep(nc_value(nc_pos(rest),b[],kind),body,rest),strict)
+    end end end end
+  end
+  # 1 when every pattern record from offset on is a name, _ or a pattern
+  # whose parts are all names or _: such arms differ by their constructors
+  # alone.
+  def pa_flat(trees: bytes, offset: integer): integer do
+    if offset >= Enum.count(trees) do 1 else
+      if Enum.at(trees,offset+5,0) < 2 do pa_flat(trees,offset+5+nc_long(trees,offset+1)) else
+        if pa_shallow(trees,np_below(trees,offset+5),np_count(trees,offset+5)) == 0 do 0 else pa_flat(trees,offset+5+nc_long(trees,offset+1)) end
+      end
+    end
+  end
+  # 1 when the count trees from offset on are names or _.
+  def pa_shallow(trees: bytes, offset: integer, count: integer): integer do
+    if count == 0 do 1 else if Enum.at(trees,offset,0) >= 2 do 0 else pa_shallow(trees,if Enum.at(trees,offset,0) == 0 do offset+1 else offset+4 end,count-1) end end
+  end
+  # The number of the first arm without a guard that matches anything, -1
+  # when there is none.
+  def pa_any(trees: bytes, offset: integer, index: integer): integer do
+    if offset >= Enum.count(trees) do -1 else
+      if Enum.at(trees,offset,0)*2+Enum.at(trees,offset+5,0) < 2 do index else pa_any(trees,offset+5+nc_long(trees,offset+1),index+1) end
+    end
+  end
+  # How many arms without a guard match one constructor, and the number of
+  # constructors the type of the first of them has (0 for a type without end).
+  def pa_plain(trees: bytes, offset: integer, count: integer): integer do
+    if offset >= Enum.count(trees) do count else
+      pa_plain(trees,offset+5+nc_long(trees,offset+1),if Enum.at(trees,offset,0) == 1 do count else if Enum.at(trees,offset+5,0) < 2 do count else count+1 end end)
+    end
+  end
+  def pa_all(trees: bytes, offset: integer): integer do
+    if offset >= Enum.count(trees) do 0 else
+      if Enum.at(trees,offset,0) == 1 do pa_all(trees,offset+5+nc_long(trees,offset+1)) else if Enum.at(trees,offset+5,0) < 2 do pa_all(trees,offset+5+nc_long(trees,offset+1)) else np_all(trees,offset+5) end end
+    end
+  end
+  # A number below 2^31 from another and a byte.
+  def pa_mix(seed: integer, value: integer): integer do
+    a = seed*31+value+1
+    b = if a >= 34359738368 do a-34359738368 else a end
+    c = if b >= 17179869184 do b-17179869184 else b end
+    d = if c >= 8589934592 do c-8589934592 else c end
+    e = if d >= 4294967296 do d-4294967296 else d end
+    if e >= 2147483648 do e-2147483648 else e end
+  end
+  def pa_mixed(data: bytes, pos: integer, stop: integer, seed: integer): integer do
+    if pos >= stop do seed else pa_mixed(data,pos+1,stop,pa_mix(seed,Enum.at(data,pos,0))) end
+  end
+  # Such a number for the pattern at offset of the records: of its text for
+  # a literal (two literals are one when their texts are), else of its
+  # layout and id.
+  def pa_hash(source: bytes, trees: bytes, at: integer): integer do
+    plain = if np_layout(trees,at) == 8 do pa_mixed(source,nc_cursor(trees,at+11),nc_cursor(trees,at+14),300+Enum.at(trees,at+17,0)) else pa_mixed(trees,at+7,np_below(trees,at),7) end
+    # Scattered, so that keys in the order of their texts split evenly.
+    plain*2654435761-nt_div(plain*2654435761,2147483648)*2147483648
+  end
+  # For each arm first up to stop that is a pattern without parts: its
+  # number (4 bytes) and where its record starts (4 bytes).
+  def pa_keys(source: bytes, trees: bytes, ends: bytes, first: integer, stop: integer): bytes do
+    middle = first+nc_half(stop-first)
+    at = pa_from(ends,first)
+    if stop-first <= 0 do b[] else if stop-first == 1 do
+      if Enum.at(trees,at+5,0) < 2 do b[] else Enum.concat(nc_u32(pa_hash(source,trees,at+5)),nc_u32(at)) end
+    else Enum.concat(pa_keys(source,trees,ends,first,middle),pa_keys(source,trees,ends,middle,stop)) end end
+  end
+  # The keys first up to stop whose number is below (mode 0), equal to (1)
+  # or above (2) pivot, in their order.
+  def pa_filter(keys: bytes, first: integer, stop: integer, pivot: integer, mode: integer): bytes do
+    middle = first+nc_half(stop-first)
+    value = nc_long(keys,first*8)
+    if stop-first <= 0 do b[] else if stop-first == 1 do
+      if mode == 0 do if value < pivot do nc_slice(keys,first*8,first*8+8) else b[] end else if mode == 1 do if value == pivot do nc_slice(keys,first*8,first*8+8) else b[] end else if value > pivot do nc_slice(keys,first*8,first*8+8) else b[] end end end
+    else Enum.concat(pa_filter(keys,first,middle,pivot,mode),pa_filter(keys,middle,stop,pivot,mode)) end end
+  end
+  # 1 when one of the keys from index on, which share a number, is the
+  # pattern of an earlier arm among them that has no guard. kept: where the
+  # records of those met so far start.
+  def pa_twice(source: bytes, trees: bytes, keys: bytes, index: integer, kept: bytes): integer do
+    at = nc_long(keys,index*8+4)
+    if index*8 >= Enum.count(keys) do 0 else
+      if pa_among(source,trees,kept,0,at) == 1 do 1 else pa_twice(source,trees,keys,index+1,if Enum.at(trees,at,0) == 1 do kept else Enum.concat(kept,nc_u32(at)) end) end
+    end
+  end
+  def pa_among(source: bytes, trees: bytes, kept: bytes, index: integer, at: integer): integer do
+    if index*4 >= Enum.count(kept) do 0 else
+      if np_same(source,trees,nc_long(kept,index*4)+5,trees,at+5) == 1 do 1 else pa_among(source,trees,kept,index+1,at) end
+    end
+  end
+  # 1 when an arm among the keys has the pattern of an earlier one without
+  # a guard: the keys are split around the number of the middle one until
+  # those that share a number stand alone.
+  def pa_repeats(source: bytes, trees: bytes, keys: bytes): integer do
+    count = nc_units(Enum.count(keys),8)
+    pivot = nc_long(keys,nc_half(count)*8)
+    same = if count <= 1 do b[] else pa_filter(keys,0,count,pivot,1) end
+    if count <= 1 do 0 else
+      if pa_twice(source,trees,same,0,b[]) == 1 do 1 else
+        if pa_repeats(source,trees,pa_filter(keys,0,count,pivot,0)) == 1 do 1 else pa_repeats(source,trees,pa_filter(keys,0,count,pivot,2)) end
+      end
+    end
+  end
+  # The rows of the arms first up to stop that have no guard, as np_useful
+  # reads them.
+  def pa_rows(trees: bytes, ends: bytes, first: integer, stop: integer): bytes do
+    middle = first+nc_half(stop-first)
+    at = pa_from(ends,first)
+    if stop-first <= 0 do b[] else if stop-first == 1 do
+      if Enum.at(trees,at,0) == 1 do b[] else nc_slice(trees,at+1,nc_long(ends,first*4)) end
+    else Enum.concat(pa_rows(trees,ends,first,middle),pa_rows(trees,ends,middle,stop)) end end
+  end
+  # 1 when every arm from offset on can be reached, each against the rows
+  # of the arms before it (np_useful): for arms with parts.
+  def pa_replay(source: bytes, trees: bytes, offset: integer, rows: bytes): integer do
+    size = nc_long(trees,offset+1)
+    if offset >= Enum.count(trees) do 1 else
+      if np_useful(source,rows,nc_slice(trees,offset+5,offset+5+size),1) == 0 do 0 else
+        pa_replay(source,trees,offset+5+size,if Enum.at(trees,offset,0) == 1 do rows else Enum.concat(rows,nc_slice(trees,offset+1,offset+5+size)) end)
+      end
+    end
+  end
+  # 1 when no arm is unreachable: trees holds the pattern records of count
+  # arms and ends where each of them ends.
+  def pa_sound(source: bytes, trees: bytes, ends: bytes, count: integer): integer do
+    any = pa_any(trees,0,0)
+    if pa_flat(trees,0) == 0 do pa_replay(source,trees,0,b[]) else
+      if any >= 0 do if any != count-1 do 0 else pa_distinct(source,trees,pa_keys(source,trees,ends,0,count)) end else pa_distinct(source,trees,pa_keys(source,trees,ends,0,count)) end
+    end
+  end
+  # 1 when no arm has the pattern of an earlier one without a guard, and
+  # none matches anything after arms without a guard have matched every
+  # constructor of a type that has an end to them.
+  def pa_distinct(source: bytes, trees: bytes, keys: bytes): integer do
+    if pa_repeats(source,trees,keys) == 1 do 0 else 1-pa_spent(trees,0,0,pa_all(trees,0)) end
+  end
+  def pa_spent(trees: bytes, offset: integer, seen: integer, total: integer): integer do
+    wild = if Enum.at(trees,offset+5,0) < 2 do 1 else 0 end
+    if total == 0 do 0 else if offset >= Enum.count(trees) do 0 else
+      if wild == 1 do if seen >= total do 1 else pa_spent(trees,offset+5+nc_long(trees,offset+1),seen,total) end else
+        pa_spent(trees,offset+5+nc_long(trees,offset+1),if Enum.at(trees,offset,0) == 1 do seen else seen+1 end,total)
+      end
+    end end
+  end
+  # 1 when the arms match every value.
+  def pa_whole(source: bytes, trees: bytes, ends: bytes, count: integer): integer do
+    plain = pa_plain(trees,0,0)
+    if pa_flat(trees,0) == 0 do 1-np_useful(source,pa_rows(trees,ends,0,count),b[0],1) else
+      if pa_any(trees,0,0) >= 0 do 1 else if plain == 0 do 0 else if pa_all(trees,0) == plain do 1 else 0 end end end
+    end
+  end
+  # What follows the arms of the run: the end of the case, or the arms
+  # np_arms compiles.
+  def pa_tail(source: bytes, env: bytes, table: bytes, plan: bytes, run: bytes, ends: bytes): bytes do
+    if Enum.at(run,3,0) == 1 do
+      if pa_whole(source,pa_part(run,3),ends,nc_long(run,5)) == 0 do b[] else nc_value(nc_cursor(run,0),if pa_any(pa_part(run,3),0,0) >= 0 do b[] else zf_unmatched(table,env,nc_cursor(plan,1)) end,b[9,2]) end
+    else np_arms(source,nc_cursor(run,0),env,table,Enum.at(plan,0,0),Enum.concat(nc_slice(plan,1,4),pa_rows(pa_part(run,3),ends,0,nc_long(run,5)))) end
+  end
+  def pa_finish(source: bytes, env: bytes, table: bytes, plan: bytes, run: bytes): bytes do
+    count = nc_long(run,5)
+    sizes = pa_part(run,1)
+    ends = pa_sums(sizes,2,0,count,0)
+    tail = if pa_sound(source,pa_part(run,3),ends,count) == 0 do b[] else pa_tail(source,env,table,plan,run,ends) end
+    value = pa_fold(pa_part(run,2),pa_sums(sizes,1,0,count,0),count-1,nc_slice(tail,0,nt_after(tail,4)),if nf_open_end(env,2,0) == 3 do 1 else 0 end)
+    if nc_pos(value) < 0 do b[] else
+      nc_join(value,pa_assemble(pa_part(run,0),pa_sums(sizes,0,0,count,0),0,count,Enum.count(nc_code(tail))),nc_code(tail))
+    end
+  end
+  # The arms from where plan says they begin: plan holds the nesting, the
+  # slot the value waits in and that position.
+  def pa_arms(source: bytes, env: bytes, table: bytes, plan: bytes): bytes do
+    run = pa_grow(source,pa_step(source,nc_slice(plan,4,7),env,table,plan),env,table,plan,0)
+    fresh = if Enum.count(run) == 0 do 0 else if nc_long(run,5) == 0 do if Enum.at(run,3,0) == 2 do 1 else 0 end else 0 end end
+    made = if Enum.count(run) == 0 do b[] else if fresh == 1 do b[] else pa_finish(source,env,table,plan,run) end end
+    # An arm that waits for the type of the arms after it stands first, or
+    # arms that np_arms would have given a type to expect did not compile:
+    # it compiles them all.
+    if nc_pos(made) >= 0 do made else if Enum.count(run) == 0 do b[] else
+      if fresh+Enum.at(run,4,0) == 0 do b[] else np_arms(source,nc_cursor(plan,4),env,table,Enum.at(plan,0,0),nc_slice(plan,1,4)) end
+    end end
+  end
+  # The clauses of a function are put together the same way (nj_clauses
+  # compiled each inside the one before it). ctx: the function (2 bytes),
+  # then behind their lengths (4 bytes each) the plan of nj_slots (the
+  # parameters' types, read once for all clauses) and the names of the
+  # function's type variables, then the records its environment starts
+  # with (nc_function_with).
+  def pc_ctx(source: bytes, table: bytes, head: integer, extra: bytes): bytes do
+    cells = nj_cells(source,table,head)
+    names = jd_names(table,head,nu_names(nc_return_kind(source,table,head),0,nu_cell_names(cells,0,b[])))
+    nc_join(nc_join(nc_u16(head),nc_u32(6+Enum.count(cells)),nc_join(nc_u24(0),nc_u24(nc_argc(table,head)),cells)),Enum.concat(nc_u32(Enum.count(names)),names),extra)
+  end
+  def pc_plan(ctx: bytes): bytes do nc_slice(ctx,6,6+nc_long(ctx,2)) end
+  def pc_names(ctx: bytes): bytes do nc_slice(ctx,10+nc_long(ctx,2),10+nc_long(ctx,2)+nc_long(ctx,6+nc_long(ctx,2))) end
+  def pc_extra(ctx: bytes): bytes do nc_slice(ctx,10+nc_long(ctx,2)+nc_long(ctx,6+nc_long(ctx,2)),Enum.count(ctx)) end
+  # A clause's parameters matched (nj_shape).
+  def pc_shape(source: bytes, table: bytes, ctx: bytes, clause: integer): bytes do
+    named = nj_slots(source,nc_meta(table,clause,6),nc_slice(ctx,0,2),pc_plan(ctx))
+    wide = if Enum.count(named) == 0 do b[] else nu_barring(nu_hidden(named,pc_names(ctx),0),pc_extra(ctx)) end
+    if Enum.count(wide) == 0 do b[] else nj_patterns(source,nc_meta(table,clause,6),wide,table,pc_plan(ctx)) end
+  end
+  # The clause before says is next, as a run of one (pa_run): its number
+  # stands where a run of arms has a position.
+  def pc_step(source: bytes, table: bytes, ctx: bytes, before: bytes): bytes do
+    clause = nc_cursor(before,0)
+    shaped = pc_shape(source,table,ctx,clause)
+    at = nc_cursor(table,clause*27+21)
+    guard = if nc_pos(shaped) < 0 do b[] else if at == 0 do nc_value(0,b[],b[3]) else nc_condition(source,at,np_env(shaped),table,1) end end
+    opened = if nc_pos(guard) < 0 do 0 else if at == 0 do 1 else if nc_expect(source,nc_pos(guard),b[100,111]) == nc_meta(table,clause,9) do 1 else 0 end end end
+    body = if opened == 0 do b[] else nj_body(source,table,Enum.concat(nc_slice(ctx,0,2),nc_u16(clause)),np_env(shaped)) end
+    check = if at == 0 do b[] else nc_join(nz_at(table,nc_meta(table,nc_read(ctx,0),0)),nc_code(guard),b[72,133,192,15,132]) end
+    if nc_pos(body) < 0 do b[] else pc_made(table,clause,nj_trees(np_tree(shaped)),nc_join(nc_u32(Enum.count(nj_match(np_tree(shaped)))),nj_match(np_tree(shaped)),check),nc_code(body)) end
+  end
+  # tests: the match of the parameters behind its length (4 bytes), then
+  # the guard's test, empty for none.
+  def pc_made(table: bytes, clause: integer, row: bytes, tests: bytes, body: bytes): bytes do
+    match = nc_slice(tests,4,4+nc_long(tests,0))
+    check = nc_slice(tests,4+nc_long(tests,0),Enum.count(tests))
+    taken = Enum.count(body)+5
+    guarded = if Enum.count(check) == 0 do b[] else Enum.concat(check,nc_u32(taken)) end
+    tested = if Enum.count(match) == 0 do b[] else nc_join(match,b[132,192,15,132],nc_u32(Enum.count(guarded)+taken)) end
+    code = nc_join(nc_join(tested,guarded,body),b[233],b[])
+    record = nc_join(b[if Enum.count(check) == 0 do 0 else 1 end],nc_u32(Enum.count(row)),row)
+    more = nj_more(table,clause)
+    pa_run(pa_head(if more < 0 do 0 else more end,if more < 0 do 1 else 0 end,0,1),code,nc_join(nc_u32(Enum.count(code)),nc_u32(0),nc_u32(Enum.count(record))),b[],record)
+  end
+  def pc_more(source: bytes, table: bytes, ctx: bytes, before: bytes, level: integer): bytes do
+    if level == 0 do pc_step(source,table,ctx,before) else
+      first = pc_more(source,table,ctx,before,level-1)
+      if Enum.count(first) == 0 do b[] else if Enum.at(first,3,0) != 0 do first else pa_joined(first,pc_more(source,table,ctx,first,level-1)) end end
+    end
+  end
+  def pc_grow(source: bytes, table: bytes, ctx: bytes, done: bytes, level: integer): bytes do
+    if Enum.count(done) == 0 do b[] else if Enum.at(done,3,0) != 0 do done else
+      pc_grow(source,table,ctx,pa_joined(done,pc_more(source,table,ctx,done,level)),level+1)
+    end end
+  end
+  # The one parameter that the clauses tell apart by: its index when every
+  # other parameter of every clause from offset on is a name or _, -1 when
+  # all of them are, -2 when clauses differ in more than one.
+  def pc_column(trees: bytes, offset: integer, count: integer, found: integer): integer do
+    own = pc_first(trees,offset+5,0,count)
+    if offset >= Enum.count(trees) do found else
+      if own == -2 do -2 else if own < 0 do pc_column(trees,offset+5+nc_long(trees,offset+1),count,found) else
+        if found < 0 do pc_column(trees,offset+5+nc_long(trees,offset+1),count,own) else if own != found do -2 else pc_column(trees,offset+5+nc_long(trees,offset+1),count,found) end end
+      end end
+    end
+  end
+  # The index of the one tree of a row, from tree index at offset on, that
+  # is no name or _: -1 for none, -2 for more than one.
+  def pc_first(trees: bytes, at: integer, index: integer, count: integer): integer do
+    rest = if index >= count do -1 else pc_first(trees,np_size(trees,at),index+1,count) end
+    if index >= count do -1 else
+      if Enum.at(trees,at,0) < 2 do rest else if rest == -1 do index else -2 end end
+    end
+  end
+  # The pattern records of the clauses first up to stop with only the tree
+  # of one parameter each, and their lengths as pa_sums reads them.
+  def pc_single(trees: bytes, ends: bytes, column: integer, first: integer, stop: integer): bytes do
+    middle = first+nc_half(stop-first)
+    at = pa_from(ends,first)
+    from = np_sizes(trees,at+5,column)
+    if stop-first <= 0 do b[] else if stop-first == 1 do nc_join(b[Enum.at(trees,at,0)],nc_u32(np_size(trees,from)-from),nc_slice(trees,from,np_size(trees,from))) else
+      Enum.concat(pc_single(trees,ends,column,first,middle),pc_single(trees,ends,column,middle,stop))
+    end end
+  end
+  def pc_sizes(trees: bytes, ends: bytes, column: integer, first: integer, stop: integer): bytes do
+    middle = first+nc_half(stop-first)
+    from = np_sizes(trees,pa_from(ends,first)+5,column)
+    if stop-first <= 0 do b[] else if stop-first == 1 do Enum.concat(nc_zeros(8),nc_u32(5+np_size(trees,from)-from)) else
+      Enum.concat(pc_sizes(trees,ends,column,first,middle),pc_sizes(trees,ends,column,middle,stop))
+    end end
+  end
+  # 1 when every clause from offset on can be reached, each against the
+  # rows of those before it (np_useful over count parameters).
+  def pc_replay(source: bytes, trees: bytes, offset: integer, rows: bytes, count: integer): integer do
+    size = nc_long(trees,offset+1)
+    if offset >= Enum.count(trees) do 1 else
+      if np_useful(source,rows,nc_slice(trees,offset+5,offset+5+size),count) == 0 do 0 else
+        pc_replay(source,trees,offset+5+size,if Enum.at(trees,offset,0) == 1 do rows else Enum.concat(rows,nc_slice(trees,offset+1,offset+5+size)) end,count)
+      end
+    end
+  end
+  # 1 when no clause is unreachable and the clauses match every value.
+  # plan: the number of clauses and of parameters (3 bytes each).
+  def pc_sound(source: bytes, trees: bytes, ends: bytes, plan: bytes): integer do
+    total = nc_cursor(plan,0)
+    count = nc_cursor(plan,3)
+    column = if count == 0 do -2 else pc_column(trees,0,count,-1) end
+    one = if column == -2 do b[] else pc_single(trees,ends,if column < 0 do 0 else column end,0,total) end
+    marks = if column == -2 do b[] else pa_sums(pc_sizes(trees,ends,if column < 0 do 0 else column end,0,total),2,0,total,0) end
+    if column == -2 do
+      if pc_replay(source,trees,0,b[],count) == 0 do 0 else 1-np_useful(source,pa_rows(trees,ends,0,total),np_wilds(count),count) end
+    else
+      if pa_sound(source,one,marks,total) == 0 do 0 else pa_whole(source,one,marks,total) end
+    end
+  end
+  # The clauses of function head as one value (nj_clauses).
+  def pc_clauses(source: bytes, table: bytes, head: integer, extra: bytes): bytes do
+    ctx = pc_ctx(source,table,head,extra)
+    run = pc_grow(source,table,ctx,pc_step(source,table,ctx,nc_u24(head)),0)
+    total = nc_long(run,5)
+    sizes = pa_part(run,1)
+    if Enum.count(run) == 0 do b[] else
+      if pc_sound(source,pa_part(run,3),pa_sums(sizes,2,0,total,0),Enum.concat(nc_u24(total),nc_u24(nc_argc(table,head)))) == 0 do b[] else
+        # No clause matches a nil among the arguments (zf_zero): the failure names the function.
+        fail = zf_clauses(table,head,nc_slice(pc_plan(ctx),6,nc_long(ctx,2)))
+        nc_value(0,Enum.concat(pa_assemble(pa_part(run,0),pa_sums(sizes,0,0,total,0),0,total,Enum.count(fail)),fail),b[0])
+      end
+    end
+  end
+  # The arms of a cond likewise (nk_cond_arms compiled each inside the one
+  # before it). plan: the nesting, where the cond stands and where its arms
+  # begin.
+  def pk_step(source: bytes, before: bytes, env: bytes, table: bytes, plan: bytes): bytes do
+    pos = nc_cursor(before,0)
+    depth = Enum.at(plan,0,0)
+    last = nc_word(source,pos,b[101,110,100])
+    condition = if last == 1 do b[] else nc_condition(source,pos,sg_conditional(env),table,depth+1) end
+    arrow = nc_expect(source,nc_pos(condition),b[45,62])
+    first = if arrow < 0 do b[] else nc_branch(source,arrow,env,table,depth+1) end
+    code = nc_join(vs_test(nc_code(condition),Enum.count(nc_code(first))+5),nc_code(first),b[233])
+    value = nc_slice(first,0,nt_after(first,4))
+    if last == 1 do pa_run(pa_head(nc_end(source,pos),1,0,0),b[],b[],b[],b[]) else if arrow < 0 do b[] else
+      if nc_pos(first) < 0 do pa_run(pa_head(pos,2,0,0),b[],b[],b[],b[]) else
+        pa_run(pa_head(nc_pos(first),0,nu_has(nc_kind(first),10,0,Enum.count(nc_kind(first))),1),code,nc_join(nc_u32(Enum.count(code)),nc_u32(Enum.count(value)),nc_u32(0)),value,b[])
+      end
+    end end
+  end
+  def pk_more(source: bytes, before: bytes, env: bytes, table: bytes, plan: bytes, level: integer): bytes do
+    if level == 0 do pk_step(source,before,env,table,plan) else
+      first = pk_more(source,before,env,table,plan,level-1)
+      if Enum.count(first) == 0 do b[] else if Enum.at(first,3,0) != 0 do first else pa_joined(first,pk_more(source,first,env,table,plan,level-1)) end end
+    end
+  end
+  def pk_grow(source: bytes, done: bytes, env: bytes, table: bytes, plan: bytes, level: integer): bytes do
+    if Enum.count(done) == 0 do b[] else if Enum.at(done,3,0) != 0 do done else
+      pk_grow(source,pa_joined(done,pk_more(source,done,env,table,plan,level)),env,table,plan,level+1)
+    end end
+  end
+  def pk_finish(source: bytes, env: bytes, table: bytes, plan: bytes, run: bytes): bytes do
+    count = nc_long(run,5)
+    sizes = pa_part(run,1)
+    tail = if Enum.at(run,3,0) == 1 do nc_value(nc_cursor(run,0),nz_fail(table,nc_cursor(plan,1),8),b[9,2]) else nk_cond_arms(source,nc_cursor(run,0),env,table,Enum.at(plan,0,0),nc_cursor(plan,1)) end
+    value = pa_fold(pa_part(run,2),pa_sums(sizes,1,0,count,0),count-1,nc_slice(tail,0,nt_after(tail,4)),if nf_open_end(env,2,0) == 3 do 1 else 0 end)
+    if nc_pos(value) < 0 do b[] else
+      nc_join(value,pa_assemble(pa_part(run,0),pa_sums(sizes,0,0,count,0),0,count,Enum.count(nc_code(tail))),nc_code(tail))
+    end
+  end
+  def pk_arms(source: bytes, env: bytes, table: bytes, plan: bytes): bytes do
+    # A program whose coverage is counted has a count at each arm that
+    # depends on the arm after it (zf_cover_rest): nk_cond_arms makes those.
+    if Enum.at(table,15,0) == 2 do nk_cond_arms(source,nc_cursor(plan,4),env,table,Enum.at(plan,0,0),nc_cursor(plan,1)) else pk_arms_plain(source,env,table,plan) end
+  end
+  def pk_arms_plain(source: bytes, env: bytes, table: bytes, plan: bytes): bytes do
+    run = pk_grow(source,pk_step(source,nc_slice(plan,4,7),env,table,plan),env,table,plan,0)
+    fresh = if Enum.count(run) == 0 do 0 else if nc_long(run,5) == 0 do if Enum.at(run,3,0) == 2 do 1 else 0 end else 0 end end
+    made = if Enum.count(run) == 0 do b[] else if fresh == 1 do b[] else pk_finish(source,env,table,plan,run) end end
+    if nc_pos(made) >= 0 do made else if Enum.count(run) == 0 do b[] else
+      if fresh+Enum.at(run,4,0) == 0 do b[] else nk_cond_arms(source,nc_cursor(plan,4),env,table,Enum.at(plan,0,0),nc_cursor(plan,1)) end
+    end end
+  end
+  # Native smoke test; the arms of a case.
+  def main() do System.halt(0) end
+end

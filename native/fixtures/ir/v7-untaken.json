@@ -1,0 +1,64 @@
+{
+  "version": 7,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "const.bool",
+              "dest": "flag",
+              "value": false
+            },
+            {
+              "op": "if.i64",
+              "dest": "r",
+              "cond": "flag",
+              "then": {
+                "instructions": [
+                  {
+                    "op": "bytes.const",
+                    "dest": "b",
+                    "values": [
+                      104,
+                      101,
+                      108,
+                      108,
+                      111,
+                      10
+                    ]
+                  },
+                  {
+                    "op": "bytes.write",
+                    "dest": "r0",
+                    "value": "b",
+                    "stream": "stdout"
+                  }
+                ],
+                "value": "r0"
+              },
+              "else": {
+                "instructions": [
+                  {
+                    "op": "const.i64",
+                    "dest": "zero",
+                    "value": 0
+                  }
+                ],
+                "value": "zero"
+              }
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    }
+  ]
+}

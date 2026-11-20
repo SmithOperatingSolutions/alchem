@@ -1,0 +1,307 @@
+# Testing: the runner of a test file (spec/alchem-testing-gen.md). The
+# compiler writes a main that calls _run with the tests of the module; no
+# program can call it. A test is its name, where it stands, its tags after
+# an empty one, and the functions to call in turn, each given the context's
+# word and giving the next: the setup blocks, then the test. The last test
+# and the last function of the third list are fillers.
+#: _none/1
+  def _none(c: integer): integer do c end
+# 1 when the tags hold one of the comma-separated names: a name alone is
+# also a tag of that name with any value.
+#: _tagged/2 needs String.split/2 String.contains?/2 String.starts_with?/2 Enum.any?/2
+  def _tagged(tags: list[string], names: string): boolean do
+    Enum.any?(String.split(names, ","), fn w -> w != "" and Enum.any?(tags, fn t -> t == w or (not String.contains?(w, ":") and String.starts_with?(t, w <> ":")) end) end)
+  end
+# The value of the last tag name:value.
+#: _valued/2 needs String.starts_with?/2 Enum.reduce/3 Kernel.binary_part/3
+  def _valued(tags: list[string], name: string): string do
+    n = byte_size(name) + 1
+    Enum.reduce(tags, "", fn t, a -> if String.starts_with?(t, name <> ":") do binary_part(t, n, byte_size(t) - n) else a end end)
+  end
+#: _setting/2
+  def _setting(name: string, d: integer): integer do
+    case Integer.parse(System.get_env(name, "")) do
+      ok(v) -> v
+      _ -> d
+    end
+  end
+# The numbers from 0 up to i in the order of the seed: Go's rand.Shuffle
+# with a PCG.
+#: _shuffle/3 needs Gen.below/2 Enum.at/3 List.replace_at/3
+  def _shuffle(ts: list[integer], r: integer, i: integer): list[integer] do
+    if i < 1 do ts else
+      j = Gen.below(r, i + 1)
+      x = Enum.at(ts, i, 0)
+      y = Enum.at(ts, j, 0)
+      Testing._shuffle(List.replace_at(List.replace_at(ts, i, y), j, x), r, i - 1)
+    end
+  end
+#: _upto/2
+  def _upto(i: integer, n: integer): list[integer] do
+    if i >= n do [] else [i | Testing._upto(i + 1, n)] end
+  end
+#: _calls/2
+  def _calls(fs: list[fn[integer, integer]], c: integer): integer do
+    case fs do
+      [f | rest] -> Testing._calls(rest, f(c))
+      [] -> c
+    end
+  end
+# What a process that is over failed with.
+#: _report/1 needs Process._text/1 Process._reason/1
+  def _report(q: integer): string do
+    f = Sys.peek(q + 168)
+    if f != 0 do Process._text(f) else Process._reason(q) end
+  end
+# The functions on_exit registered in process q, the last first; they are
+# taken off the list (library/Kernel.alc keeps it at word 104 of the state).
+#: _hooks/3 needs Sys.state/0
+  def _hooks(q: integer, x: integer, back: integer): list[integer] do
+    if x == 0 do [] else
+      next = Sys.peek(x)
+      if Sys.peek(x + 8) != q do Testing._hooks(q, next, x) else
+        if back == 0 do Sys.poke(Sys.state() + 104, next) else Sys.poke(back, next) end
+        [Sys.peek(x + 16) | Testing._hooks(q, next, back)]
+      end
+    end
+  end
+#: _exits/1
+  def _exits(hs: list[integer]): integer do
+    case hs do
+      [h | rest] ->
+        f: fn[integer] = Sys.__cast(h)
+        v = f()
+        Testing._exits(rest)
+      [] -> 0
+    end
+  end
+#: _ms/1
+  def _ms(ns: integer): string do
+    t = div(ns + 50000, 100000)
+    "#{div(t, 10)}.#{rem(t, 10)}"
+  end
+# A function in a process of its own, as Task.start starts one: the
+# process's record.
+#: _spawn/1 needs Process._fresh/2 Process._g/0 Process._start/3 Task._run/1
+  def _spawn(f: fn[integer]): integer do
+    # The process library throws a Process.Exit to stop a process. Naming
+    # the type here brings it with this function into a program that
+    # mentions no process itself (scripts/generate-prelude.py, typed).
+    stopping: option[Process.Exit] = none
+    g = Process._g()
+    p = Process._fresh(g, 1)
+    Sys.poke(p + 328, 1)
+    w: fn[integer] = fn(): integer do Task._run(f) end
+    Process._start(g, p, Process.__word(w))
+    p
+  end
+# A function called for what it does, in a process: for assert_raise and
+# for a property of Gen.check.
+#: _ran/1
+  def _ran(f: fn[a]): integer do
+    v = f.()
+    0
+  end
+#: _applied/2
+  def _applied(p: fn[a, b], v: a): integer do
+    done = p.(v)
+    0
+  end
+# One test: "" when it passed, else what went wrong.
+#: _one/4 needs _spawn/1 Task._yield/2 Process._halt/1 _calls/2 _report/1 _hooks/3 _exits/1 Sys.state/0
+  def _one(fs: list[fn[integer, integer]], c: integer, allowed: integer, limit: integer): string do
+    t = Testing._spawn(fn -> Testing._calls(fs, c) end)
+    k = Task._yield(t, allowed)
+    stopped = if k == 0 do Process._halt(t) else false end
+    problem = if k == 0 do "timed out after #{allowed}ms" else if k == 2 do Testing._report(t) else "" end end
+    hs = Testing._hooks(t, Sys.peek(Sys.state() + 104), 0)
+    if hs == [] do problem else
+      u = Testing._spawn(fn -> Testing._exits(hs) end)
+      d = Task._yield(u, limit)
+      halted = if d == 0 do Process._halt(u) else false end
+      if problem != "" do problem else
+        if d == 0 do "on_exit timed out after #{limit}ms" else if d == 2 do "on_exit failed: " <> Testing._report(u) else "" end end
+      end
+    end
+  end
+# The tests in turn. s: the module, the working directory with its slash,
+# 1 for a trace; n: the failures allowed (0 for any), the time each test
+# may take, the context's word; the failures so far come last first.
+#: _each/4 needs _one/4 _valued/2 _ms/1 Process._g/0 Process._now/1 String.replace/3 String.trim_trailing/2 Enum.count/1
+  def _each(ts: list[tuple[string, string, list[string], list[fn[integer, integer]]]], s: tuple[string, string, boolean], n: tuple[integer, integer, integer], done: tuple[integer, list[string]]): tuple[integer, list[string], integer] do
+    {m, here, trace} = s
+    {limit, timeout, c} = n
+    {passed, failures} = done
+    case ts do
+      [] -> {passed, failures, 0}
+      [{name, where, tags, fs} | rest] ->
+        if limit > 0 and Enum.count(failures) >= limit do {passed, failures, Enum.count(ts)} else
+          g = Process._g()
+          started = Process._now(g)
+          v = Testing._valued(tags, "timeout")
+          allowed = if v == "infinity" do -1 else
+            case Integer.parse(v) do
+              ok(ms) -> if ms > 0 do ms else timeout end
+              _ -> timeout
+            end
+          end
+          problem = Testing._one(fs, c, allowed, timeout)
+          took = Testing._ms(Process._now(g) - started)
+          if problem == "" do
+            if trace do IO.write("  * test #{name} (#{took}ms)\n") else IO.write(".") end
+            Testing._each(rest, s, n, {passed + 1, failures})
+          else
+            text = String.replace(String.trim_trailing(String.replace(problem, here, ""), "\n"), "\n", "\n     ")
+            if trace do IO.write("  * test #{name} (#{took}ms) [failed]\n") else IO.write("F") end
+            Testing._each(rest, s, n, {passed, ["  #{Enum.count(failures) + 1}) test #{name} (#{m})\n     #{String.replace(where, here, "")}\n     #{text}\n" | failures]})
+          end
+        end
+    end
+  end
+#: _run/3 needs _covered/0 _tagged/2 _setting/2 _shuffle/3 _upto/2 _each/4 Enum.map/2 _calls/2 Gen.seed/1 Gen.source/2 Bitwise.bxor/2 Enum.filter/2 Enum.count/1 Enum.drop/2 Enum.reverse/1 Enum.each/2 String.contains?/2 File.cwd/0 File.write/3
+  def _run(m: string, given: list[tuple[string, string, list[string], list[fn[integer, integer]]]], alls: list[fn[integer, integer]]): tuple[] do
+    tests = Enum.reverse(Enum.drop(Enum.reverse(given), 1))
+    c = Testing._calls(alls, 0)
+    seed = Gen.seed(System.get_env("ALCHEM_SEED", ""))
+    only = System.get_env("ALCHEM_TEST_ONLY", "")
+    trace = System.get_env("ALCHEM_TEST_TRACE", "") != ""
+    include = System.get_env("ALCHEM_TEST_TAGS", "")
+    exclude = System.get_env("ALCHEM_TEST_EXCLUDE", "")
+    chosen = Enum.filter(tests, fn {name, where, tags, fs} ->
+      named = only == "" or String.contains?(name, only) or String.contains?(m, only)
+      wanted = include == "" or Testing._tagged(tags, include)
+      unwanted = Testing._tagged(tags, exclude) or (Testing._tagged(tags, "skip") and not Testing._tagged(tags, include))
+      named and wanted and not unwanted
+    end)
+    order = Testing._upto(0, Enum.count(chosen))
+    mixed = if seed == 0 do order else Testing._shuffle(order, Gen.source(seed, Bitwise.bxor(seed, -7046029254386353131)), Enum.count(chosen) - 1) end
+    selected = Enum.map(mixed, fn i -> hd(Enum.drop(chosen, i)) end)
+    if trace do IO.write("\n#{m}\n") end
+    here = case File.cwd() do
+      ok(d) -> d <> "/"
+      _ -> "\x00"
+    end
+    {passed, failures, skipped} = Testing._each(selected, {m, here, trace}, {Testing._setting("ALCHEM_TEST_MAX_FAILURES", 0), Testing._setting("ALCHEM_TEST_TIMEOUT", 60000), c}, {0, []})
+    if not trace and Enum.count(selected) > 0 do IO.write("\n") end
+    Enum.each(Enum.reverse(failures), fn f -> IO.write("\n" <> f) end)
+    path = System.get_env("ALCHEM_TEST_RESULT", "")
+    if path != "" do
+      w = File.write(path, "#{passed} #{Enum.count(failures)} #{Enum.count(tests) - Enum.count(selected)} #{skipped}\n", [:write])
+    end
+    Testing._covered()
+    if failures != [] do System.halt(1) end
+    {}
+  end
+# Coverage, as the pinned runner writes it for --cover: when
+# ALCHEM_COVER_FILE names a file, a line "file<tab>line<tab>times" for every
+# statement counted, in the order the pinned compiler lists them. The
+# compiler counts the statements of the modules under test (zf_cover,
+# spec/cover-x86_64.s): Sys.cover() is where its routine stands; behind it
+# come the address of the trace routine's table slot and that routine's
+# length, the number of calls, where the code starts, and for each call
+# where it stands in the code and its word (the position of its statement),
+# 32 bits each. The counts are in the region that word 80 of Sys.state
+# names, 0 while no statement has run.
+#: _covered/0 needs Sys.state/0 _cu/1 _centries/5 _cordered/1 _cline/3 _cwrite/3 Enum.join/1 Enum.map/2
+  def _covered(): tuple[] do
+    path = System.get_env("ALCHEM_COVER_FILE", "")
+    b = Sys.cover()
+    if path != "" and b != 0 do
+      d = b + Testing._cu(b + 4)
+      t = Sys.peek(Testing._cu(d)) + Testing._cu(d + 4)
+      n = Testing._cu(d + 8)
+      listed = Testing._cordered(Testing._centries(d + 16 + 8 * n, n, b - Testing._cu(d + 12) - 9, Sys.peek(Sys.state() + 80), []))
+      text = Enum.join(Enum.map(listed, fn e -> Testing._cline(t, elem(e, 0), elem(e, 1)) end))
+      fd = Sys.call(2, Sys.addr(path <> "\x00"), 577, 384)
+      if fd >= 0 do
+        Testing._cwrite(fd, text, 0)
+        Sys.call(3, fd)
+      end
+    end
+    {}
+  end
+#: _cu/1 needs Bitwise.band/2
+  def _cu(a: integer): integer do
+    Bitwise.band(Sys.peek(a), 4294967295)
+  end
+#: _cwrite/3
+  def _cwrite(fd: integer, text: string, at: integer): integer do
+    if at >= byte_size(text) do 0 else
+      n = Sys.call(1, fd, Sys.addr(text) + at, byte_size(text) - at)
+      if n == -4 do Testing._cwrite(fd, text, at) else if n <= 0 do 0 else Testing._cwrite(fd, text, at + n) end end
+    end
+  end
+# The n calls that end at a, the last first: the word behind each and how
+# often it ran. Each has a count of its own, the 32-bit word by how far
+# before the routine it returns (spec/cover-x86_64.s): r is the routine
+# less where the code starts and the nine bytes of a call.
+#: _centries/5 needs _cu/1 Bitwise.band/2
+  def _centries(a: integer, n: integer, r: integer, base: integer, acc: list[tuple[integer, integer]]): list[tuple[integer, integer]] do
+    if n == 0 do acc else
+      at = Bitwise.band(r - Testing._cu(a - 8), 16777215)
+      times = if base == 0 do 0 else Testing._cu(base + 4 * at) end
+      Testing._centries(a - 8, n - 1, r, base, [{Testing._cu(a - 4), times} | acc])
+    end
+  end
+# The calls in the order the pinned compiler lists them: as they stand in
+# the code, but for a try, whose mark (4 in the high four bits, then how
+# many calls its body holds, and behind it those of its rescue arms, its
+# catch arms, its else arms and its after block) puts the block first, then
+# the catch arms, the rescue arms, the body and the else arms (zf_tried).
+# The marks are left out.
+#: _cordered/1 needs _cpart/3 Enum.drop/2 Enum.map/2 Enum.sum/1 Enum.take/2 Bitwise.band/2
+  def _cordered(es: list[tuple[integer, integer]]): list[tuple[integer, integer]] do
+    case es do
+      [] -> []
+      [e | rest] ->
+        if div(elem(e, 0), 268435456) != 4 do [e | Testing._cordered(rest)] else
+          sizes = [Bitwise.band(elem(e, 0), 268435455) | Enum.map(Enum.take(rest, 4), fn x -> Bitwise.band(elem(x, 0), 268435455) end)]
+          held = Enum.drop(rest, 4)
+          Testing._cpart(held, sizes, 4) ++ Testing._cpart(held, sizes, 2) ++ Testing._cpart(held, sizes, 1) ++ Testing._cpart(held, sizes, 0) ++ Testing._cpart(held, sizes, 3) ++ Testing._cordered(Enum.drop(held, Enum.sum(sizes)))
+        end
+    end
+  end
+#: _cpart/3 needs _cordered/1 Enum.at/3 Enum.drop/2 Enum.sum/1 Enum.take/2
+  def _cpart(held: list[tuple[integer, integer]], sizes: list[integer], i: integer): list[tuple[integer, integer]] do
+    Testing._cordered(Enum.take(Enum.drop(held, Enum.sum(Enum.take(sizes, i))), Enum.at(sizes, i, 0)))
+  end
+#: _cline/3 needs _cplace/2 Bitwise.band/2
+  def _cline(t: integer, word: integer, times: integer): string do
+    "#{Testing._cplace(t, Bitwise.band(word, 4194303))}\t#{times}\n"
+  end
+# The file and the line of a position, as a trace names them
+# (spec/trace-x86_64.s, tr_place): t is where the trace's tables start.
+#: _cplace/2 needs _cu/1 _cmoved/4 _cfile/4 _clines/5 Bitwise.band/2
+  def _cplace(t: integer, pos: integer): string do
+    r = Testing._cmoved(t + Testing._cu(t + 32), Testing._cu(t + 36), pos, 0)
+    a = if r == 0 do 0 else Testing._cu(r + 4) end
+    p = if r == 0 do pos else
+      if Bitwise.band(a, 1073741824) != 0 do Bitwise.band(a, 1073741823) else
+        if Bitwise.band(a, 2147483648) != 0 do Bitwise.band(a, 2147483647) else a + pos - Testing._cu(r) end
+      end
+    end
+    named = if r == 0 do 4294967295 else Testing._cu(r + 8) end
+    files = t + Testing._cu(t + 8)
+    own = Testing._cfile(files, Testing._cu(t + 12), p, files)
+    line = 1 + Testing._clines(t + Testing._cu(t), Testing._cu(t + 4), Testing._cu(own), p, 0)
+    shown = if named == 4294967295 do own else Testing._cfile(files, Testing._cu(t + 12), named, files) end
+    Sys.text(shown + 6, Bitwise.band(Testing._cu(shown + 4), 65535)) <> "\t#{line}"
+  end
+# The last of n records of sixteen bytes from a on that starts at or before pos, 0 for none.
+#: _cmoved/4 needs _cu/1
+  def _cmoved(a: integer, n: integer, pos: integer, found: integer): integer do
+    if n == 0 do found else if Testing._cu(a) > pos do found else Testing._cmoved(a + 16, n - 1, pos, a) end end
+  end
+# The last of n file records from a on that starts at or before pos.
+#: _cfile/4 needs _cu/1 Bitwise.band/2
+  def _cfile(a: integer, n: integer, pos: integer, found: integer): integer do
+    if n == 0 do found else if Testing._cu(a) > pos do found else Testing._cfile(a + 6 + Bitwise.band(Testing._cu(a + 4), 65535), n - 1, pos, a) end end
+  end
+# How many of the n line ends from a on stand from first up to pos.
+#: _clines/5 needs _cu/1
+  def _clines(a: integer, n: integer, first: integer, pos: integer, count: integer): integer do
+    if n == 0 do count else
+      m = Testing._cu(a)
+      if m >= pos do count else Testing._clines(a + 4, n - 1, first, pos, if m >= first do count + 1 else count end) end
+    end
+  end

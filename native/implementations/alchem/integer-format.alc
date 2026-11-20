@@ -1,0 +1,32 @@
+defmodule NativeIntegerFormat do
+  # Decimal output uses a nonpositive magnitude, including minimum signed i64.
+  def core_fmt_power(index: integer): integer do
+    if index == 0 do 1 else 10 * core_fmt_power(index - 1) end
+  end
+
+  def core_fmt_digit(value: integer, weight: integer, count: integer): integer do
+    if value <= -weight do core_fmt_digit(value + weight, weight, count + 1) else count end
+  end
+
+  def core_fmt_digits(value: integer, index: integer, started: integer): bytes do
+    if index < 0 do b[] else
+      weight = core_fmt_power(index)
+      digit = core_fmt_digit(value, weight, 0)
+      rest = value + digit * weight
+      if digit > 0 do
+        Enum.concat(b[48 + digit], core_fmt_digits(rest, index - 1, 1))
+      else
+        if started == 1 do Enum.concat(b[48], core_fmt_digits(rest, index - 1, 1)) else
+          if index == 0 do b[48] else core_fmt_digits(rest, index - 1, 0) end
+        end
+      end
+    end
+  end
+
+  def core_format_i64(value: integer): bytes do
+    if value < 0 do Enum.concat(b[45], core_fmt_digits(value, 18, 0)) else core_fmt_digits(-value, 18, 0) end
+  end
+
+  # Native smoke test; module services provide the public byte entry.
+  def main() do System.halt(0) end
+end

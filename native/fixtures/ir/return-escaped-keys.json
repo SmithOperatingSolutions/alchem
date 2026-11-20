@@ -1,0 +1,26 @@
+{
+  "ver\u0073ion": 1,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "const.i64",
+              "dest": "Value🚀",
+              "val\u0075e": 42
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "Value🚀"
+          }
+        }
+      ]
+    }
+  ]
+}

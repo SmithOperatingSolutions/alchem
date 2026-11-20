@@ -1,0 +1,157 @@
+defmodule NativeByteRuntimeEmitter do
+  # Emit private native runtime code; no host runtime is linked into the target.
+  def nc_exit_code(status: integer): bytes do
+    b[191,status,0,0,0,184,60,0,0,0,15,5]
+  end
+  # An ordinary program reserves 16 GiB lazily (MAP_NORESERVE), or the
+  # largest half of that the system grants down to 4 MiB (exit 71 below):
+  # only touched pages cost memory, and nothing is given back before the
+  # program ends. R12 is the cursor and R13 the end; the page mapped after
+  # the end starts with the size reserved (System.memory reads it).
+  def nc_arena_init(): bytes do
+    b[73,189,0,0,0,0,4,0,0,0,184,9,0,0,0,49,255,73,141,181,0,16,0,0,186,3,0,0,0,65,186,34,64,0,0,73,199,192,255,255,255,255,69,49,201,15,5,72,61,1,240,255,255,114,24,73,209,237,73,129,253,0,0,64,0,115,199,191,71,0,0,0,184,60,0,0,0,15,5,73,137,196,78,137,44,40,73,1,197]
+  end
+  def nc_pack_charge(count: integer): integer do
+    if count == 0 do 8 else
+      if count <= 8 do 16 else 8+nc_pack_charge(count-8) end
+    end
+  end
+  def nc_pack_checks(count: integer, first: integer, stop: integer): bytes do
+    if first == stop do b[] else
+      if stop-first == 1 do
+        offset = (count-1-first)*8
+        load = nc_join(b[72,139,132,36],nc_u16(offset),b[0,0,72,61,255,0,0,0,118,12])
+        Enum.concat(load,nc_exit_code(72))
+      else
+        middle = first+nc_half(stop-first)
+        Enum.concat(nc_pack_checks(count,first,middle),nc_pack_checks(count,middle,stop))
+      end
+    end
+  end
+
+  def nc_pack_stores(count: integer, first: integer, stop: integer): bytes do
+    if first == stop do b[] else
+      if stop-first == 1 do nc_join(b[88,136,130],nc_u16(count-first+7),b[0,0]) else
+        middle = first+nc_half(stop-first)
+        Enum.concat(nc_pack_stores(count,first,middle),nc_pack_stores(count,middle,stop))
+      end
+    end
+  end
+
+  def nc_allocate_emit(count: integer): bytes do
+    capacity = nc_join(b[77,141,156,36],nc_u16(nc_pack_charge(count)),b[0,0,77,57,235,118,12])
+    allocate = nc_join(b[76,137,226,77,137,220,72,199,2],nc_u16(count),b[0,0])
+    nc_join(capacity,gm_hook(),allocate)
+  end
+  def nc_pack_emit(count: integer): bytes do
+    nc_join(nc_pack_checks(count,0,count),nc_allocate_emit(count),Enum.concat(nc_pack_stores(count,0,count),b[72,137,208]))
+  end
+  # A string or atom written in the program is not made when it is
+  # evaluated: its length and bytes lie in the code behind a jump, where
+  # nothing writes, and its value is their address. A loop that names "abc"
+  # a million times allocates nothing for it.
+  def nc_text_emit(data: bytes): bytes do
+    nc_join(Enum.concat(xa_mark(8+Enum.count(data),b[72,141,5,5,0,0,0]),b[233]),nc_u32(8+Enum.count(data)),Enum.concat(nt_word(Enum.count(data)),data))
+  end
+  def nc_literal_emit(data: bytes): bytes do
+    size = Enum.count(data)
+    copy = nc_join(Enum.concat(xa_mark(size,b[72,141,53,20,0,0,0]),b[72,141,122,8,185]),nc_u32(size),Enum.concat(b[252,243,164,72,137,208,233],nc_u32(size)))
+    nc_join(nc_allocate_emit(size),copy,data)
+  end
+
+  def nc_count_emit(): bytes do
+    b[88,72,139,0]
+  end
+  def nc_at_emit(): bytes do
+    # Pop fallback/index/buffer; normalize signed index once before unsigned bound.
+    b[65,88,89,88,72,139,16,72,133,201,121,3,72,1,209,72,57,209,115,8,72,15,182,68,8,8,235,3,76,137,192]
+  end
+  # Pop right/left records; R9 is the combined payload size.
+  def nc_concat_sizes(): bytes do b[90,94,72,139,14,76,139,2,73,137,201,77,1,193] end
+  def nc_concat_copy(): bytes do
+    capacity = b[77,141,81,15,73,131,226,248,77,137,227,77,1,211,77,57,235,118,12]
+    copy = b[76,137,224,77,137,220,76,137,8,72,141,120,8,72,131,198,8,252,243,164,72,137,214,72,131,198,8,76,137,193,243,164]
+    nc_join(capacity,gm_hook(),copy)
+  end
+  # Byte concatenation is bounded only by the arena, like string concatenation.
+  def nc_concat_emit(): bytes do Enum.concat(nc_concat_sizes(),nc_concat_copy()) end
+  # String concatenation is bounded only by the arena, like the pinned runtime's memory.
+  def ns_concat_emit(): bytes do Enum.concat(nc_concat_sizes(),nc_concat_copy()) end
+  def nc_slice_emit(): bytes do
+    b[90,94,95,72,133,210,120,76,72,139,15,72,133,246,121,3,72,1,206,72,57,206,115,17,72,41,241,72,57,202,72,15,71,209,72,141,116,55,8,235,6,49,210,72,141,119,8,76,141,90,15,73,131,227,248,77,1,227,77,57,235,119,33,76,137,224,77,137,220,72,137,16,72,141,120,8,72,137,209,252,243,164,235,24,191,73,0,0,0,184,60,0,0,0,15,5,255,20,37,120,4,64,0,233,211,255,255,255]
+  end
+  def nc_sum_emit(): bytes do
+    b[94,72,139,14,49,192,72,133,201,116,10,15,182,84,14,7,72,1,208,226,246]
+  end
+  def nc_reverse_emit(): bytes do
+    b[94,72,139,14,76,141,89,15,73,131,227,248,77,1,227,77,57,235,119,31,76,137,224,77,137,220,72,137,8,72,141,120,8,72,133,201,116,25,138,84,14,7,136,23,72,255,199,226,245,235,12,255,20,37,120,4,64,0,233,213,255,255,255]
+  end
+  def nc_take_emit(): bytes do
+    Enum.concat(b[90,95,72,139,15,49,246,72,133,210,121,16,72,1,202,121,2,49,210,72,137,214,72,137,202,72,41,242,87,86,82],nc_slice_emit())
+  end
+  def nc_drop_emit(): bytes do
+    Enum.concat(b[94,95,72,139,15,72,137,202,72,133,246,121,12,72,1,206,121,2,49,246,72,137,242,49,246,87,86,82],nc_slice_emit())
+  end
+  # The compiler's input: all of standard input as one bytes value (RDI),
+  # read into room the collector reserves and grows, as IO.read_all reads
+  # (spec/alchem-memory.md); more than 16 MiB less 1 KiB is refused. These
+  # bytes and nc_io_suffix's are spec/compiler-io-x86_64.s.
+  def nc_io_prefix(): bytes do
+    b[77,141,156,36,0,0,1,0,255,20,37,112,4,64,0,73,141,116,36,8,76,137,234,72,41,242,72,131,234,16,119,16,77,141,93,1,255,20,37,88,4,64,0,76,1,222,235,228,49,255,49,192,15,5,72,131,248,252,116,216,72,133,192,15,136,155,0,0,0,116,19,72,1,198,72,137,240,76,41,224,72,61,7,252,255,0,119,98,235,186,72,137,240,76,41,224,72,131,232,8,73,137,4,36,76,137,231,72,131,198,7,72,131,230,248,73,137,244,77,139,174,216,250,255,255]
+  end
+  def nc_io_part0(): bytes do
+    b[72,139,16,72,133,210,116,63,72,141,112,8,191,1,0,0,0,184,1,0,0,0,15,5,72,131,248,252,116,243,72,133,192,126,74,72,1,198,72,41,194,117,230,49,255,184,60,0,0,0,15,5,72,141,53,92,0,0,0,186,42,0,0,0,191,65,0,0,0,235,55,72,141,53,115,0,0,0,186,58,0,0,0,191,65,0,0,0,235,36,72,141,53,154,0,0]
+  end
+  def nc_io_part1(): bytes do
+    b[0,186,32,0,0,0,191,74,0,0,0,235,17,72,141,53,167,0,0,0,186,34,0,0,0,191,74,0,0,0,65,137,250,191,2,0,0,0,184,1,0,0,0,15,5,68,137,215,184,60,0,0,0,15,5,69,95,82,85,78,84,73,77,69,95,73,78,80,85,84,58,32,105,110,112,117,116,32,101,120,99,101,101,100,115,32,98,121,116,101,32,108,105,109,105,116]
+  end
+  def nc_io_part2(): bytes do
+    b[10,69,95,67,79,77,80,73,76,69,58,32,105,110,118,97,108,105,100,32,111,114,32,117,110,115,117,112,112,111,114,116,101,100,32,65,108,99,104,101,109,32,102,117,110,99,116,105,111,110,32,112,114,111,103,114,97,109,10,69,95,82,85,78,84,73,77,69,95,73,79,58,32,105,110,112,117,116,32,114,101,97,100,32,102,97,105,108,101,100,10,69,95,82,85,78]
+  end
+  def nc_io_part3(): bytes do
+    b[84,73,77,69,95,73,79,58,32,111,117,116,112,117,116,32,119,114,105,116,101,32,102,97,105,108,101,100,10]
+  end
+  def nc_io_suffix(): bytes do
+    nc_join(nc_io_part0(),nc_io_part1(),Enum.concat(nc_io_part2(),nc_io_part3()))
+  end
+  # The stack of every program is its own mapping, reserved lazily: 1 GiB, or
+  # the largest half of that the system grants down to 1 MiB (exit 71 below).
+  # Its limit, 64 KiB above its lowest byte, is kept just below the initial
+  # stack pointer in R14; R15 counts active calls and RBP starts at 0. The
+  # word below the limit is the innermost handler of a try, 0 for none.
+  # Its last instruction starts the collector (gm_start, native-memory.alc).
+  def nc_stack_init(): bytes do
+    b[65,191,0,0,0,64,184,9,0,0,0,49,255,76,137,254,186,3,0,0,0,65,186,34,64,0,0,73,199,192,255,255,255,255,69,49,201,15,5,72,61,1,240,255,255,114,24,73,209,239,73,129,255,0,0,16,0,115,203,191,71,0,0,0,184,60,0,0,0,15,5,74,141,36,56,72,5,0,0,1,0,73,137,70,248,69,49,255,49,237,73,137,110,240,255,20,37,96,4,64,0]
+  end
+  # Every function and lambda starts by checking the stack against its limit
+  # (exit 70 past it), then makes its frame: sixteen slots, the position of
+  # the statement it is running at RBP-136 and its closure records at RBP-144.
+  def nc_guard(body: bytes): bytes do
+    peak = nc_peak(body,0,Enum.count(body))
+    size = if peak <= 160 do 160 else nc_units(peak+15,16)*16 end
+    # A frame that the 64 KiB below the limit might not hold is checked whole.
+    check = if size <= 16384 do b[73,59,102,248,115,12] else nc_join(Enum.concat(b[76,141,156,36],nq_rel(0-size)),b[77,59,94,248],b[115,12]) end
+    nc_join(check,b[191,70,0,0,0,184,60,0,0,0,15,5,85,72,137,229,72,129,236],nc_u32(size))
+  end
+  # Leave the program with the status in RAX; one outside 0..255 exits 70.
+  def nc_exit_status(): bytes do
+    b[72,61,255,0,0,0,118,12,191,70,0,0,0,184,60,0,0,0,15,5,72,137,199,184,60,0,0,0,15,5]
+  end
+  # A compiler entry collects as any program does. On ARM64 its input and
+  # output, with the call of native_compile, are the function at io
+  # (nc_io_function), their messages marked as data, and the entry calls it.
+  def nc_entry_compiler(id: integer, io: integer): bytes do
+    if nc_arm() == 1 do a_entry(nc_call(io)) else nc_entry_compiler_x86(id) end
+  end
+  def nc_io_function(source: bytes, table: bytes): bytes do
+    index = nc_native_index(source,table,0,nc_records(Enum.count(table)))
+    if index < 0 do b[] else nc_join(nc_io_prefix_marked(),nc_call(index),nc_io_suffix_marked()) end
+  end
+  def nc_entry_compiler_x86(id: integer): bytes do
+    io_code = nc_join(nc_io_prefix(),nc_call(id),nc_io_suffix())
+    code = nc_join(b[73,137,230],Enum.concat(nc_arena_init(),nc_stack_init()),io_code)
+    Enum.concat(code,nc_zeros(1024-Enum.count(code)))
+  end
+  # Native smoke test; runtime emitters are assembled with the source compiler.
+  def main() do System.halt(0) end
+end

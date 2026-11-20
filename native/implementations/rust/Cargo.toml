@@ -1,0 +1,10 @@
+[package]
+name = "alchem-native-rust"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+
+[dependencies]
+serde = "1.0"
+serde_json = "1.0"

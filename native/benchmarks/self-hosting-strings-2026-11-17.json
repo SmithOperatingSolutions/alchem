@@ -1,0 +1,96 @@
+{
+  "architecture": "x86_64",
+  "child_environment": {
+    "PATH": ""
+  },
+  "compiler_bytes": 94569,
+  "compiler_sha256": "db64336a62703ac3cb8a3dc27368af32bb9712905f0de39621e6749a3ef04225",
+  "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+  "excludes": "bootstrap build and correctness suite; no Go/Rust performance comparison",
+  "includes": "Python launch/wait overhead, native process startup, stdin file reads, compilation and stdout file write; byte comparison outside timing",
+  "kernel": "6.18.57",
+  "kind": "native self-build process, warm OS input/code cache",
+  "load_after": [
+    0.66162109375,
+    0.86865234375,
+    0.60009765625
+  ],
+  "load_before": [
+    0.66162109375,
+    0.86865234375,
+    0.60009765625
+  ],
+  "max_wall_ns": 117077027,
+  "median_wall_ns": 84079943.5,
+  "min_wall_ns": 81672084,
+  "os": "Linux",
+  "peak_rss_unit": "Linux wait4 ru_maxrss KiB; process high-water mark, not arena charge",
+  "recorded_utc": "2026-11-17T04:04:24.063302+00:00",
+  "samples": [
+    {
+      "peak_rss_kib": 13440,
+      "system_seconds": 0.007902,
+      "user_seconds": 0.074199,
+      "wall_ns": 82544164
+    },
+    {
+      "peak_rss_kib": 13440,
+      "system_seconds": 0.0,
+      "user_seconds": 0.081525,
+      "wall_ns": 81784893
+    },
+    {
+      "peak_rss_kib": 13440,
+      "system_seconds": 0.0,
+      "user_seconds": 0.081415,
+      "wall_ns": 81672084
+    },
+    {
+      "peak_rss_kib": 13440,
+      "system_seconds": 0.024073999999999998,
+      "user_seconds": 0.09278199999999999,
+      "wall_ns": 117077027
+    },
+    {
+      "peak_rss_kib": 13440,
+      "system_seconds": 0.008178999999999999,
+      "user_seconds": 0.076098,
+      "wall_ns": 84501307
+    },
+    {
+      "peak_rss_kib": 13440,
+      "system_seconds": 0.004171,
+      "user_seconds": 0.07882499999999999,
+      "wall_ns": 83658580
+    },
+    {
+      "peak_rss_kib": 13440,
+      "system_seconds": 0.004053,
+      "user_seconds": 0.078998,
+      "wall_ns": 83295885
+    },
+    {
+      "peak_rss_kib": 13440,
+      "system_seconds": 0.003702,
+      "user_seconds": 0.081854,
+      "wall_ns": 85783214
+    },
+    {
+      "peak_rss_kib": 13440,
+      "system_seconds": 0.0,
+      "user_seconds": 0.085267,
+      "wall_ns": 85642100
+    },
+    {
+      "peak_rss_kib": 13440,
+      "system_seconds": 0.004108,
+      "user_seconds": 0.082035,
+      "wall_ns": 86358618
+    }
+  ],
+  "schema_version": 1,
+  "source_bytes": 63989,
+  "source_sha256": "cba221ab21ee77d8533b3973d0b613810a83a2d20aeff33f3972625609cff374",
+  "visible_cpu_count": 5,
+  "warmups": 2
+}

@@ -1,0 +1,220 @@
+# Duration: an amount of time per unit, after the pinned runtime.
+# library/Date.alc says how these files are written. Nothing here needs
+# what is there, so that a program with durations alone does not get it.
+#: struct Duration
+  struct Duration do
+    year: integer
+    month: integer
+    week: integer
+    day: integer
+    hour: integer
+    minute: integer
+    second: integer
+    microsecond: integer
+  end
+#: cf/1
+# cf: the eight amounts. ca: the duration of eight amounts.
+  def cf(d: Duration): list[integer] do
+    [d.year, d.month, d.week, d.day, d.hour, d.minute, d.second, d.microsecond]
+  end
+#: ca/1
+  def ca(f: list[integer]): Duration do
+    [y, m, w, d, h, i, s, u] = f
+    %Duration{year: y, month: m, week: w, day: d, hour: h, minute: i, second: s, microsecond: u}
+  end
+#: years/1 needs ca/1
+  def years(n: integer): Duration do
+    ca([n, 0, 0, 0, 0, 0, 0, 0])
+  end
+#: months/1 needs ca/1
+  def months(n: integer): Duration do
+    ca([0, n, 0, 0, 0, 0, 0, 0])
+  end
+#: weeks/1 needs ca/1
+  def weeks(n: integer): Duration do
+    ca([0, 0, n, 0, 0, 0, 0, 0])
+  end
+#: days/1 needs ca/1
+  def days(n: integer): Duration do
+    ca([0, 0, 0, n, 0, 0, 0, 0])
+  end
+#: hours/1 needs ca/1
+  def hours(n: integer): Duration do
+    ca([0, 0, 0, 0, n, 0, 0, 0])
+  end
+#: minutes/1 needs ca/1
+  def minutes(n: integer): Duration do
+    ca([0, 0, 0, 0, 0, n, 0, 0])
+  end
+#: seconds/1 needs ca/1
+  def seconds(n: integer): Duration do
+    ca([0, 0, 0, 0, 0, 0, n, 0])
+  end
+#: microseconds/1 needs ca/1
+  def microseconds(n: integer): Duration do
+    ca([0, 0, 0, 0, 0, 0, 0, n])
+  end
+#: new!/1 needs ca/1
+  def new!(l: list[tuple[atom, integer]]): Duration do
+    n = [:year, :month, :week, :day, :hour, :minute, :second, :microsecond]
+    if length(Enum.filter(l, fn p -> elem(p, 0) in n end)) != length(l) do raise("Duration.new! takes year:, month:, week:, day:, hour:, minute:, second: and microsecond:") end
+    ca(Enum.map(n, fn a -> Enum.sum(Enum.map(Enum.filter(l, fn p -> elem(p, 0) == a end), fn p -> elem(p, 1) end)) end))
+  end
+#: add/2
+  def add(a: Duration, b: Duration): Duration do
+    %Duration{year: a.year+b.year, month: a.month+b.month, week: a.week+b.week, day: a.day+b.day, hour: a.hour+b.hour, minute: a.minute+b.minute, second: a.second+b.second, microsecond: a.microsecond+b.microsecond}
+  end
+#: multiply/2 needs cf/1 ca/1
+  def multiply(d: Duration, n: integer): Duration do
+    Duration.ca(Enum.map(Duration.cf(d), fn a -> a*n end))
+  end
+#: negate/1 needs multiply/2
+  def negate(d: Duration): Duration do
+    Duration.multiply(d, -1)
+  end
+#: subtract/2 needs add/2 multiply/2
+  def subtract(a: Duration, b: Duration): Duration do
+    add(a, multiply(b, -1))
+  end
+#: to_iso8601/1
+# Seconds and microseconds are written as one number, n of them. The least
+# int64 is written as Go writes it, which cannot negate it. zp: an amount
+# and its unit. zr: the digits of a fraction after their point.
+  def to_iso8601(d: Duration): string do
+    n = d.second*1000000+d.microsecond
+    t = abs(max(n, -9223372036854775807))
+    c = zp(d.hour, "H")<>zp(d.minute, "M")<>(if d.second == 0 and d.microsecond == 0 do "" else
+      (if n< -9223372036854775807 do "--9223372036854.-775808" else (if n<0 do "-" else "" end)<>Integer.to_string(t/1000000)<>zr(t%1000000, 6) end)<>"S"
+    end)
+    s = zp(d.year, "Y")<>zp(d.month, "M")<>zp(d.week, "W")<>zp(d.day, "D")<>(if c == "" do "" else "T"<>c end)
+    if s == "" do "PT0S" else "P"<>s end
+  end
+  defp zp(n: integer, u: string): string do
+    if n == 0 do "" else Integer.to_string(n)<>u end
+  end
+  defp zr(u: integer, p: integer): string do
+    if u == 0 do "" else if u%10 == 0 do zr(u/10, p-1) else "."<>String.pad_leading(Integer.to_string(u), p, "0") end end
+  end
+#: from_iso8601/1 needs ca/1
+# P, then amounts with a unit each, those of the clock after a T. An amount
+# is the characters "-", "." and digits before its unit.
+  def from_iso8601(s: string): result[Duration, string] do
+    f = if byte_size(s)<3 or zc(s, "P") == s do [] else zs(zc(s, "P"), 0, [0, 0, 0, 0, 0, 0, 0, 0, 0], String.split("Y,M,W,D,H,M,S,-,.,0,1,2,3,4,5,6,7,8,9", ",")) end
+    if Enum.at(f, 8, 0) == 0 do error("invalid duration "<>inspect(s)) else ok(ca(Enum.take(f, 8))) end
+  end
+# zc: text without the start c, if it has it.
+  defp zc(p: string, c: string): string do
+    if c == "" or String.starts_with?(p, c) == false do p else Enum.join(tl(String.split(p, c)), c) end
+  end
+# zl: the first of the texts from i on that p starts with, "" if none.
+  defp zl(p: string, l: list[string], i: integer): string do
+    if i<length(l) and String.starts_with?(p, Enum.at(l, i, "")) == false do zl(p, l, i+1) else Enum.at(l, i, "") end
+  end
+# za: the amount p starts with.
+  defp za(p: string, l: list[string]): string do
+    c = zl(p, l, 7)
+    if c == "" do "" else c<>za(zc(p, c), l) end
+  end
+# zs: the eight amounts of text r and whether there was one, [] for text
+# that is not a duration; c is 4 after the T, and l the units and the
+# characters of an amount, cut from one text because a list written out
+# takes memory by the square of its length.
+  defp zs(r: string, c: integer, f: list[integer], l: list[string]): list[integer] do
+    n = za(r, l)
+    u = zl(zc(r, n), Enum.slice(l, c, 4-c/4), 0)
+    k = c+(if u == "M" do 1 else if u == "W" do 2 else if u == "D" do 3 else 0 end end end)
+    cond do
+      r == "" -> f
+      String.starts_with?(r, "T") -> if c == 0 do zs(zc(r, "T"), 4, f, l) else [] end
+      n == "" or u == "" -> []
+      u == "S" ->
+        case zm(n) do
+          [m] -> zs(zc(zc(r, n), u), c, Enum.take(f, 6) ++ [m/1000000, m%1000000, 1], l)
+          _ -> []
+        end
+      true ->
+        case Integer.parse(n) do
+          ok(a) -> zs(zc(zc(r, n), u), c, Enum.take(f, k) ++ [a] ++ Enum.take(Enum.drop(f, k+1), 7-k) ++ [1], l)
+          error(_) -> []
+        end
+    end
+  end
+# zz: digits without the zeros they start with.
+  defp zz(d: string): string do
+    if String.starts_with?(d, "0") do zz(zc(d, "0")) else d end
+  end
+# zm: the microseconds of a number of seconds as the pinned runtime takes
+# them, [] for text that is not a number: strconv.ParseFloat, times a
+# million in a float64, rounded half away from zero. A whole part of 309
+# digits is compared with the largest float64 by its first 40. Here b is
+# the number without its sign, w its whole part, d its digits, k how many
+# of the first eighteen are after the point, and v the microseconds, -1 for
+# more than an int64 holds, which Go makes the least int64.
+  defp zm(n: string): list[integer] do
+    b = zc(n, "-")
+    p = String.split(b, ".")
+    w = zz(hd(p))
+    d = zz(Enum.join(p, ""))
+    k = byte_size(b)-byte_size(hd(p))-length(p)+1-max(byte_size(d)-18, 0)
+    v = if k<0 do -1 else if k>26 do 0 else zf(zd(d, ""), 5**k, k) end end
+    cond do
+      length(p)>2 or Enum.join(p, "") == "" or length(String.split(b, "-"))>1 -> []
+      byte_size(w)>309 or (byte_size(w) == 309 and String.slice(w, 0, 40)>="1797693134862315807937289714053034150799") -> []
+      v<0 -> [-9223372036854775807-1]
+      b == n -> [v]
+      true -> [-v]
+    end
+  end
+# zd: digits as numbers of 18 digits each; those after the first are
+# filled with zeros.
+  defp zd(d: string, f: string): list[integer] do
+    m = case Integer.parse(String.slice(d<>f, 0, 18)) do
+      ok(a) -> a
+      error(_) -> 0
+    end
+    if byte_size(d)<19 do [m] else [m] ++ zd(String.slice(d, 18, byte_size(d)), "00000000000000000") end
+  end
+# zt: a fraction in such numbers doubled, after what it carries. zx: the
+# largest of some numbers.
+  defp zt(l: list[integer]): list[integer] do
+    if l == [] do [0] else
+      [c | t] = zt(tl(l))
+      [(hd(l)*2+c)/1000000000000000000, (hd(l)*2+c)%1000000000000000000] ++ t
+    end
+  end
+  defp zx(l: list[integer]): integer do
+    if l == [] do 0 else max(hd(l), zx(tl(l))) end
+  end
+# zf: the first of the numbers and the rest as its fraction, over 10**k, in
+# seconds, as microseconds; t is 5**k. The 53 bits q of the float64 times
+# 15625 are a * 2**27 + b, of which 53 bits g are kept, rounded to nearest
+# and ties to even; x is the power of two they are multiplied by.
+  defp zf(l: list[integer], t: integer, k: integer): integer do
+    if zx(l) == 0 do 0 else
+      [q, e] = zb(hd(l)/t, hd(l)%t, t, 0-k, [0] ++ tl(l))
+      a = q/134217728*15625+q%134217728*15625/134217728
+      b = q%134217728*15625%134217728
+      s = if a<549755813888 do 13 else 14 end
+      c = a*(2**(27-s))+b/(2**s)
+      g = if b%(2**s)*2+c%2>2**s do c+1 else c end
+      x = e+s+6
+      y = 2**min(abs(x), 62)
+      cond do
+        x>10 or (x == 10 and g>=9007199254740992) -> -1
+        x>=0 -> g*y
+        x< -62 -> 0
+        true -> g/y+(if g%y*2>=y do 1 else 0 end)
+      end
+    end
+  end
+# zb: the 53 bits of q + (r + fraction) / t rounded to nearest, ties to
+# even, and the power of two they are multiplied by. The fraction is the
+# numbers after the first, which counts what was lost on the way.
+  defp zb(q: integer, r: integer, t: integer, e: integer, l: list[integer]): list[integer] do
+    [c | d] = zt(tl(l))
+    cond do
+      q>=18014398509481984 -> zb(q/2, r, t, e+1, [hd(l)+q%2] ++ tl(l))
+      q<9007199254740992 -> zb(q*2+(if r*2+c>=t do 1 else 0 end), (if r*2+c>=t do r*2+c-t else r*2+c end), t, e-1, [hd(l)] ++ d)
+      true -> [q/2+(if q%2 == 1 and (r+zx(l)>0 or q/2%2 == 1) do 1 else 0 end), e+1]
+    end
+  end

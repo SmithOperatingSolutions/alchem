@@ -1,0 +1,678 @@
+# Base: the functions written in Alchem. A string gives up its bytes by
+# comparison. octets takes it one character at a time. A character of one byte
+# is looked up in a map, or in a short text searched for among the 256 strings
+# of one byte, which costs no map. A longer character has its first byte
+# searched for and is split at that byte, and so on for the pieces; its bytes
+# are written as numbers before commas and split again. Results are filled by
+# Enum.map over a list of places, so that no list is built by appending and
+# memory stays in proportion to the text. The forms that take options are at
+# the end of the file.
+# The entries without a public function (octets, to64 and so on) are shared by
+# the others through needs. The string of a byte comes from four entries of 64
+# bytes each, because the seed backend cannot build a compiler that holds one
+# entry of all 256.
+#: octets_codes/1
+  defp octets_codes(): map[string, integer] do
+    %{"\x00" => 0, "\x01" => 1, "\x02" => 2, "\x03" => 3, "\x04" => 4, "\x05" => 5, "\x06" => 6, "\x07" => 7, "\x08" => 8, "\x09" => 9, "\x0A" => 10, "\x0B" => 11, "\x0C" => 12, "\x0D" => 13, "\x0E" => 14, "\x0F" => 15, "\x10" => 16, "\x11" => 17, "\x12" => 18, "\x13" => 19, "\x14" => 20, "\x15" => 21, "\x16" => 22, "\x17" => 23, "\x18" => 24, "\x19" => 25, "\x1A" => 26, "\x1B" => 27, "\x1C" => 28, "\x1D" => 29, "\x1E" => 30, "\x1F" => 31, "\x20" => 32, "\x21" => 33, "\x22" => 34, "\x23" => 35, "\x24" => 36, "\x25" => 37, "\x26" => 38, "\x27" => 39, "\x28" => 40, "\x29" => 41, "\x2A" => 42, "\x2B" => 43, "\x2C" => 44, "\x2D" => 45, "\x2E" => 46, "\x2F" => 47, "\x30" => 48, "\x31" => 49, "\x32" => 50, "\x33" => 51, "\x34" => 52, "\x35" => 53, "\x36" => 54, "\x37" => 55, "\x38" => 56, "\x39" => 57, "\x3A" => 58, "\x3B" => 59, "\x3C" => 60, "\x3D" => 61, "\x3E" => 62, "\x3F" => 63, "\x40" => 64, "\x41" => 65, "\x42" => 66, "\x43" => 67, "\x44" => 68, "\x45" => 69, "\x46" => 70, "\x47" => 71, "\x48" => 72, "\x49" => 73, "\x4A" => 74, "\x4B" => 75, "\x4C" => 76, "\x4D" => 77, "\x4E" => 78, "\x4F" => 79, "\x50" => 80, "\x51" => 81, "\x52" => 82, "\x53" => 83, "\x54" => 84, "\x55" => 85, "\x56" => 86, "\x57" => 87, "\x58" => 88, "\x59" => 89, "\x5A" => 90, "\x5B" => 91, "\x5C" => 92, "\x5D" => 93, "\x5E" => 94, "\x5F" => 95, "\x60" => 96, "\x61" => 97, "\x62" => 98, "\x63" => 99, "\x64" => 100, "\x65" => 101, "\x66" => 102, "\x67" => 103, "\x68" => 104, "\x69" => 105, "\x6A" => 106, "\x6B" => 107, "\x6C" => 108, "\x6D" => 109, "\x6E" => 110, "\x6F" => 111, "\x70" => 112, "\x71" => 113, "\x72" => 114, "\x73" => 115, "\x74" => 116, "\x75" => 117, "\x76" => 118, "\x77" => 119, "\x78" => 120, "\x79" => 121, "\x7A" => 122, "\x7B" => 123, "\x7C" => 124, "\x7D" => 125, "\x7E" => 126, "\x7F" => 127, "\x80" => 128, "\x81" => 129, "\x82" => 130, "\x83" => 131, "\x84" => 132, "\x85" => 133, "\x86" => 134, "\x87" => 135, "\x88" => 136, "\x89" => 137, "\x8A" => 138, "\x8B" => 139, "\x8C" => 140, "\x8D" => 141, "\x8E" => 142, "\x8F" => 143, "\x90" => 144, "\x91" => 145, "\x92" => 146, "\x93" => 147, "\x94" => 148, "\x95" => 149, "\x96" => 150, "\x97" => 151, "\x98" => 152, "\x99" => 153, "\x9A" => 154, "\x9B" => 155, "\x9C" => 156, "\x9D" => 157, "\x9E" => 158, "\x9F" => 159, "\xA0" => 160, "\xA1" => 161, "\xA2" => 162, "\xA3" => 163, "\xA4" => 164, "\xA5" => 165, "\xA6" => 166, "\xA7" => 167, "\xA8" => 168, "\xA9" => 169, "\xAA" => 170, "\xAB" => 171, "\xAC" => 172, "\xAD" => 173, "\xAE" => 174, "\xAF" => 175, "\xB0" => 176, "\xB1" => 177, "\xB2" => 178, "\xB3" => 179, "\xB4" => 180, "\xB5" => 181, "\xB6" => 182, "\xB7" => 183, "\xB8" => 184, "\xB9" => 185, "\xBA" => 186, "\xBB" => 187, "\xBC" => 188, "\xBD" => 189, "\xBE" => 190, "\xBF" => 191, "\xC0" => 192, "\xC1" => 193, "\xC2" => 194, "\xC3" => 195, "\xC4" => 196, "\xC5" => 197, "\xC6" => 198, "\xC7" => 199, "\xC8" => 200, "\xC9" => 201, "\xCA" => 202, "\xCB" => 203, "\xCC" => 204, "\xCD" => 205, "\xCE" => 206, "\xCF" => 207, "\xD0" => 208, "\xD1" => 209, "\xD2" => 210, "\xD3" => 211, "\xD4" => 212, "\xD5" => 213, "\xD6" => 214, "\xD7" => 215, "\xD8" => 216, "\xD9" => 217, "\xDA" => 218, "\xDB" => 219, "\xDC" => 220, "\xDD" => 221, "\xDE" => 222, "\xDF" => 223, "\xE0" => 224, "\xE1" => 225, "\xE2" => 226, "\xE3" => 227, "\xE4" => 228, "\xE5" => 229, "\xE6" => 230, "\xE7" => 231, "\xE8" => 232, "\xE9" => 233, "\xEA" => 234, "\xEB" => 235, "\xEC" => 236, "\xED" => 237, "\xEE" => 238, "\xEF" => 239, "\xF0" => 240, "\xF1" => 241, "\xF2" => 242, "\xF3" => 243, "\xF4" => 244, "\xF5" => 245, "\xF6" => 246, "\xF7" => 247, "\xF8" => 248, "\xF9" => 249, "\xFA" => 250, "\xFB" => 251, "\xFC" => 252, "\xFD" => 253, "\xFE" => 254, "\xFF" => 255}
+  end
+#: octets_mark/1 needs octets_mark2/1
+  defp octets_mark(code: integer): string do
+    cond do
+      code == 0 -> "\x00"
+      code == 1 -> "\x01"
+      code == 2 -> "\x02"
+      code == 3 -> "\x03"
+      code == 4 -> "\x04"
+      code == 5 -> "\x05"
+      code == 6 -> "\x06"
+      code == 7 -> "\x07"
+      code == 8 -> "\x08"
+      code == 9 -> "\x09"
+      code == 10 -> "\x0A"
+      code == 11 -> "\x0B"
+      code == 12 -> "\x0C"
+      code == 13 -> "\x0D"
+      code == 14 -> "\x0E"
+      code == 15 -> "\x0F"
+      code == 16 -> "\x10"
+      code == 17 -> "\x11"
+      code == 18 -> "\x12"
+      code == 19 -> "\x13"
+      code == 20 -> "\x14"
+      code == 21 -> "\x15"
+      code == 22 -> "\x16"
+      code == 23 -> "\x17"
+      code == 24 -> "\x18"
+      code == 25 -> "\x19"
+      code == 26 -> "\x1A"
+      code == 27 -> "\x1B"
+      code == 28 -> "\x1C"
+      code == 29 -> "\x1D"
+      code == 30 -> "\x1E"
+      code == 31 -> "\x1F"
+      code == 32 -> "\x20"
+      code == 33 -> "\x21"
+      code == 34 -> "\x22"
+      code == 35 -> "\x23"
+      code == 36 -> "\x24"
+      code == 37 -> "\x25"
+      code == 38 -> "\x26"
+      code == 39 -> "\x27"
+      code == 40 -> "\x28"
+      code == 41 -> "\x29"
+      code == 42 -> "\x2A"
+      code == 43 -> "\x2B"
+      code == 44 -> "\x2C"
+      code == 45 -> "\x2D"
+      code == 46 -> "\x2E"
+      code == 47 -> "\x2F"
+      code == 48 -> "\x30"
+      code == 49 -> "\x31"
+      code == 50 -> "\x32"
+      code == 51 -> "\x33"
+      code == 52 -> "\x34"
+      code == 53 -> "\x35"
+      code == 54 -> "\x36"
+      code == 55 -> "\x37"
+      code == 56 -> "\x38"
+      code == 57 -> "\x39"
+      code == 58 -> "\x3A"
+      code == 59 -> "\x3B"
+      code == 60 -> "\x3C"
+      code == 61 -> "\x3D"
+      code == 62 -> "\x3E"
+      code == 63 -> "\x3F"
+      true -> octets_mark2(code)
+    end
+  end
+#: octets_mark2/1 needs octets_mark3/1
+  defp octets_mark2(code: integer): string do
+    cond do
+      code == 64 -> "\x40"
+      code == 65 -> "\x41"
+      code == 66 -> "\x42"
+      code == 67 -> "\x43"
+      code == 68 -> "\x44"
+      code == 69 -> "\x45"
+      code == 70 -> "\x46"
+      code == 71 -> "\x47"
+      code == 72 -> "\x48"
+      code == 73 -> "\x49"
+      code == 74 -> "\x4A"
+      code == 75 -> "\x4B"
+      code == 76 -> "\x4C"
+      code == 77 -> "\x4D"
+      code == 78 -> "\x4E"
+      code == 79 -> "\x4F"
+      code == 80 -> "\x50"
+      code == 81 -> "\x51"
+      code == 82 -> "\x52"
+      code == 83 -> "\x53"
+      code == 84 -> "\x54"
+      code == 85 -> "\x55"
+      code == 86 -> "\x56"
+      code == 87 -> "\x57"
+      code == 88 -> "\x58"
+      code == 89 -> "\x59"
+      code == 90 -> "\x5A"
+      code == 91 -> "\x5B"
+      code == 92 -> "\x5C"
+      code == 93 -> "\x5D"
+      code == 94 -> "\x5E"
+      code == 95 -> "\x5F"
+      code == 96 -> "\x60"
+      code == 97 -> "\x61"
+      code == 98 -> "\x62"
+      code == 99 -> "\x63"
+      code == 100 -> "\x64"
+      code == 101 -> "\x65"
+      code == 102 -> "\x66"
+      code == 103 -> "\x67"
+      code == 104 -> "\x68"
+      code == 105 -> "\x69"
+      code == 106 -> "\x6A"
+      code == 107 -> "\x6B"
+      code == 108 -> "\x6C"
+      code == 109 -> "\x6D"
+      code == 110 -> "\x6E"
+      code == 111 -> "\x6F"
+      code == 112 -> "\x70"
+      code == 113 -> "\x71"
+      code == 114 -> "\x72"
+      code == 115 -> "\x73"
+      code == 116 -> "\x74"
+      code == 117 -> "\x75"
+      code == 118 -> "\x76"
+      code == 119 -> "\x77"
+      code == 120 -> "\x78"
+      code == 121 -> "\x79"
+      code == 122 -> "\x7A"
+      code == 123 -> "\x7B"
+      code == 124 -> "\x7C"
+      code == 125 -> "\x7D"
+      code == 126 -> "\x7E"
+      code == 127 -> "\x7F"
+      true -> octets_mark3(code)
+    end
+  end
+#: octets_mark3/1 needs octets_mark4/1
+  defp octets_mark3(code: integer): string do
+    cond do
+      code == 128 -> "\x80"
+      code == 129 -> "\x81"
+      code == 130 -> "\x82"
+      code == 131 -> "\x83"
+      code == 132 -> "\x84"
+      code == 133 -> "\x85"
+      code == 134 -> "\x86"
+      code == 135 -> "\x87"
+      code == 136 -> "\x88"
+      code == 137 -> "\x89"
+      code == 138 -> "\x8A"
+      code == 139 -> "\x8B"
+      code == 140 -> "\x8C"
+      code == 141 -> "\x8D"
+      code == 142 -> "\x8E"
+      code == 143 -> "\x8F"
+      code == 144 -> "\x90"
+      code == 145 -> "\x91"
+      code == 146 -> "\x92"
+      code == 147 -> "\x93"
+      code == 148 -> "\x94"
+      code == 149 -> "\x95"
+      code == 150 -> "\x96"
+      code == 151 -> "\x97"
+      code == 152 -> "\x98"
+      code == 153 -> "\x99"
+      code == 154 -> "\x9A"
+      code == 155 -> "\x9B"
+      code == 156 -> "\x9C"
+      code == 157 -> "\x9D"
+      code == 158 -> "\x9E"
+      code == 159 -> "\x9F"
+      code == 160 -> "\xA0"
+      code == 161 -> "\xA1"
+      code == 162 -> "\xA2"
+      code == 163 -> "\xA3"
+      code == 164 -> "\xA4"
+      code == 165 -> "\xA5"
+      code == 166 -> "\xA6"
+      code == 167 -> "\xA7"
+      code == 168 -> "\xA8"
+      code == 169 -> "\xA9"
+      code == 170 -> "\xAA"
+      code == 171 -> "\xAB"
+      code == 172 -> "\xAC"
+      code == 173 -> "\xAD"
+      code == 174 -> "\xAE"
+      code == 175 -> "\xAF"
+      code == 176 -> "\xB0"
+      code == 177 -> "\xB1"
+      code == 178 -> "\xB2"
+      code == 179 -> "\xB3"
+      code == 180 -> "\xB4"
+      code == 181 -> "\xB5"
+      code == 182 -> "\xB6"
+      code == 183 -> "\xB7"
+      code == 184 -> "\xB8"
+      code == 185 -> "\xB9"
+      code == 186 -> "\xBA"
+      code == 187 -> "\xBB"
+      code == 188 -> "\xBC"
+      code == 189 -> "\xBD"
+      code == 190 -> "\xBE"
+      code == 191 -> "\xBF"
+      true -> octets_mark4(code)
+    end
+  end
+#: octets_mark4/1
+  defp octets_mark4(code: integer): string do
+    cond do
+      code == 192 -> "\xC0"
+      code == 193 -> "\xC1"
+      code == 194 -> "\xC2"
+      code == 195 -> "\xC3"
+      code == 196 -> "\xC4"
+      code == 197 -> "\xC5"
+      code == 198 -> "\xC6"
+      code == 199 -> "\xC7"
+      code == 200 -> "\xC8"
+      code == 201 -> "\xC9"
+      code == 202 -> "\xCA"
+      code == 203 -> "\xCB"
+      code == 204 -> "\xCC"
+      code == 205 -> "\xCD"
+      code == 206 -> "\xCE"
+      code == 207 -> "\xCF"
+      code == 208 -> "\xD0"
+      code == 209 -> "\xD1"
+      code == 210 -> "\xD2"
+      code == 211 -> "\xD3"
+      code == 212 -> "\xD4"
+      code == 213 -> "\xD5"
+      code == 214 -> "\xD6"
+      code == 215 -> "\xD7"
+      code == 216 -> "\xD8"
+      code == 217 -> "\xD9"
+      code == 218 -> "\xDA"
+      code == 219 -> "\xDB"
+      code == 220 -> "\xDC"
+      code == 221 -> "\xDD"
+      code == 222 -> "\xDE"
+      code == 223 -> "\xDF"
+      code == 224 -> "\xE0"
+      code == 225 -> "\xE1"
+      code == 226 -> "\xE2"
+      code == 227 -> "\xE3"
+      code == 228 -> "\xE4"
+      code == 229 -> "\xE5"
+      code == 230 -> "\xE6"
+      code == 231 -> "\xE7"
+      code == 232 -> "\xE8"
+      code == 233 -> "\xE9"
+      code == 234 -> "\xEA"
+      code == 235 -> "\xEB"
+      code == 236 -> "\xEC"
+      code == 237 -> "\xED"
+      code == 238 -> "\xEE"
+      code == 239 -> "\xEF"
+      code == 240 -> "\xF0"
+      code == 241 -> "\xF1"
+      code == 242 -> "\xF2"
+      code == 243 -> "\xF3"
+      code == 244 -> "\xF4"
+      code == 245 -> "\xF5"
+      code == 246 -> "\xF6"
+      code == 247 -> "\xF7"
+      code == 248 -> "\xF8"
+      code == 249 -> "\xF9"
+      code == 250 -> "\xFA"
+      code == 251 -> "\xFB"
+      code == 252 -> "\xFC"
+      code == 253 -> "\xFD"
+      code == 254 -> "\xFE"
+      true -> "\xFF"
+    end
+  end
+#: octets/1 needs octets_codes/1 octets_mark/1
+  defp octets(text: string): list[integer] do
+    places = octets_span(String.length(text))
+    wide = Enum.map(octets_span((length(places) + 4095) / 4096), fn part -> String.slice(text, part * 4096, 4096) end)
+    parts = Enum.map(octets_span((length(places) + 63) / 64), fn part -> String.slice(octets_part(wide, part / 64), rem(part, 64) * 64, 64) end)
+    letters = Enum.map(places, fn place -> String.slice(octets_part(parts, place / 64), rem(place, 64), 1) end)
+    found = if length(places) < 128 do Enum.map(letters, fn letter -> octets_one(letter) end) else octets_many(letters, octets_codes()) end
+    if -1 in found do
+      names = String.split(Enum.join(Enum.map(letters, fn letter -> octets_units(letter) end), ""), ",")
+      Enum.map(Enum.take(names, length(names) - 1), fn name -> String.to_integer(name) end)
+    else found end
+  end
+  defp octets_many(letters: list[string], codes: map[string, integer]): list[integer] do
+    Enum.map(letters, fn letter -> Map.get(codes, letter, -1) end)
+  end
+  defp octets_one(letter: string): integer do
+    if byte_size(letter) == 1 do octets_find(letter, 0, 255) else -1 end
+  end
+  defp octets_units(text: string): string do
+    if byte_size(text) == 0 do "" else
+      first = octets_find(text, 0, 255)
+      if byte_size(text) == 1 do Integer.to_string(first) <> "," else
+        Enum.join(Enum.map(String.split(text, octets_mark(first)), fn part -> octets_units(part) end), Integer.to_string(first) <> ",")
+      end
+    end
+  end
+  defp octets_find(text: string, low: integer, high: integer): integer do
+    if low >= high do low else
+      middle = (low + high + 1) / 2
+      if octets_mark(middle) <= text do octets_find(text, middle, high) else octets_find(text, low, middle - 1) end
+    end
+  end
+  defp octets_part(parts: list[string], index: integer): string do
+    case Enum.at(parts, index) do
+      some(part) -> part
+      none -> ""
+    end
+  end
+  defp octets_span(count: integer): list[integer] do
+    if count < 2 do
+      if count == 1 do [0] else
+        start: list[integer] = []
+        start
+      end
+    else
+      half = count / 2
+      low = octets_span(half)
+      both = low ++ Enum.map(low, fn place -> place + half end)
+      if count % 2 == 1 do both ++ [count - 1] else both end
+    end
+  end
+  defp octets_at(items: list[integer], index: integer): integer do
+    case Enum.at(items, index) do
+      some(item) -> item
+      none -> 0
+    end
+  end
+  defp octets_text(items: list[integer]): string do
+    Enum.join(Enum.map(items, fn item -> octets_mark(item) end), "")
+  end
+  defp octets_lines(items: list[integer]): list[integer] do
+    Enum.filter(items, fn item -> item != 10 and item != 13 end)
+  end
+  defp octets_letters(letters: string): list[string] do
+    Enum.map(octets_span(String.length(letters)), fn place -> String.slice(letters, place, 1) end)
+  end
+#: to16/1 needs octets/1
+  defp to16(text: string): string do
+    Enum.join(Enum.map(octets(text), fn item -> to16_pair(item) end), "")
+  end
+  defp to16_pair(item: integer): string do
+    if item < 16 do "0" <> Integer.to_string(item, 16) else Integer.to_string(item, 16) end
+  end
+#: from16/1 needs octets/1
+  defp from16(text: string): option[string] do
+    items = octets(text)
+    found = Enum.map(octets_span(length(items) / 2), fn pair -> from16_pair(from16_digit(octets_at(items, pair * 2)), from16_digit(octets_at(items, pair * 2 + 1))) end)
+    if length(items) % 2 == 1 or -1 in found do none else some(octets_text(found)) end
+  end
+  defp from16_pair(high: integer, low: integer): integer do
+    if high < 0 or low < 0 do -1 else high * 16 + low end
+  end
+  defp from16_digit(item: integer): integer do
+    cond do
+      item >= 48 and item <= 57 -> item - 48
+      item >= 65 and item <= 70 -> item - 55
+      item >= 97 and item <= 102 -> item - 87
+      true -> -1
+    end
+  end
+#: to32/1 needs octets/1
+  defp to32(text: string, letters: string): string do
+    items = octets(text)
+    marks = octets_letters(letters)
+    Enum.join(Enum.map(octets_span((length(items) + 4) / 5), fn group -> to32_group(items, length(items) - group * 5, group * 5, marks) end), "")
+  end
+  defp to32_group(items: list[integer], left: integer, index: integer, marks: list[string]): string do
+    value = (((octets_at(items, index) * 256 + octets_at(items, index + 1)) * 256 + octets_at(items, index + 2)) * 256 + octets_at(items, index + 3)) * 256 + octets_at(items, index + 4)
+    kept = cond do
+      left == 1 -> 2
+      left == 2 -> 4
+      left == 3 -> 5
+      left == 4 -> 7
+      true -> 8
+    end
+    Enum.join([to32_letter(value, 0, kept, marks), to32_letter(value, 1, kept, marks), to32_letter(value, 2, kept, marks), to32_letter(value, 3, kept, marks), to32_letter(value, 4, kept, marks), to32_letter(value, 5, kept, marks), to32_letter(value, 6, kept, marks), to32_letter(value, 7, kept, marks)], "")
+  end
+  defp to32_letter(value: integer, index: integer, kept: integer, marks: list[string]): string do
+    if index < kept do octets_part(marks, (value / 32 ** (7 - index)) % 32) else "=" end
+  end
+#: from32/1 needs octets/1
+  defp from32(text: string, extended: boolean): option[string] do
+    items = octets_lines(octets(text))
+    groups = (length(items) + 7) / 8
+    reads = Enum.map(octets_span(groups), fn group -> from32_group(items, length(items), group * 8, 0, 0, extended) end)
+    kept = if groups >= 2 and from32_ended(octets_at(reads, groups - 2)) do Enum.take(reads, groups - 1) else reads end
+    if -1 in kept do none else
+      size = from32_bytes(octets_at(kept, length(kept) - 1) / 1099511627776)
+      count = if length(kept) == 0 do 0 else length(kept) * 5 - 5 + size end
+      some(octets_text(Enum.map(octets_span(count), fn place -> (octets_at(kept, place / 5) % 1099511627776 / 256 ** (4 - place % 5)) % 256 end)))
+    end
+  end
+  defp from32_ended(read: integer): boolean do
+    read >= 0 and read / 1099511627776 < 8
+  end
+  defp from32_bytes(size: integer): integer do
+    cond do
+      size == 2 -> 1
+      size == 4 -> 2
+      size == 5 -> 3
+      size == 7 -> 4
+      true -> 5
+    end
+  end
+  defp from32_group(items: list[integer], count: integer, index: integer, place: integer, value: integer, extended: boolean): integer do
+    at = index + place
+    if place == 8 do 8 * 1099511627776 + value else
+      if at >= count do -1 else
+        item = octets_at(items, at)
+        if item == 61 and place >= 2 and count - at <= 8 do
+          if count - at - 1 + place < 7 or place == 3 or place == 6 or not from32_padded(items, at + 1, 7 - place) do -1 else
+            place * 1099511627776 + value * 32 ** (8 - place)
+          end
+        else
+          digit = from32_digit(item, extended)
+          if digit < 0 do -1 else from32_group(items, count, index, place + 1, value * 32 + digit, extended) end
+        end
+      end
+    end
+  end
+  defp from32_padded(items: list[integer], at: integer, left: integer): boolean do
+    if left == 0 do true else
+      if octets_at(items, at) != 61 do false else from32_padded(items, at + 1, left - 1) end
+    end
+  end
+  defp from32_digit(item: integer, extended: boolean): integer do
+    if extended do
+      cond do
+        item >= 48 and item <= 57 -> item - 48
+        item >= 65 and item <= 86 -> item - 55
+        true -> -1
+      end
+    else
+      cond do
+        item >= 65 and item <= 90 -> item - 65
+        item >= 50 and item <= 55 -> item - 24
+        true -> -1
+      end
+    end
+  end
+#: to64/1 needs octets/1
+  defp to64(text: string, letters: string): string do
+    items = octets(text)
+    marks = octets_letters(letters)
+    Enum.join(Enum.map(octets_span((length(items) + 2) / 3), fn group -> to64_group(items, length(items) - group * 3, group * 3, marks) end), "")
+  end
+  defp to64_group(items: list[integer], left: integer, index: integer, marks: list[string]): string do
+    value = (octets_at(items, index) * 256 + octets_at(items, index + 1)) * 256 + octets_at(items, index + 2)
+    third = if left >= 2 do octets_part(marks, (value / 64) % 64) else "=" end
+    fourth = if left >= 3 do octets_part(marks, value % 64) else "=" end
+    octets_part(marks, value / 262144) <> octets_part(marks, (value / 4096) % 64) <> third <> fourth
+  end
+#: from64/1 needs octets/1
+  defp from64(text: string, safe: boolean): option[string] do
+    items = octets_lines(octets(text))
+    count = length(items)
+    short = if count > 0 and count % 4 == 0 and octets_at(items, count - 1) == 61 do (if octets_at(items, count - 2) == 61 do 2 else 1 end) else 0 end
+    found = Enum.map(Enum.take(items, count - short), fn item -> from64_digit(item, safe) end)
+    if count % 4 != 0 or -1 in found do none else
+      some(octets_text(Enum.map(octets_span(count / 4 * 3 - short), fn place -> from64_byte(found, place / 3 * 4, place % 3) end)))
+    end
+  end
+  defp from64_byte(found: list[integer], index: integer, place: integer): integer do
+    cond do
+      place == 0 -> octets_at(found, index) * 4 + octets_at(found, index + 1) / 16
+      place == 1 -> octets_at(found, index + 1) % 16 * 16 + octets_at(found, index + 2) / 4
+      true -> octets_at(found, index + 2) % 4 * 64 + octets_at(found, index + 3)
+    end
+  end
+  defp from64_digit(item: integer, safe: boolean): integer do
+    cond do
+      item >= 65 and item <= 90 -> item - 65
+      item >= 97 and item <= 122 -> item - 71
+      item >= 48 and item <= 57 -> item + 4
+      item == 43 and not safe -> 62
+      item == 47 and not safe -> 63
+      item == 45 and safe -> 62
+      item == 95 and safe -> 63
+      true -> -1
+    end
+  end
+#: encode16/1 needs to16/1
+  def encode16(text: string): string do
+    to16(text)
+  end
+#: decode16/1 needs from16/1
+  def decode16(text: string): option[string] do
+    from16(text)
+  end
+#: decode16!/1 needs from16/1
+  def decode16!(text: string): string do
+    case from16(text) do
+      some(value) -> value
+      none -> raise("the encoded text is not valid")
+    end
+  end
+#: encode32/1 needs to32/1
+  def encode32(text: string): string do
+    to32(text, "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
+  end
+#: decode32/1 needs from32/1
+  def decode32(text: string): option[string] do
+    from32(text, false)
+  end
+#: decode32!/1 needs from32/1
+  def decode32!(text: string): string do
+    case from32(text, false) do
+      some(value) -> value
+      none -> raise("the encoded text is not valid")
+    end
+  end
+#: hex_encode32/1 needs to32/1
+  def hex_encode32(text: string): string do
+    to32(text, "0123456789ABCDEFGHIJKLMNOPQRSTUV")
+  end
+#: hex_decode32/1 needs from32/1
+  def hex_decode32(text: string): option[string] do
+    from32(text, true)
+  end
+#: encode64/1 needs to64/1
+  def encode64(text: string): string do
+    to64(text, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+  end
+#: decode64/1 needs from64/1
+  def decode64(text: string): option[string] do
+    from64(text, false)
+  end
+#: decode64!/1 needs from64/1
+  def decode64!(text: string): string do
+    case from64(text, false) do
+      some(value) -> value
+      none -> raise("the encoded text is not valid")
+    end
+  end
+#: url_encode64/1 needs to64/1
+  def url_encode64(text: string): string do
+    to64(text, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+  end
+#: url_decode64/1 needs from64/1
+  def url_decode64(text: string): option[string] do
+    from64(text, true)
+  end
+#: url_decode64!/1 needs from64/1
+  def url_decode64!(text: string): string do
+    case from64(text, true) do
+      some(value) -> value
+      none -> raise("the encoded text is not valid")
+    end
+  end
+# The forms with options: case: :upper, :lower or :mixed and padding: true or
+# false, as atoms or booleans. They work on the text the forms above give or take.
+#: opt/2
+  defp opt(o: list[tuple[atom, atom]]): tuple[atom, boolean] do
+    Enum.reduce(o, {:upper, true}, fn p, s ->
+      k = elem(p, 0)
+      v = elem(p, 1)
+      if not ((k == :case and v in [:upper, :lower, :mixed]) or (k == :padding and v in [:true, :false])) do raise("Base takes case: :upper, :lower or :mixed and padding: true or false") end
+      if k == :case do {v, elem(s, 1)} else {elem(s, 0), v == :true} end
+    end)
+  end
+#: enc/2 needs opt/2
+  defp enc(r: string, o: list[tuple[atom, atom]], low: boolean): string do
+    s = opt(o)
+    t = if elem(s, 1) do r else String.replace(r, "=", "") end
+    if low and elem(s, 0) == :lower do String.downcase(t) else t end
+  end
+#: dec/2 needs opt/2 Kernel.binary_part/3
+  defp dec(t: string, o: list[tuple[atom, atom]], f: fn[string, option[string]]): option[string] do
+    s = opt(o)
+    u = if elem(s, 0) == :upper do t else String.upcase(t) end
+    c = String.replace(String.replace(u, "\n", ""), "\r", "")
+    n = rem(String.length(c), 8)
+    if elem(s, 1) do f(u) else
+      if String.contains?(c, "=") do none else
+        if n == 1 or n == 3 or n == 6 do
+          case f(c <> String.duplicate("A", 8 - n)) do
+            some(x) -> some(binary_part(x, 0, byte_size(x) - 5))
+            none -> none
+          end
+        else f(c <> String.duplicate("=", rem(8 - n, 8))) end
+      end
+    end
+  end
+#: encode16/2 needs enc/2 encode16/1
+  def encode16(t: string, o: list[tuple[atom, atom]]): string do
+    enc(Base.encode16(t), o, true)
+  end
+#: decode16/2 needs opt/2 decode16/1
+  def decode16(t: string, o: list[tuple[atom, atom]]): option[string] do
+    l = elem(opt(o), 0)
+    if (l == :upper and String.upcase(t) != t) or (l == :lower and String.downcase(t) != t) do none else Base.decode16(t) end
+  end
+#: encode32/2 needs enc/2 encode32/1
+  def encode32(t: string, o: list[tuple[atom, atom]]): string do
+    enc(Base.encode32(t), o, true)
+  end
+#: hex_encode32/2 needs enc/2 hex_encode32/1
+  def hex_encode32(t: string, o: list[tuple[atom, atom]]): string do
+    enc(Base.hex_encode32(t), o, true)
+  end
+#: encode64/2 needs enc/2 encode64/1
+  def encode64(t: string, o: list[tuple[atom, atom]]): string do
+    enc(Base.encode64(t), o, false)
+  end
+#: url_encode64/2 needs enc/2 url_encode64/1
+  def url_encode64(t: string, o: list[tuple[atom, atom]]): string do
+    enc(Base.url_encode64(t), o, false)
+  end
+#: decode32/2 needs dec/2 decode32/1
+  def decode32(t: string, o: list[tuple[atom, atom]]): option[string] do
+    dec(t, o, fn x -> Base.decode32(x) end)
+  end
+#: hex_decode32/2 needs dec/2 hex_decode32/1
+  def hex_decode32(t: string, o: list[tuple[atom, atom]]): option[string] do
+    dec(t, o, fn x -> Base.hex_decode32(x) end)
+  end
+#: decode64/2 needs opt/2 decode64/1
+  def decode64(t: string, o: list[tuple[atom, atom]]): option[string] do
+    c = String.replace(String.replace(t, "\n", ""), "\r", "")
+    n = rem(String.length(c), 4)
+    if elem(opt(o), 1) do Base.decode64(t) else
+      if n == 1 or String.contains?(c, "=") do none else Base.decode64(c <> String.duplicate("=", rem(4 - n, 4))) end
+    end
+  end
+#: encode32/2 form 2 needs encode32/2
+  def encode32(t: string, o: list[tuple[atom, boolean]]): string do
+    Base.encode32(t, Enum.map(o, fn p -> {elem(p, 0), if elem(p, 1) do :true else :false end} end))
+  end
+#: hex_encode32/2 form 2 needs hex_encode32/2
+  def hex_encode32(t: string, o: list[tuple[atom, boolean]]): string do
+    Base.hex_encode32(t, Enum.map(o, fn p -> {elem(p, 0), if elem(p, 1) do :true else :false end} end))
+  end
+#: encode64/2 form 2 needs encode64/2
+  def encode64(t: string, o: list[tuple[atom, boolean]]): string do
+    Base.encode64(t, Enum.map(o, fn p -> {elem(p, 0), if elem(p, 1) do :true else :false end} end))
+  end
+#: url_encode64/2 form 2 needs url_encode64/2
+  def url_encode64(t: string, o: list[tuple[atom, boolean]]): string do
+    Base.url_encode64(t, Enum.map(o, fn p -> {elem(p, 0), if elem(p, 1) do :true else :false end} end))
+  end
+#: decode32/2 form 2 needs decode32/2
+  def decode32(t: string, o: list[tuple[atom, boolean]]): option[string] do
+    Base.decode32(t, Enum.map(o, fn p -> {elem(p, 0), if elem(p, 1) do :true else :false end} end))
+  end
+#: hex_decode32/2 form 2 needs hex_decode32/2
+  def hex_decode32(t: string, o: list[tuple[atom, boolean]]): option[string] do
+    Base.hex_decode32(t, Enum.map(o, fn p -> {elem(p, 0), if elem(p, 1) do :true else :false end} end))
+  end
+#: decode64/2 form 2 needs decode64/2
+  def decode64(t: string, o: list[tuple[atom, boolean]]): option[string] do
+    Base.decode64(t, Enum.map(o, fn p -> {elem(p, 0), if elem(p, 1) do :true else :false end} end))
+  end

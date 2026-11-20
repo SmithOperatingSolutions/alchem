@@ -1,0 +1,792 @@
+defmodule AlchemCommand do
+  import "alchem-bundle.alc"
+  import "alchem-compiler.alc"
+  # alchem COMMAND ...: the pinned command line's test, run, build, check
+  # and new, with the bundler and the compiler in the same program
+  # (scripts/build-alchem.py puts the three together).
+  #
+  #     alchem test [flags] PATH...
+  #     alchem run FILE [ARGUMENT...]
+  #     alchem build [-o OUT] FILE
+  #     alchem check FILE
+  #     alchem new DIRECTORY
+  #
+  # A file is bundled with its imports (Bundler, tools/alchem-bundle.alc)
+  # and the bundle compiled by a call of the compiler (AlchemCompiler, the
+  # compiler's own source): no other program is run to build one.
+  #
+  # test finds the test files (*_test.alc) the paths name or hold, builds
+  # and runs each in the order the seed gives, hands the runner its
+  # settings through the environment, prints what the programs print, the
+  # summary and, with -cover, the table made from the files the programs
+  # write (ALCHEM_COVER_FILE): what the pinned command prints, with its
+  # statuses. A directory of programs with their expected output and no
+  # test file is run as fixtures, as there.
+  #
+  # Not as the pinned command: a file that does not compile is reported
+  # with the bundler's or the compiler's message (the compiler has one
+  # message); a test program ended by a signal is reported as killed,
+  # whatever the signal (System.cmd gives -1 for each); -jobs is read and
+  # the files run one after another, which prints the same.
+
+  struct Settings do
+    cover: boolean
+    cover_min: float
+    exclude: string
+    jobs: integer
+    max_failures: integer
+    only: string
+    receive_ms: integer
+    seed: string
+    tag: string
+    timeout_ms: integer
+    trace: boolean
+    problem: string
+    rest: list[string]
+  end
+
+  def usage(): string do
+    "Usage of test:\n" <>
+    "  -cover\n    \treport line coverage of the code under test\n" <>
+    "  -cover-min float\n    \tfail if total coverage is below this percentage\n" <>
+    "  -exclude string\n    \tleave out tests carrying one of these comma-separated tags\n" <>
+    "  -jobs int\n    \ttest files compiled and run at once; 0 means one per processor\n" <>
+    "  -max-failures int\n    \tstop a test file after this many failures\n" <>
+    "  -only string\n    \trun only tests whose name or module contains this text\n" <>
+    "  -receive-timeout duration\n    \thow long assert_receive and refute_receive wait by default (default 100ms)\n" <>
+    "  -seed uint\n    \tseed for test order and random values; 0 picks one\n" <>
+    "  -tag string\n    \trun only tests carrying one of these comma-separated tags\n" <>
+    "  -timeout duration\n    \tdeadline for one fixture, or one test (default 30s)\n" <>
+    "  -trace\n    \tprint each test with its duration\n"
+  end
+
+  def defaults(): Settings do
+    %Settings{cover: false, cover_min: 0.0, exclude: "", jobs: 0, max_failures: 0, only: "", receive_ms: 100, seed: "0", tag: "", timeout_ms: 30000, trace: false, problem: "", rest: []}
+  end
+
+  def digits?(text: string): boolean do
+    text =~ ~r/^[0-9]+$/
+  end
+
+  # strconv.ParseUint(text, 10, 64) as a decimal text without leading
+  # zeros; "" when it is no such number, "!" when it is too great.
+  def unsigned(text: string): string do
+    trimmed = String.trim_leading(text, "0")
+    shown = if trimmed == "" do "0" else trimmed end
+    fits = byte_size(shown) < 20 or (byte_size(shown) == 20 and shown <= "18446744073709551615")
+    if not digits?(text) do "" else if fits do shown else "!" end end
+  end
+
+  # strconv.ParseInt(text, 10, 64).
+  def signed(text: string): result[integer, string] do
+    body = if String.starts_with?(text, "-") or String.starts_with?(text, "+") do binary_part(text, 1, byte_size(text) - 1) else text end
+    digits = String.trim_leading(body, "0")
+    negative = String.starts_with?(text, "-")
+    if not digits?(body) do error("parse error") else
+      if byte_size(digits) > 19 or (byte_size(digits) == 19 and digits > (if negative do "9223372036854775808" else "9223372036854775807" end)) do error("value out of range") else
+        if digits == "9223372036854775808" do ok(-9223372036854775807 - 1) else
+          case Integer.parse(if digits == "" do "0" else digits end) do
+            ok(n) -> ok(if negative do 0 - n else n end)
+            error(_) -> error("parse error")
+          end
+        end
+      end
+    end
+  end
+
+  def decimal(text: string): result[float, string] do
+    plain = if digits?(text) do text <> ".0" else text end
+    case Float.parse(plain) do
+      ok(f) -> ok(f)
+      error(_) -> error(if text =~ ~r/^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$/ do "value out of range" else "parse error" end)
+    end
+  end
+
+  # How many nanoseconds one of a unit is; 0 for no unit.
+  def unit(name: string): integer do
+    case name do
+      "ns" -> 1
+      "us" -> 1000
+      "µs" -> 1000
+      "μs" -> 1000
+      "ms" -> 1000000
+      "s" -> 1000000000
+      "m" -> 60000000000
+      "h" -> 3600000000000
+      _ -> 0
+    end
+  end
+
+  # The nanoseconds of the pieces of a duration ("1.5h", "30s"), each the
+  # digits before the point, those after it and the unit; -1 for one that is none.
+  def pieces(found: list[list[string]], total: integer): integer do
+    case found do
+      [] -> total
+      [[_, whole, part, letters] | rest] ->
+        scale = unit(letters)
+        if (whole == "" and (part == "" or part == ".")) or scale == 0 or byte_size(whole) > 9 do -1 else
+          high = if whole == "" do 0 else String.to_integer(whole) end
+          low = Enum.reduce(Enum.take(Enum.drop(String.graphemes(part), 1), 9), {0, scale}, fn c, acc -> {elem(acc, 0) + div(String.to_integer(c) * elem(acc, 1), 10), div(elem(acc, 1), 10)} end)
+          pieces(rest, total + high * scale + elem(low, 0))
+        end
+      _ -> -1
+    end
+  end
+
+  # time.ParseDuration in milliseconds, as Duration.Milliseconds gives them.
+  def duration(text: string): result[integer, string] do
+    negative = String.starts_with?(text, "-")
+    body = if negative or String.starts_with?(text, "+") do binary_part(text, 1, byte_size(text) - 1) else text end
+    whole = body =~ ~r/^([0-9]*(\.[0-9]*)?[a-zµμ]+)+$/
+    total = if body == "0" do 0 else if not whole do -1 else pieces(Regex.scan(~r/([0-9]*)(\.[0-9]*)?([a-zµμ]+)/, body), 0) end end
+    if total < 0 do error("parse error") else ok(div(if negative do 0 - total else total end, 1000000)) end
+  end
+
+  def truth(text: string): result[boolean, string] do
+    if text in ["1", "t", "T", "true", "TRUE", "True"] do ok(true) else
+      if text in ["0", "f", "F", "false", "FALSE", "False"] do ok(false) else error("parse error") end
+    end
+  end
+
+  def failed(s: Settings, message: string): Settings do
+    %Settings{s | problem: message}
+  end
+
+  def bad(s: Settings, name: string, value: string, why: string): Settings do
+    failed(s, "invalid value " <> inspect(value) <> " for flag -" <> name <> ": " <> why)
+  end
+
+  # One flag that takes a value.
+  def assign(s: Settings, name: string, value: string): Settings do
+    case name do
+      "cover-min" ->
+        case decimal(value) do
+          ok(f) -> %Settings{s | cover_min: f}
+          error(why) -> bad(s, name, value, why)
+        end
+      "exclude" -> %Settings{s | exclude: value}
+      "jobs" ->
+        case signed(value) do
+          ok(n) -> %Settings{s | jobs: n}
+          error(why) -> bad(s, name, value, why)
+        end
+      "max-failures" ->
+        case signed(value) do
+          ok(n) -> %Settings{s | max_failures: n}
+          error(why) -> bad(s, name, value, why)
+        end
+      "only" -> %Settings{s | only: value}
+      "receive-timeout" ->
+        case duration(value) do
+          ok(n) -> %Settings{s | receive_ms: n}
+          error(why) -> bad(s, name, value, why)
+        end
+      "seed" -> if unsigned(value) == "" do bad(s, name, value, "parse error") else if unsigned(value) == "!" do bad(s, name, value, "value out of range") else %Settings{s | seed: unsigned(value)} end end
+      "tag" -> %Settings{s | tag: value}
+      "timeout" ->
+        case duration(value) do
+          ok(n) -> %Settings{s | timeout_ms: n}
+          error(why) -> bad(s, name, value, why)
+        end
+      _ -> failed(s, "flag provided but not defined: -" <> name)
+    end
+  end
+
+  def switch(s: Settings, name: string, on: boolean): Settings do
+    if name == "cover" do %Settings{s | cover: on} else %Settings{s | trace: on} end
+  end
+
+  # Go's flag.Parse: flags up to the first argument that is none, or --.
+  def flags(args: list[string], s: Settings): Settings do
+    case args do
+      [] -> s
+      [arg | rest] ->
+        if byte_size(arg) < 2 or not String.starts_with?(arg, "-") do %Settings{s | rest: args} else
+          if arg == "--" do %Settings{s | rest: rest} else
+            body = if String.starts_with?(arg, "--") do binary_part(arg, 2, byte_size(arg) - 2) else binary_part(arg, 1, byte_size(arg) - 1) end
+            if body == "" or String.starts_with?(body, "-") or String.starts_with?(body, "=") do failed(s, "bad flag syntax: " <> arg) else
+              parts = String.split(body, "=")
+              name = hd(parts)
+              valued = length(parts) > 1
+              value = Enum.join(tl(parts), "=")
+              if name == "cover" or name == "trace" do
+                if not valued do flags(rest, switch(s, name, true)) else
+                  case truth(value) do
+                    ok(on) -> flags(rest, switch(s, name, on))
+                    error(_) -> failed(s, "invalid boolean value " <> inspect(value) <> " for -" <> name <> ": parse error")
+                  end
+                end
+              else
+                if not (name in ["cover-min", "exclude", "jobs", "max-failures", "only", "receive-timeout", "seed", "tag", "timeout"]) do
+                  if name == "help" or name == "h" do failed(s, "help") else failed(s, "flag provided but not defined: -" <> name) end
+                else
+                  if not valued and rest == [] do failed(s, "flag needs an argument: -" <> name) else
+                    given = assign(s, name, if valued do value else hd(rest) end)
+                    if given.problem != "" do given else flags(if valued do rest else tl(rest) end, given) end
+                  end
+                end
+              end
+            end
+          end
+        end
+    end
+  end
+
+  # What Go says of a file that cannot be read, from the library's word.
+  def reason(code: string): string do
+    case code do
+      "enoent" -> "no such file or directory"
+      "eacces" -> "permission denied"
+      "enotdir" -> "not a directory"
+      "eloop" -> "too many levels of symbolic links"
+      "enametoolong" -> "file name too long"
+      _ -> code
+    end
+  end
+
+  def kind(path: string): string do
+    case File.stat(path) do
+      ok(info) -> if info.type == :directory do "directory" else "file" end
+      error(code) -> "!" <> reason(code)
+    end
+  end
+
+  def linked_kind(path: string): string do
+    case File.lstat(path) do
+      ok(info) -> if info.type == :directory do "directory" else "file" end
+      error(code) -> "!" <> reason(code)
+    end
+  end
+
+  def joined(directory: string, name: string): string do
+    if directory == "." do name else if String.ends_with?(directory, "/") do directory <> name else directory <> "/" <> name end end
+  end
+
+  # filepath.WalkDir: the test files under a directory; a directory whose
+  # name starts with a dot is left out. "!" and a message when one cannot be read.
+  def walk(directory: string): list[string] do
+    case File.ls(directory) do
+      error(message) -> ["!" <> message]
+      ok(names) ->
+        Enum.flat_map(Enum.sort(names), fn name ->
+          path = joined(directory, name)
+          if linked_kind(path) == "directory" do
+            if String.starts_with?(name, ".") do [] else walk(path) end
+          else
+            if String.ends_with?(name, "_test.alc") do [path] else [] end
+          end
+        end)
+    end
+  end
+
+  # filepath.Clean of a path that is given.
+  def cleaned(path: string): string do
+    absolute = String.starts_with?(path, "/")
+    nothing: list[string] = []
+    parts = Enum.reduce(String.split(path, "/"), nothing, fn part, kept ->
+      if part == "" or part == "." do kept else
+        if part == ".." and kept != [] and hd(kept) != ".." do tl(kept) else
+          if part == ".." and absolute do kept else [part | kept] end
+        end
+      end
+    end)
+    text = Enum.join(Enum.reverse(parts), "/")
+    if absolute do "/" <> text else if text == "" do "." else text end end
+  end
+
+  # testrunner.TestFiles: sorted, each once; ["!message"] when a path cannot be read.
+  def test_files(paths: list[string]): list[string] do
+    found = Enum.flat_map(paths, fn path ->
+      case kind(path) do
+        "directory" -> walk(cleaned(path))
+        "file" -> if String.ends_with?(path, "_test.alc") do [path] else [] end
+        problem -> ["!stat " <> path <> ": " <> binary_part(problem, 1, byte_size(problem) - 1)]
+      end
+    end)
+    problems = Enum.filter(found, &String.starts_with?(&1, "!"))
+    if problems != [] do [hd(problems)] else Enum.sort(Enum.uniq(found)) end
+  end
+
+  # Bundle the file and compile it into out. "" when that worked, else what
+  # the bundler or the compiler said: the compiler has one message for every
+  # program it does not take, and takes a source of at most 16776191 bytes,
+  # as alchem-compiler reads one (nc_limit).
+  def build(file: string, out: string, locked: boolean): string do
+    bundled = Bundler.bundle(file, locked)
+    if elem(bundled, 0) != 0 do elem(bundled, 1) else
+      source = rx_ab(elem(bundled, 1))
+      if Enum.count(source) > 16776191 do "E_RUNTIME_INPUT: input exceeds byte limit" else
+        image = AlchemCompiler.nc_compile(source)
+        if Enum.count(image) == 0 do "E_COMPILE: invalid or unsupported Alchem function program" else
+          written = case File.write(out, rx_as(image)) do
+            ok(_) -> File.chmod(out, 448)
+            error(message) -> error(message)
+          end
+          case written do
+            ok(_) -> ""
+            error(message) -> message
+          end
+        end
+      end
+    end
+  end
+
+  # Go's rand.Shuffle with the PCG of seed (seed, seed).
+  def shuffled(items: list[string], source: integer, i: integer): list[string] do
+    if i < 1 do items else
+      j = Gen.below(source, i + 1)
+      x = Enum.at(items, i, "")
+      y = Enum.at(items, j, "")
+      shuffled(List.replace_at(List.replace_at(items, i, y), j, x), source, i - 1)
+    end
+  end
+
+  # A float to one decimal as Go's %.1f writes it: the exact value rounded,
+  # a tie to the even digit.
+  def tenth(f: float): string do
+    if f < 0.0 do "-" <> tenth(0.0 - f) else
+      if f >= 100000000000000.0 do Float.to_string(f) else
+        {n, d} = Float.ratio(f)
+        q = div(n, d) * 10 + div(rem(n, d) * 10, d)
+        r = rem(rem(n, d) * 10, d)
+        up = r * 2 > d or (r * 2 == d and rem(q, 2) == 1)
+        t = if up do q + 1 else q end
+        "#{div(t, 10)}.#{rem(t, 10)}"
+      end
+    end
+  end
+
+  def percent(covered: integer, lines: integer): float do
+    if lines == 0 do 100.0 else 100.0 * Float.from_integer(covered) / Float.from_integer(lines) end
+  end
+
+  def counted(n: integer, word: string): string do
+    if n == 1 do "1 " <> word else "#{n} #{word}s" end
+  end
+
+  # Sorted line numbers as 3, 7-9, 12.
+  def ranges(lines: list[integer]): string do
+    nothing: list[tuple[integer, integer]] = []
+    runs = Enum.reduce(lines, nothing, fn line, sofar ->
+      case sofar do
+        [{first, last} | rest] -> if line == last + 1 do [{first, line} | rest] else [{line, line} | sofar] end
+        [] -> [{line, line}]
+      end
+    end)
+    Enum.join(Enum.map(Enum.reverse(runs), fn {first, last} -> if first == last do "#{first}" else "#{first}-#{last}" end end), ", ")
+  end
+
+  # readCoverage: one program's lines added to the counts of every file.
+  def read_cover(path: string, hits: map[string, map[integer, integer]]): map[string, map[integer, integer]] do
+    text = case File.read(path) do
+      ok(t) -> t
+      error(_) -> ""
+    end
+    Enum.reduce(String.split(text, "\n"), hits, fn line, sofar ->
+      case String.split(line, "\t") do
+        [file, number, times] ->
+          n = case Integer.parse(number) do
+            ok(v) -> v
+            error(_) -> 0
+          end
+          t = case Integer.parse(times) do
+            ok(v) -> v
+            error(_) -> 0
+          end
+          none: map[integer, integer] = %{}
+          counts = Map.get(sofar, file, none)
+          Map.put(sofar, file, Map.put(counts, n, Map.get(counts, n, 0) + t))
+        _ -> sofar
+      end
+    end)
+  end
+
+  # report: the table, and the total.
+  def report(hits: map[string, map[integer, integer]]): float do
+    here = System.cwd!()
+    files = Enum.sort(Enum.map(Map.to_list(hits), fn {file, counts} ->
+      relative = Path.relative_to(file, here)
+      shown = if here == "/" and String.starts_with?(file, "/") and file != "/" do binary_part(file, 1, byte_size(file) - 1) else if relative == file and file != here do file else if file == here do "." else relative end end end
+      missed = Enum.sort(Enum.map(Enum.filter(Map.to_list(counts), fn {line, times} -> times == 0 end), fn {line, times} -> line end))
+      {shown, map_size(counts), map_size(counts) - length(missed), missed}
+    end))
+    lines = Enum.sum(Enum.map(files, fn {name, count, ran, missed} -> count end))
+    covered = Enum.sum(Enum.map(files, fn {name, count, ran, missed} -> ran end))
+    total = percent(covered, lines)
+    IO.write("\nPercentage | File\n-----------|--------------------------\n")
+    Enum.each(files, fn {name, count, ran, missed} -> IO.write(String.pad_leading(tenth(percent(ran, count)), 9) <> "% | " <> name <> "\n") end)
+    IO.write("-----------|--------------------------\n" <> String.pad_leading(tenth(total), 9) <> "% | Total\n")
+    Enum.each(files, fn {name, count, ran, missed} -> if missed != [] do IO.write("\n" <> name <> ": lines not run: " <> ranges(missed) <> "\n") end end)
+    total
+  end
+
+  def ended(status: integer): string do
+    if status == 0 do "<nil>" else if status < 0 do "signal: killed" else "exit status #{status}" end end
+  end
+
+  # One test file: {passed, failed, excluded, skipped, broken}; its cover
+  # file is read into the counts.
+  def one(file: string, binary: string, s: Settings, seed: string): list[integer] do
+    problem = build(file, binary, false)
+    if problem != "" do
+      IO.write("\n" <> file <> " did not compile:\n  " <> problem <> "\n")
+      [0, 0, 0, 0, 1]
+    else
+      settings = [stderr_to_stdout: "true", env: "ALCHEM_SEED=" <> seed, env: "ALCHEM_TEST_ONLY=" <> s.only, env: "ALCHEM_TEST_TAGS=" <> s.tag, env: "ALCHEM_TEST_EXCLUDE=" <> s.exclude, env: "ALCHEM_TEST_MAX_FAILURES=#{s.max_failures}", env: "ALCHEM_TEST_TIMEOUT=#{s.timeout_ms}", env: "ALCHEM_TEST_RECEIVE_TIMEOUT=#{if s.receive_ms <= 0 do 100 else s.receive_ms end}", env: "ALCHEM_TEST_RESULT=" <> binary <> ".result", env: "ALCHEM_COVER_FILE=" <> binary <> ".cover"]
+      {said, status} = System.cmd(binary, [], if s.trace do settings ++ [env: "ALCHEM_TEST_TRACE=1"] else settings end)
+      IO.write(said)
+      text = case File.read(binary <> ".result") do
+        ok(t) -> t
+        error(_) -> ""
+      end
+      numbers = Enum.map(Enum.take(String.split(String.trim(text), " "), 4), fn word ->
+        case Integer.parse(word) do
+          ok(n) -> n
+          error(_) -> -1
+        end
+      end)
+      if length(numbers) != 4 or Enum.any?(numbers, fn n -> n < 0 end) do
+        IO.write("\n" <> file <> " stopped before finishing its tests: " <> ended(status) <> "\n")
+        [0, 0, 0, 0, 1]
+      else
+        numbers ++ [0]
+      end
+    end
+  end
+
+  def fresh(prefix: string): string do
+    path = System.tmp_dir!() <> "/" <> prefix <> "#{System.os_time(:nanosecond)}"
+    case File.mkdir_p(path) do
+      ok(_) -> path
+      error(message) -> raise(message)
+    end
+  end
+
+  # RunTests.
+  def run_tests(files: list[string], s: Settings): integer do
+    seed = if s.seed == "0" do "#{rem(System.os_time(:nanosecond), 999999) + 1}" else s.seed end
+    number = Gen.seed(seed)
+    order = shuffled(files, Gen.source(number, number), length(files) - 1)
+    work = fresh("alchem-tests-")
+    started = System.monotonic_time(:nanosecond)
+    none: map[string, map[integer, integer]] = %{}
+    {totals, hits, last} = Enum.reduce(order, {[0, 0, 0, 0, 0], none, 0}, fn file, {sums, sofar, i} ->
+      binary = work <> "/test#{i}"
+      got = one(file, binary, s, seed)
+      broken = Enum.at(got, 4, 0) == 1
+      {Enum.map(Enum.zip(sums, got), fn {a, b} -> a + b end), if s.cover and not broken do read_cover(binary <> ".cover", sofar) else sofar end, i + 1}
+    end)
+    File.rm_rf(work)
+    [passed, failures, excluded, skipped, broken] = totals
+    seconds = Float.from_integer(System.monotonic_time(:nanosecond) - started) / 1000000000.0
+    IO.write("\nFinished in " <> tenth(seconds) <> " seconds\n" <> counted(passed + failures, "test") <> ", " <> counted(failures, "failure"))
+    if excluded > 0 do IO.write(", #{excluded} excluded") end
+    if skipped > 0 do IO.write(", #{skipped} skipped") end
+    if broken > 0 do IO.write(", " <> counted(broken, "file") <> " not run") end
+    IO.write("\n\nRandomized with seed " <> seed <> "\n")
+    total = if s.cover do report(hits) else 100.0 end
+    if failures > 0 or broken > 0 do 1 else
+      if s.cover and total < s.cover_min do
+        IO.puts(:stderr, "coverage " <> tenth(total) <> "% is below the required " <> tenth(s.cover_min) <> "%")
+        1
+      else
+        0
+      end
+    end
+  end
+
+  def slurp(path: string): tuple[boolean, string] do
+    case File.read_binary(path) do
+      ok(text) -> {true, text}
+      error(_) -> {false, ""}
+    end
+  end
+
+  # runFixture: "" when the program did what the files beside it say.
+  def fixture(directory: string, name: string, work: string, timeout_ms: integer): string do
+    base = binary_part(name, 0, byte_size(name) - 4)
+    native = String.ends_with?(name, ".test.alc")
+    {coded, code_text} = slurp(joined(directory, base <> ".exitcode"))
+    wanted = if coded do signed(String.trim(code_text)) else ok(0) end
+    {told, expected} = slurp(joined(directory, base <> ".stdout"))
+    {erred, expected_stderr} = slurp(joined(directory, base <> ".stderr"))
+    case wanted do
+      error(_) -> name <> ": invalid exitcode"
+      ok(expected_code) ->
+        if expected_code < 0 do name <> ": invalid exitcode" else
+          if not native and not told do name <> ": expected stdout: open " <> joined(directory, base <> ".stdout") <> ": no such file or directory" else
+            binary = work <> "/" <> base
+            problem = build(Path.expand(joined(directory, name)), binary, false)
+            if problem != "" do name <> ": compile: " <> problem else
+              limit = if System.find_executable("timeout") == none do "" else "timeout -s KILL #{div(timeout_ms + 999, 1000)} " end
+              {actual, status} = System.cmd("/bin/sh", ["-c", limit <> "\"$0\" < /dev/null 2> \"$0.stderr\"", binary], [cd: work])
+              {_, stderr} = slurp(binary <> ".stderr")
+              File.rm(binary)
+              File.rm(binary <> ".stderr")
+              if limit != "" and status == 137 do name <> ": execute: fixture execution: context deadline exceeded" else
+                if byte_size(actual) > 1048576 or byte_size(stderr) > 1048576 do name <> ": execute: fixture output exceeds 1 MiB per stream" else
+                  if status != expected_code do "#{name}: exit code #{status}, expected #{expected_code}; output: #{actual}#{stderr}" else
+                    if not native and actual != expected do name <> ": output mismatch: got " <> inspect(actual) <> " want " <> inspect(expected) else
+                      if native and expected_code != 0 and not String.contains?(stderr, "assertion failed") do name <> ": failure was not an assertion: " <> stderr else
+                        if (erred or expected_code == 0) and stderr != expected_stderr do name <> ": stderr mismatch: got " <> inspect(stderr) <> " want " <> inspect(expected_stderr) else "" end
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+    end
+  end
+
+  # testrunner.RunContext: the programs of a directory in the order of
+  # their names; the first that fails ends the run.
+  def fixtures(directory: string, timeout_ms: integer): string do
+    if timeout_ms <= 0 do "fixture timeout must be positive" else
+      names = case File.ls(directory) do
+        ok(found) -> Enum.sort(Enum.filter(found, fn name -> String.ends_with?(name, ".alc") and not String.ends_with?(name, "_test.alc") and kind(joined(directory, name)) != "directory" end))
+        error(_) -> []
+      end
+      work = fresh("alchem-test-")
+      outcome = Enum.reduce(names, "", fn name, problem ->
+        if problem != "" do problem else
+          found = fixture(directory, name, work, timeout_ms)
+          if found == "" do IO.write("PASS " <> name <> "\n") end
+          found
+        end
+      end)
+      File.rm_rf(work)
+      outcome
+    end
+  end
+
+  # 1 when the directory holds programs and no test file: its fixtures run.
+  def fixture_directory?(path: string): boolean do
+    if kind(path) != "directory" do false else
+      names = case File.ls(path) do
+        ok(found) -> found
+        error(_) -> []
+      end
+      programs = Enum.any?(names, fn name -> String.ends_with?(name, ".alc") and not String.ends_with?(name, "_test.alc") and linked_kind(joined(path, name)) != "directory" end)
+      programs and test_files([path]) == []
+    end
+  end
+
+  def complain(message: string, status: integer): integer do
+    IO.puts(:stderr, message)
+    status
+  end
+
+  def test(args: list[string]): integer do
+    s = flags(args, defaults())
+    if s.problem == "help" do
+      IO.puts(:stderr, String.trim_trailing(usage(), "\n"))
+      0
+    else
+      if s.problem != "" do
+        IO.puts(:stderr, s.problem <> "\n" <> String.trim_trailing(usage(), "\n"))
+        2
+      else
+        if s.rest == [] do complain("provide one entry path (fmt and test accept multiple paths)", 2) else
+          files = test_files(s.rest)
+          if files != [] and String.starts_with?(hd(files), "!") do complain(binary_part(hd(files), 1, byte_size(hd(files)) - 1), 1) else
+            {ran, problem} = Enum.reduce(s.rest, {false, ""}, fn path, {sofar, failed} ->
+              if failed != "" or not fixture_directory?(path) do {sofar, failed} else {true, fixtures(path, s.timeout_ms)} end
+            end)
+            if problem != "" do complain(problem, 1) else
+              if files == [] do
+                if ran do 0 else complain("no test files (*_test.alc) or fixtures found", 1) end
+              else
+                run_tests(files, s)
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  # alchem run FILE ARGUMENT...: built into a directory of its own and run.
+  def run(args: list[string]): integer do
+    paths = if args != [] and hd(args) == "--" do tl(args) else args end
+    if paths == [] do complain("provide the program to run, then its arguments", 2) else
+      entry = hd(paths)
+      given = if tl(paths) != [] and hd(tl(paths)) == "--" do tl(tl(paths)) else tl(paths) end
+      if not String.ends_with?(entry, ".alc") do complain("source must have .alc extension", 1) else
+        work = fresh("alchem-run-")
+        binary = work <> "/" <> Path.basename(entry, ".alc")
+        problem = build(entry, binary, false)
+        status = if problem != "" do complain(problem, 1) else
+          # The program reads this program's standard input and writes to
+          # its standard output as it runs: /bin/sh opens both again from
+          # /proc (System.cmd gives a program no input and collects what it
+          # writes); where they cannot be opened (a socket) it has no input
+          # and what it wrote is written when it has ended. The tests use
+          # true, not :, which is a special built-in: a redirection it
+          # cannot make would end the shell with status 2.
+          script = "i=/proc/$PPID/fd/0; o=/proc/$PPID/fd/1; { true < \"$i\"; } 2>/dev/null || i=/dev/null; if { true >> \"$o\"; } 2>/dev/null; then exec \"$0\" \"$@\" < \"$i\" >> \"$o\"; else exec \"$0\" \"$@\" < \"$i\"; fi"
+          {said, code} = System.cmd("/bin/sh", ["-c", script, binary] ++ given)
+          IO.write(said)
+          if code < 0 do 255 else code end
+        end
+        File.rm_rf(work)
+        status
+      end
+    end
+  end
+
+  def build_usage(): string do
+    "Usage of build:\n" <>
+    "  -json\n    \temit structured compile diagnostics\n" <>
+    "  -locked\n    \tfail instead of updating alchem.lock\n" <>
+    "  -max-call-depth int\n    \tnested Alchem calls allowed per process (default 100000)\n" <>
+    "  -o string\n    \toutput executable\n" <>
+    "  -race\n    \tenable Go race detection in generated executable\n" <>
+    "  -shutdown-timeout duration\n    \truntime shutdown deadline (default 2s)\n" <>
+    "  -target string\n    \ttarget GOOS/GOARCH\n" <>
+    "  -timeout duration\n    \tbuild deadline (default 2m0s)\n" <>
+    "  -trace\n    \tinclude Alchem runtime frames (default true)"
+  end
+
+  # alchem build [-o OUT] [-locked] FILE: the executable, named after the
+  # file when no name is given. The pinned command's other flags are read:
+  # -target must be linux/amd64, the one the compiler makes; -json, -race,
+  # -trace, -timeout, -shutdown-timeout and -max-call-depth change nothing.
+  def build_command(args: list[string], out: string, locked: boolean): integer do
+    case args do
+      [] -> complain("provide one entry path (fmt and test accept multiple paths)", 2)
+      [arg | rest] ->
+        if byte_size(arg) < 2 or not String.starts_with?(arg, "-") or arg == "--" do
+          paths = if arg == "--" do rest else args end
+          if length(paths) != 1 do complain("provide one entry path (fmt and test accept multiple paths)", 2) else
+            entry = hd(paths)
+            if not String.ends_with?(entry, ".alc") do complain("source must have .alc extension", 1) else
+              # A file with no main at all is refused as the pinned compiler
+              # refuses it; the compiler has one message for every refusal.
+              text = case File.read(entry) do
+                ok(t) -> t
+                error(_) -> "def main("
+              end
+              problem = if text =~ ~r/(^|\n)[ \t]*def[ \t]+main[ \t]*\(/ do build(entry, if out == "" do Path.basename(entry, ".alc") else out end, locked) else entry <> ":1:1: missing main/0" end
+              if problem == "" do 0 else complain(problem, 1) end
+            end
+          end
+        else
+          body = String.trim_leading(if String.starts_with?(arg, "--") do binary_part(arg, 1, byte_size(arg) - 1) else arg end, "-")
+          parts = String.split(body, "=")
+          name = hd(parts)
+          valued = length(parts) > 1
+          value = if valued do Enum.join(tl(parts), "=") else if rest == [] do "" else hd(rest) end end
+          after_value = if valued or rest == [] do rest else tl(rest) end
+          if name in ["json", "race", "trace"] do build_command(rest, out, locked) else
+            if name == "locked" do build_command(rest, out, true) else
+              if not (name in ["o", "target", "timeout", "shutdown-timeout", "max-call-depth"]) do complain("flag provided but not defined: -" <> name <> "\n" <> build_usage(), 2) else
+                if not valued and rest == [] do complain("flag needs an argument: -" <> name <> "\n" <> build_usage(), 2) else
+                  if name == "target" and value != "linux/amd64" do complain("the self-hosted compiler builds linux/amd64 alone, not " <> value, 2) else
+                    build_command(after_value, if name == "o" do value else out end, locked)
+                  end
+                end
+              end
+            end
+          end
+        end
+    end
+  end
+
+  # alchem check [-locked] FILE: built and thrown away; a module without
+  # main is built as the import of a program that does nothing. The compiler
+  # has one message for a program it does not take; -json changes nothing.
+  def check(args: list[string], locked: boolean): integer do
+    case args do
+      ["-locked" | rest] -> check(rest, true)
+      ["--locked" | rest] -> check(rest, true)
+      ["-json" | rest] -> check(rest, locked)
+      ["--json" | rest] -> check(rest, locked)
+      [entry] ->
+        if String.starts_with?(entry, "-") and byte_size(entry) > 1 do complain("flag provided but not defined: " <> entry, 2) else
+          if not String.ends_with?(entry, ".alc") do complain(entry <> ": source must have .alc extension", 1) else
+            work = fresh("alchem-check-")
+            # A module without main is checked as what a program imports.
+            text = case File.read(entry) do
+              ok(t) -> t
+              error(_) -> "def main("
+            end
+            # A test file is a program of its own, as the test command builds it.
+            whole = text =~ ~r/(^|\n)[ \t]*def[ \t]+main[ \t]*\(/ or text =~ ~r/(^|\n)[ \t]*(test|doctest|describe)[ \t]/
+            used = if whole do entry else
+              # An import is joined to the importing file's directory, so the
+              # module is named from the work directory up to the root.
+              up = String.duplicate("../", length(Enum.filter(String.split(work, "/"), fn part -> part != "" end)))
+              File.write(work <> "/checking.alc", "defmodule AlchemChecking do\n  import " <> inspect(up <> String.trim_leading(Path.expand(entry), "/")) <> "\n  def main() do\n    IO.write(\"\")\n  end\nend\n")
+              work <> "/checking.alc"
+            end
+            problem = build(used, work <> "/checked", locked)
+            File.rm_rf(work)
+            if problem == "" do 0 else complain(problem, 1) end
+          end
+        end
+      _ -> complain("provide one entry path (fmt and test accept multiple paths)", 2)
+    end
+  end
+
+  # my_app is the module MyApp.
+  def module_name(name: string): string do
+    elem(Enum.reduce(String.graphemes(name), {"", true}, fn c, {text, upper} ->
+      if c == "_" or c == "-" do {text, true} else {text <> (if upper do String.upcase(c) else c end), false} end
+    end), 0)
+  end
+
+  # alchem new DIRECTORY: a library module, its test and a main program.
+  def new(paths: list[string]): integer do
+    if length(paths) != 1 do complain("provide the directory of the new project", 2) else
+      path = hd(paths)
+      name = Path.basename(cleaned(path))
+      if not (name =~ ~r/^[A-Za-z][A-Za-z0-9_-]*$/) do complain("a project name starts with a letter and has only letters, digits, _ and -: " <> inspect(name), 1) else
+        if not String.starts_with?(kind(path), "!") do complain(path <> " already exists", 1) else
+          module = module_name(name)
+          library = String.replace(String.downcase(name), "-", "_")
+          files = [
+            {"main.alc", "defmodule Main do\n  import \"lib/" <> library <> ".alc\"\n\n  def main() do\n    name = case System.argv() do\n      [first | _] -> first\n      [] -> \"world\"\n    end\n    IO.puts(" <> module <> ".hello(name))\n  end\nend\n"},
+            {"lib/" <> library <> ".alc", "defmodule " <> module <> " do\n  @moduledoc \"\"\"\n  The " <> name <> " library.\n  \"\"\"\n\n  @doc \"\"\"\n  Greets someone by name.\n\n      alx> " <> module <> ".hello(\"Ada\")\n      \"Hello, Ada!\"\n  \"\"\"\n  def hello(name: string): string do\n    \"Hello, \" <> name <> \"!\"\n  end\nend\n"},
+            {"test/" <> library <> "_test.alc", "defmodule " <> module <> "Test do\n  import \"../lib/" <> library <> ".alc\"\n  doctest " <> module <> "\n\n  test \"greets the world\" do\n    assert(" <> module <> ".hello(\"world\") == \"Hello, world!\")\n  end\nend\n"},
+            {".gitignore", "/" <> name <> "\n/" <> name <> ".exe\n"},
+            {"README.md", "# " <> name <> "\n\n```sh\nalchem run main.alc            # build and run\nalchem run main.alc -- Ada     # with arguments\nalchem test test               # run the tests\nalchem build -o " <> name <> " main.alc   # build an executable\n```\n"}
+          ]
+          problem = Enum.reduce(files, "", fn {file, text}, failed ->
+            if failed != "" do failed else
+              target = cleaned(path <> "/" <> file)
+              made = case File.mkdir_p(Path.dirname(target)) do
+                ok(_) -> File.write(target, text)
+                error(message) -> error(message)
+              end
+              case made do
+                ok(_) ->
+                  IO.puts("created " <> target)
+                  ""
+                error(message) -> message
+              end
+            end
+          end)
+          if problem != "" do complain(problem, 1) else
+            IO.write("\ncd " <> path <> "\nalchem run main.alc\nalchem test test\n")
+            0
+          end
+        end
+      end
+    end
+  end
+
+  def main() do
+    args = System.argv()
+    status = case args do
+      ["test" | rest] -> test(rest)
+      ["run" | rest] -> run(rest)
+      ["build" | rest] -> build_command(rest, "", false)
+      ["check" | rest] -> check(rest, false)
+      ["new" | rest] -> new(rest)
+      _ -> complain("usage: alchem test [flags] PATH... | run FILE [ARGUMENT...] | build [-o OUT] FILE | check FILE | new DIRECTORY", 2)
+    end
+    System.halt(status)
+  end
+end

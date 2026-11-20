@@ -1,0 +1,10 @@
+defmodule NativeStringDemo do
+  def greet(name: string): string do
+    "Hello, " <> name <> "!"
+  end
+  def main() do
+    message = greet("Alchem")
+    IO.puts(message)
+    System.halt(0)
+  end
+end

@@ -1,0 +1,60 @@
+# Markup: HTML a template made. The struct holds the text and, in a field
+# no program can name (its name ends in byte 127, which inspect and == pass
+# over), how it was made, for Markup.parts: 0 from text, 1 by a template
+# (its name, its fixed pieces and its values), 2 by joining the values.
+#: struct Markup
+  struct Markup do
+    html: string
+    p: tuple[integer, string, list[string], list[Markup]] = {0, "", [], []}
+  end
+#: struct Markup.Value
+  type Markup.Value do
+    text(text: string)
+    markup(markup: Markup)
+    list(items: list[Markup])
+  end
+#: struct Markup.Parts
+  struct Markup.Parts do
+    template: string
+    fixed: list[string]
+    values: list[Markup.Value]
+  end
+#: raw/1
+  def raw(t: string): Markup do %Markup{html: t} end
+#: to_string/1
+  def to_string(m: Markup): string do m.html end
+#: escape/1
+  def escape(t: string): string do
+    String.replace(String.replace(String.replace(String.replace(String.replace(t, "&", "&amp;"), "<", "&lt;"), ">", "&gt;"), "'", "&#39;"), "\"", "&#34;")
+  end
+#: join/1
+  def join(l: list[Markup]): Markup do %Markup{html: Enum.join(Enum.map(l, fn m -> m.html end), ""), p: {2, "", [], l}} end
+#: template/3
+  def template(n: string, f: list[string], v: list[Markup]): Markup do
+    h = Enum.map(v, fn m -> m.html end)
+    %Markup{html: elem(Enum.reduce(f, {"", 0}, fn p, s -> {elem(s, 0) <> p <> Enum.at(h, elem(s, 1), ""), elem(s, 1) + 1} end), 0), p: {1, n, f, v}}
+  end
+#: parts/1 needs value/1
+  def parts(m: Markup): Markup.Parts do
+    s = m.p
+    if elem(s, 0) == 1 do %Markup.Parts{template: elem(s, 1), fixed: elem(s, 2), values: Enum.map(elem(s, 3), fn v -> Markup.value(v) end)} else
+      %Markup.Parts{template: "", fixed: ["", ""], values: [Markup.value(m)]}
+    end
+  end
+#: value/1
+  def value(m: Markup): Markup.Value do
+    k = elem(m.p, 0)
+    if k == 0 do Markup.Value.text(m.html) else if k == 2 do Markup.Value.list(elem(m.p, 3)) else Markup.Value.markup(m) end end
+  end
+#: of/1
+  def of(m: Markup): Markup do m end
+#: of/1 form 2 needs escape/1
+  def of(t: string): Markup do %Markup{html: Markup.escape(t)} end
+#: of/1 form 3
+  def of(n: integer): Markup do %Markup{html: "#{n}"} end
+#: of/1 form 4
+  def of(n: float): Markup do %Markup{html: "#{n}"} end
+#: of/1 form 5 needs escape/1
+  def of(a: atom): Markup do %Markup{html: Markup.escape("#{a}")} end
+#: of/1 form 6 needs join/1
+  def of(l: list[Markup]): Markup do Markup.join(l) end

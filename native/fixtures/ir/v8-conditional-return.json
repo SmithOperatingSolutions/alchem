@@ -1,0 +1,107 @@
+{
+  "version": 8,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "bytes.const",
+              "dest": "a",
+              "values": [
+                97,
+                98
+              ]
+            },
+            {
+              "op": "bytes.const",
+              "dest": "b",
+              "values": [
+                99,
+                100
+              ]
+            },
+            {
+              "op": "call",
+              "dest": "joined",
+              "callee": "choose",
+              "args": [
+                "a",
+                "b"
+              ]
+            },
+            {
+              "op": "bytes.write",
+              "dest": "n",
+              "value": "joined",
+              "stream": "stdout"
+            },
+            {
+              "op": "const.i64",
+              "dest": "r",
+              "value": 0
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    },
+    {
+      "name": "choose",
+      "params": [
+        {
+          "name": "a",
+          "type": "bytes"
+        },
+        {
+          "name": "b",
+          "type": "bytes"
+        }
+      ],
+      "return_type": "bytes",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "const.bool",
+              "dest": "flag",
+              "value": false
+            },
+            {
+              "op": "if.bytes",
+              "dest": "r",
+              "cond": "flag",
+              "then": {
+                "instructions": [],
+                "value": "a"
+              },
+              "else": {
+                "instructions": [
+                  {
+                    "op": "bytes.concat",
+                    "dest": "no",
+                    "lhs": "b",
+                    "rhs": "a"
+                  }
+                ],
+                "value": "no"
+              }
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    }
+  ]
+}

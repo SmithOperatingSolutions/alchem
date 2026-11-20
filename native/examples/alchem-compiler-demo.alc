@@ -1,0 +1,4 @@
+defmodule Example do
+ def scale(x: integer): integer do x*6 end
+ def main() do System.halt(scale(7)) end
+end

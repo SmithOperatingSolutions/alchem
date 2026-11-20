@@ -1,0 +1,20 @@
+# Build artifacts
+/build/
+/dist/
+/target/
+*.o
+*.out
+*.exe
+*.test
+/coverage/
+*.prof
+.DS_Store
+
+# Local verification artifacts
+**/target/
+__pycache__/
+*.pyc
+
+# Local dependency caches
+/.cache/
+/implementations/go/go

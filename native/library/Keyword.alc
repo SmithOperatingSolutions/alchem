@@ -1,0 +1,130 @@
+# Keyword: lists of {atom, value}. The first pair with a key is the one read.
+#: get/2
+  def get(l: list[tuple[atom, v]], k: atom): option[v] do
+    case Enum.at(Enum.filter(l, fn p -> elem(p, 0) == k end), 0) do
+      some(p) -> some(elem(p, 1))
+      none -> none
+    end
+  end
+#: fetch/2 needs get/2
+  def fetch(l: list[tuple[atom, v]], k: atom): option[v] do
+    Keyword.get(l, k)
+  end
+#: fetch!/2 needs get/2
+  def fetch!(l: list[tuple[atom, v]], k: atom): v do
+    case Keyword.get(l, k) do
+      some(x) -> x
+      none -> raise("key :#{k} not found")
+    end
+  end
+#: get/3 needs get/2
+  def get(l: list[tuple[atom, v]], k: atom, d: v): v do
+    case Keyword.get(l, k) do
+      some(x) -> x
+      none -> d
+    end
+  end
+#: get_lazy/3 needs get/2
+  def get_lazy(l: list[tuple[atom, v]], k: atom, f: fn[v]): v do
+    case Keyword.get(l, k) do
+      some(x) -> x
+      none -> f()
+    end
+  end
+#: get_values/2
+  def get_values(l: list[tuple[atom, v]], k: atom): list[v] do
+    Enum.map(Enum.filter(l, fn p -> elem(p, 0) == k end), fn p -> elem(p, 1) end)
+  end
+#: has_key?/2
+  def has_key?(l: list[tuple[atom, v]], k: atom): boolean do
+    Enum.filter(l, fn p -> elem(p, 0) == k end) != []
+  end
+#: delete/2
+  def delete(l: list[tuple[atom, v]], k: atom): list[tuple[atom, v]] do
+    Enum.filter(l, fn p -> elem(p, 0) != k end)
+  end
+#: put/3
+  def put(l: list[tuple[atom, v]], k: atom, x: v): list[tuple[atom, v]] do
+    [{k, x}] ++ Enum.filter(l, fn p -> elem(p, 0) != k end)
+  end
+#: put_new/3 needs has_key?/2
+  def put_new(l: list[tuple[atom, v]], k: atom, x: v): list[tuple[atom, v]] do
+    if Keyword.has_key?(l, k) do l else [{k, x}] ++ l end
+  end
+#: put_new_lazy/3 needs has_key?/2
+  def put_new_lazy(l: list[tuple[atom, v]], k: atom, f: fn[v]): list[tuple[atom, v]] do
+    if Keyword.has_key?(l, k) do l else [{k, f()}] ++ l end
+  end
+#: keys/1
+  def keys(l: list[tuple[atom, v]]): list[atom] do
+    Enum.map(l, fn p -> elem(p, 0) end)
+  end
+#: values/1
+  def values(l: list[tuple[atom, v]]): list[v] do
+    Enum.map(l, fn p -> elem(p, 1) end)
+  end
+#: merge/2
+  def merge(a: list[tuple[atom, v]], b: list[tuple[atom, v]]): list[tuple[atom, v]] do
+    ks = Enum.map(b, fn p -> elem(p, 0) end)
+    Enum.filter(a, fn p -> not (elem(p, 0) in ks) end) ++ b
+  end
+#: merge/3
+  def merge(a: list[tuple[atom, v]], b: list[tuple[atom, v]], f: fn[atom, v, v, v]): list[tuple[atom, v]] do
+    Enum.reduce(b, a, fn e, o ->
+      k = elem(e, 0)
+      if Enum.filter(o, fn p -> elem(p, 0) == k end) == [] do o ++ [e] else
+        Enum.map(o, fn p -> if elem(p, 0) == k do {k, f(k, elem(p, 1), elem(e, 1))} else p end end)
+      end
+    end)
+  end
+#: take/2
+  def take(l: list[tuple[atom, v]], ks: list[atom]): list[tuple[atom, v]] do
+    Enum.filter(l, fn p -> elem(p, 0) in ks end)
+  end
+#: drop/2
+  def drop(l: list[tuple[atom, v]], ks: list[atom]): list[tuple[atom, v]] do
+    Enum.filter(l, fn p -> not (elem(p, 0) in ks) end)
+  end
+#: split/2
+  def split(l: list[tuple[atom, v]], ks: list[atom]): tuple[list[tuple[atom, v]], list[tuple[atom, v]]] do
+    {Enum.filter(l, fn p -> elem(p, 0) in ks end), Enum.filter(l, fn p -> not (elem(p, 0) in ks) end)}
+  end
+#: update/4 needs get/2 Enum.take_while/2
+  def update(l: list[tuple[atom, v]], k: atom, d: v, f: fn[v, v]): list[tuple[atom, v]] do
+    case Keyword.get(l, k) do
+      none -> l ++ [{k, d}]
+      some(x) ->
+        at = length(Enum.take_while(l, fn p -> elem(p, 0) != k end))
+        Enum.take(l, at) ++ [{k, f(x)}] ++ Enum.drop(l, at + 1)
+    end
+  end
+#: pop/2 needs get/2
+  def pop(l: list[tuple[atom, v]], k: atom): tuple[option[v], list[tuple[atom, v]]] do
+    {Keyword.get(l, k), Enum.filter(l, fn p -> elem(p, 0) != k end)}
+  end
+#: pop_lazy/3 needs get/2
+  def pop_lazy(l: list[tuple[atom, v]], k: atom, f: fn[v]): tuple[v, list[tuple[atom, v]]] do
+    x = case Keyword.get(l, k) do
+      some(x) -> x
+      none -> f()
+    end
+    {x, Enum.filter(l, fn p -> elem(p, 0) != k end)}
+  end
+#: to_map/1
+  def to_map(l: list[tuple[atom, v]]): map[atom, v] do
+    Enum.reduce(Enum.reverse(l), %{}, fn p, m -> Map.put(m, elem(p, 0), elem(p, 1)) end)
+  end
+#: validate/2
+  def validate(l: list[tuple[atom, v]], ks: list[atom]): result[list[tuple[atom, v]], list[atom]] do
+    start: list[atom] = []
+    bad = Enum.o_turn(Enum.reduce(l, start, fn p, u -> if elem(p, 0) in ks or elem(p, 0) in u do u else [elem(p, 0) | u] end end))
+    if bad == [] do ok(l) else error(bad) end
+  end
+#: validate/2 form 2
+  def validate(l: list[tuple[atom, v]], a: list[tuple[atom, v]]): result[list[tuple[atom, v]], list[atom]] do
+    ks = Enum.map(a, fn p -> elem(p, 0) end)
+    has = Enum.map(l, fn p -> elem(p, 0) end)
+    start: list[atom] = []
+    bad = Enum.o_turn(Enum.reduce(has, start, fn k, u -> if k in ks or k in u do u else [k | u] end end))
+    if bad == [] do ok(l ++ Enum.filter(a, fn p -> not (elem(p, 0) in has) end)) else error(bad) end
+  end

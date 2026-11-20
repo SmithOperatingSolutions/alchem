@@ -1,0 +1,434 @@
+defmodule NativeLexer do
+  # Preliminary token categories: unknown=0, space=1, identifier-start=2,
+  # digit=3, plus=4, minus=5, star=6, left-paren=7, right-paren=8, EOF=9.
+  def is_digit(value: integer): integer do
+    if value < 48 do
+      0
+    else
+      if value <= 57 do 1 else 0 end
+    end
+  end
+
+  def is_letter(value: integer): integer do
+    if value < 65 do
+      0
+    else
+      if value <= 90 do
+        1
+      else
+        if value < 97 do 0 else if value <= 122 do 1 else 0 end end
+      end
+    end
+  end
+
+  def is_space(value: integer): integer do
+    if value == 32 do 1 else
+      if value == 9 do 1 else
+        if value == 10 do 1 else
+          if value == 13 do 1 else 0 end
+        end
+      end
+    end
+  end
+
+  def punctuation(value: integer): integer do
+    if value == 43 do 4 else
+      if value == 45 do 5 else
+        if value == 42 do 6 else
+          if value == 40 do 7 else
+            if value == 41 do 8 else 0 end
+          end
+        end
+      end
+    end
+  end
+
+  def classify_ascii(value: integer): integer do
+    if value == -1 do 9 else
+      if is_space(value) == 1 do 1 else
+        if is_letter(value) == 1 do 2 else
+          if value == 95 do 2 else
+            if is_digit(value) == 1 do 3 else punctuation(value) end
+          end
+        end
+      end
+    end
+  end
+
+  def match_kind(actual: integer, expected: integer): integer do
+    if actual == expected do 1 else 0 end
+  end
+
+  # Iteration through recursive calls over integer ordinals.
+  def count_digits(first: integer, last: integer): integer do
+    if first > last do
+      0
+    else
+      is_digit(first) + count_digits(first + 1, last)
+    end
+  end
+
+  # Byte cursors use -1 as EOF. Cursor indices are nonnegative.
+  def byte_at(values: bytes, index: integer): integer do
+    if index < 0 do -1 else Enum.at(values, index, -1) end
+  end
+
+  def count_buffer_digits(values: bytes, index: integer): integer do
+    if index < 0 do 0 else
+      if index >= Enum.count(values) do 0 else
+        is_digit(byte_at(values, index)) + count_buffer_digits(values, index + 1)
+      end
+    end
+  end
+
+  def skip_spaces(values: bytes, index: integer): integer do
+    if is_space(byte_at(values, index)) == 1 do
+      skip_spaces(values, index + 1)
+    else
+      index
+    end
+  end
+
+  def scan_digits(values: bytes, index: integer): integer do
+    if is_digit(byte_at(values, index)) == 1 do
+      scan_digits(values, index + 1)
+    else
+      index
+    end
+  end
+
+  def is_identifier_continue(value: integer): integer do
+    if is_digit(value) == 1 do 1 else
+      if classify_ascii(value) == 2 do 1 else if value == 127 do 1 else 0 end end
+    end
+  end
+
+  def scan_identifier(values: bytes, index: integer): integer do
+    if is_identifier_continue(byte_at(values, index)) == 1 do
+      scan_identifier(values, index + 1)
+    else
+      index
+    end
+  end
+
+  # Public token requests bound input before entering recursive scans.
+  def token_start(values: bytes, cursor: integer): integer do
+    size = Enum.count(values)
+    if size > 128 do -1 else
+      if cursor < 0 do -1 else
+        if cursor > size do -1 else skip_spaces(values, cursor) end
+      end
+    end
+  end
+
+  def token_kind(values: bytes, cursor: integer): integer do
+    start = token_start(values, cursor)
+    if start < 0 do 0 else classify_ascii(byte_at(values, start)) end
+  end
+
+  def token_end(values: bytes, cursor: integer): integer do
+    start = token_start(values, cursor)
+    kind = token_kind(values, cursor)
+    if start < 0 do -1 else
+      if kind == 9 do start else
+        if kind == 2 do scan_identifier(values, start) else
+          if kind == 3 do scan_digits(values, start) else start + 1 end
+        end
+      end
+    end
+  end
+
+  def token_error(values: bytes, cursor: integer): integer do
+    if Enum.count(values) > 128 do 3 else
+      if cursor < 0 do 2 else
+        if cursor > Enum.count(values) do 2 else
+          if token_kind(values, cursor) == 0 do 1 else 0 end
+        end
+      end
+    end
+  end
+
+  def token_count(values: bytes, cursor: integer): integer do
+    if token_error(values, cursor) != 0 do -1 else
+      if token_kind(values, cursor) == 9 do 0 else
+        remaining = token_count(values, token_end(values, cursor))
+        if remaining < 0 do -1 else remaining + 1 end
+      end
+    end
+  end
+
+  def first_error(values: bytes, cursor: integer): integer do
+    error = token_error(values, cursor)
+    if error == 3 do -3 else
+      if error == 2 do -2 else
+        if error == 1 do token_start(values, cursor) else
+          if token_kind(values, cursor) == 9 do -1 else
+            first_error(values, token_end(values, cursor))
+          end
+        end
+      end
+    end
+  end
+
+  # Conversion uses a nonpositive accumulator, including minimum signed i64.
+  def decimal_status(values: bytes, cursor: integer, stop: integer, accumulator: integer, last: integer): integer do
+    if cursor == stop do 0 else
+      digit = byte_at(values, cursor) - 48
+      if digit < 0 do 1 else
+        if digit > 9 do 1 else
+          if accumulator < -922337203685477580 do 4 else
+            if accumulator == -922337203685477580 do
+              if digit > last do 4 else
+                decimal_status(values, cursor + 1, stop, accumulator * 10 - digit, last)
+              end
+            else
+              decimal_status(values, cursor + 1, stop, accumulator * 10 - digit, last)
+            end
+          end
+        end
+      end
+    end
+  end
+
+  def decimal_error(values: bytes, start: integer, stop: integer, negative: integer): integer do
+    if Enum.count(values) > 128 do 3 else
+      if negative < 0 do 2 else
+        if negative > 1 do 2 else
+          if start < 0 do 2 else
+            if start >= stop do 2 else
+              if stop > Enum.count(values) do 2 else
+                last = if negative == 1 do 8 else 7 end
+                decimal_status(values, start, stop, 0, last)
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  # Internal value pass: public entrypoints validate the entire span first.
+  def decimal_digits(values: bytes, cursor: integer, stop: integer, accumulator: integer): integer do
+    if cursor == stop do accumulator else
+      decimal_digits(values, cursor + 1, stop, accumulator * 10 - (byte_at(values, cursor) - 48))
+    end
+  end
+
+  def decimal_or(values: bytes, start: integer, stop: integer, negative: integer, fallback: integer): integer do
+    if decimal_error(values, start, stop, negative) != 0 do fallback else
+      result = decimal_digits(values, start, stop, 0)
+      if negative == 1 do result else -result end
+    end
+  end
+
+  def integer_error(values: bytes, cursor: integer, negative: integer): integer do
+    error = token_error(values, cursor)
+    if error != 0 do error else
+      if token_kind(values, cursor) != 3 do 1 else
+        decimal_error(values, token_start(values, cursor), token_end(values, cursor), negative)
+      end
+    end
+  end
+
+  def integer_or(values: bytes, cursor: integer, negative: integer, fallback: integer): integer do
+    if integer_error(values, cursor, negative) != 0 do fallback else
+      decimal_or(values, token_start(values, cursor), token_end(values, cursor), negative, fallback)
+    end
+  end
+
+  # End-position pass; negative results encode parser errors.
+  def parse_unary_end(values: bytes, cursor: integer, depth: integer): integer do
+    kind = token_kind(values, cursor)
+    if kind == 4 do parse_sign_end(values, cursor, depth, 0) else
+      if kind == 5 do parse_sign_end(values, cursor, depth, 1) else
+        if kind == 3 do
+          if integer_error(values, cursor, 0) == 0 do token_end(values, cursor) else -4 end
+        else
+          if kind == 7 do
+            if depth >= 16 do -5 else
+              inside = parse_sum_end(values, token_end(values, cursor), depth + 1)
+              if inside < 0 do inside else
+                if token_kind(values, inside) == 8 do token_end(values, inside) else -2 end
+              end
+            end
+          else -2 end
+        end
+      end
+    end
+  end
+
+  def parse_sign_end(values: bytes, cursor: integer, depth: integer, negative: integer): integer do
+    if depth >= 16 do -5 else
+      operand = token_end(values, cursor)
+      if token_kind(values, operand) == 3 do
+        if integer_error(values, operand, negative) == 0 do token_end(values, operand) else -4 end
+      else
+        parse_unary_end(values, operand, depth + 1)
+      end
+    end
+  end
+
+  def parse_product_end(values: bytes, cursor: integer, depth: integer): integer do
+    operand = parse_unary_end(values, cursor, depth)
+    if operand < 0 do operand else parse_product_tail(values, operand, depth) end
+  end
+
+  def parse_product_tail(values: bytes, cursor: integer, depth: integer): integer do
+    if token_kind(values, cursor) == 6 do
+      operand = parse_unary_end(values, token_end(values, cursor), depth)
+      if operand < 0 do operand else parse_product_tail(values, operand, depth) end
+    else cursor end
+  end
+
+  def parse_sum_end(values: bytes, cursor: integer, depth: integer): integer do
+    operand = parse_product_end(values, cursor, depth)
+    if operand < 0 do operand else parse_sum_tail(values, operand, depth) end
+  end
+
+  def parse_sum_tail(values: bytes, cursor: integer, depth: integer): integer do
+    kind = token_kind(values, cursor)
+    if kind == 4 do parse_sum_operand(values, cursor, depth) else
+      if kind == 5 do parse_sum_operand(values, cursor, depth) else cursor end
+    end
+  end
+
+  def parse_sum_operand(values: bytes, cursor: integer, depth: integer): integer do
+    operand = parse_product_end(values, token_end(values, cursor), depth)
+    if operand < 0 do operand else parse_sum_tail(values, operand, depth) end
+  end
+
+  def expression_error(values: bytes): integer do
+    if Enum.count(values) > 128 do 3 else
+      if first_error(values, 0) >= 0 do 1 else
+        stop = parse_sum_end(values, token_start(values, 0), 0)
+        if stop < 0 do -stop else
+          if token_kind(values, stop) == 9 do 0 else 2 end
+        end
+      end
+    end
+  end
+
+  # The evaluator's arithmetic wraps at 64 bits whatever the language it is
+  # compiled as does on overflow: no step here leaves the signed range.
+  def wrap_add(a: integer, b: integer): integer do
+    if b > 0 do
+      if a > 9223372036854775807 - b do (a + -9223372036854775808) + (b + -9223372036854775808) else a + b end
+    else
+      if b == 0 do a else
+        if a < -9223372036854775808 - b do (a - -9223372036854775808) + (b - -9223372036854775808) else a + b end
+      end
+    end
+  end
+
+  def wrap_negate(a: integer): integer do
+    if a == -9223372036854775808 do a else -a end
+  end
+
+  def wrap_subtract(a: integer, b: integer): integer do
+    if b == -9223372036854775808 do wrap_add(wrap_add(a, 9223372036854775807), 1) else wrap_add(a, -b) end
+  end
+
+  def wrap_power(index: integer): integer do
+    if index == 0 do 1 else wrap_power(index - 1) * 2 end
+  end
+
+  def wrap_shift(a: integer, count: integer): integer do
+    if count == 0 do a else wrap_shift(wrap_add(a, a), count - 1) end
+  end
+
+  # a times the magnitude left, whose bits from index down are still to add.
+  def wrap_times(a: integer, left: integer, index: integer, sum: integer): integer do
+    if index < 0 do sum else
+      if left >= wrap_power(index) do wrap_times(a, left - wrap_power(index), index - 1, wrap_add(sum, wrap_shift(a, index))) else
+        wrap_times(a, left, index - 1, sum)
+      end
+    end
+  end
+
+  # The lowest bit of a magnitude.
+  def wrap_odd(left: integer, index: integer): integer do
+    if index == 0 do left else
+      if left >= wrap_power(index) do wrap_odd(left - wrap_power(index), index - 1) else wrap_odd(left, index - 1) end
+    end
+  end
+
+  def wrap_multiply(a: integer, b: integer): integer do
+    if b == -9223372036854775808 do
+      if a == b do 0 else if wrap_odd(if a < 0 do -a else a end, 62) == 1 do b else 0 end end
+    else
+      if b < 0 do wrap_negate(wrap_times(a, -b, 62, 0)) else wrap_times(a, b, 62, 0) end
+    end
+  end
+
+  # Value pass; expression_or validates syntax and literals before evaluation.
+  def eval_unary(values: bytes, cursor: integer, depth: integer): integer do
+    kind = token_kind(values, cursor)
+    if kind == 4 do eval_sign(values, cursor, depth, 0) else
+      if kind == 5 do eval_sign(values, cursor, depth, 1) else
+        if kind == 3 do integer_or(values, cursor, 0, 0) else
+          eval_sum(values, token_end(values, cursor), depth + 1)
+        end
+      end
+    end
+  end
+
+  def eval_sign(values: bytes, cursor: integer, depth: integer, negative: integer): integer do
+    operand = token_end(values, cursor)
+    if token_kind(values, operand) == 3 do integer_or(values, operand, negative, 0) else
+      value = eval_unary(values, operand, depth + 1)
+      if negative == 1 do wrap_negate(value) else value end
+    end
+  end
+
+  def eval_product(values: bytes, cursor: integer, depth: integer): integer do
+    value = eval_unary(values, cursor, depth)
+    stop = parse_unary_end(values, cursor, depth)
+    eval_product_tail(values, stop, depth, value)
+  end
+
+  def eval_product_tail(values: bytes, cursor: integer, depth: integer, accumulator: integer): integer do
+    if token_kind(values, cursor) == 6 do
+      operand = token_end(values, cursor)
+      value = eval_unary(values, operand, depth)
+      stop = parse_unary_end(values, operand, depth)
+      eval_product_tail(values, stop, depth, wrap_multiply(accumulator, value))
+    else accumulator end
+  end
+
+  def eval_sum(values: bytes, cursor: integer, depth: integer): integer do
+    value = eval_product(values, cursor, depth)
+    stop = parse_product_end(values, cursor, depth)
+    eval_sum_tail(values, stop, depth, value)
+  end
+
+  def eval_sum_tail(values: bytes, cursor: integer, depth: integer, accumulator: integer): integer do
+    kind = token_kind(values, cursor)
+    if kind == 4 do eval_sum_operand(values, cursor, depth, accumulator, 0) else
+      if kind == 5 do eval_sum_operand(values, cursor, depth, accumulator, 1) else accumulator end
+    end
+  end
+
+  def eval_sum_operand(values: bytes, cursor: integer, depth: integer, accumulator: integer, subtract: integer): integer do
+    operand = token_end(values, cursor)
+    value = eval_product(values, operand, depth)
+    stop = parse_product_end(values, operand, depth)
+    result = if subtract == 1 do wrap_subtract(accumulator, value) else wrap_add(accumulator, value) end
+    eval_sum_tail(values, stop, depth, result)
+  end
+
+  def expression_or(values: bytes, fallback: integer): integer do
+    if expression_error(values) != 0 do fallback else eval_sum(values, token_start(values, 0), 0) end
+  end
+
+  # Native smoke test; the shared harness replaces this main for exhaustive tests.
+  def main() do
+    checks = match_kind(classify_ascii(65), 2) * match_kind(classify_ascii(48), 3) * match_kind(classify_ascii(43), 4) * match_kind(count_digits(0, 127), 10)
+    values = b[32, 9, 10, 48, 49, 43, 0, 255, 57]
+    buffer_checks = match_kind(count_buffer_digits(values, 0), 3) * match_kind(skip_spaces(values, 0), 3) * match_kind(scan_digits(values, 3), 5) * match_kind(byte_at(values, 9), -1) * match_kind(byte_at(values, -1), -1)
+    source = b[32, 97, 95, 49, 32, 43, 32, 48, 48, 52, 50]
+    token_checks = match_kind(token_start(source, 0), 1) * match_kind(token_kind(source, 0), 2) * match_kind(token_end(source, 0), 4) * match_kind(token_count(source, 0), 3) * match_kind(first_error(source, 0), -1) * match_kind(first_error(b[97, 0], 0), 1)
+    integer_checks = match_kind(integer_or(b[52,50], 0, 0, 7), 42) * match_kind(decimal_error(b[57,50,50,51,51,55,50,48,51,54,56,53,52,55,55,53,56,48,56], 0, 19, 0), 4)
+    expression_checks = match_kind(expression_or(b[54,42,55], 7), 42) * match_kind(expression_error(b[49,43]), 2)
+    if checks * buffer_checks * token_checks * integer_checks * expression_checks == 1 do System.halt(0) else System.halt(1) end
+  end
+end

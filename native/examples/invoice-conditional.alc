@@ -1,0 +1,14 @@
+defmodule Invoice do
+  def discounted(total: integer): integer do
+    if total >= 50 do
+      total - 18
+    else
+      total
+    end
+  end
+
+  def main() do
+    amount = discounted(12 * 5)
+    System.halt(amount)
+  end
+end

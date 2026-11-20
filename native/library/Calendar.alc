@@ -1,0 +1,122 @@
+# Calendar: strftime, after the pinned runtime. library/Date.alc has the
+# functions named with two letters and says how these files are written.
+#: strftime/2 needs cf/2
+  def strftime(d: Date, f: string): string do
+    cf([d.year, d.month, d.day, 0, 0, 0, 0], [f, "", "", "1"])
+  end
+#: strftime/2 form 2 needs cf/2
+  def strftime(t: Time, f: string): string do
+    Calendar.cf([1970, 1, 1, t.hour, t.minute, t.second, t.microsecond], [f, "", "", "2"])
+  end
+#: strftime/2 form 3 needs cf/2
+  def strftime(n: NaiveDateTime, f: string): string do
+    Calendar.cf([n.year, n.month, n.day, n.hour, n.minute, n.second, n.microsecond], [f, "", "", "3"])
+  end
+#: strftime/2 form 4 needs cf/2 Date.dz/2
+  def strftime(d: DateTime, f: string): string do
+    z = Date.da(d, "")
+    Calendar.cf([d.year, d.month, d.day, d.hour, d.minute, d.second, d.microsecond], [f, Date.df(d, ""), (if z == "" do "UTC" else z end), "7"])
+  end
+#: cf/2 needs Date.cm/2 Kernel.binary_part/3
+# cf: seven fields formatted with the %-directives of the first text; the
+# other three are the offset and the abbreviation of the zone and what the
+# value has: 1 a date, 2 a time, 3 both, 7 a zone as well. A directive may
+# carry a padding flag (- for none, 0 for zeros, _ for spaces) and a width.
+#
+# A list written out takes memory by the square of its length, so the
+# texts that are looked through are cut from one text: after the four
+# given come the letters of the 23 directives, the flags and the digits, an
+# empty text after each. The numbers are the fields of the moment without
+# its microseconds, then those, what the value has, and its day number.
+  def cf(f: list[integer], z: list[string]): string do
+    t = Date.cm(f, -o(f, 6))
+    p = String.split(hd(z), "%")
+    hd(p)<>zw(p, 1, t ++ [o(f, 6), String.to_integer(Enum.at(z, 3, "")), Date.cv(t, 0)], z ++ String.split("Y,y,m,d,j,q,u,H,I,M,S,a,A,b,B,p,P,z,Z,x,X,f,c,,-,0,_,,0,1,2,3,4,5,6,7,8,9,", ","))
+  end
+  defp o(f: list[integer], i: integer): integer do
+    Enum.at(f, i, 0)
+  end
+# zc: text without the start c it is known to have.
+  defp zc(p: string, c: string): string do
+    if c == "" do p else Enum.join(tl(String.split(p, c)), c) end
+  end
+# zl: where the first of the texts from i to n is that p starts with, n if
+# there is none.
+  defp zl(p: string, z: list[string], i: integer, n: integer): integer do
+    if i<n and String.starts_with?(p, Enum.at(z, i, "")) == false do zl(p, z, i+1, n) else i end
+  end
+# zn: the digits p starts with.
+  defp zn(p: string, z: list[string]): string do
+    c = Enum.at(z, zl(p, z, 32, 42), "")
+    if c == "" do "" else c<>zn(zc(p, c), z) end
+  end
+# zw: the pieces after each % of a format from piece i on, formatted: a
+# piece starts with a flag a, a width n and the directive at k, and one
+# that is empty stands before the % of %%.
+  defp zw(p: list[string], i: integer, f: list[integer], z: list[string]): string do
+    a = Enum.at(z, zl(Enum.at(p, i, ""), z, 28, 31), "")
+    n = zn(zc(Enum.at(p, i, ""), a), z)
+    r = zc(zc(Enum.at(p, i, ""), a), n)
+    k = zl(r, z, 4, 27)
+    cond do
+      i>=length(p) -> ""
+      r == "" and i+1 == length(p) -> raise("strftime format ends in the middle of a directive")
+      r == "" -> "%"<>Enum.at(p, i+1, "")<>zw(p, i+2, f, z)
+      k == 27 -> raise("strftime: unknown directive %"<>zb(binary_part(r, 0, 1)))
+      true -> zo(k-4, f, z, a, if n == "" do -1 else String.to_integer(n) end)<>zc(r, Enum.at(z, k, ""))<>zw(p, i+1, f, z)
+    end
+  end
+# zb: a byte as Go's string(byte) writes it: itself, or from 128 on the
+# character of that number, which is two bytes. Text starts with one of the
+# bytes 194 to 244 if not below 128, and n is how far past 194 it is.
+  defp zb(c: string): string do
+    n = length(Enum.filter(["\xC3", "\xC4", "\xC5", "\xC6", "\xC7", "\xC8", "\xC9", "\xCA", "\xCB", "\xCC", "\xCD", "\xCE", "\xCF", "\xD0", "\xD1", "\xD2", "\xD3", "\xD4", "\xD5", "\xD6", "\xD7", "\xD8", "\xD9", "\xDA", "\xDB", "\xDC", "\xDD", "\xDE", "\xDF", "\xE0", "\xE1", "\xE2", "\xE3", "\xE4", "\xE5", "\xE6", "\xE7", "\xE8", "\xE9", "\xEA", "\xEB", "\xEC", "\xED", "\xEE", "\xEF", "\xF0", "\xF1", "\xF2", "\xF3", "\xF4"], fn a -> c>=a end))
+    if c<"\x80" do c else "\xC3"<>Enum.at(["\x82", "\x83", "\x84", "\x85", "\x86", "\x87", "\x88", "\x89", "\x8A", "\x8B", "\x8C", "\x8D", "\x8E", "\x8F", "\x90", "\x91", "\x92", "\x93", "\x94", "\x95", "\x96", "\x97", "\x98", "\x99", "\x9A", "\x9B", "\x9C", "\x9D", "\x9E", "\x9F", "\xA0", "\xA1", "\xA2", "\xA3", "\xA4", "\xA5", "\xA6", "\xA7", "\xA8", "\xA9", "\xAA", "\xAB", "\xAC", "\xAD", "\xAE", "\xAF", "\xB0", "\xB1", "\xB2", "\xB3", "\xB4"], n, "") end
+  end
+# zo: directive k with its flag a and width w: one of 11 numbers, of 8
+# texts or of 4 that take no padding. e is what the value must have: 1 a
+# date, 2 a time, 4 a zone, 3 a date and a time.
+  defp zo(k: integer, f: list[integer], z: list[string], a: string, w: integer): string do
+    e = String.to_integer(String.slice("11111112222111122441223", k, 1))
+    if (if e == 3 do o(f, 8)<3 else o(f, 8)/e%2 == 0 end) do raise("strftime: %"<>Enum.at(z, k+4, "")<>" needs a value with a "<>Enum.at(String.split("date,time,date and time,time zone", ","), e-1, "")) end
+    cond do
+      k<11 -> String.pad_leading(Integer.to_string(zv(k, f)), (if a == "-" do 0 else if w<0 do String.to_integer(String.slice("02223112222", k, 1)) else w end end), if a == "_" do " " else "0" end)
+      k<19 -> String.pad_leading(zx(k, f, z), (if a == "-" do 0 else w end), " ")
+      k == 19 -> zd(f)
+      k == 20 -> zt(f)
+      k == 21 -> if o(f, 7) == 0 do "0" else String.slice(Date.ct([0, 0, 0, o(f, 7)], ""), 9, 9) end
+      true -> zd(f)<>" "<>zt(f)
+    end
+  end
+# zv: the number of directive k: Y y m d j q u H I M S.
+  defp zv(k: integer, f: list[integer]): integer do
+    case k do
+      0 -> o(f, 0)
+      1 -> o(f, 0)%100
+      2 -> o(f, 1)
+      3 -> o(f, 2)
+      4 -> Date.cj(o(f, 9), 0)
+      5 -> (o(f, 1)-1)/3+1
+      6 -> (o(f, 9)+2)%7+1
+      7 -> o(f, 3)
+      8 -> (o(f, 3)+11)%12+1
+      9 -> o(f, 4)
+      _ -> o(f, 5)
+    end
+  end
+# zx: the text of directive k: a A b B p P z Z.
+  defp zx(k: integer, f: list[integer], z: list[string]): string do
+    j = Enum.at(String.split("Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday,January,February,March,April,May,June,July,August,September,October,November,December,AM,PM,am,pm", ","), (if k<13 do (o(f, 9)+2)%7 else if k<15 do o(f, 1)+6 else k*2-11+o(f, 3)/12 end end), "")
+    cond do
+      k>16 -> Enum.at(z, k-16, "")
+      k<15 and k%2 == 1 -> String.slice(j, 0, 3)
+      true -> j
+    end
+  end
+# zd: the date as %x writes it. zt: the time as %X writes it.
+  defp zd(f: list[integer]): string do
+    (if o(f, 0)<0 do "-" else "" end)<>Date.ct([abs(o(f, 0)), o(f, 1), o(f, 2)], "")
+  end
+  defp zt(f: list[integer]): string do
+    Date.ct([o(f, 3), o(f, 4), o(f, 5), 0], "")
+  end

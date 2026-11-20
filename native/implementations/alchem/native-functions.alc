@@ -1,0 +1,891 @@
+defmodule NativeFunctions do
+  # Function values are pointers to records whose first word is the code address,
+  # followed by captured values. Callers pass the record in R10; a function-table
+  # slot is such a record with no captures, so &name needs no allocation.
+  # fn(x: integer, y: string): integer do body end
+  def nf_lambda(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    params = nc_expect(source,nc_end(source,pos),b[40])
+    shape = if params < 0 do b[] else if nc_word(source,params,b[41]) == 1 do Enum.concat(nc_u24(nc_end(source,params)),b[0,0,0]) else nc_parameters(source,params,0) end end
+    if nc_pos(shape) < 0 do b[] else
+      count = nc_cursor(shape,3)
+      declared = nc_type(source,nc_expect(source,nc_pos(shape),b[58]))
+      owner = nc_owner(table,nc_read(env,0))
+      body = nc_expect(source,nc_pos(declared),b[100,111])
+      inner = if body < 0 do b[] else nc_env(source,params,nc_u16(nc_read(env,0)),count,table) end
+      if Enum.count(inner) == 0 do b[] else
+        nf_finish(source,env,table,depth,nc_value(body,inner,nd_resolve(source,table,owner,nc_kind(declared))),nl_parameter_words(source,params,count,table,owner))
+      end
+    end
+  end
+  # spec: body position, parameter environment and declared result type. An
+  # inferred lambda has declared type 9 (unknown), then a byte for its form: 0 or none for
+  # fn ... end, 1 for the capture &name(...), 2 for the capture &(...), 3 for
+  # the text made for a library function by arity.
+  def nf_finish(source: bytes, env: bytes, table: bytes, depth: integer, spec: bytes, words: bytes): bytes do
+    captures = nf_captures(env,2)
+    scope = nj_scoped(nf_capture_env(source,env,nc_code(spec),captures,0),spec)
+    form = if nc_tag(spec) == 9 do Enum.at(nc_kind(spec),1,0) else 0 end
+    # fn p, q -> ... holds the position of its parameters: patterns among them
+    # are matched before the body.
+    shaped = if Enum.count(scope) == 0 do b[] else if nc_tag(spec) != 9 do np_pack(0,b[],scope) else if nc_cursor(nc_kind(spec),2) == 0 do np_pack(0,b[],scope) else np_lambda(source,nc_cursor(nc_kind(spec),2),scope,table,0) end end end
+    inner = if nc_pos(shaped) < 0 do b[] else
+      if form == 0 do nj_lambda_body(source,nc_pos(spec),gm_scope(source,table,if nc_tag(spec) == 9 do nc_cursor(nc_kind(spec),2) else 0 end,np_env(shaped)),table,depth+1) else nc_expression(source,nc_pos(spec),np_env(shaped),table,depth+1) end
+    end
+    # A body that ends in a statement gives the empty tuple.
+    unit = if nc_tag(inner) == 12 do 1 else 0 end
+    begin = nc_start(source,nc_pos(spec))
+    enter = if form == 0 do tl_fn_enter(source,env,table,begin) else nz_enter_plain(if nc_cursor(table,21) == 0 do begin else nc_cursor(table,21) end) end
+    value = if nc_pos(inner) < 0 do b[] else nc_value(nc_pos(inner),nc_join(nc_join(enter,zf_cover_fn(source,table,env,nc_join(b[form],nc_u24(begin),nc_u24(if nc_tag(spec) != 9 do 0 else nc_cursor(nc_kind(spec),2) end)),Enum.count(np_tree(shaped))),np_tree(shaped)),nc_code(inner),Enum.concat(if unit == 1 do nc_join(nc_allocate_emit(0),b[72,199,2,0,0,0,0],b[72,137,208]) else b[] end,if form == 0 do tl_fn_leave(source,env,table) else b[] end)),if unit == 1 do b[5,0] else nc_kind(inner) end) end
+    gm_shed(source,env,if form != 0 do 0 else if nc_tag(spec) == 9 do nc_cursor(nc_kind(spec),2) else nc_pos(spec) end end,nf_seal(source,spec,if nw_marked(inner) == 1 do nw_mark(value) else value end,words,gm_held(env,2),form))
+  end
+  def nf_seal(source: bytes, spec: bytes, value: bytes, words: bytes, captures: bytes, form: integer): bytes do
+    count = nc_env_count(nc_code(spec),2)
+    stop = nc_pos(value)
+    after = if form == 0 do nc_expect(source,stop,b[101,110,100]) else if form == 2 do nc_expect(source,stop,b[41]) else stop end end
+    # A capture has as many parameters as its highest placeholder.
+    used = if (form-0)*(form-3) == 0 do 1 else nf_uses(source,nc_pos(spec),stop,count) end
+    # An inferred lambda takes its result type from its body; one whose every
+    # way out raises never gives a value, and its result is the empty tuple.
+    # Where a result type is expected the body is held to it, so a body that
+    # is none, [] or ok(x) has its whole type.
+    asked = if nc_tag(spec) == 9 do nc_slice(nc_kind(spec),5,Enum.count(nc_kind(spec))) else b[] end
+    result = if nc_tag(spec) == 9 do if Enum.count(asked) > 0 do asked else if nt_same(nc_kind(value),b[9]) == 1 do b[5,0] else nc_kind(value) end end else nc_kind(spec) end
+    kind = nt_function(Enum.concat(words,nt_cell(result)),count)
+    # A body that needed a type from its context has none to take when no result type is expected.
+    lost = if nc_tag(spec) != 9 do 0 else if Enum.count(asked) > 0 do 0 else nw_marked(value) end end
+    if after < 0 do b[] else if used+(1-lost) < 2 do b[] else if stop < 0 do b[] else
+      if no_compatible(result,nc_kind(value)) == 0 do b[] else nc_value(after,nf_code(count,captures,nc_code(value)),kind) end
+    end end end
+  end
+  # fn x, y -> body end: 1 when the fn at pos is this unannotated form. fn( is the
+  # annotated form and fn[ a type.
+  def nf_untyped(source: bytes, pos: integer): integer do
+    if nc_word(source,pos,b[102,110]) != 1 do 0 else
+      next = nc_end(source,nc_start(source,pos))
+      # fn[integer, integer] is the function type; fn [head | tail] -> ... is a
+      # lambda whose first parameter is a list pattern: its parameters lead to
+      # an arrow.
+      if nc_word(source,next,b[40]) == 1 do 0 else if nc_word(source,next,b[91]) == 0 do 1 else nf_arrow_after(source,np_skip(source,next),250) end end
+    end
+  end
+  # 1 when the parameters from pos on (each after a comma) end in an arrow.
+  def nf_arrow_after(source: bytes, pos: integer, budget: integer): integer do
+    if pos < 0 do 0 else if nc_word(source,pos,b[45,62]) == 1 do 1 else
+      if budget == 0 do 0 else if nc_word(source,pos,b[44]) == 0 do 0 else nf_arrow_after(source,np_skip(source,nc_end(source,pos)),budget-1) end end
+    end end
+  end
+  # An argument whose types come from its callee: fn x -> ... end or a capture.
+  # 0 for any other expression, else the position after it (-1 when malformed).
+  # The packet records such an argument as kind 11 with its source position and
+  # no code until the callee's parameter types are known.
+  def nf_deferred(source: bytes, pos: integer, env: bytes, table: bytes): integer do
+    start = nc_start(source,pos)
+    if nf_untyped(source,start) == 1 do
+      close = nc_body_end(source,nc_end(source,start),16777216)
+      if close < 0 do -1 else nc_end(source,close) end
+    else
+      if nf_capture_form(source,start) == 0 do if nc_word(source,start,b[38]) != 1 do 0 else nc_pos(nf_library_form(source,start,env,table))+1 end else if byte_at(source,start+1) == 40 do np_close(source,start+1,0,16777216) else nc_span(source,nc_span_state(start,0,0,0,0),16777216) end end
+    end
+  end
+  # &name/N or &Module.name/N at pos where the program has no such function or
+  # module: a library function by arity. The position after it, with the text
+  # &name or &Module.name as code and N as kind; b[] for anything else.
+  def nf_library_form(source: bytes, pos: integer, env: bytes, table: bytes): bytes do
+    name = nc_start(source,nc_end(source,pos))
+    dotted = nc_word(source,nc_end(source,name),b[46])
+    # The function's name follows its module names: IO.ANSI.red.
+    last = sg_referred(source,pos)
+    slash = nc_end(source,last)
+    given = if nc_word(source,slash,b[47]) != 1 do -1 else nf_index(source,nc_end(source,slash)) end
+    known = nj_aimed(source,table,nf_target(source,name,env,table),given)
+    # A generic function is such a capture too, with or without its arity: each
+    # use settles its types. So is a function of several forms: the use says
+    # which form.
+    generic = if known < 0 do 0 else if nj_formed(source,table,known) == 1 do 1 else nu_generic(source,table,known) end end
+    arity = if given < 0 do if generic == 1 do nc_argc(table,known) else -1 end else given end
+    stop = if given < 0 do slash else nc_end(source,nc_end(source,slash)) end
+    plain = if known < 0 do 0 else 1-generic end
+    if nc_word(source,pos,b[38]) != 1 do b[] else if arity < 0 do b[] else if plain == 1 do b[] else
+      if classify_ascii(byte_at(source,name))*classify_ascii(byte_at(source,last)) != 4 do b[] else if sg_unknown(source,name,dotted,known) == 1 do b[] else
+        text = sg_dotted(source,name,last)
+        nc_value(stop-1,Enum.concat(b[38],text),b[arity])
+      end end
+    end end end
+  end
+  # The function that name or Module.name at pos refers to, for a function of
+  # the module or a public one of a module it imports directly; -1 otherwise.
+  def nf_target(source: bytes, pos: integer, env: bytes, table: bytes): integer do
+    owner = nc_owner(table,nc_read(env,0))
+    stop = nc_end(source,pos)
+    home = nc_find(source,pos,table,-1)
+    name = nc_start(source,nc_end(source,stop))
+    if nc_word(source,stop,b[46]) != 1 do nc_find(source,pos,table,owner) else
+      target = if home < 0 do -1 else if nc_imported(source,table,owner,home) == 0 do -1 else nc_find(source,name,table,home) end end
+      if target < 0 do -1 else if home == owner do target else if Enum.at(table,target*27+16,0) != 0 do -1 else target end end end
+    end
+  end
+  # "&1,&2" for count placeholders.
+  def nf_holes(count: integer, index: integer): bytes do
+    if index >= count do b[] else
+      Enum.concat(if index == 0 do b[38,49] else b[44,38,49+index] end,nf_holes(count,index+1))
+    end
+  end
+  # A library function by arity is the capture &name(&1, ..., &N): compiled from
+  # that text, which names nothing of the enclosing function.
+  def nf_library(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, words: bytes): bytes do
+    target = nf_target(source,nc_start(source,nc_end(source,pos)),env,table)
+    built = if target >= 0 do b[] else nf_library_text(source,pos,env,table,depth,words) end
+    # A function the compiler has no code of its own for is one written in Alchem.
+    if target >= 0 do nf_generic(source,pos,env,table,words,target) else if nc_pos(built) >= 0 do built else sg_reference(source,pos,env,table,words) end end
+  end
+  # &name/N for a generic function of the module: a function value that calls
+  # it with the types this use settles, and the comparators they need.
+  def nf_generic(source: bytes, pos: integer, env: bytes, table: bytes, words: bytes, target: integer): bytes do
+    form = nf_library_form(source,pos,env,table)
+    count = nt_items(words,0)
+    captures = nf_captures(env,2)
+    scope = nf_capture_env(source,env,nf_unnamed(nc_u16(nc_read(env,0)),words,0),captures,0)
+    packet = nc_arg_packet(0,count,Enum.concat(words,nt_cell(nc_zeros(count))),nf_pushes(count,0))
+    # Of a function of several forms, the form these parameter types fit.
+    fit = nj_form(source,table,nj_aimed(source,table,target,count),packet)
+    value = if nc_pos(form) < 0 do b[] else if nc_tag(form) != count do b[] else if Enum.count(scope) == 0 do b[] else if fit < 0 do b[] else nu_call(source,scope,table,0,packet,nc_u16(fit)) end end end end
+    kind = nt_function(Enum.concat(words,nt_cell(nc_kind(value))),count)
+    if nc_pos(value) < 0 do b[] else nc_value(nc_pos(form)+1,nf_code(count,gm_held(env,2),Enum.concat(nz_enter_plain(nc_start(source,pos)),nc_code(value))),kind) end
+  end
+  # Parameters without names, one per type in words.
+  def nf_unnamed(inner: bytes, words: bytes, index: integer): bytes do
+    if index == nt_items(words,0) do inner else nf_unnamed(np_hidden(inner,0,nt_item(words,index)),words,index+1) end
+  end
+  # Push parameters index.. of count from their slots.
+  def nf_pushes(count: integer, index: integer): bytes do
+    if index >= count do b[] else Enum.concat(Enum.concat(nc_slot(b[72,139,69],index),b[80]),nf_pushes(count,index+1)) end
+  end
+  def nf_library_text(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, words: bytes): bytes do
+    form = nf_library_form(source,pos,env,table)
+    count = nt_items(words,0)
+    text = nc_join(nc_code(form),Enum.concat(b[40],nf_holes(count,0)),b[41])
+    scope = nc_u16(nc_read(env,0))
+    if nc_pos(form) < 0 do b[] else if nc_tag(form) != count do b[] else if nf_nested(source,env,2) == 1 do b[] else
+      # A failure in the function names the reference, as does its closure.
+      value = nf_finish(text,jd_carried_scope(scope,env),zf_cover_text(source,nj_from(table,nc_start(source,pos)),env,nc_start(source,pos)),depth,nc_value(1,nf_placeholders(0,scope,words,0),b[9,3]),words)
+      if nc_pos(value) != Enum.count(text) do b[] else nc_value(nc_pos(form)+1,nc_code(value),nc_kind(value)) end
+    end end end
+  end
+  # &(...), &name(...), &Module.name(...) and &value.(...) are captures; &name,
+  # &name/1 and &Module.name are references.
+  def nf_capture_form(source: bytes, pos: integer): integer do
+    if nc_word(source,pos,b[38]) != 1 do 0 else nf_capture_name(source,nc_end(source,pos),4) end
+  end
+  def nf_capture_name(source: bytes, pos: integer, budget: integer): integer do
+    start = nc_start(source,pos)
+    if nc_word(source,start,b[40]) == 1 do 1 else if budget == 0 do 0 else
+      if classify_ascii(byte_at(source,start)) != 2 do 0 else
+        next = nc_end(source,start)
+        if nc_word(source,next,b[40]) == 1 do 1 else
+          if nc_word(source,next,b[46]) == 1 do nf_capture_name(source,nc_end(source,next),budget-1) else 0 end
+        end
+      end
+    end end
+  end
+  def nf_has_pending(args: bytes, index: integer): integer do
+    if nc_pos(args) < 0 do 0 else if index >= nc_arg_count(args) do 0 else
+      if nt_tag(nc_arg_kind(args,index)) == 11 do 1 else nf_has_pending(args,index+1) end
+    end end
+  end
+  # Callees that give no types reject deferred lambdas.
+  def nf_settled(args: bytes): bytes do
+    if nf_has_pending(args,0) == 1 do b[] else args end
+  end
+  # Compile a deferred argument now that its parameter types are known, and place
+  # its code where the argument stands. target: the argument index, then one
+  # type word per lambda parameter.
+  def nf_resolve(source: bytes, env: bytes, table: bytes, depth: integer, args: bytes, target: bytes): bytes do
+    index = nc_cursor(target,0)
+    pending = nc_arg_kind(args,index)
+    offset = nc_cursor(pending,4)
+    # After the index (3 bytes): a zero and the type wanted, or the types of a function's parameters and result.
+    value = if Enum.at(target,3,1) == 0 do nf_valued(source,nc_cursor(pending,1),env,table,depth,nc_slice(target,4,Enum.count(target))) else nf_inferred(source,nc_cursor(pending,1),env,table,depth,nc_slice(target,3,Enum.count(target))) end
+    after = nc_pos(value)
+    code = nc_arg_code(args)
+    # A piped value (an eighth byte: its slot and 1) stands before |>, and
+    # passes through its slot, which says that the call took it.
+    slot = nc_cursor(pending,7)-1
+    kept = if slot < 0 do b[] else Enum.concat(nc_slot(b[72,137,69],slot),nc_slot(b[72,139,69],slot)) end
+    if after < 0 do b[] else if nc_word(source,after,b[44])+nc_word(source,after,b[41])+(if slot < 0 do 0 else 1 end) == 0 do b[] else
+      kinds = nt_replace(nc_arg_types(args),index,nc_kind(value))
+      nc_arg_packet(nc_pos(args),nc_arg_count(args),kinds,nc_join(nc_slice(code,0,offset),nc_join(nc_code(value),kept,b[80]),nc_slice(code,offset,Enum.count(code))))
+    end end
+  end
+  def nf_is_pending(args: bytes): integer do
+    count = nc_arg_count(args)
+    if nc_pos(args) < 0 do 0 else if count == 0 do 0 else if nt_tag(nc_arg_kind(args,count-1)) == 11 do 1 else 0 end end end
+  end
+  # Enum.map/filter callbacks take the element; Enum.reduce takes element and accumulator.
+  # plan: the function's number, and from 256 on the position after the
+  # call's "(": what is expected of the call (a record there) gives a list
+  # that is [] its type for filter, the function its result type for map,
+  # and the accumulator its type for reduce.
+  def nf_enum_args(source: bytes, env: bytes, table: bytes, depth: integer, args: bytes, plan: integer): bytes do
+    op = nt_mod(plan,256)
+    wanted = if plan < 256 do b[] else nw_expected(env,nt_div(plan,256)-1,2) end
+    if nf_is_pending(args) == 0 do nf_settled(args) else if Enum.count(wanted) == 0 do nf_enum_typed(source,env,table,depth,args,b[op,9]) else
+      seen = if op == 12 do 1 else 0 end
+      merged = if (op-12)*(op-13) != 0 do b[] else nt_merge(nc_arg_kind(args,seen),wanted) end
+      given = if Enum.count(merged) == 0 do args else nc_arg_packet(nc_pos(args),nc_arg_count(args),nt_replace(nc_arg_types(args),seen,merged),nc_arg_code(args)) end
+      asked = if op == 12 do wanted else if op == 11 do if nt_tag(wanted) == 7 do nt_child(wanted,0) else b[9] end else b[9] end end
+      nf_enum_typed(source,env,table,depth,given,Enum.concat(b[op],asked))
+    end end
+  end
+  # plan: the function's number, then the result type asked of the callback (9: any).
+  def nf_enum_typed(source: bytes, env: bytes, table: bytes, depth: integer, args: bytes, plan: bytes): bytes do
+    op = Enum.at(plan,0,0)
+    if nf_is_pending(args) == 0 do nf_settled(args) else
+      items = nc_arg_kind(args,0)
+      element = if op == 15 do nt_cell(nl_each_item(items)) else nt_cell(nt_child(items,0)) end
+      count = nc_arg_count(args)
+      wanted = if op == 12 do 3 else if (op-11)*(op-13)*(op-15) == 0 do 2 else 0 end end
+      listed = if nt_tag(items) == 7 do 1 else if op == 15 do if nt_tag(items) == 8 do 1 else 0 end else 0 end end
+      if listed == 0 do b[] else if count != wanted do b[] else if nw_generic_reference(source,env,table,nc_arg_kind(args,count-1)) == 1 do b[] else
+        nf_settled(nf_resolve(source,env,table,depth,args,nc_join(nc_u24(count-1),if op == 12 do Enum.concat(element,nt_cell(nc_arg_kind(args,1))) else element end,nt_cell(nc_slice(plan,1,Enum.count(plan))))))
+      end end end
+    end
+  end
+  # Deferred arguments from the last down to the first, each for a parameter of
+  # type fn[...]. plan: the index to look at, then one type word per parameter.
+  # Later arguments go first, so earlier code offsets stay valid.
+  def nf_typed_all(source: bytes, env: bytes, table: bytes, depth: integer, args: bytes, plan: bytes): bytes do
+    index = nc_cursor(plan,0)
+    kind = nt_item(nc_slice(plan,3,Enum.count(plan)),index)
+    done = if nt_tag(nc_arg_kind(args,index)) != 11 do args else
+      nf_resolve(source,env,table,depth,args,nc_join(nc_u24(index),b[0],kind))
+    end
+    if nc_pos(done) < 0 do b[] else if index == 0 do done else
+      nf_typed_all(source,env,table,depth,done,Enum.concat(nc_u24(index-1),nc_slice(plan,3,Enum.count(plan))))
+    end end
+  end
+  # A lambda where type kind (fn[...]) is expected.
+  def nf_expected(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, kind: bytes): bytes do
+    # Type 30 says that a later branch is to give the type (nf_hinting):
+    # the lambda stands for a value of unknown type until then.
+    if nt_tag(kind) == 30 do nf_unknown(source,pos,env,table) else if nt_tag(kind) != 10 do b[] else nf_inferred(source,nc_start(source,pos),env,table,depth,nf_words(kind,0,nt_count(kind)+1)) end end
+  end
+  def nf_unknown(source: bytes, pos: integer, env: bytes, table: bytes): bytes do
+    stop = nf_deferred(source,nc_start(source,pos),env,table)
+    if stop <= 0 do b[] else nw_mark(nc_value(stop,b[],b[9])) end
+  end
+  # The first branch of an if, or an arm of a case or cond, that does not
+  # compile for want of a lambda's type waits for the branches after it, as
+  # the pinned compiler holds such a branch back: it is compiled with
+  # lambdas standing for values of unknown type (nf_hinting), only to find
+  # where it ends; the others then give the type, and it is compiled again
+  # expecting that. b[] inside such a trial: one is enough.
+  def nf_hinting(source: bytes, env: bytes, table: bytes): bytes do
+    if nt_tag(nf_ambient(source,env,table)) == 30 do b[] else nw_expect(env,0,b[30]) end
+  end
+  # The same for the branch that starts at pos, and only when a lambda or
+  # capture stands before the end of its form: any other failure is no
+  # want of a type, and a trial at each of 250 nested forms would cost the
+  # cube of their number.
+  def nf_trial(source: bytes, pos: integer, env: bytes, table: bytes): bytes do
+    stop = wc_scan(source,pos,0)
+    if stop < 0 do b[] else if ny_has(source,pos,stop,b[102,110])+ny_has(source,pos,stop,b[38]) == 0 do b[] else nf_hinting(source,env,table) end end
+  end
+  # env for the branch held back, given what the others made; b[] when
+  # they give no type that holds a function.
+  def nf_settling(env: bytes, others: bytes): bytes do
+    kind = nc_kind(others)
+    if nc_pos(others) < 0 do b[] else if nu_functional(kind,0) == 0 do b[] else if nu_holes(kind,0) == 1 do b[] else nw_expect(env,0,kind) end end end
+  end
+  # name = value or name: type = value; the annotation types a lambda.
+  def nf_binds(source: bytes, start: integer): integer do
+    next = nc_end(source,start)
+    nc_identifier(source,start)*(nc_word(source,next,b[61])+nc_word(source,next,b[58]))
+  end
+  def nf_bound_value(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
+    next = nc_end(source,start)
+    # fn -> value end bound without a type is a function nothing gives a type, as one with parameters is.
+    if nc_word(source,next,b[61]) == 1 do if nc_word(source,nc_end(source,next),b[102,110])*nc_word(source,nc_end(source,nc_end(source,next)),b[45,62]) == 1 do b[] else nw_settled(nc_expression(source,nc_end(source,next),nf_unexpected(source,env,table),table,depth)) end else
+      declared = nc_type(source,nc_end(source,next))
+      kind = nd_resolve(source,table,nc_owner(table,nc_read(env,0)),nc_kind(declared))
+      begin = nc_expect(source,nc_pos(declared),b[61])
+      value = if begin < 0 do b[] else
+        # A value that is one call gets the declared type as what the call is expected to give.
+        if nf_deferred(source,begin,env,table) == 0 do nc_expression(source,begin,if nw_whole_call(source,begin) == 1 do nw_expect(env,nf_pipe_target(source,nc_start(source,begin)),kind) else if wf_keyword(source,begin,env) == 1 do nw_expect(env,nc_start(source,begin),kind) else nf_expecting(source,env,begin,kind) end end,table,depth) else nf_expected(source,begin,env,table,depth,kind) end
+      end
+      given = nn_expected(value,kind,table)
+      if nc_pos(given) < 0 do b[] else if no_compatible(kind,nc_kind(given)) == 0 do b[] else nc_value(nc_pos(given),nc_code(given),kind) end end
+    end
+  end
+  # The value of a binding; a statement of no type binds nothing.
+  def nf_bound(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
+    value = nf_bound_value(source,start,env,table,depth)
+    if nc_tag(value) == 12 do b[] else value end
+  end
+  def nf_words(kind: bytes, index: integer, count: integer): bytes do
+    if index == count do b[] else Enum.concat(nt_cell(nt_child(kind,index)),nf_words(kind,index+1,count)) end
+  end
+  # fn a, b -> body end with parameter types from the type list given: one
+  # entry per parameter, then the result type expected of it, unknown (9)
+  # when the body is to give it.
+  def nf_inferred(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, given: bytes): bytes do
+    last = nt_skip(given,0,nt_items(given,0)-1)
+    words = nc_slice(given,0,last)
+    if nf_general(source,pos) == 1 do nf_valued(source,pos,env,table,depth,nt_function(given,nt_items(given,0)-1)) else
+    if byte_at(source,pos) == 38 do
+      if nf_capture_form(source,pos) == 1 do nf_capture(source,pos,env,table,depth,given) else jd_referred(source,pos,env,table,depth,given) end
+    else
+      first = nc_end(source,nc_start(source,pos))
+      names = nf_names(source,first,nc_u16(nc_read(env,0)),words)
+      if Enum.count(given) == 0 do b[] else if nc_pos(names) < 0 do b[] else nf_finish(source,env,table,depth,nc_value(nc_pos(names),nc_code(names),nc_join(b[9,0],nc_u24(first),nf_asked(nt_read(given,last)))),words) end end
+    end
+    end
+  end
+  # 1 when the argument at pos is neither fn ... end nor a capture or
+  # reference: an expression that holds one, set aside because it has no
+  # type without the type its parameter gives.
+  def nf_general(source: bytes, pos: integer): integer do
+    start = nc_start(source,pos)
+    if byte_at(source,start) == 38 do 0 else 1-nf_untyped(source,start) end
+  end
+  # The value at pos where type kind is expected: a lambda takes its types
+  # from it, any other expression gives it to the lambdas it holds.
+  def nf_valued(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, kind: bytes): bytes do
+    if Enum.count(kind) == 0 do b[] else
+      stop = nf_primary(source,nc_start(source,pos),env,table)
+      piped = if stop < 0 do 0 else if byte_at(source,nc_start(source,stop))*256+byte_at(source,nc_start(source,stop)+1) == 31806 do 1 else 0 end end
+      # A value held back by a pipe ends before the pipe.
+      if nf_general(source,pos) == 0 do nf_expected(source,pos,env,table,depth,kind) else if piped == 1 do nc_unary(source,pos,nf_expecting(source,env,pos,kind),table,depth+1) else nc_expression(source,pos,if nw_whole_call(source,pos) == 1 do nw_expect(env,nf_pipe_target(source,nc_start(source,pos)),kind) else nf_expecting(source,env,pos,kind) end,table,depth+1) end end
+    end
+  end
+  # An argument that did not compile and holds a lambda or capture: the
+  # position after it, to set it aside as a lambda is (nf_deferred); 0 for
+  # any other.
+  def nf_late(source: bytes, pos: integer): integer do
+    start = nc_start(source,pos)
+    stop = nc_span(source,nc_span_state(start,0,0,0,0),16777216)
+    if stop <= start do 0 else if ny_has(source,start,stop,b[102,110])+ny_has(source,start,stop,b[38]) == 0 do 0 else stop end end
+  end
+  # env with what a record there expects of the expression at pos as what
+  # the surroundings expect: a literal gives it to its parts.
+  def nf_inward(source: bytes, pos: integer, env: bytes): bytes do
+    placed = nw_expected(env,pos,2)
+    if Enum.count(placed) == 0 do env else nw_expect(env,0,placed) end
+  end
+  # The type expected of an element of the list, a value of the map or part
+  # index of the tuple being compiled.
+  def nf_part(source: bytes, env: bytes, table: bytes, index: integer): bytes do
+    kind = nf_ambient(source,env,table)
+    tag = nt_tag(kind)
+    if tag == 7 do nt_child(kind,0) else if tag == 8 do nt_child(kind,1) else if tag != 5 do b[] else if index >= nt_count(kind) do b[] else nt_child(kind,index) end end end end
+  end
+  # env for the later branches of an if, case or cond whose first one gave
+  # a type that holds a function: they are expected to give it too. b[]
+  # when the first gives no such type, or it is expected already.
+  def nf_led(source: bytes, env: bytes, table: bytes, first: bytes): bytes do
+    kind = nc_kind(first)
+    if nc_pos(first) < 0 do b[] else if nu_has(kind,10,0,Enum.count(kind)) == 0 do b[] else if nu_holes(kind,0) == 1 do b[] else
+      if nt_same(nf_ambient(source,env,table),kind) == 1 do b[] else nw_expect(env,0,kind) end
+    end end end
+  end
+  # value.(arguments) for any value that is a function.
+  def nf_called(source: bytes, value: bytes, env: bytes, table: bytes, depth: integer): bytes do
+    next = nc_start(source,nc_pos(value))
+    before = nc_pos(value)-1
+    # Not after end: fn ... end.(1) and if ... end.(1) are no calls. A "("
+    # calls only what a call left: hd(list)(1).
+    ended = if byte_at(source,before) != 100 do 0 else if byte_at(source,before-1) != 110 do 0 else if byte_at(source,before-2) != 101 do 0 else 1-is_identifier_continue(byte_at(source,before-3)) end end end
+    dotted = if byte_at(source,next) != 46 do 0 else if byte_at(source,nc_start(source,next+1)) == 40 do 1 else 0 end end
+    direct = if byte_at(source,before) != 41 do 0 else if byte_at(source,next) != 40 do 0 else 1 end end
+    if nc_tag(value) != 10 do value else if ended == 1 do value else
+      if dotted+direct == 0 do value else nw_keep(nf_postfix_call(source,value,env,table,depth),value,b[]) end
+    end end
+  end
+  # 1 when the value that ends before pos is a name, or names joined by
+  # dots: only such a value has its field called, value.field.(1).
+  def nf_chained(source: bytes, pos: integer, budget: integer): integer do
+    start = nf_name_back(source,pos,64)
+    if budget == 0 do 0 else if start == pos do 0 else if byte_at(source,start-1) != 46 do 1 else nf_chained(source,start-1,budget-1) end end end
+  end
+  def nf_name_back(source: bytes, pos: integer, budget: integer): integer do
+    if pos <= 0 do pos else if budget == 0 do pos else if is_identifier_continue(byte_at(source,pos-1)) == 0 do pos else nf_name_back(source,pos-1,budget-1) end end end
+  end
+  # The statement at start, one call that did not compile, where it ends a
+  # block: the block's value is expected to be what its function, or the
+  # fn it is in, gives, and the call takes that as its own expected type.
+  def nf_tail(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
+    paren = nf_pipe_target(source,start)
+    held = nf_ambient(source,env,table)
+    wanted = if Enum.count(held) > 0 do held else nc_return_kind(source,table,nc_read(env,0)) end
+    usable = if nw_whole_call(source,start) == 0 do 0 else if (nt_tag(wanted)-9)*(nt_tag(wanted)-30)*(nt_tag(wanted)+1) == 0 do 0 else if Enum.count(nw_expected(env,paren,2)) > 0 do 0 else 1 end end end
+    value = if usable == 0 do b[] else nx_expression(source,start,nw_expect(env,paren,wanted),table,depth) end
+    if nc_pos(value) < 0 do b[] else if ty_ends(source,nc_pos(value),env) == 0 do b[] else value end end
+  end
+  # 1 when two branches that end the body of a fn whose result type is
+  # still to be found both lack a part of their type: one of them has to
+  # give the type the other is held to (each is a return of its own).
+  # 3 when the statement being compiled ends a fn whose result type its body
+  # is to give: the last record of type 41 has no type, and no record of
+  # type 40 (a form used as a value) stands after it but the one of a
+  # statement tried again as a value (after a record of type 45). state: 1
+  # for such a fn, 2 while nothing is a value, 4 after a 45.
+  def nf_open_end(env: bytes, offset: integer, state: integer): integer do
+    kind = nt_read(env,offset+7)
+    tag = nt_tag(kind)
+    armed = if state >= 4 do 1 else 0 end
+    kept = state-armed*4
+    next = if tag == 41 do if nt_same(kind,b[41,9]) == 1 do 3 else 2 end else if tag == 45 do kept+4 else if tag != 40 do state else if armed == 1 do kept else if kept >= 2 do kept-2 else kept end end end end end
+    if offset >= Enum.count(env) do if state >= 4 do state-4 else state end else nf_open_end(env,nc_env_next(env,offset),next) end
+  end
+  def nf_both_open(env: bytes, first: bytes, second: bytes): integer do
+    if nf_open_end(env,2,0) != 3 do 0 else if nc_tag(first) == 9 do 0 else if nc_tag(second) == 9 do 0 else nu_holes(nc_kind(first),0)*nu_holes(nc_kind(second),0) end end end
+  end
+  # How many parameters fn a, b -> ... at pos is written with; -1 for
+  # anything else (a capture's number is the highest placeholder it uses,
+  # which nf_seal checks).
+  def nf_arity(source: bytes, pos: integer): integer do
+    start = nc_start(source,pos)
+    if nf_untyped(source,start) == 0 do -1 else nf_arity_from(source,nc_end(source,start),0) end
+  end
+  def nf_arity_from(source: bytes, pos: integer, count: integer): integer do
+    next = np_skip(source,pos)
+    if nc_word(source,pos,b[45,62]) == 1 do count else if count >= 250 do -1 else if next < 0 do -1 else
+      if nc_word(source,next,b[44]) == 1 do nf_arity_from(source,nc_end(source,next),count+1) else if nc_word(source,next,b[45,62]) == 1 do count+1 else -1 end end
+    end end end
+  end
+  # 1 when every lambda among the arguments that still waits for its types
+  # is written with as many parameters as the function type of its
+  # parameter has: which of a function's forms a lambda fits.
+  def nf_arities(source: bytes, cells: bytes, args: bytes, index: integer): integer do
+    given = nc_arg_kind(args,index)
+    wanted = nt_item(cells,index)
+    written = if nt_tag(given) != 11 do -1 else nf_arity(source,nc_cursor(given,1)) end
+    if index >= nc_arg_count(args) do 1 else
+      if written < 0 do nf_arities(source,cells,args,index+1) else if nt_tag(wanted) != 10 do nf_arities(source,cells,args,index+1) else
+        if nt_count(wanted) != written do 0 else nf_arities(source,cells,args,index+1) end
+      end end
+    end
+  end
+  # What the expression at pos is to be, where every type counts: what is
+  # expected there, else what the body is to give, else (outside a fn) the
+  # function's result type.
+  def nf_goal(source: bytes, pos: integer, env: bytes, table: bytes): bytes do
+    placed = nw_expected(env,pos,2)
+    held = nf_ambient_from(env,2,b[])
+    if Enum.count(placed) > 0 do placed else if Enum.count(held) > 0 do nc_slice(held,1,Enum.count(held)) else nc_return_kind(source,table,nc_read(env,0)) end end
+  end
+  # 1 when the parts of the literal being compiled are expected to hold functions.
+  def nf_parted(source: bytes, env: bytes, table: bytes): integer do
+    kind = nf_ambient(source,env,table)
+    if (nt_tag(kind)-7)*(nt_tag(kind)-8)*(nt_tag(kind)-5) != 0 do 0 else nu_has(kind,10,0,Enum.count(kind)) end
+  end
+  # The result type a lambda is held to: one with no part unknown. A longer
+  # type than its record holds is left to the body, and checked where the
+  # function value is used.
+  def nf_asked(kind: bytes): bytes do
+    if nu_holes(kind,0) == 1 do b[] else if Enum.count(kind) > 240 do b[] else kind end end
+  end
+  # A capture at pos (its &): parameters &1.. take their types from words. Each
+  # placeholder record starts at the capture's & and has its index as length, so
+  # no name can match it.
+  def nf_capture(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, given: bytes): bytes do
+    open = nc_end(source,pos)
+    paren = nc_word(source,open,b[40])
+    body = if paren == 1 do nc_end(source,open) else open end
+    last = nt_skip(given,0,nt_items(given,0)-1)
+    words = nc_slice(given,0,last)
+    if Enum.count(words) == 0 do b[] else if nf_nested(source,env,2) == 1 do b[] else
+      nf_finish(source,env,table,depth,nc_value(body,nf_placeholders(pos,nc_u16(nc_read(env,0)),words,0),nc_join(b[9,1+paren],b[0,0,0],nf_asked(nt_read(given,last)))),words)
+    end end
+  end
+  def nf_placeholders(pos: integer, inner: bytes, words: bytes, index: integer): bytes do
+    if index == nt_items(words,0) do inner else
+      record = nc_env_record(pos,pos+index+1,nt_item(words,index))
+      nf_placeholders(pos,Enum.concat(inner,record),words,index+1)
+    end
+  end
+  # 1 when env holds a capture's placeholders, visible or carried into a nested
+  # function: the pinned language rejects a capture inside another either way.
+  def nf_nested(source: bytes, env: bytes, offset: integer): integer do
+    if offset >= Enum.count(env) do 0 else
+      if byte_at(source,nc_cursor(env,offset)) != 38 do nf_nested(source,env,nc_env_next(env,offset)) else if nt_tag(nt_read(env,offset+7)) == 21 do nf_nested(source,env,nc_env_next(env,offset)) else 1 end end
+    end
+  end
+  # The digit at pos as a placeholder or arity index, else -1.
+  def nf_index(source: bytes, pos: integer): integer do
+    start = nc_start(source,pos)
+    if start < 0 do -1 else if is_digit(byte_at(source,start)) == 0 do -1 else
+      if nc_end(source,start)-start != 1 do -1 else byte_at(source,start)-48 end
+    end end
+  end
+  # &N inside a capture: parameter N of the nearest capture.
+  def nf_placeholder(source: bytes, pos: integer, env: bytes, table: bytes): bytes do
+    index = nf_index(source,pos)
+    offset = if index < 1 do 2 else nc_env_offset(env,index-1) end
+    start = nc_cursor(env,offset)
+    if index < 1 do b[] else if offset+8 > Enum.count(env) do b[] else
+      if byte_at(source,start) != 38 do b[] else if nc_cursor(env,offset+3)-start != index do b[] else
+        nd_access(source,nc_value(nc_end(source,pos),nc_slot(b[72,139,69],index-1),nt_read(env,offset+7)),env,table,0)
+      end end
+    end end
+  end
+  # 1 when &index appears among the tokens from pos up to stop.
+  def nf_uses(source: bytes, pos: integer, stop: integer, index: integer): integer do
+    next = nf_uses_chunk(source,pos,stop,index,32)
+    if next == -2 do 1 else if next < 0 do 0 else if next >= stop do 0 else nf_uses(source,next,stop,index) end end end
+  end
+  def nf_uses_chunk(source: bytes, pos: integer, stop: integer, index: integer, count: integer): integer do
+    start = nc_start(source,pos)
+    if start < 0 do -1 else if start >= stop do start else if count == 0 do start else
+      found = if byte_at(source,start) != 38 do 0 else if nf_index(source,nc_end(source,start)) == index do 1 else 0 end end
+      if found == 1 do -2 else nf_uses_chunk(source,nc_end(source,start),stop,index,count-1) end
+    end end end
+  end
+  # & at pos: a placeholder, a capture, or a reference to a named function.
+  def nf_ampersand(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    next = nc_start(source,nc_end(source,pos))
+    if is_digit(byte_at(source,next)) == 1 do nf_placeholder(source,next,env,table) else
+      if nf_capture_form(source,pos)+nc_pos(nf_library_form(source,pos,env,table)) >= 0 do nf_returned(source,pos,env,table,depth) else nf_reference(source,next,env,table) end
+    end
+  end
+  # &name, &Module.name and either with /arity: the function's table slot.
+  def nf_reference(source: bytes, pos: integer, env: bytes, table: bytes): bytes do
+    owner = nc_owner(table,nc_read(env,0))
+    stop = nc_end(source,pos)
+    if nc_word(source,stop,b[46]) != 1 do nf_slot(source,stop,table,nc_find(source,pos,table,owner),0) else
+      home = nc_find(source,pos,table,-1)
+      name = nc_start(source,nc_end(source,stop))
+      target = if home < 0 do -1 else if nc_imported(source,table,owner,home) == 0 do -1 else nc_find(source,name,table,home) end end
+      if target < 0 do b[] else nf_slot(source,nc_end(source,name),table,target,if home == owner do 0 else 1 end) end
+    end
+  end
+  # pos follows the name; id is its table entry.
+  # A name with other numbers of parameters needs its arity; with defaults it
+  # is still the function of all its parameters. strict: 1 from another
+  # module, which only reaches a def.
+  def nf_slot(source: bytes, pos: integer, table: bytes, named: integer, strict: integer): bytes do
+    slashed = nc_word(source,pos,b[47])
+    given = if slashed == 1 do nf_index(source,nc_end(source,pos)) else -1 end
+    id = if named < 0 do -1 else if slashed == 1 do nj_fit_from(source,table,named,given,b[0,0,0,1]) else if nj_alone(source,table,named) == 1 do named else -1 end end end
+    stop = if slashed == 1 do nc_end(source,nc_end(source,pos)) else pos end
+    # A generic function has no plain reference: its comparators come with each use.
+    if id < 0 do b[] else if Enum.at(table,id*27+16,0) == 1 do b[] else if strict*Enum.at(table,id*27+16,0) != 0 do b[] else if nu_generic(source,table,id) == 1 do b[] else
+      kind = nt_function(Enum.concat(nj_cells(source,table,id),nt_cell(nc_return_kind(source,table,id))),nc_argc(table,id))
+      if nt_tag(kind) < 0 do b[] else nc_value(stop,Enum.concat(b[184],nc_u32(4195456+id*8)),kind) end
+    end end end end
+  end
+  def nf_names(source: bytes, pos: integer, inner: bytes, words: bytes): bytes do
+    index = nc_env_count(inner,2)
+    if nc_word(source,pos,b[45,62]) == 1 do
+      if index != nt_items(words,0) do b[] else nc_value(nc_end(source,pos),inner,b[0]) end
+    else
+      name = nc_start(source,pos)
+      # A parameter may be a pattern: it is matched once the captures are in place.
+      # _ is one, so that several parameters may be _ (fn key, _, _ -> ... end).
+      plain = if nc_word(source,name,b[95]) == 1 do 0 else np_plain_name(source,name) end
+      bound = if index >= nt_items(words,0) do b[] else if plain == 0 do np_hidden(inner,name,nt_item(words,index)) else nc_bind(source,name,inner,nt_item(words,index)) end end
+      next = if plain == 0 do np_skip(source,name) else nc_end(source,name) end
+      if Enum.count(bound) == 0 do b[] else
+        nf_names(source,if nc_word(source,next,b[44]) == 1 do nc_end(source,next) else next end,bound,words)
+      end
+    end
+  end
+  # A lambda outside an argument list or annotated binding: the result of a
+  # function declared to return fn[...], whose types it takes.
+  def nf_returned(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    nf_expected(source,pos,env,table,depth,nf_want(source,nc_start(source,pos),env,table))
+  end
+  # The type expected of the expression that starts at pos: what a record
+  # with no name there says (type 21 and the type), else what its
+  # surroundings expect of their value.
+  def nf_want(source: bytes, pos: integer, env: bytes, table: bytes): bytes do
+    placed = nw_expected(env,pos,2)
+    if Enum.count(placed) > 0 do placed else nf_ambient(source,env,table) end
+  end
+  # What the body being compiled is to give: the result type of the fn it
+  # is in (a record of type 41), or what a record of type 21 at position 0
+  # says, whichever comes last. A function whose result type holds a
+  # function type starts its body with such a record (nf_bodied).
+  def nf_ambient(source: bytes, env: bytes, table: bytes): bytes do
+    found = nf_ambient_from(env,2,b[])
+    nc_slice(found,1,Enum.count(found))
+  end
+  def nf_bodied(source: bytes, table: bytes, id: integer, env: bytes): bytes do
+    kind = nc_return_kind(source,table,id)
+    if Enum.count(env) == 0 do env else if nu_has(kind,10,0,Enum.count(kind)) == 0 do env else nw_expect(env,0,kind) end end
+  end
+  def nf_ambient_from(env: bytes, offset: integer, found: bytes): bytes do
+    kind = nt_read(env,offset+7)
+    if offset >= Enum.count(env) do found else
+      nf_ambient_from(env,nc_env_next(env,offset),if nt_tag(kind) == 41 do kind else if nt_tag(kind) != 21 do found else if nc_cursor(env,offset) != 0 do found else kind end end end)
+    end
+  end
+  # env with kind expected of the expression at pos. Only a type that holds
+  # a function type is worth a record: every other value has its type
+  # without one. An if, case, cond, with or try gives the type to the ends
+  # of its branches, so there it is what the surroundings expect.
+  def nf_expecting(source: bytes, env: bytes, pos: integer, kind: bytes): bytes do
+    start = nc_start(source,pos)
+    block = nc_word(source,start,b[105,102])+nc_word(source,start,b[117,110,108,101,115,115])+nc_word(source,start,b[99,97,115,101])+nc_word(source,start,b[99,111,110,100])+nc_word(source,start,b[119,105,116,104])+nc_word(source,start,b[116,114,121])
+    if nu_has(kind,10,0,Enum.count(kind)) == 0 do env else nw_expect(env,if block > 0 do 0 else start end,kind) end
+  end
+  # env for a value its surroundings give no type: a binding without
+  # annotation, an argument.
+  def nf_unexpected(source: bytes, env: bytes, table: bytes): bytes do
+    kind = nf_ambient(source,env,table)
+    if nu_has(kind,10,0,Enum.count(kind)) == 0 do env else nw_expect(env,0,b[9]) end
+  end
+  # A lambda captures every enclosing binding. Binding them after the parameters
+  # rejects a parameter that shadows one, as the pinned language does.
+  def nf_captures(env: bytes, offset: integer): bytes do
+    b[]
+  end
+  # The slots first up to stop, three bytes each, made by halves.
+  def nf_slots(first: integer, stop: integer): bytes do
+    if stop-first <= 0 do b[] else if stop-first == 1 do nc_u24(first) else
+      Enum.concat(nf_slots(first,first+nc_half(stop-first)),nf_slots(first+nc_half(stop-first),stop))
+    end end
+  end
+  # 1 when a named record of env from offset on has a name that inner has.
+  def nf_clashes(source: bytes, env: bytes, inner: bytes, offset: integer): integer do
+    start = nc_cursor(env,offset)
+    if offset >= Enum.count(env) do 0 else
+      if byte_at(source,start) == 38 do nf_clashes(source,env,inner,nc_env_next(env,offset)) else if nc_cursor(env,offset+3) == start do nf_clashes(source,env,inner,nc_env_next(env,offset)) else
+        if nc_lookup(source,start,inner,2) >= 0 do 1 else nf_clashes(source,env,inner,nc_env_next(env,offset)) end
+      end end
+    end
+  end
+  # The records of env from offset on as a function inside carries them: a
+  # placeholder's without its name.
+  def nf_carry_at(source: bytes, env: bytes, offset: integer): integer do
+    if offset >= Enum.count(env) do offset else
+      if nc_env_gap(env,offset) > 0 do offset else if nc_cursor(env,offset+3) == nc_cursor(env,offset) do nf_carry_at(source,env,nc_env_next(env,offset)) else
+        if byte_at(source,nc_cursor(env,offset)) == 38 do offset else nf_carry_at(source,env,nc_env_next(env,offset)) end
+      end end
+    end
+  end
+  def nf_carried(source: bytes, env: bytes, offset: integer): bytes do
+    at = nf_carry_at(source,env,offset)
+    if at >= Enum.count(env) do nc_slice(env,offset,Enum.count(env)) else
+      nc_join(nc_slice(env,offset,at),if nc_env_gap(env,at) > 0 do b[] else nc_env_record(nc_cursor(env,at),nc_cursor(env,at),nt_read(env,at+7)) end,nf_carried(source,env,nc_env_next(env,at)))
+    end
+  end
+  def nf_capture_env(source: bytes, env: bytes, inner: bytes, captures: bytes, index: integer): bytes do
+    # An enclosing capture's placeholder is carried without a name (&N is not
+    # visible inside a nested function), as are the nameless records of piped
+    # values and of case subjects. A name the function has already (a
+    # parameter) may not be captured too.
+    if Enum.count(inner) == 0 do b[] else if nf_clashes(source,env,inner,2) == 1 do b[] else Enum.concat(inner,nf_carried(source,env,2)) end end
+  end
+  # Lambda entry: copy capture j from the record in R10 to slot count+j.
+  def nf_loads(captures: bytes, count: integer, index: integer): bytes do
+    nf_loads_run(count,index,nc_units(Enum.count(captures),3))
+  end
+  def nf_loads_run(count: integer, first: integer, stop: integer): bytes do
+    if stop-first <= 0 do b[] else if stop-first == 1 do nc_join(b[73,139,130],nc_u32(8+first*8),nc_slot(b[72,137,69],count+first)) else
+      Enum.concat(nf_loads_run(count,first,first+nc_half(stop-first)),nf_loads_run(count,first+nc_half(stop-first),stop))
+    end end
+  end
+  # Closure construction: copy each captured slot into the new record at R12.
+  # A slot of 16777215 holds no value (gm_held, native-memory.alc): its word of
+  # the record stays 0, as memory is when it is given out.
+  def nf_stores(captures: bytes, index: integer): bytes do
+    nf_stores_run(captures,index,nc_units(Enum.count(captures),3))
+  end
+  def nf_stores_run(captures: bytes, first: integer, stop: integer): bytes do
+    if stop-first <= 0 do b[] else if stop-first == 1 do if nc_cursor(captures,first*3) == 16777215 do b[] else nc_join(nc_slot(b[72,139,69],nc_cursor(captures,first*3)),b[73,137,132,36],nc_u32(8+first*8)) end else
+      Enum.concat(nf_stores_run(captures,first,first+nc_half(stop-first)),nf_stores_run(captures,first+nc_half(stop-first),stop))
+    end end
+  end
+  # Jump over the lambda's code, then allocate and fill its record.
+  def nf_code(count: integer, captures: bytes, body: bytes): bytes do
+    # The body starts with the entry code of its kind (nz_enter and others),
+    # which counts the call; leaving ends it.
+    inside = nc_join(nc_store_params(count,0),nf_loads(captures,count,0),Enum.concat(body,b[73,255,207,201,195]))
+    lambda = Enum.concat(nc_guard(inside),inside)
+    size = Enum.count(lambda)
+    allocate = nc_join(Enum.concat(b[77,141,156,36],nc_u32(8+nc_units(Enum.count(captures),3)*8)),b[77,57,235,118,12],gm_hook())
+    # lea rax,[rip-(size+32)]: the lambda starts size+32 bytes before the next instruction.
+    address = nc_join(b[72,141,5],nc_u32(4294967296-size-32),b[73,137,4,36])
+    record = nc_join(allocate,address,Enum.concat(nf_stores(captures,0),b[76,137,224,77,137,220]))
+    nc_join(Enum.concat(b[233],nc_u32(size)),lambda,record)
+  end
+  # The checked arguments of a call through a value of type kind; open is the "(".
+  def nf_call_args(source: bytes, open: integer, env: bytes, table: bytes, depth: integer, kind: bytes): bytes do
+    wanted = nt_count(kind)
+    parsed = if nt_tag(kind) != 10 do b[] else nc_arguments_open(source,nc_end(source,open),env,table,depth) end
+    args = if nf_has_pending(parsed,0) == 0 do parsed else nf_typed_all(source,env,table,depth,parsed,Enum.concat(nc_u24(nc_arg_count(parsed)-1),nf_words(kind,0,wanted))) end
+    if nc_pos(args) < 0 do b[] else if nc_arg_count(args) != wanted do b[] else
+      if nf_check(kind,args,0,wanted) == 0 do b[] else args end
+    end end
+  end
+  # name(args) or name.(args) through a function-valued binding; open is the "(".
+  def nf_call_value(source: bytes, pos: integer, open: integer, env: bytes, table: bytes, depth: integer): bytes do
+    slot = nc_lookup(source,pos,env,2)
+    kind = if slot < 0 do b[] else nt_read(env,nc_env_offset(env,slot)+7) end
+    args = nf_call_args(source,open,env,table,depth,kind)
+    count = nc_arg_count(args)
+    if nc_pos(args) < 0 do b[] else
+      nf_postfix(source,nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),nc_passed(count,Enum.concat(nc_slot(b[76,139,85],slot),b[65,255,18]))),nt_child(kind,count)),env,table,depth)
+    end
+  end
+  # A function-valued call result called at once: adder(10)(5) or adder(10).(5).
+  # The value waits on the stack while its arguments are evaluated.
+  def nf_postfix(source: bytes, value: bytes, env: bytes, table: bytes, depth: integer): bytes do
+    next = nc_pos(value)
+    kind = nc_kind(value)
+    if (nt_tag(kind)-13)*(nt_tag(kind)-18) == 0 do nd_access(source,value,env,table,depth) else if nt_tag(kind) == 23 do nk_range_dot(source,value) else nf_postfix_call(source,value,env,table,depth) end end
+  end
+  def nf_postfix_call(source: bytes, value: bytes, env: bytes, table: bytes, depth: integer): bytes do
+    next = nc_pos(value)
+    kind = nc_kind(value)
+    dotted = if nc_word(source,next,b[46]) == 1 do nc_end(source,next) else next end
+    open = if nt_tag(kind) != 10 do -1 else if nc_word(source,dotted,b[40]) != 1 do -1 else
+      if nf_same_line(source,next,nc_start(source,dotted)) == 0 do -1 else dotted end
+    end end
+    if open < 0 do value else
+      args = nf_call_args(source,open,env,table,depth,kind)
+      count = nc_arg_count(args)
+      if nc_pos(args) < 0 do b[] else
+        # The function value waits under its arguments.
+        apply = if count > 6 do nc_join(nc_load_args(count),Enum.concat(b[76,139,148,36],nc_u32(count*8)),Enum.concat(b[65,255,18],nc_drop_args(count+1))) else nc_join(nc_pop_args(count),b[65,90],b[65,255,18]) end
+        call = nc_join(Enum.concat(nc_code(value),b[80]),nc_arg_code(args),apply)
+        nf_postfix(source,nc_value(nc_pos(args),call,nt_child(kind,count)),env,table,depth)
+      end
+    end
+  end
+  # left |> name(args): the call takes left as its first argument. left waits in
+  # a slot under a record that has no name: it starts and ends at the call's "(",
+  # where the argument list finds it. Pipes bind looser than + and <> and
+  # tighter than comparisons, and the target must be a call.
+  # budget: how many more pipes the chain may hold (1024 in all, as the
+  # pinned parser chains operators).
+  def nf_pipes(source: bytes, left: bytes, env: bytes, table: bytes, depth: integer, budget: integer): bytes do
+    pos = nc_start(source,nc_pos(left))
+    shift = if nc_pos(left) < 0 do 0 else nk_bit_at(source,pos,b[60,62]) end
+    # <<< and >>> bind as a pipe does; what follows is the next operand.
+    if shift > 0 do if budget <= 0 do b[] else nf_pipes(source,nk_bits(left,nk_join_tail(source,nc_sum(source,pos+3,env,table,depth),env,table,depth,1024),shift),env,table,depth,budget-1) end else
+    if nc_pos(left) < 0 do left else if byte_at(source,pos)*256+byte_at(source,pos+1) != 31806 do left else
+      target = nc_start(source,pos+2)
+      output = nf_pipe_output(source,target,left)
+      if nc_pos(output) >= 0 do output else if budget <= 0 do b[] else nf_pipe_call(source,left,env,table,depth,budget) end end
+    end end
+    end
+  end
+  # text |> IO.puts(), IO.write() or IO.warn() ends a pipeline as a statement: a
+  # value of no type (12), which only a body or branch accepts, before its rest.
+  def nf_pipe_output(source: bytes, target: integer, left: bytes): bytes do
+    dot = if nc_word(source,target,b[73,79]) != 1 do -1 else nc_expect(source,nc_end(source,target),b[46]) end
+    kind = ns_output_kind(source,dot)
+    stop = nc_expect(source,nc_expect(source,nc_end(source,dot),b[40]),b[41])
+    if kind == 0 do b[] else if stop < 0 do b[] else if nc_tag(left) != 2 do b[] else
+      nc_value(stop,Enum.concat(nc_code(left),ns_output_emit(kind)),b[12])
+    end end end
+  end
+  # A statement of no type, then the rest of its body.
+  def nf_then(first: bytes, rest: bytes): bytes do
+    if nc_pos(rest) < 0 do b[] else nc_value(nc_pos(rest),Enum.concat(nc_code(first),nc_code(rest)),nc_kind(rest)) end
+  end
+  # left |> call(...) where left did not compile for want of a type: a
+  # lambda, a capture, or a list, tuple, map or parenthesized value that
+  # holds one. It waits for the type of the call's first parameter.
+  # The position after the value at start when it is one a pipe may hold
+  # back: a lambda, &(...), or a value in brackets; -1 for any other.
+  def nf_primary(source: bytes, start: integer, env: bytes, table: bytes): integer do
+    value = byte_at(source,start)
+    if (value-91)*(value-123)*(value-40) == 0 do np_close(source,start,0,16777216) else
+      if (value-37)*(value-38) == 0 do if (byte_at(source,start+1)-123)*(byte_at(source,start+1)-40) == 0 do np_close(source,start+1,0,16777216) else -1 end else
+        if nc_word(source,start,b[105,102])+nc_word(source,start,b[117,110,108,101,115,115])+nc_word(source,start,b[99,97,115,101])+nc_word(source,start,b[99,111,110,100]) > 0 do nc_end(source,nc_body_scan(source,start,0,16777216)) else
+          if nf_untyped(source,start) == 0 do -1 else nf_deferred(source,start,env,table) end
+        end
+      end
+    end
+  end
+  def nf_pipe_late(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    start = nc_start(source,pos)
+    value = byte_at(source,start)
+    stop = nf_primary(source,start,env,table)
+    next = nc_start(source,stop)
+    holds = if stop <= start do 0 else ny_has(source,start,stop,b[102,110])+ny_has(source,start,stop,b[38]) end
+    if holds == 0 do b[] else if byte_at(source,next)*256+byte_at(source,next+1) != 31806 do b[] else
+      nf_pipe_call(source,nc_value(stop,b[],nc_join(b[11],nc_u24(start),b[0,0,0])),env,table,depth,1024)
+    end end
+  end
+  def nf_pipe_call(source: bytes, left: bytes, env: bytes, table: bytes, depth: integer, budget: integer): bytes do
+    pos = nc_start(source,nc_pos(left))
+    if nc_pos(left) < 0 do left else
+      target = nc_start(source,pos+2)
+      paren = nf_pipe_target(source,target)
+      slot = nc_env_count(env,2)
+      mark = if paren < 0 do 0 else paren end
+      record = nc_env_record(mark,mark,if nc_tag(left) == 11 do Enum.concat(nc_kind(left),nc_u24(slot+1)) else nn_waiting(left) end)
+      # The target is a call: value.(arguments) after it is no part of it.
+      call = if paren < 0 do b[] else sg_indexed(source,gm_unary(source,target,Enum.concat(env,record),table,depth+1),Enum.concat(env,record),table,depth+1) end
+      # A call that took the value loads its slot, which nothing else uses.
+      taken = if nc_pos(call) < 0 do 0 else nf_holds(nc_code(call),nc_slot(b[72,139,69],slot),0,Enum.count(nc_code(call))) end
+      if nc_pos(call) < 0 do b[] else if nf_pipe_taken(source,call,taken) == 0 do b[] else
+        nf_pipes(source,nc_value(nc_pos(call),if nc_tag(left) == 11 do nc_code(call) else nc_join(nc_code(left),nc_slot(b[72,137,69],slot),nc_code(call)) end,nc_kind(call)),env,table,depth,budget-1)
+      end end
+    end
+  end
+  # 1 when code holds the bytes wanted at a position from first up to stop.
+  def nf_holds(code: bytes, wanted: bytes, first: integer, stop: integer): integer do
+    middle = first+nc_half(stop-first)
+    if stop-first <= 0 do 0 else
+      if stop-first == 1 do
+        if Enum.at(code,first,0) != Enum.at(wanted,0,0) do 0 else nt_same(nc_slice(code,first,first+Enum.count(wanted)),wanted) end
+      else
+        if nf_holds(code,wanted,first,middle) == 1 do 1 else nf_holds(code,wanted,middle,stop) end
+      end
+    end
+  end
+  def nf_pipe_taken(source: bytes, call: bytes, taken: integer): integer do
+    next = nc_start(source,nc_pos(call))
+    value = byte_at(source,next)
+    operator = if (value-43)*(value-45)*(value-42)*(value-47) == 0 do 1 else if value*256+byte_at(source,next+1) == 15422 do 1 else if value*256+byte_at(source,next+1) == 11816 do 1 else 0 end end end
+    if operator == 1 do 0 else taken end
+  end
+  # The "(" of the call at pos: name(, Module.name( or value.(; else -1.
+  def nf_pipe_target(source: bytes, pos: integer): integer do
+    next = nc_start(source,nc_end(source,pos))
+    if classify_ascii(byte_at(source,pos)) != 2 do -1 else
+      if byte_at(source,next) == 40 do next else
+        if nc_word(source,next,b[46]) != 1 do -1 else
+          if byte_at(source,nc_start(source,nc_end(source,next))) == 40 do nc_start(source,nc_end(source,next)) else nf_pipe_target(source,nc_start(source,nc_end(source,next))) end
+        end
+      end
+    end
+  end
+  # The piped value for the argument list that opens just before pos, as a
+  # packet with the code that loads it; b[] when nothing is piped into it.
+  def nf_piped(source: bytes, pos: integer, env: bytes): bytes do
+    nn_plain(nf_piped_from(source,pos,env,2))
+  end
+  def nf_piped_from(source: bytes, pos: integer, env: bytes, offset: integer): bytes do
+    nf_piped_at(source,pos,env,offset,0)
+  end
+  # slot: the slot of the record at offset.
+  def nf_piped_at(source: bytes, pos: integer, env: bytes, offset: integer, slot: integer): bytes do
+    start = nc_cursor(env,offset)
+    if pos < 1 do b[] else if offset >= Enum.count(env) do b[] else
+      if start != pos-1 do nf_piped_at(source,pos,env,nc_env_next(env,offset),slot+nc_env_weight(env,offset)) else
+        if nc_cursor(env,offset+3) != start do nf_piped_at(source,pos,env,nc_env_next(env,offset),slot+nc_env_weight(env,offset)) else
+          # A record of tag 21 at the same place holds an expected type, not a piped value.
+          if byte_at(source,start) != 40 do b[] else if nc_env_tag(env,offset) == 21 do nf_piped_at(source,pos,env,nc_env_next(env,offset),slot+nc_env_weight(env,offset)) else nc_value(pos,nc_slot(b[72,139,69],slot),nt_read(env,offset+7)) end end
+        end
+      end
+    end end
+  end
+  def nf_same_line(source: bytes, pos: integer, stop: integer): integer do
+    middle = pos+nc_half(stop-pos)
+    if pos >= stop do 1 else if stop-pos == 1 do if byte_at(source,pos) == 10 do 0 else 1 end else
+      if nf_same_line(source,pos,middle) == 0 do 0 else nf_same_line(source,middle,stop) end
+    end end
+  end
+  def nf_check(kind: bytes, args: bytes, index: integer, count: integer): integer do
+    if index == count do 1 else
+      if no_compatible(nt_child(kind,index),nc_arg_kind(args,index)) == 0 do 0 else nf_check(kind,args,index+1,count) end
+    end
+  end
+  # Native smoke test; function values and closures.
+  def main() do System.halt(0) end
+end

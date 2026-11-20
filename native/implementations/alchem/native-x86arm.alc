@@ -1,0 +1,1044 @@
+defmodule NativeX86Arm do
+  # The ARM64 compiler translates each function's x86-64 code to ARM64
+  # (spec/arm64.md): the emitters, and the passes that read their code, stay
+  # those of x86-64. This file decodes x86-64 (xd_) and emits ARM64 (xa_)
+  # with the machine model of scripts/x86-to-arm64.py.
+
+  # ---- words ----
+  # 8 bytes, two's complement, of any integer.
+  # Most words are small (a length, an op, a register, -1 for none): those
+  # are made at once, the rest by divisions, which are recursions here.
+  def xw(v: integer): bytes do
+    if v >= 0 do (if v < 256 do b[v,0,0,0,0,0,0,0] else if v < 65536 do Enum.concat(nc_u16(v),b[0,0,0,0,0,0]) else xw_wide(v) end end) else
+      if v == -1 do b[255,255,255,255,255,255,255,255] else xw_wide(v) end
+    end
+  end
+  def xw_wide(v: integer): bytes do
+    if v >= 0 do Enum.concat(nc_u32(v-a_div(v,4294967296)*4294967296),nc_u32(a_div(v,4294967296))) else
+      w = 0-v-1
+      Enum.concat(nc_u32(4294967295-(w-a_div(w,4294967296)*4294967296)),nc_u32(4294967295-a_div(w,4294967296)))
+    end
+  end
+  def xg(d: bytes, p: integer): integer do
+    high = nc_long(d,p+4)
+    if high >= 2147483648 do nc_long(d,p)+(high-4294967296)*4294967296 else nc_long(d,p)+high*4294967296 end
+  end
+  def xs8(v: integer): integer do if v >= 128 do v-256 else v end end
+  def xs32(d: bytes, p: integer): integer do
+    u = nc_long(d,p)
+    if u >= 2147483648 do u-4294967296 else u end
+  end
+  def xbit(v: integer, bit: integer): integer do a_div(v,a_pow(bit))-2*a_div(v,a_pow(bit+1)) end
+
+  # ---- decoding ----
+  # A decoded instruction: twelve words.
+  #  0 length, 1 op, 2 size (1, 2, 4, 8), 3 reg (ModRM.reg or the register
+  #  of the opcode, x86-64 numbering), 4 mode (0 none, 1 register, 2
+  #  memory), 5 the register or base (16 for RIP, -1 none), 6 index (-1
+  #  none), 7 scale, 8 displacement, 9 immediate, 10 sub-operation,
+  #  condition or source size, 11 REX (0 none, else 16 plus its bits: a byte
+  #  register 4..7 without it is AH..BH), 12 prefixes (256 for 0x66, plus
+  #  0xF2 or 0xF3), 13 the opcode's last byte.
+  # Length 0: not an instruction the translator knows.
+  def xf(rec: bytes, i: integer): integer do xg(rec,i*8) end
+  # Word 14: the offset the instruction starts at.
+  def xd(code: bytes, p: integer): bytes do Enum.concat(xd_pre(code,p,p,0,0),xw(p)) end
+  # o16: 1 after 0x66; rep: 0, 0xF2 or 0xF3.
+  def xd_pre(code: bytes, start: integer, q: integer, o16: integer, rep: integer): bytes do
+    v = Enum.at(code,q,0)
+    if v == 102 do xd_pre(code,start,q+1,1,rep) else
+      if (v-242)*(v-243) == 0 do xd_pre(code,start,q+1,o16,v) else
+        if v == 240 do xd_pre(code,start,q+1,o16,rep) else
+          rex = if v >= 64 do if v <= 79 do v-64 else -1 end else -1 end
+          if rex >= 0 do xd_op(code,start,q+1,o16*256+rep,rex+16) else xd_op(code,start,q,o16*256+rep,0) end
+        end
+      end
+    end
+  end
+  # rex: 0 without a REX prefix, else 16 plus its four bits.
+  def xd_op(code: bytes, start: integer, q: integer, pre: integer, rex: integer): bytes do
+    v = Enum.at(code,q,0)
+    if v == 15 do xd_two(code,start,q+2,pre,rex,Enum.at(code,q+1,0)) else xd_one(code,start,q+1,pre,rex,v) end
+  end
+  # The spec of an opcode: op, size code (0 the operand size, 1 a byte, 8
+  # 64 bits), ModRM (1 yes), immediate (0 none, 1 imm8, 2 imm16, 4 immz,
+  # 9 imm32 or imm64 with REX.W, 6 rel8, 7 rel32), sub, register in the
+  # opcode (1 yes).
+  # The spec of a one-byte opcode (xd_t1) or of 0F xx (xd_t2), 6 bytes
+  # each: op (0 none), size code (0 the operand size, 1 a byte, 8 64 bits),
+  # ModRM (1 yes), immediate (0 none, 1 imm8, 2 imm16, 4 immz, 9 imm32 or
+  # imm64 with REX.W, 6 rel8, 7 rel32), sub (255: ModRM.reg), register in
+  # the opcode (1 yes). Generated with the table of spec/arm64.md.
+  def xd_t1(v: integer): bytes do
+    # The 6 bytes of opcode v, from the part of 64 that holds it: a table
+    # joined whole for each would be copied for each instruction decoded.
+    at = (v-64*a_div(v,64))*6
+    if v < 128 do (if v < 64 do nc_slice(b"CgEBAAAACgABAAAACwEBAAAACwABAAAADQEAAQAADQAABAAAAAAAAAAAAAAAAAAACgEBAAEACgABAAEACwEBAAEACwABAAEADQEAAQEADQAABAEAAAAAAAAAAAAAAAAACgEBAAIACgABAAIACwEBAAIACwABAAIADQEAAQIADQAABAIAAAAAAAAAAAAAAAAACgEBAAMACgABAAMACwEBAAMACwABAAMADQEAAQMADQAABAMAAAAAAAAAAAAAAAAACgEBAAQACgABAAQACwEBAAQACwABAAQADQEAAQQADQAABAQAAAAAAAAAAAAAAAAACgEBAAUACgABAAUACwEBAAUACwABAAUADQEAAQUADQAABAUAAAAAAAAAAAAAAAAACgEBAAYACgABAAYACwEBAAYACwABAAYADQEAAQYADQAABAYAAAAAAAAAAAAAAAAACgEBAAcACgABAAcACwEBAAcACwABAAcADQEAAQcADQAABAcAAAAAAAAAAAAAAAAA",at,at+6) else nc_slice(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAgAAAABKAgAAAABKAgAAAABKAgAAAABKAgAAAABKAgAAAABKAgAAAABKAgAAAABKQgAAAABKQgAAAABKQgAAAABKQgAAAABKQgAAAABKQgAAAABKQgAAAABKQgAAAABAAAAAAAAAAAAAAAAAAAAAAAAJQABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKggABAAAIgABBAAAKggAAQAAIgABAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALwAABgAALwAABgEALwAABgIALwAABgMALwAABgQALwAABgUALwAABgYALwAABgcALwAABggALwAABgkALwAABgoALwAABgsALwAABgwALwAABg0ALwAABg4ALwAABg8A",at,at+6) end) else
+      if v < 192 do nc_slice(b"DAEBAf8ADAABBP8AAAAAAAAADAABAf8AFAEBAAAAFAABAAAANgEBAAAANgABAAAAAQEBAAAAAQABAAAAAgEBAAAAAgABAAAAAAAAAAAABQABAAAAAAAAAAAALAgBAAAANwAAAAAAUgAAAAABUgAAAAABUgAAAAABUgAAAAABUgAAAAABUgAAAAABUgAAAAABNQAAAAAANAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPAEAAAAAPAAAAAAAQAEAAAAAAAAAAAAAFQEAAQAAFQAABAAAPgEAAAAAPgAAAAAAAAAAAAAAAAAAAAAAVQEAAAAAVQAAAAAABAEAAQABBAEAAQABBAEAAQABBAEAAQABBAEAAQABBAEAAQABBAEAAQABBAEAAQABBAAACQABBAAACQABBAAACQABBAAACQABBAAACQABBAAACQABBAAACQABBAAACQAB",at,at+6) else nc_slice(b"HgEBAf8AHgABAf8AMgAAAgAAMgAAAAAAAAAAAAAAAAAAAAAAAwEBAQAAAwABBAAAAAAAAAAAMwAAAAAAAAAAAAAAAAAAAAAAOQAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAHwEBAP8AHwABAP8AIAEBAP8AIAABAP8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVggABgAAVggABgEAVggABgIAVggABgMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALQAABwAALgAABwAAAAAAAAAALgAABgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFgEBAP8AFgABAP8AUwAAAAAAVAAAAAAAAAAAAAAAAAAAAAAAOgAAAAAAOwAAAAAAHAEBAP8AHAABAP8A",at,at+6) end
+    end
+  end
+  def xd_t2(v: integer): bytes do
+    # The 6 bytes of opcode v, from the part of 64 that holds it: a table
+    # joined whole for each would be copied for each instruction decoded.
+    at = (v-64*a_div(v,64))*6
+    if v < 128 do (if v < 64 do nc_slice(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARggBABAARggBABEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANwABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARggBACgARggBACkARgABACoAAAAAAAAARgABACwARgABAC0ARggBAC4ARggBAC8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",at,at+6) else nc_slice(b"JwABAAAAJwABAAEAJwABAAIAJwABAAMAJwABAAQAJwABAAUAJwABAAYAJwABAAcAJwABAAgAJwABAAkAJwABAAoAJwABAAsAJwABAAwAJwABAA0AJwABAA4AJwABAA8AAAAAAAAARggBAFEAAAAAAAAAAAAAAAAARggBAFQAAAAAAAAARggBAFYARggBAFcARggBAFgARggBAFkAAAAAAAAAAAAAAAAARggBAFwARggBAF0ARggBAF4ARggBAF8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARgABAG4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARgABAH4AAAAAAAAA",at,at+6) end) else
+      if v < 192 do nc_slice(b"LwAABwAALwAABwEALwAABwIALwAABwMALwAABwQALwAABwUALwAABwYALwAABwcALwAABwgALwAABwkALwAABwoALwAABwsALwAABwwALwAABw0ALwAABw4ALwAABw8AJgEBAAAAJgEBAAEAJgEBAAIAJgEBAAMAJgEBAAQAJgEBAAUAJgEBAAYAJgEBAAcAJgEBAAgAJgEBAAkAJgEBAAoAJgEBAAsAJgEBAAwAJgEBAA0AJgEBAA4AJgEBAA8AAAAAAAAAAAAAAAAAAAAAAAAAQgABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQgABAAEAAAAAAAAAAAAAAAAAAAAAAAAAIQABAAAAAAAAAAAAAAAAAAAAAAAAAAAAQgABAAIAAAAAAAAAAAAAAAAAIwABAAEAIwABAAIAAAAAAAAAAAAAAAAAQwABAf8AQgABAAMARAABAAAARQABAAAAJAABAAEAJAABAAIA",at,at+6) else nc_slice(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARggBANYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARggBAO8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",at,at+6) end
+    end
+  end
+  def xd_one(code: bytes, start: integer, q: integer, pre: integer, rex: integer, v: integer): bytes do
+    # 0x90 is nop, but with REX.B xchg rax, r8 (the form of 0x91 to 0x97).
+    spec = if v == 144 do (if rex >= 16 do (if xbit(rex-16,0) == 1 do xd_t1(145) else xd_t1(144) end) else xd_t1(144) end) else xd_t1(v) end
+    if Enum.at(spec,0,0) == 0 do xd_none() else xd_build(code,start,q,pre,rex,Enum.concat(spec,b[v])) end
+  end
+  # Two-byte opcodes 0x0F xx; 0F 0B 'D' is the marker of data (xa_mark).
+  def xd_two(code: bytes, start: integer, q: integer, pre: integer, rex: integer, v: integer): bytes do
+    spec = if v == 11 do (if Enum.at(code,q,0) == 68 do b[80,0,0,0,0,0] else if Enum.at(code,q,0) == 65 do b[81,0,0,0,0,0] else b[57,0,0,0,0,0] end end) else xd_t2(v) end
+    if Enum.at(spec,0,0) == 0 do xd_none() else xd_build(code,start,q,pre,rex,Enum.concat(spec,b[v])) end
+  end
+  def xd_none(): bytes do Enum.concat(xw(0),nc_zeros(104)) end
+  # spec: op, size code, ModRM, immediate, sub, register in opcode, opcode.
+  def xd_build(code: bytes, start: integer, q: integer, pre: integer, rex: integer, spec: bytes): bytes do
+    w = if rex == 0 do 0 else xbit(rex-16,3) end
+    code_size = Enum.at(spec,1,0)
+    o16 = a_div(pre,256)
+    size = if code_size == 1 do 1 else if code_size == 8 do 8 else if w == 1 do 8 else if o16 == 1 do 2 else 4 end end end end
+    m = if Enum.at(spec,2,0) == 1 do xd_modrm(code,q,rex) else nc_join(nc_join(xw(0),xw(0),xw(0)),nc_join(xw(-1),xw(-1),xw(1)),xw(0)) end
+    after = q+xf(m,0)
+    # test r/m, imm (F6 /0, F7 /0) is the one form of group 3 with an immediate.
+    kind = if Enum.at(spec,0,0) == 22 do (if xf(m,1)-8*a_div(xf(m,1),8) == 0 do (if size == 1 do 1 else 4 end) else 0 end) else Enum.at(spec,3,0) end
+    imm = xd_imm(code,after,kind,size,w)
+    reg = if Enum.at(spec,5,0) == 1 do (Enum.at(spec,6,0)-8*a_div(Enum.at(spec,6,0),8))+8*(if rex == 0 do 0 else xbit(rex-16,0) end) else xf(m,1) end
+    sub = if Enum.at(spec,4,0) == 255 do xf(m,1)-8*a_div(xf(m,1),8) else Enum.at(spec,4,0) end
+    marker = if Enum.at(spec,0,0) == 80 do 1 else if Enum.at(spec,0,0) == 81 do 1 else 0 end end
+    # A marker of ARM64 code covers that code too.
+    raw = if Enum.at(spec,0,0) == 81 do nc_long(code,after+1) else 0 end
+    data = if Enum.at(spec,0,0) == 80 do 4 else 0 end
+    length = if marker == 1 do after+5+data+raw-start else after+xf(imm,0)-start end
+    value = if marker == 1 do nc_long(code,after+1) else xf(imm,1) end
+    nc_join(nc_join(xw(length),xw(Enum.at(spec,0,0)),xw(size)),nc_join(xw(reg),nc_slice(m,16,56),xw(value)),nc_join(Enum.concat(xw(sub),xw(rex)),xw(pre),xw(Enum.at(spec,6,0))))
+  end
+  # The immediate: {its length, its value}.
+  def xd_imm(code: bytes, p: integer, kind: integer, size: integer, w: integer): bytes do
+    if kind == 0 do Enum.concat(xw(0),xw(0)) else if kind == 1 do Enum.concat(xw(1),xw(xs8(Enum.at(code,p,0)))) else if kind == 6 do Enum.concat(xw(1),xw(xs8(Enum.at(code,p,0)))) else
+      if kind == 2 do Enum.concat(xw(2),xw(nc_read(code,p))) else
+        if kind == 4 do (if size == 2 do Enum.concat(xw(2),xw(nc_read(code,p)-(if nc_read(code,p) >= 32768 do 65536 else 0 end))) else Enum.concat(xw(4),xw(xs32(code,p))) end) else
+          if kind == 7 do Enum.concat(xw(4),xw(xs32(code,p))) else
+            if w == 1 do Enum.concat(xw(8),xw(xg(code,p))) else Enum.concat(xw(4),xw(nc_long(code,p))) end
+          end
+        end
+      end
+    end end end
+  end
+  # ModRM (and SIB and displacement) at q: {length, reg, mode, register or
+  # base, index, scale, displacement} as words.
+  def xd_modrm(code: bytes, q: integer, rex: integer): bytes do
+    m = Enum.at(code,q,0)
+    mod = a_div(m,64)
+    r = if rex == 0 do 0 else xbit(rex-16,2) end
+    x = if rex == 0 do 0 else xbit(rex-16,1) end
+    bb = if rex == 0 do 0 else xbit(rex-16,0) end
+    reg = a_div(m,8)-8*mod+8*r
+    rm = m-8*a_div(m,8)
+    if mod == 3 do nc_join(nc_join(xw(1),xw(reg),xw(1)),nc_join(xw(rm+8*bb),xw(-1),xw(1)),xw(0)) else
+      if rm == 4 do xd_sib(code,q,reg,mod,x*2+bb) else
+        if mod == 0 do (if rm == 5 do nc_join(nc_join(xw(5),xw(reg),xw(2)),nc_join(xw(16),xw(-1),xw(1)),xw(xs32(code,q+1))) else nc_join(nc_join(xw(1),xw(reg),xw(2)),nc_join(xw(rm+8*bb),xw(-1),xw(1)),xw(0)) end) else
+          if mod == 1 do nc_join(nc_join(xw(2),xw(reg),xw(2)),nc_join(xw(rm+8*bb),xw(-1),xw(1)),xw(xs8(Enum.at(code,q+1,0)))) else
+            nc_join(nc_join(xw(5),xw(reg),xw(2)),nc_join(xw(rm+8*bb),xw(-1),xw(1)),xw(xs32(code,q+1)))
+          end
+        end
+      end
+    end
+  end
+  def xd_sib(code: bytes, q: integer, reg: integer, mod: integer, xb: integer): bytes do
+    s = Enum.at(code,q+1,0)
+    scale = a_pow(a_div(s,64))
+    index = a_div(s,8)-8*a_div(s,64)+8*a_div(xb,2)
+    base = s-8*a_div(s,8)
+    noindex = if index == 4 do -1 else index end
+    if mod == 0 do (if base == 5 do nc_join(nc_join(xw(6),xw(reg),xw(2)),nc_join(xw(-1),xw(noindex),xw(scale)),xw(xs32(code,q+2))) else nc_join(nc_join(xw(2),xw(reg),xw(2)),nc_join(xw(base+8*(xb-2*a_div(xb,2))),xw(noindex),xw(scale)),xw(0)) end) else
+      if mod == 1 do nc_join(nc_join(xw(3),xw(reg),xw(2)),nc_join(xw(base+8*(xb-2*a_div(xb,2))),xw(noindex),xw(scale)),xw(xs8(Enum.at(code,q+2,0)))) else
+        nc_join(nc_join(xw(6),xw(reg),xw(2)),nc_join(xw(base+8*(xb-2*a_div(xb,2))),xw(noindex),xw(scale)),xw(xs32(code,q+2)))
+      end
+    end
+  end
+  # The lean decoding: of the instruction at p only its length, op, sub and
+  # last opcode byte (xd's words 0, 1, 10, 13), as one integer
+  # op + 256 sub + 65536 last + 16777216 length (0: not known), made with no
+  # record; what reads ahead for the flags reads this.
+  def xq(code: bytes, p: integer): integer do xq_pre(code,p,p,0) end
+  def xq_len(q: integer): integer do a_div(q,16777216) end
+  def xq_op(q: integer): integer do q-256*a_div(q,256) end
+  def xq_sub(q: integer): integer do a_div(q,256)-256*a_div(q,65536) end
+  def xq_last(q: integer): integer do a_div(q,65536)-256*a_div(q,16777216) end
+  def xq_pre(code: bytes, start: integer, q: integer, o16: integer): integer do
+    v = Enum.at(code,q,0)
+    if v == 102 do xq_pre(code,start,q+1,1) else
+      if (v-240)*(v-242)*(v-243) == 0 do xq_pre(code,start,q+1,o16) else
+        if v >= 64 do (if v <= 79 do xq_one(code,start,q+1,o16*256+v-48) else xq_one(code,start,q,o16*256) end) else xq_one(code,start,q,o16*256) end
+      end
+    end
+  end
+  # mode: 256 after 0x66, plus the REX byte less 48 (16 plus its bits), or 0.
+  def xq_one(code: bytes, start: integer, q: integer, mode: integer): integer do
+    v = Enum.at(code,q,0)
+    if v == 15 do
+      w = Enum.at(code,q+1,0)
+      spec = if w == 11 do (if Enum.at(code,q+2,0) == 68 do b[80,0,0,0,0,0] else if Enum.at(code,q+2,0) == 65 do b[81,0,0,0,0,0] else b[57,0,0,0,0,0] end end) else xd_t2(w) end
+      xq_build(code,start,q+2,mode,spec,w)
+    else xq_build(code,start,q+1,mode,xd_t1(if v == 144 do (if xbit(mode,4) == 1 do (if xbit(mode,0) == 1 do 145 else 144 end) else 144 end) else v end),v) end
+  end
+  def xq_build(code: bytes, start: integer, q: integer, mode: integer, spec: bytes, last: integer): integer do
+    op = Enum.at(spec,0,0)
+    if op == 0 do 0 else
+      rex = mode-256*a_div(mode,256)
+      w = if rex == 0 do 0 else xbit(rex-16,3) end
+      size = if Enum.at(spec,1,0) == 1 do 1 else if Enum.at(spec,1,0) == 8 do 8 else if w == 1 do 8 else if mode >= 256 do 2 else 4 end end end end
+      modrm = if Enum.at(spec,2,0) == 1 do Enum.at(code,q,0) else 0 end
+      after = if Enum.at(spec,2,0) == 1 do q+xq_modrm(code,q) else q end
+      reg = a_div(modrm,8)-8*a_div(modrm,64)
+      kind = if op == 22 do (if reg == 0 do (if size == 1 do 1 else 4 end) else 0 end) else Enum.at(spec,3,0) end
+      sub = if Enum.at(spec,4,0) == 255 do reg else Enum.at(spec,4,0) end
+      length = if op == 80 do after+9-start else if op == 81 do after+5+nc_long(code,after+1)-start else after+xq_imm(kind,size,w)-start end end
+      op+256*sub+65536*last+16777216*length
+    end
+  end
+  # The length of ModRM, SIB and displacement at q.
+  def xq_modrm(code: bytes, q: integer): integer do
+    m = Enum.at(code,q,0)
+    mod = a_div(m,64)
+    rm = m-8*a_div(m,8)
+    if mod == 3 do 1 else
+      if rm == 4 do (if mod == 0 do (if Enum.at(code,q+1,0)-8*a_div(Enum.at(code,q+1,0),8) == 5 do 6 else 2 end) else if mod == 1 do 3 else 6 end end) else
+        if mod == 0 do (if rm == 5 do 5 else 1 end) else if mod == 1 do 2 else 5 end end
+      end
+    end
+  end
+  def xq_imm(kind: integer, size: integer, w: integer): integer do
+    if kind == 0 do 0 else if (kind-1)*(kind-6) == 0 do 1 else if kind == 2 do 2 else
+      if kind == 4 do (if size == 2 do 2 else 4 end) else if kind == 7 do 4 else (if w == 1 do 8 else 4 end) end end
+    end end end
+  end
+  # ---- operands ----
+  # The ARM64 register of x86-64 register r.
+  def xr(r: integer): integer do ar(r) end
+  # 1 when a memory operand is a base register and a displacement ldur
+  # reaches: no address is computed for it.
+  def xa_simple(rec: bytes): integer do
+    if xf(rec,6) >= 0 do 0 else if xf(rec,5) < 0 do 0 else if xf(rec,5) > 15 do 0 else a_near(xf(rec,8)) end end end
+  end
+  # The code that puts the address of a memory operand in X16 (none for a
+  # simple one); a RIP-relative one is the instruction's target in the
+  # translated function (xa_target), here being where this code starts.
+  def xa_addr(rec: bytes, mp: bytes, here: integer): bytes do
+    if xf(rec,4) != 2 do b[] else if xa_simple(rec) == 1 do b[] else
+      base = xf(rec,5)
+      if base == 16 do a_adr(16,xa_target(mp,xf(rec,14)+xf(rec,0)+xf(rec,8))-here) else
+        scaled = if xf(rec,6) < 0 do (if base < 0 do b[] else a_mov(16,xr(base)) end) else
+          if base < 0 do a_lsl_n(16,xr(xf(rec,6)),xa_log(xf(rec,7)),8) else a_add_shift(16,xr(base),xr(xf(rec,6)),xa_log(xf(rec,7))) end
+        end
+        disp = xf(rec,8)
+        if base < 0 do (if xf(rec,6) < 0 do a_mov_imm(16,disp) else Enum.concat(scaled,a_add_value(16,16,disp,0)) end) else
+          if disp == 0 do scaled else Enum.concat(scaled,xa_add16(disp)) end
+        end
+      end
+    end end
+  end
+  # X16 += disp (through X17 past twelve bits).
+  def xa_add16(disp: integer): bytes do
+    if disp > -4096 do (if disp < 4096 do a_add_value(16,16,disp,0) else Enum.concat(a_mov_imm(17,disp),a_add(16,16,17,0)) end) else Enum.concat(a_mov_imm(17,disp),a_add(16,16,17,0)) end
+  end
+  def xa_log(scale: integer): integer do if scale == 8 do 3 else if scale == 4 do 2 else if scale == 2 do 1 else 0 end end end end
+  def xa_mb(rec: bytes): integer do if xa_simple(rec) == 1 do xr(xf(rec,5)) else 16 end end
+  def xa_md(rec: bytes): integer do if xa_simple(rec) == 1 do xf(rec,8) else 0 end end
+  # A register r of size bytes read into dst (zero- or sign-extended).
+  def xa_rdr(r: integer, dst: integer, size: integer, sign: integer): bytes do
+    if size == 8 do (if xr(r) == dst do b[] else a_mov(dst,xr(r)) end) else
+      if sign == 1 do a_sxt(dst,xr(r),size) else a_uxt(dst,xr(r),size) end
+    end
+  end
+  # dst written to register r as x86-64 writes size bytes of it: 8 and 4
+  # set it (4 zeroes the upper half), 2 and 1 keep the rest.
+  def xa_wrr(r: integer, src: integer, size: integer): bytes do
+    if size == 8 do (if xr(r) == src do b[] else a_mov(xr(r),src) end) else
+      if size == 4 do a_movw(xr(r),src) else a_bfxil(xr(r),src,size*8) end
+    end
+  end
+  # The r/m operand read into dst, written from src.
+  def xa_rd(rec: bytes, dst: integer, size: integer, sign: integer): bytes do
+    if xf(rec,4) == 1 do xa_rdr(xf(rec,5),dst,size,sign) else a_ldur(dst,xa_mb(rec),xa_md(rec),size,sign) end
+  end
+  def xa_wr(rec: bytes, src: integer, size: integer): bytes do
+    if xf(rec,4) == 1 do xa_wrr(xf(rec,5),src,size) else a_stur(src,xa_mb(rec),xa_md(rec),size) end
+  end
+  # 1 when a byte operand names AH, CH, DH or BH (no REX, register 4..7),
+  # which the translation does not take.
+  def xa_high(rec: bytes): integer do
+    op = xf(rec,1)
+    # The reg field names a register only in these forms; in the groups it
+    # says which operation.
+    named = if nc_and(nc_and((op-1)*(op-2)*(op-10)*(op-11),(op-20)*(op-54)),op-4) == 0 do 1 else 0 end
+    if xf(rec,2) != 1 do 0 else if xf(rec,11) != 0 do 0 else
+      if named*(if xf(rec,3) >= 4 do (if xf(rec,3) < 8 do 1 else 0 end) else 0 end) == 1 do 1 else xa_high_rm(rec) end
+    end end
+  end
+  def xa_high_rm(rec: bytes): integer do if xf(rec,4) != 1 do 0 else if xf(rec,5) >= 4 do (if xf(rec,5) < 8 do 1 else 0 end) else 0 end end end
+
+  # An instruction the translation does not take: udf with 0xFF00 plus its
+  # op in the immediate, so that a program that reaches it says which (an
+  # x86-64 byte it could not decode is udf with that byte and the next).
+  def xa_udf(rec: bytes): bytes do a4(65280+xf(rec,1)) end
+
+  # ---- conditions ----
+  # x86-64 condition cc (0 o, 1 no, 2 b, 3 ae, 4 e, 5 ne, 6 be, 7 a, 8 s,
+  # 9 ns, 10 p, 11 np, 12 l, 13 ge, 14 le, 15 g) after flags from pol (0 a
+  # subtraction, 1 an addition or logic, 2 a floating-point comparison):
+  # kind*256 + second*16 + first, kind 0 one ARM condition, 1 either of
+  # two, 2 both; -1 none.
+  def xa_cc(cc: integer, pol: integer): integer do
+    at = (pol*16+cc)*2
+    if Enum.at(xa_conds(),at,0) == 255 do -1 else nc_read(xa_conds(),at) end
+  end
+  def xa_conds(): bytes do b"BgAHAAMAAgAAAAEACQAIAAQABQD/////CwAKAA0ADAAGAAcAAgADAAAAAQACARMCBAAFAP////8LAAoADQAMAP////8LAAoAYAFxAg0ADAD/////BgAHAP//////////" end
+  # dst = X20 when the condition holds (cmovcc), by csel alone: the flags
+  # stay for what reads them after. Either of two: csel twice; both: csel
+  # twice the other way round.
+  def xa_cmov(c: integer, dst: integer, w: integer): bytes do
+    kind = a_div(c,256)
+    first = c-16*a_div(c,16)
+    second = a_div(c,16)-16*kind
+    if kind == 0 do a_csel_s(dst,20,dst,first,w) else
+      if kind == 1 do Enum.concat(a_csel_s(24,20,dst,second,w),a_csel_s(dst,20,24,first,w)) else
+        Enum.concat(a_csel_s(24,20,dst,second,w),a_csel_s(dst,24,dst,first,w))
+      end
+    end
+  end
+  # X19 = 1 when the condition holds, else 0.
+  def xa_cset(c: integer): bytes do
+    kind = a_div(c,256)
+    first = c-16*a_div(c,16)
+    second = a_div(c,16)-16*kind
+    if kind == 0 do a_cset(19,first) else
+      nc_join(a_cset(19,first),a_cset(21,second),if kind == 1 do a_orr(19,19,21) else a_and(19,19,21,0) end)
+    end
+  end
+
+  # ---- instructions ----
+  # The translation of rec (at x86-64 offset p of code) where it starts at
+  # here in the translated function. st: the flags' origin before it (pol),
+  # whether flags are read after it (need: 0 no, 1 yes, 2 its carry), the
+  # direction (0 forward, 1 back) and 1 for a function past 256 KiB.
+  def xa_insn(rec: bytes, mp: bytes, here: integer, st: bytes): bytes do
+    op = xf(rec,1)
+    if xa_high(rec) == 1 do xa_udf(rec) else
+      if op < 10 do xa_move(rec,mp,here) else if op < 22 do xa_alu(rec,mp,here,st) else if op < 40 do xa_unary(rec,mp,here,st) else
+        if op < 52 do xa_flow(rec,mp,here,st) else xa_other(rec,mp,here,st) end
+      end end end
+    end
+  end
+  # mov (1 r/m <- reg, 2 reg <- r/m, 3 r/m <- imm, 4 reg <- imm), lea (5).
+  def xa_move(rec: bytes, mp: bytes, here: integer): bytes do
+    op = xf(rec,1)
+    size = xf(rec,2)
+    pre = xa_addr(rec,mp,here)
+    if op == 1 do (if xf(rec,4) == 1 do xa_wrr(xf(rec,5),xr(xf(rec,3)),size) else Enum.concat(pre,a_stur(xr(xf(rec,3)),xa_mb(rec),xa_md(rec),size)) end) else
+      if op == 2 do (if xf(rec,4) == 1 do (if size == 8 do xa_wrr(xf(rec,3),xr(xf(rec,5)),8) else Enum.concat(xa_rdr(xf(rec,5),19,size,0),xa_wrr(xf(rec,3),19,size)) end) else nc_join(pre,a_ldur(19,xa_mb(rec),xa_md(rec),size,0),xa_wrr(xf(rec,3),19,size)) end) else
+        if op == 3 do nc_join(pre,a_mov_imm(19,xf(rec,9)),xa_wr(rec,19,size)) else
+          if op == 4 do Enum.concat(a_mov_imm(19,if size == 4 do xa_u32(xf(rec,9)) else xf(rec,9) end),xa_wrr(xf(rec,3),19,size)) else
+            if op == 5 do Enum.concat(xa_lea(rec,mp,here),xa_wrr(xf(rec,3),16,size)) else xa_udf(rec) end
+          end
+        end
+      end
+    end
+  end
+  def xa_u32(v: integer): integer do if v < 0 do v+4294967296 else v end end
+  # X16 = the address of the memory operand.
+  def xa_lea(rec: bytes, mp: bytes, here: integer): bytes do
+    if xa_simple(rec) == 1 do a_add_value(16,xr(xf(rec,5)),xf(rec,8),0) else xa_addr(rec,mp,here) end
+  end
+  # The ALU (10 r/m op= reg, 11 reg op= r/m, 12 r/m op= imm, 13 accumulator
+  # op= imm; sub 0 add, 1 or, 2 adc, 3 sbb, 4 and, 5 sub, 6 xor, 7 cmp) and
+  # test (20 r/m & reg, 21 accumulator & imm).
+  def xa_alu(rec: bytes, mp: bytes, here: integer, st: bytes): bytes do
+    op = xf(rec,1)
+    size = xf(rec,2)
+    pre = xa_addr(rec,mp,here)
+    acc = if (op-13)*(op-21) == 0 do 1 else 0 end
+    a = if op == 11 do xa_rdr(xf(rec,3),19,size,0) else if acc == 1 do xa_rdr(0,19,size,0) else xa_rd(rec,19,size,0) end end
+    bv = if op == 10 do xa_rdr(xf(rec,3),20,size,0) else if op == 20 do xa_rdr(xf(rec,3),20,size,0) else if op == 11 do xa_rd(rec,20,size,0) else a_mov_imm(20,xf(rec,9)) end end end
+    sub = if op >= 20 do 8 else xf(rec,10) end
+    result = xa_compute(sub,size,Enum.at(st,1,0),Enum.at(st,0,0))
+    back = if sub >= 7 do b[] else if op == 11 do xa_wrr(xf(rec,3),19,size) else if acc == 1 do xa_wrr(0,19,size) else xa_wr(rec,19,size) end end end
+    nc_join(nc_join(pre,a,bv),result,back)
+  end
+  # X19 = X19 op X20 on size bytes, with x86-64's flags when need is not 0
+  # (sub 8: test, which only sets flags). A byte or a word is worked on in
+  # the top of a W register so that the flags are those of its size.
+  def xa_compute(sub: integer, size: integer, need: integer, pol: integer): bytes do
+    narrow = if size < 4 do (if need > 0 do 1 else 0 end) else 0 end
+    w = if size == 8 do 8 else 4 end
+    up = if narrow == 1 do Enum.concat(a_lsl_n(19,19,32-8*size,4),a_lsl_n(20,20,32-8*size,4)) else b[] end
+    down = if narrow == 1 do (if sub >= 7 do b[] else a_lsr_n(19,19,32-8*size,4) end) else b[] end
+    s = if need > 0 do 1 else 0 end
+    body = if sub == 0 do a_alu(2332033024+s*536870912,19,19,20,w) else if sub == 5 do a_alu(3405774848+s*536870912,19,19,20,w) else
+      if sub == 7 do a_alu(3942645760,31,19,20,w) else if sub == 4 do a_alu(2315255808+s*1610612736,19,19,20,w) else if sub == 8 do a_alu(3925868544,31,19,20,w) else
+        if sub == 1 do Enum.concat(a_alu(2852126720,19,19,20,w),if s == 1 do a_alu(3925868544,31,19,19,w) else b[] end) else
+          if sub == 6 do Enum.concat(a_alu(3388997632,19,19,20,w),if s == 1 do a_alu(3925868544,31,19,19,w) else b[] end) else
+            xa_carry_op(sub,w,pol)
+          end
+        end
+      end end end
+    end end
+    nc_join(up,body,down)
+  end
+  # adc (2), sbb (3): x86-64's carry brought into ARM's C as each reads it.
+  def xa_carry_op(sub: integer, w: integer, pol: integer): bytes do
+    if sub == 2 do Enum.concat(if pol == 0 do Enum.concat(a_cset(21,3),a_cmp_value(21,1)) else b[] end,a_alu(3120562176,19,19,20,w)) else
+      Enum.concat(if pol == 1 do Enum.concat(a_cset(21,3),a_cmp_value(21,1)) else b[] end,a_alu(4194304000,19,19,20,w))
+    end
+  end
+  # The flags' origin after rec (0 subtraction, 1 addition, 2 floating
+  # point), from pol before it.
+  def xa_pol(rec: bytes, pol: integer): integer do xa_polq(xf(rec,1),xf(rec,10),xf(rec,13),pol) end
+  def xa_polq(op: integer, sub: integer, last: integer, pol: integer): integer do
+    if (op-10)*(op-11)*(op-12)*(op-13) == 0 do (if (sub-3)*(sub-5)*(sub-7) == 0 do 0 else 1 end) else
+      if (op-20)*(op-21) == 0 do 1 else
+        if op == 22 do (if sub == 3 do 0 else if sub == 0 do 1 else if (sub-4)*(sub-5) == 0 do 1 else pol end end end) else
+          if op == 28 do (if sub < 2 do (if pol == 2 do 1 else pol end) else pol end) else
+            if nc_and(nc_and((op-30)*(op-31)*(op-32)*(op-33)*(op-34),(op-66)*(op-67)*(op-68)),op-69) == 0 do (if op >= 68 do 0 else 1 end) else
+              if (op-64)*(op-85) == 0 do 0 else if (op-83)*(op-84) == 0 do 1 else if op == 70 do (if (last-46)*(last-47) == 0 do 2 else pol end) else pol end end end
+            end
+          end
+        end
+      end
+    end
+  end
+  # 1 when rec sets the flags, 2 when it reads them (3 when it reads the
+  # carry), 4 when it ends what can be known (a jump, call or return).
+  def xa_flags(rec: bytes): integer do xa_flagsq(xf(rec,1),xf(rec,10),xf(rec,13)) end
+  def xa_flagsq(op: integer, sub: integer, last: integer): integer do
+    # loopne, loope read Z; loop and jrcxz read nothing but go on to code
+    # that may: all four are counted as reading every flag.
+    if op == 86 do 2 else
+    if (op-38)*(op-39)*(op-47) == 0 do (if xa_carry_cc(sub) == 1 do 3 else 2 end) else
+      if (op-10)*(op-11)*(op-12)*(op-13) == 0 do (if (sub-2)*(sub-3) == 0 do 3 else 1 end) else
+        if nc_and((op-45)*(op-46)*(op-48)*(op-49),(op-50)*(op-56)) == 0 do 4 else
+          if op == 22 do (if sub == 2 do 0 else 1 end) else if op == 28 do (if sub < 2 do 1 else if (sub-2)*(sub-4) == 0 do 4 else 0 end end) else
+            if xa_polq(op,sub,last,9) != 9 do 1 else 0 end
+          end end
+        end
+      end
+    end end
+  end
+  def xa_carry_cc(cc: integer): integer do if (cc-2)*(cc-3) == 0 do 1 else 0 end end
+  # V and C set exactly when X21 is 1 (an overflow of mul or imul).
+  def xa_overflow(): bytes do Enum.concat(a_lsl_n(22,21,63,8),a_add(31,22,22,1)) end
+  def xa_w(size: integer): integer do if size == 8 do 8 else 4 end end
+  # Group 3 (22: 0 test imm, 2 not, 3 neg, 4 mul, 5 imul, 6 div, 7 idiv),
+  # group 4/5 (28: 0 inc, 1 dec, 2 call, 4 jmp, 6 push), shifts (30 by an
+  # immediate, 31 by 1, 32 by CL), imul (33, 34), movzx (35), movsx (36),
+  # movsxd (37), setcc (38), cmovcc (39).
+  def xa_unary(rec: bytes, mp: bytes, here: integer, st: bytes): bytes do
+    op = xf(rec,1)
+    size = xf(rec,2)
+    pre = xa_addr(rec,mp,here)
+    if op == 22 do Enum.concat(pre,xa_group3(rec,st)) else if op == 28 do Enum.concat(pre,xa_group5(rec,st)) else
+      if op < 33 do Enum.concat(pre,xa_shift(rec,st)) else if op < 35 do Enum.concat(pre,xa_imul(rec,st)) else
+        if op < 38 do Enum.concat(pre,xa_extend(rec)) else
+          c = xa_cc(xf(rec,10),Enum.at(st,0,0))
+          if c < 0 do xa_udf(rec) else
+            if op == 38 do nc_join(pre,xa_cset(c),xa_wr(rec,19,1)) else
+              if size == 2 do xa_udf(rec) else nc_join(pre,xa_rd(rec,20,size,0),xa_cmov(c,xr(xf(rec,3)),xa_w(size))) end
+            end
+          end
+        end
+      end end
+    end end
+  end
+  def xa_group3(rec: bytes, st: bytes): bytes do
+    sub = xf(rec,10)
+    size = xf(rec,2)
+    need = Enum.at(st,1,0)
+    w = xa_w(size)
+    if sub == 0 do nc_join(xa_rd(rec,19,size,0),a_mov_imm(20,xf(rec,9)),xa_compute(8,size,need,0)) else
+      if sub == 2 do nc_join(xa_rd(rec,19,size,0),a_alu(2854223872,19,31,19,w),xa_wr(rec,19,size)) else
+        if sub == 3 do nc_join(Enum.concat(xa_rd(rec,20,size,0),a_mov_imm(19,0)),xa_compute(5,size,need,0),xa_wr(rec,19,size)) else
+          if sub == 4 do Enum.concat(xa_rd(rec,20,size,0),xa_mul(size,need,0)) else
+            if sub == 5 do Enum.concat(xa_rd(rec,20,size,1),xa_mul(size,need,1)) else Enum.concat(xa_rd(rec,20,size,if sub == 7 do 1 else 0 end),xa_div(size,sub)) end
+          end
+        end
+      end
+    end
+  end
+  # RDX:RAX = RAX * X20, unsigned or signed.
+  def xa_mul(size: integer, need: integer, sign: integer): bytes do
+    if size == 8 do
+      high = if sign == 1 do a_smulh(21,0,20) else a_umulh(21,0,20) end
+      flag = if need == 0 do b[] else if sign == 1 do nc_join(a_asr_n(22,0,63,8),a_cmp(21,22),Enum.concat(a_cset(21,1),xa_overflow())) else nc_join(a_cmp_value(2,0),a_cset(21,1),xa_overflow()) end end
+      nc_join(high,a_mul(0,0,20),Enum.concat(a_mov(2,21),flag))
+    else
+      if size != 4 do a_udf() else
+        product = if sign == 1 do a_smull(19,0,20) else Enum.concat(a_movw(19,0),a_mul(19,19,20)) end
+        flag = if need == 0 do b[] else if sign == 1 do nc_join(a_sxt(22,19,4),a_cmp(19,22),Enum.concat(a_cset(21,1),xa_overflow())) else nc_join(a_lsr_n(22,19,32,8),a_cmp_value(22,0),Enum.concat(a_cset(21,1),xa_overflow())) end end
+        nc_join(product,Enum.concat(a_movw(0,19),a_lsr_n(2,19,32,8)),flag)
+      end
+    end
+  end
+  # div (6) and idiv (7) of RDX:RAX by X20.
+  def xa_div(size: integer, sub: integer): bytes do
+    if size == 8 do (if sub == 7 do nc_join(a_sdiv(19,0,20),a_msub(2,19,20,0,8),a_mov(0,19)) else xa_udiv() end) else
+      if size != 4 do a_udf() else
+        dividend = nc_join(a_lsl_n(21,2,32,8),a_movw(22,0),a_orr(21,21,22))
+        if sub == 7 do nc_join(dividend,a_sxt(20,20,4),nc_join(a_sdiv(19,21,20),a_msub(2,19,20,21,8),Enum.concat(a_movw(0,19),a_movw(2,2)))) else
+          nc_join(dividend,a_udiv(19,21,20,8),nc_join(a_msub(2,19,20,21,8),a_movw(0,19),a_movw(2,2)))
+        end
+      end
+    end
+  end
+  # Unsigned RDX:RAX / X20 with RDX below X20: one udiv when RDX is 0, else
+  # by bits, the remainder reduced at once when it passes 64 bits.
+  def xa_udiv(): bytes do
+    quick = nc_join(a_udiv(19,0,20,8),a_msub(2,19,20,0,8),Enum.concat(a_mov(0,19),a_b(56)))
+    step = nc_join(nc_join(a_lsr_n(22,0,63,8),a_add(2,2,2,1),a_cset(23,2)),nc_join(a_orr(2,2,22),a_lsl_n(0,0,1,8),a_cbnz(23,12,8)),Enum.concat(a_cmp(2,20),a_bcond(3,12)))
+    take = Enum.concat(a_sub(2,2,20,0),a_orr_one(0))
+    nc_join(Enum.concat(a_cbnz(2,20,8),quick),Enum.concat(a_mov_imm(21,64),step),nc_join(take,a_sub_imm(21,21,1,1),a_bcond(1,-44)))
+  end
+  # rd |= 1.
+  def a_orr_one(rd: integer): bytes do a4(2990538752+rd*32+rd) end
+  # inc and dec keep x86-64's carry: ARM's C (mrs x22, nzcv) is put back
+  # into the flags they set (mrs x23, nzcv; bfi x23, x22 >> 29, #29, #1; msr
+  # nzcv, x23) and keeps its sense, so that a path that skips one reads it
+  # the same. After a floating-point comparison it is taken as x86-64's CF
+  # (cset x22, lt) and made an addition's.
+  def xa_keep_carry(code: bytes, need: integer, pol: integer): bytes do
+    if need == 0 do code else
+      before = if pol == 2 do a_cset(22,11) else a4(3577430550) end
+      after = if pol == 2 do b[] else a_lsr_n(22,22,29,8) end
+      nc_join(Enum.concat(before,code),Enum.concat(after,a4(3577430551)),Enum.concat(a_bfm(3003121664,23,22,35,0,8),a4(3575333399)))
+    end
+  end
+  def xa_group5(rec: bytes, st: bytes): bytes do
+    sub = xf(rec,10)
+    size = xf(rec,2)
+    need = Enum.at(st,1,0)
+    if sub < 2 do nc_join(Enum.concat(xa_rd(rec,19,size,0),a_mov_imm(20,1)),xa_keep_carry(xa_compute(if sub == 0 do 0 else 5 end,size,need,0),need,Enum.at(st,0,0)),xa_wr(rec,19,size)) else
+      if sub == 2 do nc_join(xa_rd(rec,17,8,0),Enum.concat(a_adr(30,12),a_push(30)),a_br(17)) else
+        if sub == 4 do Enum.concat(xa_rd(rec,17,8,0),a_br(17)) else if sub == 6 do Enum.concat(xa_rd(rec,19,8,0),a_push(19)) else xa_udf(rec) end end
+      end
+    end
+  end
+  # Shifts and rotates: sub 0 rol, 1 ror, 4 shl, 5 shr, 7 sar.
+  def xa_shift(rec: bytes, st: bytes): bytes do
+    sub = xf(rec,10)
+    size = xf(rec,2)
+    need = Enum.at(st,1,0)
+    w = xa_w(size)
+    bits = size*8
+    load = xa_rd(rec,19,size,if sub == 7 do 1 else 0 end)
+    if xf(rec,1) == 32 do nc_join(load,xa_shift_cl(sub,size,need),xa_wr(rec,19,size)) else
+      n = (if xf(rec,1) == 31 do 1 else xf(rec,9) end)-(if size == 8 do 64 else 32 end)*a_div(if xf(rec,1) == 31 do 1 else xf(rec,9) end,if size == 8 do 64 else 32 end)
+      if n == 0 do b[] else
+        carry = if need == 2 do (if sub == 4 do a_bfm(3539992576,21,19,bits-n,bits-n,8) else a_bfm(3539992576,21,19,n-1,n-1,8) end) else b[] end
+        work = if size < 4 do 8 else w end
+        body = if sub == 4 do a_lsl_n(19,19,n,work) else if sub == 5 do a_lsr_n(19,19,n,work) else if sub == 7 do a_asr_n(19,19,n,work) else
+          if size < 4 do xa_udf(rec) else if sub == 1 do a_ror_n(19,19,n,w) else a_ror_n(19,19,bits-n,w) end end
+        end end end
+        nc_join(nc_join(load,carry,body),xa_shift_flags(size,need),xa_wr(rec,19,size))
+      end
+    end
+  end
+  def xa_shift_cl(sub: integer, size: integer, need: integer): bytes do
+    w = if size == 8 do 8 else if size == 4 do 4 else 8 end end
+    kind = if sub == 4 do 0 else if sub == 5 do 1 else if sub == 7 do 2 else 3 end end end
+    count = if sub == 0 do Enum.concat(a_sub(20,31,1,0),b[]) else b[] end
+    body = if sub == 0 do a_shiftv(3,19,19,20,w) else a_shiftv(kind,19,19,1,w) end
+    nc_join(count,body,xa_shift_flags(size,if need == 2 do 1 else need end))
+  end
+  # After a shift: the carry (X21, need 2) or Z and N of the result.
+  def xa_shift_flags(size: integer, need: integer): bytes do
+    if need == 2 do a_cmp_value(21,1) else if need == 0 do b[] else
+      if size < 4 do Enum.concat(a_lsl_n(22,19,32-8*size,4),a_alu(3925868544,31,22,22,4)) else a_alu(3925868544,31,19,19,xa_w(size)) end
+    end end
+  end
+  def xa_imul(rec: bytes, st: bytes): bytes do
+    size = xf(rec,2)
+    need = Enum.at(st,1,0)
+    a = if xf(rec,1) == 33 do xa_rdr(xf(rec,3),19,size,1) else xa_rd(rec,19,size,1) end
+    bv = if xf(rec,1) == 33 do xa_rd(rec,20,size,1) else a_mov_imm(20,xf(rec,9)) end
+    if size == 8 do
+      flag = if need == 0 do b[] else nc_join(a_smulh(21,19,20),Enum.concat(a_mul(19,19,20),a_asr_n(22,19,63,8)),nc_join(a_cmp(21,22),a_cset(21,1),xa_overflow())) end
+      nc_join(Enum.concat(a,bv),if need == 0 do a_mul(19,19,20) else flag end,xa_wrr(xf(rec,3),19,8))
+    else
+      if size != 4 do xa_udf(rec) else
+        flag = if need == 0 do b[] else nc_join(a_sxt(22,19,4),a_cmp(19,22),Enum.concat(a_cset(21,1),xa_overflow())) end
+        nc_join(Enum.concat(a,bv),Enum.concat(a_smull(19,19,20),flag),xa_wrr(xf(rec,3),19,4))
+      end
+    end
+  end
+  # movzx, movsx (source size in sub), movsxd.
+  def xa_extend(rec: bytes): bytes do
+    op = xf(rec,1)
+    from_size = if op == 37 do 4 else xf(rec,10) end
+    high = if from_size == 1 do (if xf(rec,11) == 0 do (if xf(rec,4) == 1 do (if xf(rec,5) >= 4 do (if xf(rec,5) < 8 do 1 else 0 end) else 0 end) else 0 end) else 0 end) else 0 end
+    if high == 1 do xa_udf(rec) else Enum.concat(xa_rd(rec,19,from_size,if op == 35 do 0 else 1 end),xa_wrr(xf(rec,3),19,xf(rec,2))) end
+  end
+
+  # ---- control ----
+  # The offset in the translated function of x86-64 offset target, by a
+  # search of the map (16-byte entries, the x86-64 offset first): 0 with
+  # no map (while sizes are measured).
+  def xa_target(mp: bytes, target: integer): integer do
+    if Enum.count(mp) == 0 do 0 else xa_find(mp,target,0,a_div(Enum.count(mp),16)) end
+  end
+  def xa_find(mp: bytes, target: integer, first: integer, stop: integer): integer do
+    # Inside data (an operand may point into it) the distance from its start
+    # carries over; an instruction is only ever named at its start.
+    if stop-first <= 1 do nc_long(mp,first*16+4)+target-nc_long(mp,first*16) else
+      middle = first+a_div(stop-first,2)
+      if nc_long(mp,middle*16) <= target do xa_find(mp,target,middle,stop) else xa_find(mp,target,first,middle) end
+    end
+  end
+  def xa_flow(rec: bytes, mp: bytes, here: integer, st: bytes): bytes do
+    op = xf(rec,1)
+    target = xa_target(mp,xf(rec,14)+xf(rec,0)+xf(rec,9))
+    if op == 40 do a_push(xr(xf(rec,3))) else if op == 41 do a_pop(xr(xf(rec,3))) else if op == 42 do Enum.concat(a_mov_imm(19,xf(rec,9)),a_push(19)) else
+      if op == 44 do nc_join(xa_addr(rec,mp,here),a_pop(19),xa_wr(rec,19,8)) else
+        if op == 45 do nc_join(a_adr(30,12),a_push(30),a_b(target-here-8)) else
+          if op == 46 do a_b(target-here) else if op == 47 do xa_jcc(rec,target-here,st) else
+            if op == 50 do nc_join(a_pop(30),if xf(rec,9) == 0 do b[] else a_add_imm(28,28,xf(rec,9),0) end,a_br(30)) else
+              if op == 51 do Enum.concat(a_mov(28,29),a_pop(29)) else xa_udf(rec) end
+            end
+          end end
+        end
+      end
+    end end end
+  end
+  # A conditional jump distance bytes away: b.cond reaches 1 MiB, which a
+  # function past 256 KiB of x86-64 code may pass, so there it skips a b.
+  def xa_jcc(rec: bytes, distance: integer, st: bytes): bytes do
+    c = xa_cc(xf(rec,10),Enum.at(st,0,0))
+    big = Enum.at(st,3,0)
+    kind = a_div(c,256)
+    first = c-16*a_div(c,16)
+    second = a_div(c,16)-16*kind
+    if c < 0 do xa_udf(rec) else
+      if kind == 0 do (if big == 0 do a_bcond(first,distance) else Enum.concat(a_bcond(a_invert(first),8),a_b(distance-4)) end) else
+        if kind == 1 do (if big == 0 do Enum.concat(a_bcond(first,distance),a_bcond(second,distance-4)) else nc_join(Enum.concat(a_bcond(a_invert(first),8),a_b(distance-4)),a_bcond(a_invert(second),8),a_b(distance-12)) end) else
+          if big == 0 do Enum.concat(a_bcond(a_invert(first),8),a_bcond(second,distance-4)) else nc_join(a_bcond(a_invert(first),12),a_bcond(a_invert(second),8),a_b(distance-8)) end
+        end
+      end
+    end
+  end
+
+  # ---- the rest ----
+  def xa_other(rec: bytes, mp: bytes, here: integer, st: bytes): bytes do
+    op = xf(rec,1)
+    size = xf(rec,2)
+    if op == 52 do (if size == 8 do a_asr_n(2,0,63,8) else a_asr_n(2,0,31,4) end) else
+      if op == 53 do (if size == 8 do a_sxt(0,0,4) else Enum.concat(a_sxt(19,0,2),a_movw(0,19)) end) else
+        if op == 54 do nc_join(Enum.concat(xa_addr(rec,mp,here),xa_rd(rec,19,size,0)),xa_rdr(xf(rec,3),20,size,0),Enum.concat(xa_wr(rec,20,size),xa_wrr(xf(rec,3),19,size))) else
+          if op == 86 do xa_loop(rec,mp,here) else
+          if op == 85 do xa_scas(rec,st) else
+          if op == 83 do a_add(31,31,31,1) else if op == 84 do a_sub(31,31,31,1) else
+          if op == 82 do (if size == 8 do nc_join(a_mov(19,0),a_mov(0,xr(xf(rec,3))),a_mov(xr(xf(rec,3)),19)) else nc_join(a_movw(19,0),a_movw(0,xr(xf(rec,3))),a_movw(xr(xf(rec,3)),19)) end) else
+          if (op-55)*(op-58)*(op-59)*(op-80) == 0 do b[] else
+            if op == 56 do nc_join(Enum.concat(a_adr(30,20),a_movz(16,1056,0)),Enum.concat(a_movk(16,64,1),a_ldr(16,16,0)),a_br(16)) else
+              if op == 57 do (if xf(rec,10) == 1 do a4(3558866944) else xa_udf(rec) end) else
+                if op < 66 do xa_string(rec,st) else
+                  if op < 68 do Enum.concat(xa_addr(rec,mp,here),xa_bt(rec)) else if op < 70 do Enum.concat(xa_addr(rec,mp,here),xa_bscan(rec)) else xa_sse(rec,mp,here) end end
+                end
+              end end
+              end end end end
+            end
+          end
+        end
+      end
+    end
+  end
+  # movs (60), stos (62), cmps (64), with or without rep (prefix 0xF3),
+  # forward or back (st byte 2, set by std).
+  def xa_string(rec: bytes, st: bytes): bytes do
+    op = xf(rec,1)
+    size = xf(rec,2)
+    rep = xf(rec,12)-256*a_div(xf(rec,12),256)
+    d = if Enum.at(st,2,0) == 1 do 0-size else size end
+    body = if op == 60 do Enum.concat(a_ldr_post(19,4,d,size),a_str_post(19,5,d,size)) else
+      if op == 62 do a_str_post(0,5,d,size) else b[] end
+    end
+    if op == 64 do (if rep == 243 do xa_repe_cmpsb() else xa_udf(rec) end) else
+      if rep == 0 do body else
+        # RCX counted down without the flags, which rep movs and stos keep.
+        n = Enum.count(body)
+        nc_join(a_cbz(1,n+12,8),body,Enum.concat(a_sub_imm(1,1,1,0),a_cbnz(1,0-n-4,8)))
+      end
+    end
+  end
+  # loopne, loope, loop, jrcxz (86, sub 0..3), to a rel8 target: RCX
+  # counted down without the flags, then a jump while it is not zero (and
+  # Z is clear, set), or jrcxz's when it is zero.
+  def xa_loop(rec: bytes, mp: bytes, here: integer): bytes do
+    sub = xf(rec,10)
+    target = xa_target(mp,xf(rec,14)+xf(rec,0)+xf(rec,9))
+    if sub == 3 do a_cbz(1,target-here,8) else
+      if sub == 2 do Enum.concat(a_sub_imm(1,1,1,0),a_cbnz(1,target-here-4,8)) else
+        nc_join(a_sub_imm(1,1,1,0),a_cbz(1,8,8),a_bcond(if sub == 1 do 0 else 1 end,target-here-8))
+      end
+    end
+  end
+  # scas (85): the accumulator compared with [RDI], RDI stepped; with repne
+  # (0xF2) until they are equal, with repe (0xF3) until they differ, RCX
+  # counting down to 0. The flags are those of the last comparison.
+  def xa_scas(rec: bytes, st: bytes): bytes do
+    size = xf(rec,2)
+    w = xa_w(size)
+    rep = xf(rec,12)-256*a_div(xf(rec,12),256)
+    d = if Enum.at(st,2,0) == 1 do 0-size else size end
+    one = nc_join(a_ldr_post(19,5,d,size),xa_rdr(0,20,size,0),xa_narrow_cmp(size))
+    if rep == 0 do one else
+      stop = if rep == 242 do 0 else 1 end
+      body = nc_join(one,a_sub_imm(1,1,1,0),b[])
+      n = Enum.count(body)
+      # cbz x1 (done) | body | b.stop done | cbnz x1 top | done
+      nc_join(a_cbz(1,n+12,8),body,Enum.concat(a_bcond(stop,8),a_cbnz(1,0-n-4,8)))
+    end
+  end
+  # cmp X20, X19 on size bytes: a byte or a word moved to the top of W
+  # registers, so that the flags are those of its size.
+  def xa_narrow_cmp(size: integer): bytes do
+    if size >= 4 do a_alu(3942645760,31,20,19,xa_w(size)) else
+      nc_join(a_lsl_n(20,20,32-8*size,4),a_lsl_n(19,19,32-8*size,4),a_alu(3942645760,31,20,19,4))
+    end
+  end
+  def xa_repe_cmpsb(): bytes do
+    nc_join(nc_join(a_cbz(1,28,8),a_ldr_post(19,4,1,1),a_ldr_post(20,5,1,1)),nc_join(a_sub_imm(1,1,1,0),a_alu(3942645760,31,19,20,4),a_bcond(1,8)),a_cbnz(1,-20,8))
+  end
+  # bt, bts, btr, btc (66 by a register, sub 0..3; 67 by an immediate, sub
+  # 4..7): C = the bit, as an addition leaves it (xa_pol says 1).
+  def xa_bt(rec: bytes): bytes do
+    size = xf(rec,2)
+    kind = if xf(rec,1) == 67 do xf(rec,10)-4 else xf(rec,10) end
+    index = if xf(rec,1) == 67 do a_mov_imm(20,xf(rec,9)) else xa_rdr(xf(rec,3),20,8,0) end
+    change = if kind == 1 do 2852126720 else if kind == 2 do 2317352960 else 3388997632 end end
+    if xf(rec,4) == 1 do
+      r = xr(xf(rec,5))
+      mask = nc_join(index,a_bfm(3539992576,20,20,0,size*8-1-(if size == 8 do 58 else 27 end),8),Enum.concat(a_mov_imm(21,1),a_lsl(21,21,20)))
+      nc_join(mask,Enum.concat(a_tst(r,21),a_cset(22,1)),Enum.concat(if kind == 0 do b[] else a_alu(change,r,r,21,8) end,a_cmp_value(22,1)))
+    else
+      word = if xf(rec,1) == 67 do Enum.concat(a_add_value(23,xa_mb(rec),xa_md(rec)+8*a_div(xf(rec,9),64),0),a_mov_imm(20,xf(rec,9)-64*a_div(xf(rec,9),64))) else
+        nc_join(Enum.concat(a_add_value(23,xa_mb(rec),xa_md(rec),0),index),Enum.concat(a_asr_n(22,20,6,8),a_add_shift(23,23,22,3)),a_bfm(3539992576,20,20,0,5,8))
+      end
+      nc_join(Enum.concat(word,a_ldur(24,23,0,8,0)),Enum.concat(a_mov_imm(21,1),a_lsl(21,21,20)),nc_join(Enum.concat(a_tst(24,21),a_cset(22,1)),if kind == 0 do b[] else Enum.concat(a_alu(change,24,24,21,8),a_stur(24,23,0,8)) end,a_cmp_value(22,1)))
+    end
+  end
+  # bsf (68), bsr (69): the index of the lowest or highest set bit; ZF when
+  # the source is 0, when the destination keeps its value.
+  def xa_bscan(rec: bytes): bytes do
+    size = xf(rec,2)
+    w = xa_w(size)
+    scan = if xf(rec,1) == 69 do Enum.concat(a_clz(19,20,w),Enum.concat(a_mov_imm(21,size*8-1),a_sub(19,21,19,0))) else Enum.concat(a_rbit(19,20,w),a_clz(19,19,w)) end
+    store = xa_wrr(xf(rec,3),19,size)
+    nc_join(Enum.concat(xa_rd(rec,20,size,0),scan),Enum.concat(a_cbz(20,4+Enum.count(store),w),store),a_cmp_value(20,0))
+  end
+  # SSE on doubles (word 13 the opcode, word 12 the prefixes): the XMM
+  # registers are D0..D15.
+  def xa_sse(rec: bytes, mp: bytes, here: integer): bytes do
+    v = xf(rec,13)
+    pre = xf(rec,12)
+    reg = xf(rec,3)
+    mem = if xf(rec,4) == 2 do 1 else 0 end
+    rm = xf(rec,5)
+    src = if mem == 1 do Enum.concat(xa_addr(rec,mp,here),a_ldr_d(31,xa_mb(rec),xa_md(rec))) else b[] end
+    fr = if mem == 1 do 31 else rm end
+    load = if v == 16 do 1 else if v == 126 do (if pre-256*a_div(pre,256) == 243 do 1 else 0 end) else 0 end end
+    if load == 1 do (if pre == 0 do xa_udf(rec) else nc_join(src,a_fmov_dd(reg,fr),b[]) end) else
+      if v == 17 do (if mem == 1 do Enum.concat(xa_addr(rec,mp,here),a_str_d(reg,xa_mb(rec),xa_md(rec))) else a_fmov_dd(rm,reg) end) else
+        if v == 214 do (if mem == 1 do Enum.concat(xa_addr(rec,mp,here),a_str_d(reg,xa_mb(rec),xa_md(rec))) else a_fmov_dd(rm,reg) end) else
+          if v == 110 do (if mem == 1 do Enum.concat(xa_addr(rec,mp,here),a_ldr_d(reg,xa_mb(rec),xa_md(rec))) else a_fmov_dx(reg,xr(rm)) end) else
+            if v == 126 do (if mem == 1 do Enum.concat(xa_addr(rec,mp,here),a_str_d(reg,xa_mb(rec),xa_md(rec))) else a_fmov_xd(xr(rm),reg) end) else xa_sse2(rec,src,fr) end
+          end
+        end
+      end
+    end
+  end
+  # X19 = D(d) as an integer of w bytes, truncated (kind 0, cvttsd2si) or
+  # to nearest even (1, cvtsd2si); NaN and values out of range give the
+  # lowest integer, as x86-64 gives where ARM64 saturates.
+  def xa_fconv(kind: integer, d: integer, w: integer): bytes do
+    lowest = if w == 8 do -9223372036854775807-1 else 2147483648 end
+    convert = if kind == 0 do a_fcvtzs(19,d,w) else a4(509607936+a_sf(w)+d*32+19) end
+    m1 = a_mov_imm(20,if w == 8 do 9223372036854775807 else 2147483647 end)
+    m2 = a_mov_imm(20,lowest)
+    m3 = a_mov_imm(19,lowest)
+    # NaN, then the two saturated values, go to m3 (the lowest integer).
+    first = nc_join(Enum.concat(convert,a_fcmp(d,d)),a_bcond(6,Enum.count(m1)+Enum.count(m2)+20),Enum.concat(m1,a_alu(3942645760,31,19,20,w)))
+    nc_join(first,Enum.concat(a_bcond(0,Enum.count(m2)+12),m2),nc_join(a_alu(3942645760,31,19,20,w),a_bcond(1,4+Enum.count(m3)),m3))
+  end
+  # andpd, orpd, xorpd, pxor on the low 64 bits (the scalar double): xor of
+  # a register with itself is 0.
+  def xa_flogic(v: integer, reg: integer, fr: integer, src: bytes): bytes do
+    if fr == reg do (if (v-87)*(v-239) == 0 do a_fmov_dx(reg,31) else b[] end) else
+      base = if v == 84 do 2315255808 else if v == 86 do 2852126720 else 3388997632 end end
+      nc_join(Enum.concat(src,a_fmov_xd(16,reg)),Enum.concat(a_fmov_xd(17,fr),a_alu(base,16,16,17,8)),a_fmov_dx(reg,16))
+    end
+  end
+  def xa_sse2(rec: bytes, src: bytes, fr: integer): bytes do
+    v = xf(rec,13)
+    reg = xf(rec,3)
+    if (v-46)*(v-47) == 0 do Enum.concat(src,a_fcmp(reg,fr)) else
+      if v == 88 do Enum.concat(src,a_farith(2,reg,reg,fr)) else if v == 92 do Enum.concat(src,a_farith(3,reg,reg,fr)) else
+        if v == 89 do Enum.concat(src,a_farith(0,reg,reg,fr)) else if v == 94 do Enum.concat(src,a_farith(1,reg,reg,fr)) else
+          if v == 81 do Enum.concat(src,a_fsqrt(reg,fr)) else
+            if v == 42 do Enum.concat(xa_rd(rec,19,xf(rec,2),1),a_scvtf(reg,19,xf(rec,2))) else
+              if (v-44)*(v-45) == 0 do nc_join(src,xa_fconv(if v == 44 do 0 else 1 end,fr,xa_w(xf(rec,2))),xa_wrr(reg,19,xa_w(xf(rec,2)))) else
+              if (v-84)*(v-86)*(v-87)*(v-239) == 0 do xa_flogic(v,reg,fr,src) else
+                if (v-93)*(v-95) == 0 do nc_join(src,a_fcmp(reg,fr),a4(509611008+fr*65536+(if v == 93 do 4 else 12 end)*4096+reg*32+reg)) else
+                if v == 40 do Enum.concat(src,a_fmov_dd(reg,fr)) else xa_udf(rec) end
+                end
+              end
+              end
+            end
+          end
+        end end
+      end end
+    end
+  end
+
+  # ---- a function ----
+  # The ARM64 code of a function's x86-64 code; empty when a translation
+  # does not come out at the size it was measured at (a fault of this file).
+  # Pass 1 (xa_scan) walks the instructions in order, noting for each its
+  # translation's size and what it needs to know of the instructions before
+  # it; pass 2 (xa_emit) translates them with every target known.
+  def xa_function(code: bytes): bytes do
+    big = if Enum.count(code) >= 262144 do 1 else 0 end
+    first = xa_scan(code,0,Enum.count(code),Enum.count(code),b[0,0,big])
+    # Targets where the carry is live, found as their jumps were met: once
+    # more with all of them known (a loop's head is met before its jump).
+    marks = xa_marks(xa_scan_state(first),3)
+    scanned = if Enum.count(marks) == 0 do first else xa_scan(code,0,Enum.count(code),Enum.count(code),Enum.concat(b[0,0,big],marks)) end
+    list = xa_scan_list(scanned)
+    mp = nc_slice(xa_offsets(list,0,a_div(Enum.count(list),16),0),4,4+Enum.count(list))
+    made = xa_emit(code,mp,0,a_div(Enum.count(mp),16),big)
+    if Enum.count(made)-4*a_div(Enum.count(made),4) != 0 do b[] else made end
+  end
+  # A scan: u32 where it stopped, u16 the length of the state, the state
+  # (pol, direction, big, then u32 start and u32 length of each data region
+  # a marked operand named ahead), then 16 bytes an instruction: u32 x86-64
+  # offset, u32 ARM64 size (an offset after xa_offsets), pol, need,
+  # direction, kind (0 an instruction, 1 data, 2 one byte not decoded),
+  # u32 length.
+  def xa_scan_list(scan: bytes): bytes do nc_slice(scan,6+nc_read(scan,4),Enum.count(scan)) end
+  def xa_scan_state(scan: bytes): bytes do nc_slice(scan,6,6+nc_read(scan,4)) end
+  def xa_pack(p: integer, st: bytes, list: bytes): bytes do nc_join(nc_u32(p),nc_u16(Enum.count(st)),Enum.concat(st,list)) end
+  def xa_scan(code: bytes, p: integer, limit: integer, stop: integer, st: bytes): bytes do
+    if limit-p > 256 do
+      left = xa_scan(code,p,p+nc_half(limit-p),stop,st)
+      right = xa_scan(code,nc_long(left,0),limit,stop,xa_scan_state(left))
+      xa_pack(nc_long(right,0),xa_scan_state(right),Enum.concat(xa_scan_list(left),xa_scan_list(right)))
+    else xa_seq(code,p,limit,stop,st,b[]) end
+  end
+  def xa_entry(p: integer, size: integer, flags: bytes, length: integer): bytes do nc_join(nc_u32(p),nc_u32(size),Enum.concat(flags,nc_u32(length))) end
+  def xa_seq(code: bytes, p: integer, limit: integer, stop: integer, st: bytes, acc: bytes): bytes do
+    if p >= limit do xa_pack(p,st,acc) else if p >= stop do xa_pack(p,st,acc) else
+      data = xa_pending_at(st,p,3)
+      if data >= 0 do xa_seq(code,p+data,limit,stop,xa_unpend(st,p),Enum.concat(acc,xa_entry(p,data+xa_pad(data),b[0,0,0,1],data))) else
+        rec = xd(code,p)
+        n = xf(rec,0)
+        if n == 0 do xa_seq(code,p+1,limit,stop,st,Enum.concat(acc,xa_entry(p,4,b[0,0,0,2],1))) else
+          op = xf(rec,1)
+          if op == 81 do xa_seq(code,p+n,limit,stop,st,Enum.concat(acc,xa_entry(p,xf(rec,9)+xa_pad(xf(rec,9)),b[0,0,0,3],n))) else
+            step = xa_step(code,p,stop,st,rec)
+            xa_seq(code,p+n,limit,stop,nc_slice(step,2,2+nc_read(step,0)),Enum.concat(acc,nc_slice(step,2+nc_read(step,0),Enum.count(step))))
+          end
+        end
+      end
+    end end
+  end
+  # One instruction of pass 1: u16 the length of the state after it, that
+  # state, its entry. A label (a jump's target) where the carry is read
+  # before it is set again is one where every path brings the carry in one
+  # sense, a subtraction's: such targets are kept in the state as regions
+  # of length 0xFFFFFFFF (xa_carried); a jump to one, or the instruction
+  # before one, that leaves it as an addition's turns ARM's C over (kind 4
+  # before the instruction, 8 after it), and the target starts with pol 0.
+  def xa_step(code: bytes, p: integer, stop: integer, st: bytes, rec: bytes): bytes do
+    n = xf(rec,0)
+    op = xf(rec,1)
+    pol = if Enum.at(st,0,0) == 1 do (if xa_carried(st,p) == 1 do 0 else 1 end) else Enum.at(st,0,0) end
+    target = if (op-46)*(op-47)*(op-86) == 0 do p+n+xf(rec,9) else -1 end
+    before = if target >= 0 do (if pol == 1 do xa_carried(st,target) else 0 end) else 0 end
+    inpol = if before == 1 do 0 else pol end
+    need = xa_need(code,p+n,stop,16)
+    size = Enum.count(xa_insn(rec,b[],0,b[inpol,need,Enum.at(st,1,0),Enum.at(st,2,0)]))
+    found = if target >= 0 do (if xa_carried(st,target) == 0 do xa_live_carry(code,target,stop,16) else 0 end) else 0 end
+    st2 = nc_join(b[xa_pol(rec,inpol),if op == 58 do 0 else if op == 59 do 1 else Enum.at(st,1,0) end end],nc_slice(st,2,Enum.count(st)),Enum.concat(if op == 80 do xa_region(code,p+n,xf(rec,9),nc_long(code,p+7)) else b[] end,if found == 1 do Enum.concat(nc_u32(target),nc_u32(4294967295)) else b[] end))
+    after = if Enum.at(st2,0,0) == 1 do xa_carried(st2,p+n) else 0 end
+    st3 = if after == 1 do Enum.concat(b[0],nc_slice(st2,1,Enum.count(st2))) else st2 end
+    nc_join(nc_u16(Enum.count(st3)),st3,xa_entry(p,size+12*(before+after),b[inpol,need,Enum.at(st,1,0),4*before+8*after],n))
+  end
+  def xa_carried(st: bytes, p: integer): integer do xa_carried_at(st,p,3) end
+  def xa_carried_at(st: bytes, p: integer, at: integer): integer do
+    if at+8 > Enum.count(st) do 0 else if nc_long(st,at) == p do (if nc_long(st,at+4) == 4294967295 do 1 else xa_carried_at(st,p,at+8) end) else xa_carried_at(st,p,at+8) end end
+  end
+  # The carried targets of a state, as they stand in it.
+  def xa_marks(st: bytes, at: integer): bytes do
+    if at+8 > Enum.count(st) do b[] else Enum.concat(if nc_long(st,at+4) == 4294967295 do nc_slice(st,at,at+8) else b[] end,xa_marks(st,at+8)) end
+  end
+  # mrs x22, nzcv; eor x22, x22, #0x20000000; msr nzcv, x22: C turned over.
+  def xa_flip(): bytes do nc_join(a4(3577430550),a4(3529704150),a4(3575333398)) end
+  # 1 when the first instruction from p that reads the flags reads the
+  # carry (adc, sbb, jb, ja and the like; past an inc or dec, which keep
+  # it), else 0, also when budget steps touch no flag: the compiler's code
+  # keeps no carry that long (jumps over data, one literal after another,
+  # would otherwise make every such label one, and pass 1 quadratic).
+  def xa_live_carry(code: bytes, p: integer, stop: integer, budget: integer): integer do
+    if budget == 0 do 0 else if p >= stop do 0 else
+      q = xq(code,p)
+      if xq_len(q) == 0 do 1 else
+        f = xa_flagsq(xq_op(q),xq_sub(q),xq_last(q))
+        if f == 3 do 1 else
+          if f == 2 do xa_reads_carry(q) else
+            if f == 1 do (if xa_keepsq(q) == 1 do a_div(xa_need_carry(code,p+xq_len(q),stop,budget-1),2) else 0 end) else
+              if f == 4 do (if xq_op(q) == 46 do xa_live_carry(code,xa_jumped(code,p),stop,budget-1) else 0 end) else xa_live_carry(code,p+xq_len(q),stop,budget-1) end
+            end
+          end
+        end
+      end
+    end end
+  end
+  # 1 when a reader of the flags (setcc, cmovcc, jcc) reads the carry with
+  # them: ja and jbe.
+  def xa_reads_carry(q: integer): integer do
+    op = xq_op(q)
+    if op == 86 do 1 else if nc_and((op-38)*(op-39)*(op-47),(xq_sub(q)-6)*(xq_sub(q)-7)) == 0 do 1 else 0 end end
+  end
+  # The data region the RIP-relative operand of the instruction at p names,
+  # starting back bytes before what it points at: u32 its start, u32 length.
+  def xa_region(code: bytes, p: integer, length: integer, back: integer): bytes do
+    rec = xd(code,p)
+    Enum.concat(nc_u32(p+xf(rec,0)+xf(rec,8)-back),nc_u32(length))
+  end
+  # The length of the data region that starts at p, -1 for none; the state
+  # without it. offset: where the regions start in st (3).
+  def xa_pending_at(st: bytes, p: integer, at: integer): integer do
+    if at+8 > Enum.count(st) do -1 else if nc_long(st,at) == p do (if nc_long(st,at+4) == 4294967295 do xa_pending_at(st,p,at+8) else nc_long(st,at+4) end) else xa_pending_at(st,p,at+8) end end
+  end
+  def xa_unpend(st: bytes, p: integer): bytes do Enum.concat(nc_slice(st,0,3),xa_unpend_at(st,p,3)) end
+  def xa_unpend_at(st: bytes, p: integer, at: integer): bytes do
+    if at+8 > Enum.count(st) do b[] else if nc_long(st,at) == p do xa_unpend_at(st,p,at+8) else Enum.concat(nc_slice(st,at,at+8),xa_unpend_at(st,p,at+8)) end end
+  end
+  # Whether the flags an instruction leaves are read before others are set:
+  # 0 no, 1 yes, 2 the carry; 1 when it cannot be known in budget steps.
+  # What follows is read by the lean decoding (xq).
+  def xa_need(code: bytes, p: integer, stop: integer, budget: integer): integer do
+    if budget == 0 do 1 else if p >= stop do 0 else
+      q = xq(code,p)
+      if xq_len(q) == 0 do 1 else
+        f = xa_flagsq(xq_op(q),xq_sub(q),xq_last(q))
+        if f == 2 do 1 else if f == 3 do 2 else if f == 1 do (if xa_keepsq(q) == 1 do xa_need_carry(code,p+xq_len(q),stop,budget-1) else 0 end) else if f == 4 do (if xq_op(q) == 46 do xa_need(code,xa_jumped(code,p),stop,budget-1) else 0 end) else xa_need(code,p+xq_len(q),stop,budget-1) end end end end
+      end
+    end end
+  end
+  # Past an inc or dec, which keep the carry, only a reader of the carry
+  # (ja and jbe with it) reads what came before: 2 then, else 0.
+  def xa_need_carry(code: bytes, p: integer, stop: integer, budget: integer): integer do
+    if budget == 0 do 2 else if p >= stop do 0 else
+      q = xq(code,p)
+      if xq_len(q) == 0 do 2 else
+        f = xa_flagsq(xq_op(q),xq_sub(q),xq_last(q))
+        if f == 3 do 2 else
+          if f == 2 do 2*xa_reads_carry(q) else
+            if f == 1 do (if xa_keepsq(q) == 1 do xa_need_carry(code,p+xq_len(q),stop,budget-1) else 0 end) else
+              if f == 4 do (if xq_op(q) == 46 do xa_need_carry(code,xa_jumped(code,p),stop,budget-1) else 0 end) else xa_need_carry(code,p+xq_len(q),stop,budget-1) end
+            end
+          end
+        end
+      end
+    end end
+  end
+  # Where the jump (jmp rel8 or rel32) at p goes: the flags it carries are
+  # read there.
+  def xa_jumped(code: bytes, p: integer): integer do
+    rec = xd(code,p)
+    p+xf(rec,0)+xf(rec,9)
+  end
+  def xa_keepsq(q: integer): integer do if xq_op(q) == 28 do (if xq_sub(q) < 2 do 1 else 0 end) else 0 end end
+  # The list with each size made the offset where the instruction starts:
+  # u32 the total, then the list.
+  def xa_offsets(list: bytes, first: integer, stop: integer, base: integer): bytes do
+    if stop-first == 1 do Enum.concat(nc_u32(nc_long(list,first*16+4)),nc_join(nc_slice(list,first*16,first*16+4),nc_u32(base),nc_slice(list,first*16+8,first*16+16))) else
+      if stop <= first do nc_u32(0) else
+        middle = first+a_div(stop-first,2)
+        left = xa_offsets(list,first,middle,base)
+        right = xa_offsets(list,middle,stop,base+nc_long(left,0))
+        Enum.concat(nc_u32(nc_long(left,0)+nc_long(right,0)),Enum.concat(nc_slice(left,4,Enum.count(left)),nc_slice(right,4,Enum.count(right))))
+      end
+    end
+  end
+  def xa_emit(code: bytes, mp: bytes, first: integer, stop: integer, big: integer): bytes do
+    if stop-first == 1 do xa_emit_one(code,mp,first*16,big) else
+      if stop <= first do b[] else
+        middle = first+a_div(stop-first,2)
+        Enum.concat(xa_emit(code,mp,first,middle,big),xa_emit(code,mp,middle,stop,big))
+      end
+    end
+  end
+  def xa_emit_one(code: bytes, mp: bytes, at: integer, big: integer): bytes do
+    p = nc_long(mp,at)
+    here = nc_long(mp,at+4)
+    kind = Enum.at(mp,at+11,0)
+    length = nc_long(mp,at+12)
+    next = if at+16 < Enum.count(mp) do nc_long(mp,at+20) else -1 end
+    made = if kind == 1 do Enum.concat(nc_slice(code,p,p+length),nc_zeros(xa_pad(length))) else if kind == 2 do a4(Enum.at(code,p,0)+256*Enum.at(code,p+1,0)) else if kind == 3 do Enum.concat(nc_slice(code,p+7,p+length),nc_zeros(xa_pad(length-7))) else
+      xa_emit_insn(code,mp,at,here,kind,big)
+    end end end
+    # Each translation must come out at the size pass 1 measured; one that
+    # does not leaves a byte that no instruction is, which xa_function sees.
+    if next >= 0 do (if here+Enum.count(made) != next do b[1] else made end) else made end
+  end
+  # An instruction, C turned over before it (kind 4) and after it (8).
+  def xa_emit_insn(code: bytes, mp: bytes, at: integer, here: integer, kind: integer, big: integer): bytes do
+    before = if kind-8*a_div(kind,8) == 4 do xa_flip() else b[] end
+    made = xa_insn(xd(code,nc_long(mp,at)),mp,here+Enum.count(before),b[Enum.at(mp,at+8,0),Enum.at(mp,at+9,0),Enum.at(mp,at+10,0),big])
+    nc_join(before,made,if kind >= 8 do xa_flip() else b[] end)
+  end
+  def xa_pad(length: integer): integer do 4*a_div(length+3,4)-length end
+  # An instruction with a RIP-relative operand that names length bytes of
+  # data in the code: in the ARM64 compiler it follows the marker 0F 0B 'D',
+  # the length and how far before what the operand points at the data
+  # starts, so that the translation copies those bytes (xa_region).
+  def xa_mark(length: integer, instruction: bytes): bytes do xa_mark_back(length,0,instruction) end
+  # The bytes a marker adds: what a jump over a marked instruction adds to
+  # its distance.
+  def xa_mark_size(): integer do if nc_arm() == 1 do 11 else 0 end end
+  def xa_mark_back(length: integer, back: integer, instruction: bytes): bytes do
+    if nc_arm() == 0 do instruction else nc_join(b[15,11,68],Enum.concat(nc_u32(length),nc_u32(back)),instruction) end
+  end
+  # ARM64 code among x86-64 code: in the ARM64 compiler, behind the marker
+  # 0F 0B 'A' and its length, which the translation copies (kind 3).
+  def xa_raw(arm: bytes): bytes do nc_join(b[15,11,65],nc_u32(Enum.count(arm)),arm) end
+  # A runtime of its own table entry: its ARM64 version in the ARM64
+  # compiler when there is one (native-runtimes-arm64.alc).
+  def xa_runtime(x86: bytes, arm: bytes): bytes do
+    if nc_arm() == 0 do x86 else if Enum.count(arm) == 0 do x86 else if Enum.count(x86) == 0 do x86 else xa_raw(arm) end end end
+  end
+  # The functions first..stop of a bundle (32-bit lengths, then the code
+  # from offset), translated: u32 the length of the lengths, the lengths,
+  # the code. A function that does not translate fails the program.
+  def xa_bundle(lengths: bytes, code: bytes, first: integer, stop: integer, offset: integer): bytes do
+    if stop-first == 1 do
+      made = xa_function(nc_slice(code,offset,offset+nc_long(lengths,first*4)))
+      if Enum.count(made) == 0 do (if nc_long(lengths,first*4) == 0 do Enum.concat(nc_u32(4),nc_u32(0)) else b[] end) else nc_join(nc_u32(4),nc_u32(Enum.count(made)),made) end
+    else
+      if stop <= first do nc_u32(0) else
+        middle = first+a_div(stop-first,2)
+        left = xa_bundle(lengths,code,first,middle,offset)
+        right = xa_bundle(lengths,code,middle,stop,offset+nc_length_sum(lengths,first,middle))
+        if Enum.count(left)*Enum.count(right) == 0 do b[] else
+          nc_join(nc_u32(nc_long(left,0)+nc_long(right,0)),Enum.concat(nc_slice(left,4,4+nc_long(left,0)),nc_slice(right,4,4+nc_long(right,0))),Enum.concat(nc_slice(left,4+nc_long(left,0),Enum.count(left)),nc_slice(right,4+nc_long(right,0),Enum.count(right))))
+        end
+      end
+    end
+  end
+  # Native smoke test; the x86-64 decoder.
+  def main() do System.halt(0) end
+end

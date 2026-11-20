@@ -1,0 +1,15 @@
+defmodule NativePredicateDemo do
+  def supported?(name: string): boolean do
+    String.starts_with?(name, "Alchem")
+  end
+  def main() do
+    name = "Alchem Native"
+    accepted = supported?(name)
+    if accepted do
+      IO.puts(name)
+      System.halt(0)
+    else
+      System.halt(1)
+    end
+  end
+end

@@ -1,0 +1,119 @@
+# DateTime: a date and time in a time zone, after the pinned runtime. The
+# struct and the functions named with two letters are in library/Date.alc,
+# which says how these files are written and which zones are known.
+#: utc_now/0 needs Date.cm/2 Date.dz/2
+  def utc_now(): DateTime do
+    Date.di([1970, 1, 1, 0, 0, 0, System.system_time()/1000], "UTC")
+  end
+#: from_unix/1 needs Date.cm/2 Date.dz/2
+  def from_unix(s: integer): result[DateTime, string] do
+    if s< -377705116800 or s>253402300799 do error("the Unix time is outside years -9999 to 9999") else ok(Date.dy(s, 0)) end
+  end
+#: from_unix!/1 needs from_unix/1
+  def from_unix!(s: integer): DateTime do
+    case DateTime.from_unix(s) do
+      ok(a) -> a
+      error(e) -> raise(e)
+    end
+  end
+#: to_unix/1 needs Date.cm/2
+  def to_unix(d: DateTime): integer do
+    Date.du(d, 0)
+  end
+#: from_iso8601/1 needs Date.cr/2 Date.dz/2
+  def from_iso8601(t: string): result[tuple[DateTime, integer], string] do
+    case Date.cr(t, 3) do
+      [y, m, d, h, i, s, u, o] -> ok({Date.di([y, m, d, h, i, s-o, u], "UTC"), o})
+      _ -> error("invalid date and time with offset: "<>inspect(t))
+    end
+  end
+#: from_naive!/1 needs Date.cm/2 Date.dz/2
+  def from_naive!(n: NaiveDateTime): DateTime do
+    if Date.cb([n.year, n.month, n.day], [n.hour, n.minute, n.second, n.microsecond]) do raise("invalid date or time") end
+    Date.di(Date.cw(n, 0), "UTC")
+  end
+#: from_naive/2 needs Enum.at/3 Date.cm/2 Date.dz/2
+# The wall clock of the zone: a time the clocks skipped moves on by the gap
+# and one they repeated is its first (Date.dn).
+  def from_naive(n: NaiveDateTime, z: string): result[DateTime, string] do
+    cond do
+      Enum.at(Date.dz(z, 0), 0, 0) == 0 -> error("unknown time zone "<>inspect(z))
+      Date.cb([n.year, n.month, n.day], [n.hour, n.minute, n.second, n.microsecond]) -> error("invalid date or time")
+      true -> ok(Date.di(Date.dn(Date.cw(n, 0), z), z))
+    end
+  end
+#: shift_zone/2 needs Date.cm/2 Date.dz/2
+  def shift_zone(d: DateTime, z: string): result[DateTime, string] do
+    a = Date.di(Date.dr(d, 0), z)
+    if a.time_zone == "" do error("unknown time zone "<>inspect(z)) else ok(a) end
+  end
+#: shift_zone!/2 needs shift_zone/2
+  def shift_zone!(d: DateTime, z: string): DateTime do
+    case DateTime.shift_zone(d, z) do
+      ok(a) -> a
+      error(e) -> raise(e)
+    end
+  end
+#: now/1 needs shift_zone/2 utc_now/0
+  def now(z: string): result[DateTime, string] do
+    DateTime.shift_zone(DateTime.utc_now(), z)
+  end
+#: to_naive/1
+  def to_naive(d: DateTime): NaiveDateTime do
+    %NaiveDateTime{year: d.year, month: d.month, day: d.day, hour: d.hour, minute: d.minute, second: d.second, microsecond: d.microsecond}
+  end
+#: to_date/1
+  def to_date(d: DateTime): Date do
+    %Date{year: d.year, month: d.month, day: d.day}
+  end
+#: to_time/1
+  def to_time(d: DateTime): Time do
+    %Time{hour: d.hour, minute: d.minute, second: d.second, microsecond: d.microsecond}
+  end
+#: to_iso8601/1 needs Date.cm/2
+  def to_iso8601(d: DateTime): string do
+    Date.dt(d, "T")
+  end
+#: to_string/1 needs Date.cm/2 Date.dz/2
+# Outside UTC, with the abbreviation of a zone that is known and its name.
+  def to_string(d: DateTime): string do
+    Date.dt(d, " ")<>(if d.utc_offset == 0 and d.time_zone == "Etc/UTC" do "" else Date.da(d, " ")<>" "<>d.time_zone end)
+  end
+#: compare/2 needs Date.cm/2
+  def compare(a: DateTime, b: DateTime): atom do
+    Date.co(Date.dg(a, b), 0)
+  end
+#: before?/2 needs Date.cm/2
+  def before?(a: DateTime, b: DateTime): boolean do
+    Date.dg(a, b)<0
+  end
+#: after?/2 needs Date.cm/2
+  def after?(a: DateTime, b: DateTime): boolean do
+    Date.dg(a, b)>0
+  end
+#: diff/2 needs Date.cm/2
+  def diff(a: DateTime, b: DateTime): integer do
+    Date.dg(a, b)/1000000
+  end
+#: diff/3 needs Date.cm/2
+  def diff(a: DateTime, b: DateTime, u: atom): integer do
+    Date.cp(Date.dg(a, b), u)
+  end
+#: add/2 needs Date.cm/2 Date.dz/2
+  def add(d: DateTime, s: integer): DateTime do
+    Date.dq(d, Date.ce(s, 1000000000))
+  end
+#: add/3 needs Date.cm/2 Date.dz/2
+  def add(d: DateTime, a: integer, u: atom): DateTime do
+    Date.dq(d, Date.cs(a, u))
+  end
+#: truncate/2 needs Date.cm/2
+  def truncate(d: DateTime, p: atom): DateTime do
+    %DateTime{d | microsecond: Date.cc(d.microsecond, p)}
+  end
+#: shift/2 needs Duration.cf/1 Date.cm/2 Date.dz/2
+# The calendar units move the wall clock of the zone and the time units are
+# elapsed time (Date.ds).
+  def shift(d: DateTime, b: Duration): DateTime do
+    Date.ds(d, Duration.cf(b))
+  end

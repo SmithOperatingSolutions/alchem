@@ -1,0 +1,335 @@
+# File: the functions written in Alchem on the Sys primitives
+# (spec/alchem-system.md). File.read, write/2, append and remove are the
+# compiler's own. Go's os package is followed call by call, so that the
+# results and the texts of errors are upstream's.
+#: exists?/1 needs Sys.stat/2
+  def exists?(p: string): boolean do
+    Sys.stat(p, 1) == 0
+  end
+#: exists/1 needs Sys.stat/2
+  def exists(p: string): boolean do
+    Sys.stat(p, 1) == 0
+  end
+#: dir?/1 needs Sys.kind/0 Sys.stat/2
+  def dir?(p: string): boolean do
+    Sys.stat(p, 1) == 0 and Sys.kind() == 4
+  end
+#: regular?/1 needs Sys.kind/0 Sys.stat/2
+  def regular?(p: string): boolean do
+    Sys.stat(p, 1) == 0 and Sys.kind() == 8
+  end
+#: rm/1
+  def rm(p: string): result[tuple[], string] do
+    File.remove(p)
+  end
+#: rmdir/1
+  def rmdir(p: string): result[tuple[], string] do
+    File.remove(p)
+  end
+#: rm!/1
+  def rm!(p: string): tuple[] do
+    case File.remove(p) do
+      ok(_) -> {}
+      error(e) -> raise(e)
+    end
+  end
+#: write!/2
+  def write!(p: string, t: string): tuple[] do
+    case File.write(p, t) do
+      ok(_) -> {}
+      error(e) -> raise(e)
+    end
+  end
+#: read!/1
+  def read!(p: string): string do
+    case File.read(p) do
+      ok(t) -> t
+      error(e) -> raise("could not read " <> p <> ": " <> e)
+    end
+  end
+#: read_binary/1 needs Sys.fail/3 Sys.got/0 Sys.load/1 Sys.open/3 Sys.pad/0
+  def read_binary(p: string): result[string, string] do
+    fd = Sys.open(p, 0, 0)
+    s = Sys.pad()
+    r = if fd < 0 do 0 else Sys.load(fd) end
+    if fd < 0 do error(Sys.fail("open", p, fd)) else
+      Sys.call(3, fd)
+      if r < 0 do error(Sys.fail("read", p, r)) else if Sys.peek(s + 64) > 16777216 do error("file exceeds 16777216 bytes") else ok(Sys.got()) end end
+    end
+  end
+#: read_binary!/1 needs read_binary/1
+  def read_binary!(p: string): string do
+    case File.read_binary(p) do
+      ok(t) -> t
+      error(e) -> raise("could not read " <> p <> ": " <> e)
+    end
+  end
+#: mkdir/1 needs Sys.at/5 Sys.done/3
+  def mkdir(p: string): result[tuple[], string] do
+    Sys.done(Sys.at(258, -100, p, 0o755, 0), "mkdir", p)
+  end
+#: mkdir_p/1 needs Sys.done/3 Sys.mkdirs/2
+  def mkdir_p(p: string): result[tuple[], string] do
+    r = Sys.mkdirs(p, 0o755)
+    Sys.done(elem(r, 0), "mkdir", elem(r, 1))
+  end
+#: rename/2 needs Sys.done/3 Sys.two/3
+  def rename(a: string, b: string): result[tuple[], string] do
+    Sys.done(Sys.two(82, a, b), "rename", a <> " " <> b)
+  end
+#: ls/1 needs Sys.fail/3 Sys.list/2
+  def ls(p: string): result[list[string], string] do
+    f = Sys.list(p, -1)
+    if elem(f, 0) < 0 do error(Sys.fail(elem(f, 1), p, elem(f, 0))) else ok(elem(f, 2)) end
+  end
+#: list/1 needs ls/1
+  def list(p: string): result[list[string], string] do
+    File.ls(p)
+  end
+#: ls!/1 needs ls/1
+  def ls!(p: string): list[string] do
+    case File.ls(p) do
+      ok(n) -> n
+      error(e) -> raise("could not list " <> p <> ": " <> e)
+    end
+  end
+#: struct File.Stat
+  struct File.Stat do
+    size: integer
+    type: atom
+    access: atom
+    mtime: integer
+    mode: integer
+  end
+#: stat/1 needs info/1 Sys.stat/2 Sys.why/3
+  def stat(p: string): result[File.Stat, string] do
+    r = Sys.stat(p, 1)
+    if r < 0 do error(Sys.why("stat", p, r)) else ok(File.info(p)) end
+  end
+#: lstat/1 needs info/1 Sys.stat/2 Sys.why/3
+  def lstat(p: string): result[File.Stat, string] do
+    r = Sys.stat(p, 0)
+    if r < 0 do error(Sys.why("lstat", p, r)) else ok(File.info(p)) end
+  end
+# What the stat record says of p, and whether the program can open it to
+# read and to write (a directory: list it, and has a write bit).
+#: info/1 needs Sys.kind/0 Sys.open/3 Sys.stat/2 Sys.state/0
+  def info(p: string): File.Stat do
+    a = Sys.state() + 1024
+    k = Sys.kind()
+    n = Sys.peek(a + 48)
+    t = Sys.peek(a + 88)
+    m = rem(Sys.peek(a + 24), 512)
+    r = info_open(p, if k == 4 do 0x10000 else 0 end)
+    w = if k == 4 do Sys.stat(p, 1) == 0 and rem(div(Sys.peek(a + 24), 2), 2) + rem(div(Sys.peek(a + 24), 16), 2) + rem(div(Sys.peek(a + 24), 128), 2) > 0 else info_open(p, 1) end
+    %File.Stat{size: n, type: if k == 10 do :symlink else if k == 4 do :directory else if k == 8 do :regular else :other end end end,
+      access: if r and w do :read_write else if r do :read else if w do :write else :none end end end, mtime: t, mode: m}
+  end
+# A directory (f 65536) is read to its end, as os.ReadDir reads it.
+  defp info_open(p: string, f: integer): boolean do
+    fd = Sys.open(p, f, 0)
+    r = if fd < 0 or f < 2 do 0 else info_read(fd) end
+    if fd < 0 do false else Sys.call(3, fd) == 0 and r == 0 end
+  end
+  defp info_read(fd: integer): integer do
+    n = Sys.call(217, fd, Sys.state() + 4096, 12288)
+    if n > 0 do info_read(fd) else n end
+  end
+#: ln/2 needs Sys.two/3 Sys.why/3
+  def ln(a: string, b: string): result[tuple[], string] do
+    r = Sys.two(86, a, b)
+    if r < 0 do error(Sys.why("link", a <> " " <> b, r)) else ok({}) end
+  end
+#: ln_s/2 needs Sys.two/3 Sys.why/3
+  def ln_s(a: string, b: string): result[tuple[], string] do
+    r = Sys.two(88, a, b)
+    if r < 0 do error(Sys.why("symlink", a <> " " <> b, r)) else ok({}) end
+  end
+# The mode is Go's: the nine permission bits, and its own bits for setuid
+# (8388608), setgid (4194304) and sticky (1048576).
+#: chmod/2 needs Sys.at/5 Sys.why/3
+  def chmod(p: string, m: integer): result[tuple[], string] do
+    r = Sys.at(268, -100, p, rem(m, 512) + rem(div(m, 8388608), 2) * 2048 + rem(div(m, 4194304), 2) * 1024 + rem(div(m, 1048576), 2) * 512, 0)
+    if r < 0 do error(Sys.why("chmod", p, r)) else ok({}) end
+  end
+#: touch/1 needs Sys.at/5 Sys.done/3 Sys.fail/3 Sys.open/3 Sys.state/0
+  def touch(p: string): result[tuple[], string] do
+    t = Sys.state() + 512
+    Sys.call(228, 0, t)
+    Sys.copy(t + 16, t, 16)
+    fd = if Sys.at(280, -100, p, t, 0) < 0 do Sys.open(p, 65, 0o644) else -9 end
+    if fd == -9 do ok({}) else if fd < 0 do error(Sys.fail("open", p, fd)) else Sys.done(Sys.call(3, fd), "close", p) end end
+  end
+# os.Getwd: $PWD when it names the working directory, else what the kernel
+# calls it.
+#: cwd/0 needs Sys.fail/3 Sys.stat/2 Sys.state/0
+  def cwd(): result[string, string] do
+    a = Sys.state() + 1024
+    w = System.get_env("PWD", "")
+    r = Sys.stat(".", 1)
+    d = Sys.peek(a)
+    i = Sys.peek(a + 8)
+    n = Sys.call(79, a + 3072, 4096)
+    if String.starts_with?(w, "/") and r < 0 do error(Sys.fail("stat", ".", r)) else
+      if String.starts_with?(w, "/") and Sys.stat(w, 1) == 0 and Sys.peek(a) == d and Sys.peek(a + 8) == i do ok(w) else
+        if n < 0 do error("getwd: " <> Sys.errno(0 - n)) else if Sys.byte(a + 3072) != 47 do error("getwd: no such file or directory") else ok(Sys.text(a + 3072, n - 1)) end end
+      end
+    end
+  end
+#: cwd!/0 needs cwd/0
+  def cwd!(): string do
+    case File.cwd() do
+      ok(d) -> d
+      error(e) -> raise("could not read the working directory: " <> e)
+    end
+  end
+#: cp/2 needs Sys.done/3 Sys.fail/3 Sys.open/3 Sys.put/3 Sys.state/0
+  def cp(a: string, b: string): result[tuple[], string] do
+    s = Sys.open(a, 0, 0)
+    d = if s < 0 do 0 else Sys.open(b, 578, 0o666) end
+    e = if s < 0 or d < 0 do "" else cp_pour(s, d, a, b, 0) end
+    if s >= 0 do Sys.call(3, s) end
+    c = if d > 0 do Sys.call(3, d) else 0 end
+    if s < 0 do error(Sys.fail("open", a, s)) else if d < 0 do error(Sys.fail("open", b, d)) else
+      if e != "" do error(e) else Sys.done(c, "close", b) end
+    end end
+  end
+# io.Copy between files: copy_file_range while the kernel takes it, else
+# read and write. "" or what failed.
+  defp cp_pour(s: integer, d: integer, a: string, b: string, n: integer): string do
+    r = Sys.call(326, s, 0, d, 0, 2147479552, 0)
+    if r > 0 or r == -4 do cp_pour(s, d, a, b, n + 1) else
+      if r == 0 and n > 0 do "" else
+        if r == 0 or r == -38 or r == -18 or r == -22 or r == -5 or r == -95 or r == -1 do cp_slow(s, d, a, b) else "write " <> b <> ": copy_file_range: " <> Sys.errno(0 - r) end
+      end
+    end
+  end
+  defp cp_slow(s: integer, d: integer, a: string, b: string): string do
+    m = Sys.state() + 4096
+    r = Sys.call(0, s, m, 12288)
+    w = if r > 0 do Sys.put(d, m, r) else 0 end
+    if r == -4 do cp_slow(s, d, a, b) else if r < 0 do Sys.fail("read", a, r) else if w < 0 do Sys.fail("write", b, w) else
+      if r == 0 do "" else cp_slow(s, d, a, b) end
+    end end end
+  end
+# os.RemoveAll.
+#: rm_rf/1 needs Sys.fail/3 Sys.open/3 Sys.remove/1 Sys.up/3 Sys.wipe/2
+  def rm_rf(p: string): result[tuple[], string] do
+    a = Sys.addr(p)
+    n = byte_size(p)
+    dot = n > 0 and Sys.byte(a + n - 1) == 46 and (n == 1 or Sys.byte(a + n - 2) == 47)
+    r = if n == 0 or dot do 0 else Sys.remove(p) end
+    e = Sys.up(a, n - 1, 47)
+    i = Sys.up(a, e, 0)
+    d = if i < 0 do "." else if Sys.up(a, i, 47) < 0 do "/" else Sys.text(a, i) end end
+    fd = if dot or r == 0 or r == -2 do 0 else Sys.open(d, 0, 0) end
+    if dot do error("RemoveAll " <> p <> ": invalid argument") else
+      if r == 0 or r == -2 or fd == -2 do ok({}) else if fd < 0 do error(Sys.fail("open", d, fd)) else
+        w = Sys.wipe(fd, if e < 0 do "/" else Sys.text(a + i + 1, e - i) end)
+        Sys.call(3, fd)
+        if elem(w, 0) < 0 do error(Sys.fail(elem(w, 1), d <> "/" <> elem(w, 2), elem(w, 0))) else ok({}) end
+      end end
+    end
+  end
+# filepath.WalkDir from a to b, as upstream copies: the paths written.
+#: cp_r/2 needs Path.join/2 Sys.got/0 Sys.pad/0 Sys.walk/2 Sys.why/3
+  def cp_r(a: string, b: string): result[list[string], string] do
+    Sys.pad()
+    r = Sys.walk(a, Path.join(b, "."))
+    l = String.split(Sys.got(), "\x00")
+    if elem(r, 0) < 0 do error(Sys.why(elem(r, 1), elem(r, 2), elem(r, 0))) else ok(Enum.take(l, length(l) - 1)) end
+  end
+#: write/3 exact needs Enum.all?/2 Sys.open/3 Sys.put/3 Sys.why/3
+  def write(p: string, t: string, m: list[atom]): result[tuple[], string] do
+    if not Enum.all?(m, fn x -> x in [:append, :exclusive, :write, :utf8, :binary] end) do raise("File.write takes the modes :append, :exclusive, :write, :utf8 and :binary") end
+    fd = Sys.open(p, 65 + (if :append in m do 1024 else 512 end) + (if :exclusive in m do 128 else 0 end), 0o644)
+    w = if fd < 0 do 0 else Sys.put(fd, Sys.addr(t), byte_size(t)) end
+    c = if fd < 0 do 0 else Sys.call(3, fd) end
+    if fd < 0 do error(Sys.why("open", p, fd)) else if w < 0 do error(Sys.why("write", p, w)) else if c < 0 do error(Sys.why("close", p, c)) else ok({}) end end end
+  end
+#: struct file
+  struct file do
+    at: integer
+    path: string
+  end
+#: open/2 needs Enum.all?/2 Sys.open/3 Sys.why/3
+  def open(p: string, m: list[atom]): result[file, string] do
+    if not Enum.all?(m, fn x -> x in [:read, :write, :append, :exclusive, :utf8, :binary] end) do raise("File.open takes :read, :write, :append, :exclusive, :utf8 and :binary") end
+    w = :write in m or :append in m
+    r = length(m) == 0 or :read in m
+    fd = Sys.open(p, (if w or :exclusive in m do 64 else 0 end) + (if :write in m and not r do 512 else 0 end) + (if :append in m do 1024 else 0 end) + (if :exclusive in m do 128 else 0 end) + (if w do if r do 2 else 1 end else 0 end), 0o644)
+    h = Sys.addr(String.duplicate("\x00", 40))
+    if fd < 0 do error(Sys.why("open", p, fd)) else
+      Sys.poke(h, fd)
+      Sys.poke(h + 32, Sys.call(9, 0, 4096, 3, 34, -1, 0))
+      ok(%file{at: h, path: p})
+    end
+  end
+#: open/3 needs close/1 open/2
+  def open(p: string, m: list[atom], f: fn[file, a]): result[a, string] do
+    case File.open(p, m) do
+      error(e) -> error(e)
+      ok(h) ->
+        v = f(h)
+        File.close(h)
+        ok(v)
+    end
+  end
+#: close/1
+  def close(f: file): boolean do
+    h = f.at
+    if Sys.peek(h + 8) == 1 do false else
+      Sys.poke(h + 8, 1)
+      Sys.call(3, Sys.peek(h))
+      Sys.call(11, Sys.peek(h + 32), 4096)
+      true
+    end
+  end
+# The lines of a file, each with its line break; with a size, its bytes in
+# pieces of that size. A stream: the file is opened and read when the first
+# element is asked for, and a failure then names where the stream was made.
+#: stream!/1 needs stream_from/3
+  def stream!(p: string): stream[string] do
+    File.stream_from(p, 0, Stream.__where())
+  end
+#: stream!/2 needs stream_from/3
+  def stream!(p: string, k: integer): stream[string] do
+    if k <= 0 or k > 1073741824 do raise("chunk size must be between 1 and 1073741824 bytes") end
+    File.stream_from(p, k, Stream.__where())
+  end
+#: stream_from/3 needs stream_text/2 Enum.to_list/1
+  def stream_from(p: string, k: integer, place: integer): stream[string] do
+    Stream.__make(fn c -> filed(p, k, place, some(none)) end)
+  end
+  defp filed(p: string, k: integer, place: integer, now: option[option[fn[option[string]]]]): fn[option[string]] do
+    fn -> file_step(p, k, place, now, Stream.__get(now)) end
+  end
+  defp file_step(p: string, k: integer, place: integer, now: option[option[fn[option[string]]]], held: option[fn[option[string]]]): option[string] do
+    case held do
+      some(it) -> it()
+      none -> file_first(Stream.__iter(file_parts(File.stream_text(p, place), k)), now)
+    end
+  end
+  defp file_first(it: fn[option[string]], now: option[option[fn[option[string]]]]): option[string] do
+    Stream.__then(Stream.__put(now, some(it)), it())
+  end
+  defp file_parts(t: string, k: integer): list[string] do
+    l = String.split(t, "\n")
+    n = length(l) - 1
+    b = byte_size(t)
+    if b == 0 do Enum.take([""], 0) else
+      if k == 0 do Enum.map(Enum.take(l, n), fn x -> x <> "\n" end) ++ Enum.filter(Enum.drop(l, n), fn x -> x != "" end) else
+        Enum.map(Enum.to_list(0..div(b - 1, k)), fn i -> Sys.text(Sys.addr(t) + i * k, if b - i * k < k do b - i * k else k end) end)
+      end
+    end
+  end
+#: stream_text/2 needs Sys.got/0 Sys.load/1 Sys.open/3 Sys.pad/0
+  def stream_text(p: string, place: integer): string do
+    fd = Sys.open(p, 0, 0)
+    Sys.pad()
+    r = if fd < 0 do 0 else Sys.load(fd) end
+    if fd < 0 do Stream.__fail(place, "could not stream " <> p <> ": " <> Sys.errno(0 - fd)) end
+    Sys.call(3, fd)
+    if r < 0 do Stream.__fail(place, "could not read " <> p <> ": " <> Sys.errno(0 - r)) end
+    Sys.got()
+  end

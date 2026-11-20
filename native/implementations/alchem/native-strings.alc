@@ -1,0 +1,401 @@
+defmodule NativeStrings do
+  def ns_hex(value: integer): integer do
+    if value < 48 do -1 else
+      if value <= 57 do value-48 else
+        if value < 65 do -1 else
+          if value <= 70 do value-55 else
+            if value < 97 do -1 else if value <= 102 do value-87 else -1 end end
+          end
+        end
+      end
+    end
+  end
+  # The escapes of the pinned language: \a \b \f \n \r \t \v \e \s \\ \" \#,
+  # three octal digits, \xHH (a byte), and a code point as \uHHHH, \UHHHHHHHH
+  # or \u{H...}, written as UTF-8. The position after it and its bytes.
+  def ns_escape(source: bytes, pos: integer): bytes do
+    value = byte_at(source,pos)
+    plain = if value == 110 do 10 else if value == 114 do 13 else if value == 116 do 9 else
+      if value == 34 do 34 else if value == 92 do 92 else if value == 35 do 35 else ns_escape_other(value) end end end
+    end end end
+    if plain >= 0 do Enum.concat(nc_u24(pos+1),b[plain]) else
+      if value == 120 do ns_escape_byte(pos+3,ns_hex_run(source,pos+1,2,0)) else
+        if (value-48)*(55-value) >= 0 do ns_escape_byte(pos+3,ns_octal_run(source,pos,3,0)) else
+          if value == 85 do ns_escape_point(pos+9,ns_hex_run(source,pos+1,8,0)) else
+            if value != 117 do b[] else
+              if byte_at(source,pos+1) == 123 do ns_escape_braced(source,pos+2,0,0) else ns_escape_point(pos+5,ns_hex_run(source,pos+1,4,0)) end
+            end
+          end
+        end
+      end
+    end
+  end
+  def ns_escape_other(value: integer): integer do
+    if value == 97 do 7 else if value == 98 do 8 else if value == 102 do 12 else if value == 118 do 11 else
+      if value == 101 do 27 else if value == 115 do 32 else -1 end end
+    end end end end
+  end
+  def ns_escape_byte(after: integer, value: integer): bytes do
+    if value < 0 do b[] else if value > 255 do b[] else Enum.concat(nc_u24(after),b[value]) end end
+  end
+  def ns_escape_point(after: integer, value: integer): bytes do
+    text = if value < 0 do b[] else ns_utf8(value) end
+    if Enum.count(text) == 0 do b[] else Enum.concat(nc_u24(after),text) end
+  end
+  # \u{ one to six hexadecimal digits }.
+  def ns_escape_braced(source: bytes, pos: integer, count: integer, value: integer): bytes do
+    digit = ns_hex(byte_at(source,pos))
+    if byte_at(source,pos) == 125 do if count == 0 do b[] else ns_escape_point(pos+1,value) end else
+      if digit < 0 do b[] else if count == 6 do b[] else ns_escape_braced(source,pos+1,count+1,value*16+digit) end end
+    end
+  end
+  # The value of count hexadecimal (or octal) digits at pos, -1 if one is none.
+  def ns_hex_run(source: bytes, pos: integer, count: integer, value: integer): integer do
+    digit = ns_hex(byte_at(source,pos))
+    if count == 0 do value else if digit < 0 do -1 else ns_hex_run(source,pos+1,count-1,value*16+digit) end end
+  end
+  def ns_octal_run(source: bytes, pos: integer, count: integer, value: integer): integer do
+    digit = byte_at(source,pos)-48
+    if count == 0 do value else if digit*(7-digit) < 0 do -1 else ns_octal_run(source,pos+1,count-1,value*8+digit) end end
+  end
+  def ns_shift(value: integer): integer do nc_half(nc_half(nc_half(nc_half(nc_half(nc_half(value)))))) end
+  # A code point as UTF-8; b[] for a surrogate or one past U+10FFFF.
+  def ns_utf8(point: integer): bytes do
+    a = ns_shift(point)
+    b = ns_shift(a)
+    c = ns_shift(b)
+    if point < 128 do b[point] else if point < 2048 do b[192+a,128+point-a*64] else
+      if point < 65536 do if (point-55296)*(57343-point) >= 0 do b[] else b[224+b,128+a-b*64,128+point-a*64] end else
+        if point > 1114111 do b[] else b[240+c,128+b-c*64,128+a-b*64,128+point-a*64] end
+      end
+    end end
+  end
+  def ns_decode(source: bytes, pos: integer, size: integer): bytes do
+    piece = ns_piece(source,pos,size)
+    if nc_pos(piece) < 0 do b[] else if Enum.at(piece,3,0) != 1 do b[] else Enum.concat(nc_u24(nc_pos(piece)),nc_slice(piece,4,Enum.count(piece))) end end
+  end
+  # The text from pos up to the closing quote (flag 1, the position after it)
+  # or up to "#{" (flag 2, its position): position, flag, bytes.
+  def ns_piece(source: bytes, pos: integer, size: integer): bytes do
+    ns_run_grow(source,ns_chunk(source,pos,size,16),0)
+  end
+  # Chunks of sixteen characters are joined in runs of doubling length: a
+  # text of a megabyte is copied about sixteen times, not once a chunk.
+  def ns_run_joined(first: bytes, second: bytes): bytes do
+    if nc_pos(first) < 0 do b[] else if nc_pos(second) < 0 do b[] else
+      nc_join(nc_slice(second,0,4),nc_slice(first,4,Enum.count(first)),nc_slice(second,4,Enum.count(second)))
+    end end
+  end
+  def ns_run_more(source: bytes, before: bytes, level: integer): bytes do
+    if level == 0 do ns_chunk(source,nc_pos(before),0,16) else
+      first = ns_run_more(source,before,level-1)
+      if nc_pos(first) < 0 do b[] else if Enum.at(first,3,0) != 0 do first else ns_run_joined(first,ns_run_more(source,first,level-1)) end end
+    end
+  end
+  def ns_run_grow(source: bytes, done: bytes, level: integer): bytes do
+    if nc_pos(done) < 0 do b[] else if Enum.at(done,3,0) != 0 do done else
+      ns_run_grow(source,ns_run_joined(done,ns_run_more(source,done,level)),level+1)
+    end end
+  end
+  # The value of #{...} as a string: a string, an integer or a boolean.
+  def ns_shown(value: bytes): bytes do
+    yes = nc_text_emit(b[116,114,117,101])
+    no = nc_text_emit(b[102,97,108,115,101])
+    if (nc_tag(value)-2)*(nc_tag(value)-22) == 0 do nc_code(value) else
+      if nc_tag(value) == 0 do nc_join(nc_code(value),b[80],ns_integer_emit()) else
+        if nc_tag(value) != 3 do b[] else
+          nc_join(nc_join(nc_code(value),b[72,133,192,15,132],nc_u32(Enum.count(yes)+5)),Enum.concat(yes,Enum.concat(b[233],nc_u32(Enum.count(no)))),no)
+        end
+      end
+    end
+  end
+  # A quoted string from pos, the byte after its opening quote or after a
+  # "}": text, then for each #{expression} its value as text and what follows.
+  def ns_parts(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    all = ns_part_grow(source,ns_part_step(source,pos,env,table,depth),env,table,depth,0)
+    if Enum.count(all) == 0 do b[] else
+      nc_value(nc_cursor(all,0),Enum.concat(nc_slice(all,8,Enum.count(all)),ns_part_ends(nc_long(all,4))),b[2])
+    end
+  end
+  # One step of that: the text up to the closing quote (where the string
+  # ends, 1, no expression), or up to a #{expression} with the value as text
+  # joined to it (where the next step starts, 0, one expression); then the
+  # code. Every expression's join with what follows it is closed after the
+  # last text (ns_part_ends), so the steps stand one after another and are
+  # joined in runs of doubling length: a string of ten thousand expressions
+  # copies its code about fourteen times.
+  def ns_part_step(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    piece = ns_piece(source,pos,0)
+    text = nc_text_emit(nc_slice(piece,4,Enum.count(piece)))
+    inner = if Enum.at(piece,3,0) != 2 do b[] else if depth > 252 do b[] else nc_expression(source,nc_pos(piece)+2,env,table,depth+1) end end
+    shown = ne_shown(table,inner)
+    next = if Enum.count(shown) == 0 do -1 else nc_expect(source,nc_pos(inner),b[125]) end
+    if nc_pos(piece) < 0 do b[] else
+      if Enum.at(piece,3,0) == 1 do nc_join(nc_u24(nc_pos(piece)),b[1,0,0,0,0],text) else
+        if next < 0 do b[] else nc_join(nc_u24(next),b[0,1,0,0,0],nc_join(nc_join(text,b[80],shown),b[80],Enum.concat(ns_concat_emit(),b[80]))) end
+      end
+    end
+  end
+  def ns_part_joined(first: bytes, second: bytes): bytes do
+    if Enum.count(first) == 0 do b[] else if Enum.count(second) == 0 do b[] else
+      nc_join(Enum.concat(nc_slice(second,0,4),nc_u32(nc_long(first,4)+nc_long(second,4))),nc_slice(first,8,Enum.count(first)),nc_slice(second,8,Enum.count(second)))
+    end end
+  end
+  def ns_part_more(source: bytes, before: bytes, env: bytes, table: bytes, depth: integer, level: integer): bytes do
+    if level == 0 do ns_part_step(source,nc_cursor(before,0),env,table,depth) else
+      first = ns_part_more(source,before,env,table,depth,level-1)
+      if Enum.count(first) == 0 do b[] else if Enum.at(first,3,0) == 1 do first else ns_part_joined(first,ns_part_more(source,first,env,table,depth,level-1)) end end
+    end
+  end
+  def ns_part_grow(source: bytes, done: bytes, env: bytes, table: bytes, depth: integer, level: integer): bytes do
+    if Enum.count(done) == 0 do b[] else if Enum.at(done,3,0) == 1 do done else
+      ns_part_grow(source,ns_part_joined(done,ns_part_more(source,done,env,table,depth,level)),env,table,depth,level+1)
+    end end
+  end
+  # count joins, each of what stands on the stack with the value in RAX.
+  def ns_part_ends(count: integer): bytes do
+    if count <= 0 do b[] else if count == 1 do Enum.concat(b[80],ns_concat_emit()) else
+      Enum.concat(ns_part_ends(nc_half(count)),ns_part_ends(count-nc_half(count)))
+    end end
+  end
+  # A token that starts with a quote: where it ends. A heredoc is """ at the
+  # end of a line up to """ at the start of a later one.
+  def ns_tripled(source: bytes, pos: integer): integer do
+    if byte_at(source,pos+1)*256+byte_at(source,pos+2) == 8738 do 1 else 0 end
+  end
+  def ns_token_end(source: bytes, start: integer): integer do
+    if ns_tripled(source,start) == 1 do nc_text_end(source,start) else ns_quoted_end(source,start+1) end
+  end
+  def ns_plain_run(source: bytes, pos: integer, left: integer): integer do
+    value = byte_at(source,pos)
+    if left == 0 do pos else if (value-34)*(value-92)*(value-35) == 0 do pos else if value < 32 do pos else ns_plain_run(source,pos+1,left-1) end end end
+  end
+  def ns_quoted_end(source: bytes, pos: integer): integer do
+    stop = ns_plain_run(source,pos,64)
+    value = byte_at(source,stop)
+    if pos < 0 do -1 else if stop >= Enum.count(source) do -1 else
+      if value == 34 do stop+1 else if value == 92 do ns_quoted_end(source,stop+2) else
+        if value == 35 do ns_quoted_end(source,if byte_at(source,stop+1) == 123 do np_close(source,stop+2,1,100000) else stop+1 end) else
+          if value < 32 do -1 else ns_quoted_end(source,stop) end
+        end
+      end end
+    end end
+  end
+  # The start of the line that closes a heredoc whose text starts at line.
+  def ns_heredoc_close(source: bytes, line: integer): integer do
+    first = nc_blank_end(source,line)
+    if line >= Enum.count(source) do -1 else
+      if byte_at(source,first)+byte_at(source,first+1)*256+byte_at(source,first+2)*65536 == 2236962 do line else ns_heredoc_close(source,nz_line_end(source,first)+1) end
+    end
+  end
+  # The bytes of a heredoc line from pos: up to stop, the end of the line
+  # (flag 1), or up to "#{" (flag 2): position, flag, bytes. Escapes apply
+  # and quotes are text.
+  def ns_heredoc_piece(source: bytes, pos: integer, stop: integer): bytes do
+    value = byte_at(source,pos)
+    token = if value == 92 do ns_escape(source,pos+1) else Enum.concat(nc_u24(pos+1),b[value]) end
+    hole = if value*256+byte_at(source,pos+1) == 9083 do 1 else 0 end
+    rest = if pos >= stop do b[] else if hole == 1 do b[] else if nc_pos(token) < 0 do b[] else ns_heredoc_piece(source,nc_pos(token),stop) end end end
+    if pos >= stop do Enum.concat(nc_u24(stop),b[1]) else
+      if hole == 1 do Enum.concat(nc_u24(pos),b[2]) else
+        if nc_pos(rest) < 0 do b[] else nc_join(nc_slice(rest,0,4),nc_slice(token,3,Enum.count(token)),nc_slice(rest,4,Enum.count(rest))) end
+      end
+    end
+  end
+  # The lines from line up to the closing one, each without the closing
+  # line's indentation, after a 1; nothing when a line holds an expression.
+  # The lines are taken in runs of doubling length, each run by halves, so
+  # that a heredoc of twenty thousand lines costs no depth of calls and its
+  # text is copied a few times, not once a line.
+  def ns_heredoc_lines(source: bytes, line: integer, close: integer, indent: integer): bytes do
+    ns_heredoc_grow(source,close,indent,Enum.concat(nc_u24(line),b[1]),1)
+  end
+  # A run: where the next line starts, 1 (0 when a line holds an
+  # expression), then the text.
+  def ns_heredoc_grow(source: bytes, close: integer, indent: integer, done: bytes, size: integer): bytes do
+    if Enum.at(done,3,0) == 0 do b[] else if nc_cursor(done,0) >= close do Enum.concat(b[1],nc_slice(done,4,Enum.count(done))) else
+      ns_heredoc_grow(source,close,indent,ns_heredoc_both(done,ns_heredoc_run(source,close,indent,nc_cursor(done,0),size)),size*2)
+    end end
+  end
+  def ns_heredoc_both(first: bytes, second: bytes): bytes do
+    if Enum.at(second,3,0) == 0 do b[0,0,0,0] else nc_join(nc_slice(second,0,4),nc_slice(first,4,Enum.count(first)),nc_slice(second,4,Enum.count(second))) end
+  end
+  def ns_heredoc_run(source: bytes, close: integer, indent: integer, line: integer, count: integer): bytes do
+    if line >= close do Enum.concat(nc_u24(line),b[1]) else
+      if count <= 1 do
+        start = if nc_equal(source,line,close,indent) == 1 do line+indent else line end
+        stop = nz_line_end(source,line)
+        text = ns_heredoc_piece(source,start,stop)
+        if Enum.at(text,3,0) != 1 do b[0,0,0,0] else nc_join(nc_u24(stop+1),b[1],Enum.concat(nc_slice(text,4,Enum.count(text)),b[10])) end
+      else
+        first = ns_heredoc_run(source,close,indent,line,nc_half(count))
+        if Enum.at(first,3,0) == 0 do first else ns_heredoc_both(first,ns_heredoc_run(source,close,indent,nc_cursor(first,0),count-nc_half(count))) end
+      end
+    end
+  end
+  # A heredoc with expressions, from pos: plan holds the closing line (24
+  # bits), its indentation and 1 when pos starts a line. Its lines and
+  # expressions are steps like those of a quoted string (ns_part_step),
+  # joined in runs of doubling length and closed after the last
+  # (ns_part_ends): ten thousand lines copy their code about fourteen
+  # times, where each was joined inside the one before it. A step's fourth
+  # byte is 1 after the closing line, 2 when the next step starts a line.
+  def ns_heredoc_parts(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, plan: bytes): bytes do
+    all = ns_heredoc_grow_parts(source,ns_heredoc_step(source,pos,env,table,depth,plan),env,table,depth,nc_join(nc_slice(plan,0,4),b[0],b[]))
+    if Enum.count(all) == 0 do b[] else
+      nc_value(nc_cursor(all,0),Enum.concat(nc_slice(all,8,Enum.count(all)),ns_part_ends(nc_long(all,4))),b[2])
+    end
+  end
+  def ns_heredoc_step(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, plan: bytes): bytes do
+    close = nc_cursor(plan,0)
+    indent = Enum.at(plan,3,0)
+    fresh = Enum.at(plan,4,0)
+    start = if fresh == 0 do pos else if nc_equal(source,pos,close,indent) == 1 do pos+indent else pos end end
+    done = if fresh == 1 do if pos >= close do 1 else 0 end else 0 end
+    piece = if done == 1 do b[] else ns_heredoc_piece(source,start,nz_line_end(source,start)) end
+    ended = if Enum.at(piece,3,0) == 1 do 1 else 0 end
+    text = nc_text_emit(Enum.concat(nc_slice(piece,4,Enum.count(piece)),if ended == 1 do b[10] else b[] end))
+    if done == 1 do nc_join(nc_u24(nc_blank_end(source,close)+3),b[1,0,0,0,0],nc_text_emit(b[])) else
+      if nc_pos(piece) < 0 do b[] else
+        if ended == 1 do nc_join(nc_u24(nc_pos(piece)+1),b[2,1,0,0,0],Enum.concat(text,b[80])) else ns_heredoc_hole(source,env,table,depth,nc_pos(piece),text) end
+      end
+    end
+  end
+  # text, then the value of the expression at pos, as a step.
+  def ns_heredoc_hole(source: bytes, env: bytes, table: bytes, depth: integer, pos: integer, text: bytes): bytes do
+    inner = if depth > 252 do b[] else nc_expression(source,pos+2,env,table,depth+1) end
+    shown = ne_shown(table,inner)
+    after = nc_expect(source,nc_pos(inner),b[125])
+    if Enum.count(shown) == 0 do b[] else if after < 0 do b[] else
+      nc_join(nc_u24(after),b[0,1,0,0,0],nc_join(nc_join(text,b[80],shown),b[80],Enum.concat(ns_concat_emit(),b[80])))
+    end end
+  end
+  # The string text makes, then shown when it is not empty, then the value rest.
+  def ns_joined(text: bytes, shown: bytes, rest: bytes): bytes do
+    first = if Enum.count(shown) == 0 do text else nc_join(nc_join(text,b[80],shown),b[80],ns_concat_emit()) end
+    if nc_pos(rest) < 0 do b[] else nc_value(nc_pos(rest),nc_join(nc_join(first,b[80],nc_code(rest)),b[80],ns_concat_emit()),b[2]) end
+  end
+  # plan: the closing line, its indentation and the level.
+  def ns_heredoc_more(source: bytes, before: bytes, env: bytes, table: bytes, depth: integer, plan: bytes): bytes do
+    level = Enum.at(plan,4,0)
+    first = if level == 0 do b[] else ns_heredoc_more(source,before,env,table,depth,nc_join(nc_slice(plan,0,4),b[level-1],b[])) end
+    if level == 0 do ns_heredoc_step(source,nc_cursor(before,0),env,table,depth,nc_join(nc_slice(plan,0,4),b[if Enum.at(before,3,0) == 2 do 1 else 0 end],b[])) else
+      if Enum.count(first) == 0 do b[] else if Enum.at(first,3,0) == 1 do first else ns_part_joined(first,ns_heredoc_more(source,first,env,table,depth,nc_join(nc_slice(plan,0,4),b[level-1],b[]))) end end
+    end
+  end
+  def ns_heredoc_grow_parts(source: bytes, done: bytes, env: bytes, table: bytes, depth: integer, plan: bytes): bytes do
+    if Enum.count(done) == 0 do b[] else if Enum.at(done,3,0) == 1 do done else
+      ns_heredoc_grow_parts(source,ns_part_joined(done,ns_heredoc_more(source,done,env,table,depth,plan)),env,table,depth,nc_join(nc_slice(plan,0,4),b[Enum.at(plan,4,0)+1],b[]))
+    end end
+  end
+  def ns_heredoc(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    opened = byte_at(source,nc_blank_end(source,pos+3))
+    first = nz_line_end(source,pos)+1
+    close = ns_heredoc_close(source,first)
+    indent = nc_blank_end(source,close)-close
+    text = if close < 0 do b[] else ns_heredoc_lines(source,first,close,indent) end
+    if (opened-10)*(opened-13) != 0 do b[] else if close < 0 do b[] else if indent > 255 do b[] else
+      if Enum.count(text) == 0 do ns_heredoc_parts(source,first,env,table,depth,nc_join(nc_u24(close),b[indent,1],b[])) else
+        nc_value(nc_blank_end(source,close)+3,nc_text_emit(nc_slice(text,1,Enum.count(text))),b[2])
+      end
+    end end end
+  end
+  # A string literal at pos: quoted, with or without expressions, or a heredoc.
+  def ns_text(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    if ns_tripled(source,pos) == 1 do ns_heredoc(source,pos,env,table,depth) else ns_parts(source,pos+1,env,table,depth) end
+  end
+  def ns_chunk(source: bytes, pos: integer, size: integer, budget: integer): bytes do
+    value = byte_at(source,pos)
+    if value == 34 do Enum.concat(nc_u24(pos+1),b[1]) else
+      if size >= 16777216 do b[] else
+        if budget == 0 do Enum.concat(nc_u24(pos),b[0]) else
+          if value < 32 do b[] else
+            token = if value == 92 do ns_escape(source,pos+1) else
+              Enum.concat(nc_u24(pos+1),b[value])
+            end
+            # "#{" opens an expression: the text stops there, flag 2.
+            if value*256+byte_at(source,pos+1) == 9083 do Enum.concat(nc_u24(pos),b[2]) else ns_step(source,token,size,budget) end
+          end
+        end
+      end
+    end
+  end
+  def ns_step(source: bytes, token: bytes, size: integer, budget: integer): bytes do
+    if nc_pos(token) < 0 do b[] else
+      tail = ns_chunk(source,nc_pos(token),size+1,budget-1)
+      if nc_pos(tail) < 0 do b[] else nc_join(nc_u24(nc_pos(tail)),Enum.concat(b[Enum.at(tail,3,0)],nc_slice(token,3,Enum.count(token))),nc_slice(tail,4,Enum.count(tail))) end
+    end
+  end
+  def ns_literal(source: bytes, pos: integer): bytes do
+    decoded = ns_decode(source,pos+1,0)
+    if nc_pos(decoded) < 0 do b[] else
+      nc_value(nc_pos(decoded),nc_text_emit(nc_slice(decoded,3,Enum.count(decoded))),b[2])
+    end
+  end
+  def ns_size(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    ns_measure(source,pos,env,table,depth,0)
+  end
+  def ns_integer(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    na_integer(source,pos,env,table,depth)
+  end
+  def ns_measure(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, op: integer): bytes do
+    begin = nc_expect(source,nc_end(source,pos),b[40])
+    args = if begin < 0 do b[] else nc_arguments(source,begin,env,table,depth) end
+    if nc_pos(args) < 0 do b[] else
+      if nc_arg_count(args) != 1 do b[] else
+        expected = if op == 0 do 2 else 0 end
+        kind = if op == 0 do 0 else 2 end
+        if nt_tag(nc_arg_kind(args,0)) != expected do b[] else
+          nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),if op == 0 do b[88,72,139,0] else ns_integer_emit() end),b[kind])
+        end
+      end
+    end
+  end
+  def ns_concat(source: bytes, left: bytes, env: bytes, table: bytes, depth: integer, budget: integer): bytes do
+    # A left operand takes no type from <>.
+    if budget <= 0 do b[] else if nw_marked(left) == 1 do b[] else
+      if nc_tag(left) != 2 do b[] else
+        right = nc_sum(source,nc_end(source,nc_pos(left)),env,table,depth)
+        if nc_pos(right) < 0 do b[] else
+          if nc_tag(right) != 2 do b[] else
+            code = nc_join(nc_join(nc_code(left),b[80],nc_code(right)),b[80],ns_concat_emit())
+            owned = gm_appends(source,env,left,nc_start(source,nc_pos(left)))
+            if owned > 0 do gm_appended(left,nk_join_tail(source,right,env,table,depth,budget-1),owned) else nk_join_tail(source,nc_value(nc_pos(right),code,b[2]),env,table,depth,budget-1) end
+          end
+        end
+      end
+    end end
+  end
+  # The output statement named after "IO.": 1 write, 2 puts, 3 warn, else 0.
+  def ns_output_kind(source: bytes, dot: integer): integer do
+    if dot < 0 do 0 else
+      if nc_word(source,dot,b[119,114,105,116,101]) == 1 do 1 else
+        if nc_word(source,dot,b[112,117,116,115]) == 1 do 2 else if nc_word(source,dot,b[119,97,114,110]) == 1 do 3 else 0 end end
+      end
+    end
+  end
+  # puts and warn write the text and a newline, to standard output and standard error.
+  def ns_output_emit(kind: integer): bytes do
+    if kind == 1 do na_write_emit() else ns_line_emit(kind-1) end
+  end
+  # IO.puts/IO.write/IO.warn at the start of a branch run before the branch's value.
+  def ns_output_statement(source: bytes, pos: integer): integer do
+    if nc_word(source,pos,b[73,79]) != 1 do 0 else
+      if ns_output_kind(source,nc_expect(source,nc_end(source,pos),b[46])) == 0 do 0 else nh_single(source,nc_end(source,nc_expect(source,nc_end(source,pos),b[46]))) end
+    end
+  end
+  # Write the string in RAX and a newline to descriptor fd. Standard output exits74
+  # when a write fails; standard error gives up silently, as the pinned runtime does.
+  def ns_line_emit(fd: integer): bytes do
+    head = b[72,139,16,72,141,112,8,72,133,210,116,31,191,fd,0,0,0,184,1,0,0,0,15,5,72,131,248,252,116,238,72,133,192,126,45,72,1,198,72,41,194,117,225,106,10,72,137,230,186,1,0,0,0,191,fd,0,0,0,184,1,0,0,0,15,5,72,131,248,252,116,238,72,131,248,1,117]
+    if fd == 1 do Enum.concat(head,b[3,88,235,12,191,74,0,0,0,184,60,0,0,0,15,5]) else Enum.concat(head,b[0,88,235,12,144,144,144,144,144,144,144,144,144,144,144,144]) end
+  end
+  def ns_puts_emit(): bytes do
+    ns_line_emit(1)
+  end
+  def ns_integer_emit(): bytes do
+    b[88,72,131,236,32,76,141,76,36,32,76,137,206,69,49,192,72,133,192,121,9,65,184,1,0,0,0,72,247,216,65,186,10,0,0,0,49,210,73,247,242,128,194,48,72,255,206,136,22,72,133,192,117,238,69,133,192,116,6,72,255,206,198,6,45,73,41,241,77,141,89,15,73,131,227,248,77,1,227,77,57,235,119,25,76,137,224,77,137,220,76,137,8,72,141,120,8,76,137,201,252,243,164,72,131,196,32,235,12,255,20,37,120,4,64,0,233,219,255,255,255]
+  end
+  # Native smoke test; assembled with the compiler/runtime.
+  def main() do System.halt(0) end
+end

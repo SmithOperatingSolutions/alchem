@@ -1,0 +1,411 @@
+defmodule NativeSets do
+  # Sets and streams (spec/alchem-sets-streams.md).
+  #
+  # set[T] is tag 25 and its element: at run time a map from the elements to
+  # true, so the map routines keep it in order and library/MapSet.alc is
+  # written over maps. stream[T] is tag 26 and its element: a function value
+  # of no parameters that gives none at the end, or some({element, rest}) with
+  # the stream of what follows. A range is first, last and step behind a
+  # count of 0, or behind the list of its integers once it was needed.
+  #
+  # Each of the routines below takes a value in RAX and leaves one there.
+  # first, last and step from the stack: the range, with step 0 as 1 or -1.
+  # A fifth word keeps R9 when the step was 0, else 0: where a step was
+  # written (nk_range), which a range written as a stream names when its
+  # step is 0 (zf_stepped).
+  def nn_range_emit(): bytes do
+    b[65,88,94,95,77,133,192,116,5,69,49,201,235,19,73,199,192,1,0,0,0,72,57,247,126,7,73,199,192,255,255,255,255,77,141,92,36,40,77,57,235,118,7,255,20,37,120,4,64,0,76,137,224,15,31,68,0,0,77,137,220,72,199,0,0,0,0,0,72,137,120,8,72,137,112,16,76,137,64,24,76,137,72,32]
+  end
+  # A range with the list of its integers before first, last and step.
+  def nn_range_list(): bytes do
+    nc_join(Enum.concat(b[72,139,8,72,133,201,15,133],nc_u32(9+Enum.count(nk_range_emit()))),b[255,112,8,255,112,16,255,112,24],nk_range_emit())
+  end
+  def nn_range_stream(): bytes do
+    Enum.concat(b[233,128,0,0,0,77,139,66,24,49,192,77,133,192,116,45,73,139,122,8,120,8,73,59,122,16,127,33,235,6,73,59,122,16,124,25,73,137,122,40,76,1,199,113,8,73,199,66,24,0,0,0,0,73,137,122,8,73,141,66,32,195,77,141,92,36,48,77,57,235,118,7,255,20,37,120,4,64,0,76,137,224,15,31,68,0,0,77,137,220,72,141,13,164,255,255,255,72,137,8,73,139,74,8,72,137,72,8,73,139,74,16],b[72,137,72,16,73,139,74,24,72,137,72,24,72,199,64,32,1,0,0,0,195,72,139,8,72,1,201,72,141,84,200,8,77,141,92,36,32,77,57,235,118,7,255,20,37,120,4,64,0,76,137,224,15,31,68,0,0,77,137,220,72,141,13,139,255,255,255,72,137,8,72,139,10,72,137,72,8,72,139,74,8,72,137,72,16,72,139,74,16,72,137,72,24])
+  end
+  def nn_list_stream(): bytes do
+    Enum.concat(b[235,99,73,139,114,8,49,192,72,131,62,0,116,23,72,139,86,8,72,131,198,16,73,137,114,8,73,137,82,32,73,141,66,24,15,31,0,195,77,141,92,36,40,77,57,235,118,7,255,20,37,120,4,64,0,76,137,224,15,31,68,0,0,77,137,220,72,141,13,185,255,255,255,72,137,8,73,139,74,8,72,137,72,8,72,199,64,16,0,0,0,0,72,199,64,24,1,0,0,0,195],b[72,137,194,77,141,92,36,16,77,57,235,118,7,255,20,37,120,4,64,0,76,137,224,15,31,68,0,0,77,137,220,72,141,13,155,255,255,255,72,137,8,72,137,80,8])
+  end
+  # The iterator over the list in RAX.
+  def nn_iterator(): bytes do
+    b[235,36,73,139,114,8,49,192,72,131,62,0,116,23,72,139,86,8,72,131,198,16,73,137,114,8,73,137,82,32,73,141,66,24,15,31,0,195,72,137,194,77,141,92,36,40,77,57,235,118,7,255,20,37,120,4,64,0,76,137,224,15,31,68,0,0,77,137,220,72,141,13,182,255,255,255,72,137,8,72,137,80,8,72,199,64,16,0,0,0,0,72,199,64,24,1,0,0,0]
+  end
+  # A fresh context in RAX: some(a function that does nothing).
+  def nn_context(): bytes do
+    b[77,141,92,36,32,77,57,235,118,7,255,20,37,120,4,64,0,76,137,224,15,31,68,0,0,77,137,220,72,141,13,21,0,0,0,72,137,72,16,72,199,0,1,0,0,0,72,141,72,16,72,137,72,8,235,3,49,192,195]
+  end
+  # The context from the stack is ended: its function is called. RAX stays.
+  def nn_finish(): bytes do b[90,80,76,139,82,8,65,255,18,88] end
+  # The list of what the iterator in RAX still gives.
+  def nn_all(): bytes do
+    Enum.concat(b[106,0,80,76,139,20,36,65,255,18,72,133,192,116,50,72,139,80,8,72,139,76,36,8,72,255,193,73,137,203,73,193,227,4,79,141,92,28,24,77,57,235,118,12,255,20,37,120,4,64,0,15,31,68,0,0,88,72,137,20,36,81,80,235,194,88,89],nl_pack_blob())
+  end
+  # The iterator of the stream in RAX, started under a fresh context that
+  # waits on the stack.
+  def nn_begin(): bytes do nc_join(b[80],nn_context(),b[65,90,80,72,137,199,65,255,18]) end
+  def nn_stream_list(): bytes do
+    nc_join(nn_begin(),nn_all(),nn_finish())
+  end
+  # Iterator and function from the stack: the first some(x) for which the
+  # function holds, or none.
+  def nn_until(): bytes do
+    b[76,139,84,36,8,65,255,18,72,133,192,116,22,80,72,139,120,8,76,139,84,36,8,65,255,18,72,137,193,88,72,133,201,116,221,72,131,196,16]
+  end
+  # Stream and function from the stack: the function's value for the
+  # stream's iterator, started under a context that is ended after it.
+  def nn_run(): bytes do
+    nc_join(nn_context(),b[76,139,84,36,8,72,137,68,36,8,72,137,199,65,255,18,72,137,199,65,90,65,255,18],nn_finish())
+  end
+  # The list in RAX as a list of {element, true}: the entries of a set.
+  def nn_pairs(): bytes do
+    Enum.concat(b[72,137,198,72,139,14,72,141,20,137,72,193,226,3,72,131,194,24,77,141,28,20,77,57,235,118,7,255,20,37,120,4,64,0,76,137,224,15,31,68,0,0,77,137,220,72,199,0,254,255,255,255,72,131,192,16,72,137,202,72,193,226,4,72,141],b[124,16,8,72,199,71,248,0,0,0,0,72,137,194,72,133,201,116,47,76,139,70,8,72,199,7,2,0,0,0,76,137,71,8,72,199,71,16,1,0,0,0,72,137,10,72,137,122,8,72,131,199,24,72,131,194,16,72,131,198,16,72,255,201,235,204])
+  end
+  # The elements of a set (what 0) or the entries of a map (2), as a list.
+  def nn_entries(what: integer): bytes do
+    Enum.concat(b[80,65,186,what,0,0,0],nm_entries_emit())
+  end
+  # value in set: the value waits on the stack and the set is in RAX. tagged
+  # says what the map routines need to know of the key type.
+  def nn_has(pos: integer, pushed: bytes, tagged: bytes): bytes do
+    if Enum.count(tagged) == 0 do b[] else nc_value(pos,nc_join(pushed,Enum.concat(b[94,80,86,106,0],tagged),Enum.concat(b[65,185,2,0,0,0],nm_get_emit())),b[3]) end
+  end
+  # value in stream: the value waits on the stack and the stream is in RAX.
+  # compare takes two values in RDI and RSI and leaves 1 or 0 in AL.
+  def nn_member(compare: bytes): bytes do
+    nc_join(nc_join(nn_begin(),b[80,76,139,20,36,65,255,18,72,133,192,116,23,72,139,112,8,72,139,124,36,16,232,29,0,0,0,132,192,116,226,184,1,0,0,0,89],nn_finish()),Enum.concat(b[72,131,196,8,233],nc_u32(Enum.count(compare)+1)),Enum.concat(compare,b[195]))
+  end
+  # The code that turns a value of type given into a list (wanted 7) or a
+  # stream (26) of its elements; b[] when it is not an enumerable of another
+  # kind.
+  def nn_convert(given: bytes, wanted: integer): bytes do
+    tag = nt_tag(given)
+    if tag == wanted do b[] else
+      flat = if tag == 25 do nn_entries(0) else if tag == 8 do nn_entries(2) else if tag == 7 do b[144] else b[] end end end
+      if wanted == 7 do
+        if tag == 26 do nn_stream_list() else if tag == 23 do nn_range_list() else if tag == 7 do b[] else flat end end end
+      else
+        if tag == 23 do nn_range_stream() else if Enum.count(flat) == 0 do b[] else Enum.concat(flat,nn_list_stream()) end end
+      end
+    end
+  end
+  # What an enumerable holds: the element of a list, set or stream, an
+  # integer for a range, {key, value} for a map.
+  def nn_element(given: bytes): bytes do
+    tag = nt_tag(given)
+    if (tag-7)*(tag-25)*(tag-26) == 0 do nt_child(given,0) else if tag == 23 do b[0] else
+      if tag != 8 do b[] else nt_tuple(Enum.concat(nt_cell(nt_child(given,0)),nt_cell(nt_child(given,1))),2) end
+    end end
+  end
+  # An argument packet whose argument index is replaced by what code makes
+  # of it, with type kind: the arguments are on the stack when code runs.
+  def nn_replace(args: bytes, index: integer, kind: bytes, code: bytes): bytes do
+    place = nc_u32((nc_arg_count(args)-1-index)*8)
+    kinds = nt_replace(nc_arg_types(args),index,kind)
+    nc_join(nc_arg_packet(nc_pos(args),nc_arg_count(args),kinds,nc_arg_code(args)),b[],nc_join(Enum.concat(b[72,139,132,36],place),code,Enum.concat(b[72,137,132,36],place)))
+  end
+  # The arguments from index on, each made the list or stream its parameter
+  # is declared as. plan: 1 for streams, 2 for the first argument as a list
+  # too, 3 for every argument.
+  def nn_coerce(cells: bytes, args: bytes, index: integer, plan: bytes): bytes do
+    wanted = nt_tag(nt_item(cells,index))
+    given = nc_arg_kind(args,index)
+    mode = Enum.at(plan,0,0)
+    allowed = if wanted == 26 do 1 else if wanted == 7 do if mode == 3 do 1 else if mode == 2 do if index == 0 do 1 else 0 end else 0 end end else 0 end end
+    code = if allowed == 0 do b[] else nn_convert(given,wanted) end
+    if index >= nc_arg_count(args) do args else
+      nn_coerce(cells,if Enum.count(code) == 0 do args else nn_replace(args,index,nt_unary(wanted,nn_element(given)),code) end,index+1,plan)
+    end
+  end
+  # The first argument of an Enum function the compiler has code for, as a
+  # list: a set, a stream or a range. Nothing when it is none of them.
+  def nn_listed(args: bytes, listed: integer): bytes do
+    tag = nt_tag(nc_arg_kind(args,0))
+    if listed == 0 do args else if nc_pos(args) < 0 do b[] else if nc_arg_count(args) == 0 do b[] else
+      if (tag-23)*(tag-25)*(tag-26) != 0 do b[] else nn_replace(args,0,nt_unary(7,nn_element(nc_arg_kind(args,0))),nn_convert(nc_arg_kind(args,0),7)) end
+    end end end
+  end
+  # A call of library function target with the arguments parsed. plan: the
+  # nesting, what may be converted (0 nothing; 1 to streams, 2 the first
+  # argument to a list too, 3 every argument, and something must be; 5 to
+  # streams or nothing), the function (2 bytes), then the arguments.
+  def nn_enter(source: bytes, name: integer, env: bytes, table: bytes, plan: bytes): bytes do
+    mode = Enum.at(plan,1,0)
+    parsed = nc_slice(plan,4,Enum.count(plan))
+    first = nj_fit(source,table,nc_read(plan,2),nc_arg_count(parsed))
+    given = if first < 0 do b[] else if mode == 0 do parsed else nn_coerce(nj_cells(source,table,first),parsed,0,b[mode]) end end
+    same = if (mode-1)*(mode-2)*(mode-3) != 0 do 0 else if Enum.count(given) == Enum.count(parsed) do 1 else 0 end end
+    fit = if nc_pos(given) < 0 do -1 else if same == 1 do -1 else nj_form(source,table,first,given) end end
+    full = if fit < 0 do b[] else nj_full(source,table,fit,given,nc_end(source,name)) end
+    if nc_pos(full) < 0 do b[] else nj_call(source,nc_end(source,name),env,table,Enum.at(plan,0,0),Enum.concat(nc_u16(fit),full)) end
+  end
+  # The forms of a library function in turn. plan: the nesting, the form to
+  # try, what may be converted, the module name without its form behind its
+  # length, then the arguments.
+  def nn_forms(source: bytes, name: integer, env: bytes, table: bytes, plan: bytes): bytes do
+    form = Enum.at(plan,1,0)
+    size = Enum.at(plan,3,0)
+    wanted = if form == 1 do nc_slice(plan,4,4+size) else nc_join(nc_slice(plan,4,4+size),b[118],ny_digits(form)) end
+    home = ny_module(source,table,wanted,Enum.concat(nc_u24(0),nc_u24(nc_records(Enum.count(table)))))
+    target = if home < 0 do -1 else nc_find(source,name,table,home) end
+    call = if target < 0 do b[] else nn_enter(source,name,env,table,nc_join(b[Enum.at(plan,0,0),Enum.at(plan,2,0)],nc_u16(target),nc_slice(plan,4+size,Enum.count(plan)))) end
+    if nc_pos(call) >= 0 do call else if form >= 16 do b[] else nn_forms(source,name,env,table,nc_join(b[Enum.at(plan,0,0),form+1],nc_slice(plan,2,4+size),nc_slice(plan,4+size,Enum.count(plan)))) end end
+  end
+  def nn_mode(plan: bytes, mode: integer): bytes do
+    nc_join(b[Enum.at(plan,0,0),1,mode],nc_slice(plan,3,Enum.count(plan)),b[])
+  end
+  # A library call written in Alchem. The forms are tried with the arguments
+  # as they are; then with lists, sets, maps and ranges made streams where a
+  # form takes a stream; then, for Enum, Stream's function of the name and
+  # the compiler's own code with the first argument made a list; then with
+  # the first argument, and at last every one, made the list a form takes.
+  def nn_passes(source: bytes, pos: integer, name: integer, env: bytes, table: bytes, plan: bytes): bytes do
+    enum = nc_word(source,pos,b[69,110,117,109])
+    made = zf_voided(source,table,env,nn_tried(source,pos,name,env,table,plan),zf_void(source,pos,name))
+    kind = nc_kind(made)
+    # A set holds what a map has as keys, and a map the library makes has
+    # such keys too. Enum.each and Stream.run leave no value. The
+    # function of Enum.into/3 says what an empty target collects, so the
+    # call needs no type from its context once its own has no gap.
+    inner = if nt_tag(kind) != 25 do 1 else if nu_open(nt_child(kind,0),0) == 0 do 1 else nn_library(source,env,table) end end
+    keyed = if (nt_tag(kind)-25)*(nt_tag(kind)-8) != 0 do 1 else inner*(nn_key(nt_child(kind,0))+nn_open(nt_child(kind,0))) end
+    if nc_pos(made) < 0 do b[] else if keyed == 0 do b[] else
+      if enum == 0 do if nc_word(source,pos,b[83,116,114,101,97,109])*nc_word(source,name,b[114,117,110]) == 1 do nc_join(nc_slice(made,0,4),b[1,12],nc_code(made)) else made end else
+        if nc_word(source,name,b[101,97,99,104]) == 1 do nc_join(nc_slice(made,0,4),b[1,12],nc_code(made)) else
+          if nc_word(source,name,b[105,110,116,111]) == 0 do made else if Enum.at(plan,3+Enum.at(plan,3,0),0) != 51 do made else if nu_holes(kind,0) == 1 do made else nc_value(nc_pos(made),nc_code(made),kind) end end end
+        end
+      end
+    end end
+  end
+  # A key type that is a tuple, as its parts: 5, the number of fields and
+  # each field, 0 for an integer or a boolean, 2 for a string or an atom, 24
+  # for a float. b[] when a part cannot be a key. The map routines order and
+  # compare such keys with the comparator the compiler makes for the type
+  # (od_keyed).
+  def nn_keys(kind: bytes): bytes do
+    tag = nt_tag(kind)
+    if (tag-0)*(tag-3) == 0 do b[0] else if (tag-2)*(tag-22) == 0 do b[2] else if tag == 24 do b[24] else
+      if tag != 5 do b[] else if nt_count(kind) == 0 do b[] else nn_key_fields(kind,0,b[5,0]) end end
+    end end end
+  end
+  def nn_key_fields(kind: bytes, index: integer, done: bytes): bytes do
+    field = nn_keys(nt_child(kind,index))
+    if index >= nt_count(kind) do done else if Enum.count(field) == 0 do b[] else nn_key_fields(kind,index+1,Enum.concat(done,field)) end end
+  end
+  def nn_key(kind: bytes): integer do
+    if Enum.count(nn_keys(kind)) == 0 do 0 else 1 end
+  end
+  # A set type as a program writes it holds what can be a key, and a map type
+  # has such a key (integers, floats, strings, booleans, atoms and tuples of
+  # them: not a list, an option, a struct or a type variable, as the pinned
+  # compiler has it); the library also writes sets of a type variable and
+  # maps of any key.
+  def nn_set_type(source: bytes, table: bytes, owner: integer, kind: bytes): bytes do
+    if (nt_tag(kind)-25)*(nt_tag(kind)-8) != 0 do kind else if nn_key(nt_child(kind,0)) == 1 do kind else
+      if nt_tag(kind)*nt_tag(nt_child(kind,0)) == 72 do kind else
+        if nc_word_at(source,nc_meta(table,owner,0),b[65,108,99,104,101,109],0) == 0 do b[] else
+          if nt_tag(kind) == 8 do kind else if nt_tag(nt_child(kind,0)) == 16 do kind else b[] end end
+        end
+      end
+    end end
+  end
+  # 1 for a type that is not settled where it stands: it has a gap or a type
+  # variable.
+  def nn_open(kind: bytes): integer do
+    if nu_open(kind,0)+nu_holes(kind,0) > 0 do 1 else 0 end
+  end
+  def nn_tried(source: bytes, pos: integer, name: integer, env: bytes, table: bytes, plan: bytes): bytes do
+    exact = nn_forms(source,name,env,table,plan)
+    # List.sort and List.keysort take a list and nothing else, as upstream.
+    strict = nc_word(source,pos,b[76,105,115,116])*(nc_word(source,name,b[115,111,114,116])+nc_word(source,name,b[107,101,121,115,111,114,116]))
+    if nc_pos(exact) >= 0 do exact else if strict == 1 do b[] else
+      lazy = nn_forms(source,name,env,table,nn_mode(plan,1))
+      if nc_pos(lazy) >= 0 do lazy else
+        listed = if nc_word(source,pos,b[69,110,117,109]) == 0 do b[] else nn_streamed(source,name,env,table,plan) end
+        built = if nc_pos(listed) >= 0 do listed else if nc_word(source,pos,b[69,110,117,109]) == 0 do b[] else nc_builtin_listed(source,nc_end(source,pos),env,table,Enum.at(plan,0,0),1) end end
+        first = if nc_pos(built) >= 0 do built else nn_forms(source,name,env,table,nn_mode(plan,2)) end
+        if nc_pos(first) >= 0 do first else nn_forms(source,name,env,table,nn_mode(plan,3)) end
+      end
+    end end
+  end
+  # Enum.name with a stream or a range among its arguments, for a name
+  # Stream has with a stream as its result: the list of that stream.
+  def nn_streamed(source: bytes, name: integer, env: bytes, table: bytes, plan: bytes): bytes do
+    size = Enum.at(plan,3,0)
+    base = Enum.concat(b[65,108,99,104,101,109,83,116,114,101,97,109],nc_slice(plan,14,4+size))
+    made = if nn_lazy(nc_slice(plan,4+size,Enum.count(plan)),0) == 0 do b[] else nn_forms(source,name,env,table,nc_join(b[Enum.at(plan,0,0),1,5,Enum.count(base)],base,nc_slice(plan,4+size,Enum.count(plan)))) end
+    kind = nt_unary(7,nt_child(nc_kind(made),0))
+    if nc_tag(made) != 26 do b[] else nc_join(nc_slice(made,0,4),Enum.concat(b[Enum.count(kind)],kind),Enum.concat(nc_code(made),nn_stream_list())) end
+  end
+  # 1 when an argument from index on is a stream or a range.
+  def nn_lazy(args: bytes, index: integer): integer do
+    tag = nt_tag(nc_arg_kind(args,index))
+    if index >= nc_arg_count(args) do 0 else if (tag-23)*(tag-26) == 0 do 1 else nn_lazy(args,index+1) end end
+  end
+  # A program with a range or a stream may need Stream.name where it writes
+  # Enum.name: the text " Stream.name" for each, for the library's choice of
+  # what to append. Not for into: Stream.into writes to a file.
+  def nn_hints(source: bytes, first: integer, stop: integer): bytes do
+    if stop-first > 64 do
+      middle = first+nc_half(stop-first)
+      Enum.concat(nn_hints(source,first,middle),nn_hints(source,middle,stop))
+    else nn_hint_scan(source,first,stop) end
+  end
+  def nn_hint_scan(source: bytes, pos: integer, stop: integer): bytes do
+    if pos >= stop do b[] else
+      if byte_at(source,pos) != 69 do nn_hint_scan(source,pos+1,stop) else
+        if nc_word_at(source,pos,b[69,110,117,109,46],0)-nc_word(source,pos+5,b[105,110,116,111]) != 1 do nn_hint_scan(source,pos+1,stop) else
+          Enum.concat(Enum.concat(b[32,83,116,114,101,97,109,46],nc_slice(source,pos+5,nc_end(source,pos+5))),nn_hint_scan(source,pos+5,stop))
+        end
+      end
+    end
+  end
+  def nn_hinted(source: bytes): bytes do
+    size = Enum.count(source)
+    if ny_has(source,0,size,b[46,46])+ny_has(source,0,size,b[83,116,114,101,97,109])+ny_has(source,0,size,b[115,116,114,101,97,109]) == 0 do b[] else nn_hints(source,0,size) end
+  end
+  # A range written where a stream[integer] is expected is that stream:
+  # the value of an annotated binding or of a function with that result,
+  # when its code ends in the making of a range, and an argument that is a
+  # range.
+  def nn_expected(value: bytes, kind: bytes, table: bytes): bytes do
+    if nt_same(kind,b[26,0]) == 0 do value else if nn_written(value) == 0 do value else
+      nc_join(nc_slice(value,0,4),b[2,26,0],nc_join(nc_code(value),zf_stepped(table),nn_range_stream()))
+    end end
+  end
+  # 1 for a range as it is written: the code ends in the making of it. As
+  # an argument it has mark 2; piped, it waits under type 27.
+  def nn_written(value: bytes): integer do
+    code = nc_code(value)
+    size = Enum.count(nn_range_emit())
+    if nc_tag(value) != 23 do 0 else nt_same(nc_slice(code,Enum.count(code)-size,Enum.count(code)),nn_range_emit()) end
+  end
+  def nn_waiting(value: bytes): bytes do
+    if nn_written(value) == 1 do b[27] else nc_kind(value) end
+  end
+  # The piped value and the marks of the arguments after it.
+  def nn_piped(piped: bytes, marks: bytes): bytes do
+    if nc_tag(piped) != 27 do marks else Enum.concat(b[2],nc_slice(marks,1,Enum.count(marks))) end
+  end
+  def nn_plain(value: bytes): bytes do
+    if nc_tag(value) != 27 do value else nc_join(nc_slice(value,0,4),b[1,23],nc_code(value)) end
+  end
+  def nn_returned(source: bytes, table: bytes, id: integer, body: bytes): bytes do
+    if nc_tag(body) != 23 do body else nn_expected(body,nc_return_kind(source,table,id),table) end
+  end
+  def nn_ranged(source: bytes, table: bytes, id: integer, args: bytes, index: integer): bytes do
+    if id < 0 do args else if index >= nc_arg_count(args) do args else
+      if nt_tag(nc_arg_kind(args,index))*8+nw_arg_marked(args,index) != 186 do nn_ranged(source,table,id,args,index+1) else
+        if nt_same(nt_item(nj_cells(source,table,id),index),b[26,0]) == 0 do nn_ranged(source,table,id,args,index+1) else
+          nn_ranged(source,table,id,nn_replace(args,index,b[26,0],Enum.concat(zf_stepped(table),nn_range_stream())),index+1)
+        end
+      end
+    end end
+  end
+  # 1 inside a module of the library written in Alchem.
+  def nn_library(source: bytes, env: bytes, table: bytes): integer do
+    nc_word_at(source,nc_meta(table,nc_owner(table,nc_read(env,0)),0),b[65,108,99,104,101,109],0)
+  end
+  # What the library is written with, and only it may call. A stream is a
+  # function from a context to an iterator, and an iterator a function of
+  # no parameters that gives some(element) or none; the some it gives may be
+  # written over until it is called again. A context is some(function): what
+  # is to be done when the stream is no longer read.
+  #   MapSet.__set(map)             the map as a set
+  #   MapSet.__map(set)             the set as a map to true
+  #   Stream.__make(function)       the function of a context as a stream
+  #   Stream.__start(stream, c)     its iterator under context c
+  #   Stream.__list(stream)         the list of its elements
+  #   Stream.__put(some, value)     the some with the value written into it
+  #   Stream.__get(some)            its value
+  #   Stream.__until(iterator, f)   the first some(x) with f(x), or none
+  #   Stream.__iter(list)           the iterator over a list
+  #   Stream.__all(iterator)        the list of what it still gives
+  #   Stream.__run(stream, f)       f(iterator) under a context of its own
+  #   Stream.__sleep(milliseconds)  0, later
+  #   Stream.__then(first, value)   the value, after first
+  #   Stream.__pull(some)           the next of the iterator in the some
+  #   Stream.__where()              where the program called this function
+  #   Stream.__fail(place, message) the end of the program, naming the place
+  def nn_op(source: bytes, name: integer, index: integer): integer do
+    words = b[5,95,95,115,101,116,0,0,5,95,95,109,97,112,0,0,6,95,95,109,97,107,101,0,7,95,95,115,116,97,114,116,6,95,95,108,105,115,116,0,5,95,95,112,117,116,0,0,5,95,95,103,101,116,0,0,7,95,95,117,110,116,105,108,6,95,95,105,116,101,114,0,5,95,95,97,108,108,0,0,5,95,95,114,117,110,0,0,7,95,95,115,108,101,101,112,6,95,95,116,104,101,110,0,6,95,95,112,117,108,108,0,7,95,95,119,104,101,114,101,6,95,95,102,97,105,108,0]
+    if index >= 16 do 0 else if nc_word(source,name,nc_slice(words,index*8+1,index*8+1+Enum.at(words,index*8,0))) == 1 do index+1 else nn_op(source,name,index+1) end end
+  end
+  def nn_intrinsic(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    if nc_word(source,pos,b[80,114,111,99,101,115,115]) == 1 do ac_intrinsic(source,pos,env,table,depth) else nn_intrinsic_own(source,pos,env,table,depth) end
+  end
+  def nn_intrinsic_own(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    name = nc_start(source,nc_expect(source,nc_end(source,pos),b[46]))
+    op = nn_op(source,name,0)
+    paren = if op == 0 do -1 else nc_expect(source,nc_end(source,name),b[40]) end
+    open = if paren < 0 do b[] else nc_arguments_open(source,paren,env,table,depth) end
+    first = nc_arg_kind(open,0)
+    words = if op == 3 do b[0,0,0,4,4,10,0,0,1,9] else if op == 8 do nc_join(b[1,0,0],nt_cell(nt_child(nt_child(first,0),0)),b[1,9]) else if op == 11 do nc_join(b[1,0,0],nt_cell(Enum.concat(b[10,0,4],nt_child(first,0))),b[1,9]) else b[] end end end
+    args = if nf_has_pending(open,0) == 0 do open else if Enum.count(words) == 0 do b[] else nf_resolve(source,env,table,depth,open,words) end end
+    if op == 0 do jn_intrinsic(source,pos,env,table,depth) else if op == 15 do nc_value(nc_pos(open),b[72,139,69,0,139,128,104,255,255,255],b[0]) else if op == 16 do nn_fail(table,open) else if nc_pos(args) < 0 do b[] else if nf_has_pending(args,0) == 1 do b[] else if nc_arg_count(args) != Enum.at(b[1,1,1,2,1,2,1,2,1,1,2,1,2,1,0,2],op-1,0) do b[] else nn_made(args,op) end end end end end end
+  end
+  # Stream.__fail(place, message) ends the program as raise does, naming the
+  # place, which Stream.__where() gave: where the program called the
+  # library function that asks.
+  def nn_fail(table: bytes, args: bytes): bytes do
+    fail = if nz_on(table) == 0 do nc_exit_code(70) else Enum.concat(b[94,95,129,207,0,0,0,128],nc_call(nz_slot(table))) end
+    if nc_pos(args) < 0 do b[] else if nc_arg_count(args) != 2 do b[] else if nt_tag(nc_arg_kind(args,0))+nt_tag(nc_arg_kind(args,1)) != 2 do b[] else
+      nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),fail),b[9])
+    end end end
+  end
+  def nn_made(args: bytes, op: integer): bytes do
+    kind = nc_arg_kind(args,0)
+    tag = nt_tag(kind)
+    code = nc_arg_code(args)
+    if op == 1 do if tag != 8 do b[] else nc_value(nc_pos(args),Enum.concat(code,b[88]),nt_unary(25,nt_child(kind,0))) end else
+      if op == 2 do if tag != 25 do b[] else nc_value(nc_pos(args),Enum.concat(code,b[88]),nt_binary(8,nt_child(kind,0),b[3])) end else
+        if op == 3 do nc_value(nc_pos(args),Enum.concat(code,b[88]),nn_stream(kind)) else if op == 13 do nc_value(nc_pos(args),Enum.concat(code,b[88,72,131,196,8]),nc_arg_kind(args,1)) else if op == 12 do nn_sleep(args) else
+          if (op-6)*(op-7)*(op-14) == 0 do if tag != 4 do b[] else nn_cell(args,op) end else
+            if (op-4)*(op-5)*(op-11) == 0 do if tag != 26 do b[] else nn_read(args,op) end else nn_walk(args,op) end
+          end
+        end end end
+      end
+    end
+  end
+  # Stream.__sleep(milliseconds): nanosleep, again when a signal cuts it short.
+  def nn_sleep(args: bytes): bytes do
+    if nt_tag(nc_arg_kind(args,0)) != 0 do b[] else
+      nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),b[88,49,210,185,232,3,0,0,72,247,241,72,105,210,64,66,15,0,82,80,72,137,231,72,137,230,184,35,0,0,0,15,5,72,131,248,252,116,237,72,131,196,16,49,192]),b[0])
+    end
+  end
+  def nn_cell(args: bytes, op: integer): bytes do
+    inner = nt_child(nc_arg_kind(args,0),0)
+    if op == 6 do nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),b[89,88,72,137,72,8]),nt_unary(4,nc_arg_kind(args,1))) else
+      if op == 7 do nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),b[88,72,139,64,8]),inner) else
+        if nt_tag(inner) != 10 do b[] else if nt_count(inner) != 0 do b[] else nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),b[88,76,139,80,8,65,255,18]),nt_child(inner,0)) end end
+      end
+    end
+  end
+  def nn_read(args: bytes, op: integer): bytes do
+    element = nt_child(nc_arg_kind(args,0),0)
+    code = nc_arg_code(args)
+    if op == 4 do nc_value(nc_pos(args),Enum.concat(code,b[95,65,90,65,255,18]),nt_sized(Enum.concat(b[10,0,4],element))) else
+      if op == 5 do nc_value(nc_pos(args),nc_join(code,b[88],nn_stream_list()),nt_unary(7,element)) else
+        if nt_tag(nc_arg_kind(args,1)) != 10 do b[] else nc_value(nc_pos(args),Enum.concat(code,nn_run()),nt_child(nc_arg_kind(args,1),1)) end
+      end
+    end
+  end
+  def nn_walk(args: bytes, op: integer): bytes do
+    kind = nc_arg_kind(args,0)
+    code = nc_arg_code(args)
+    given = if nt_tag(kind) != 10 do b[] else if nt_count(kind) != 0 do b[] else if nt_tag(nt_child(kind,0)) != 4 do b[] else nt_child(kind,0) end end end
+    if op == 9 do if nt_tag(kind) != 7 do b[] else nc_value(nc_pos(args),nc_join(code,b[88],nn_iterator()),nt_sized(Enum.concat(b[10,0,4],nt_child(kind,0)))) end else
+      if Enum.count(given) == 0 do b[] else
+        if op == 8 do nc_value(nc_pos(args),Enum.concat(code,nn_until()),given) else nc_value(nc_pos(args),nc_join(code,b[88],nn_all()),nt_unary(7,nt_child(given,0))) end
+      end
+    end
+  end
+  # The stream type a function from a context to an iterator is.
+  def nn_stream(kind: bytes): bytes do
+    made = nt_child(kind,1)
+    if nt_tag(kind) != 10 do b[] else if nt_count(kind) != 1 do b[] else if nt_tag(made) != 10 do b[] else if nt_count(made) != 0 do b[] else
+      if nt_tag(nt_child(made,0)) != 4 do b[] else nt_unary(26,nt_child(nt_child(made,0),0)) end
+    end end end end
+  end
+  # Native smoke test; assembled with the compiler.
+  def main() do System.halt(0) end
+end

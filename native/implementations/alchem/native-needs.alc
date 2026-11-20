@@ -1,0 +1,81 @@
+defmodule NativeNeeds do
+  # Which type variables of a function of the program need equality, as the
+  # pinned checker works it out (analyze.go: a fixpoint over every use,
+  # before any code is made). A function needs equality for a variable t
+  # when it compares a value whose type mentions t (==, !=, in, --, a pinned
+  # binding in a pattern, a library function that compares), or gives a type
+  # that mentions t to a variable of another function that needs it. A call
+  # that gives such a variable a type without equality (one that holds a
+  # function or a stream) is rejected: same(f, f) for
+  # def same(a: t, b: t): boolean do a == b end.
+  #
+  # The native compiler makes each function's code once and keeps nothing
+  # about it, so the question is asked where it matters, at a call that
+  # gives a type without equality: the callee is compiled once more with a
+  # record in its environment (type 46, the variable's name, then the
+  # functions and variables already being asked about) under which that
+  # variable has no comparator (nu_vars). If it does not compile so and does
+  # compile as it is, it needs the variable's equality. Inside, a call that
+  # gives a type mentioning the variable to another function asks the same
+  # of that function, which is the fixpoint's step.
+  #
+  # The record of type 46 that the environment holds last, without its tag;
+  # b[] when it holds none.
+  def qn_barred(env: bytes, offset: integer, found: bytes): bytes do
+    if offset >= Enum.count(env) do found else
+      qn_barred(env,nc_env_next(env,offset),if nc_env_tag(env,offset) == 46 do nc_slice(nt_read(env,offset+7),1,nt_size(env,offset+7)) else found end)
+    end
+  end
+  # The variable's name of such a record, and what follows it.
+  def qn_name(barred: bytes): bytes do
+    if Enum.count(barred) == 0 do b[] else nc_slice(barred,1,1+Enum.at(barred,0,0)) end
+  end
+  def qn_path(barred: bytes): bytes do
+    if Enum.count(barred) == 0 do b[] else nc_slice(barred,1+Enum.at(barred,0,0),Enum.count(barred)) end
+  end
+  # 1 when the type mentions the type variable of that name.
+  def qn_mentions(kind: bytes, name: bytes): integer do
+    if Enum.count(name) == 0 do 0 else nu_named(nu_names(kind,0,b[]),name,0) end
+  end
+  # 1 when the path holds the function and the variable: each entry is the
+  # function (2 bytes), the length of the name and the name.
+  def qn_seen(path: bytes, target: integer, name: bytes, offset: integer): integer do
+    size = Enum.at(path,offset+2,0)
+    if offset >= Enum.count(path) do 0 else
+      if nc_read(path,offset) != target do qn_seen(path,target,name,offset+3+size) else
+        if nt_same(nc_slice(path,offset+3,offset+3+size),name) == 1 do 1 else qn_seen(path,target,name,offset+3+size) end
+      end
+    end
+  end
+  # 1 when function target of the program needs equality for its type
+  # variable of that name. path: the functions and variables being asked
+  # about around this one, which add nothing when met again.
+  def qn_needs(source: bytes, table: bytes, target: integer, name: bytes, path: bytes): integer do
+    entry = nc_join(nc_u16(target),b[Enum.count(name)],name)
+    record = nc_env_record(0,0,nc_join(b[46,Enum.count(name)],name,Enum.concat(path,entry)))
+    if Enum.count(name) > 255 do 0 else if qn_seen(path,target,name,0) == 1 do 0 else
+      if Enum.count(nc_function_with(source,table,target,record)) > 0 do 0 else if Enum.count(nc_function(source,table,target)) > 0 do 1 else 0 end end
+    end end
+  end
+  # 1 when the call gives a type variable of a function of the program that
+  # needs equality a type that has none, or one that mentions the variable
+  # the calling function is being compiled without the equality of. plan:
+  # the callee (2 bytes), then the record of type 46 in reach, if any.
+  # offset: where in the callee's names the variable to look at stands.
+  def qn_refused(source: bytes, table: bytes, plan: bytes, subst: bytes, offset: integer): integer do
+    target = nc_read(plan,0)
+    barred = nc_slice(plan,2,Enum.count(plan))
+    names = nu_signature(source,table,target)
+    size = Enum.at(names,offset,0)
+    name = nc_slice(names,offset+1,offset+1+size)
+    kind = nu_apply(Enum.concat(b[16],nc_slice(names,offset,offset+1+size)),subst)
+    hit = if offset >= Enum.count(names) do 0 else if qn_mentions(kind,qn_name(barred)) == 1 do 1 else 1-nq_comparable(source,table,kind,b[]) end end
+    if od_library(source,table,target) == 1 do 0 else if offset >= Enum.count(names) do 0 else
+      if hit == 0 do qn_refused(source,table,plan,subst,offset+1+size) else
+        if qn_needs(source,table,target,name,qn_path(barred)) == 1 do 1 else qn_refused(source,table,plan,subst,offset+1+size) end
+      end
+    end end
+  end
+  # Native smoke test; equality needed through type variables.
+  def main() do System.halt(0) end
+end

@@ -1,0 +1,195 @@
+defmodule NativeSpeed do
+  # Code that makes programs faster without changing what they do
+  # (spec/alchem-speed.md).
+  #
+  # An integer literal is one instruction: its 64 bits are worked out from
+  # its digits here, as eight bytes, lowest first.
+  # x/256 for x below 2560.
+  def vs_q(x: integer): integer do
+    if x >= 1280 do 5+vs_q(x-1280) else if x >= 256 do 1+vs_q(x-256) else 0 end end
+  end
+  # The bytes from pos on times ten, plus carry.
+  def vs_times(word: bytes, pos: integer, carry: integer): bytes do
+    if pos == 8 do b[] else
+      t = Enum.at(word,pos,0)*10+carry
+      q = vs_q(t)
+      Enum.concat(b[t-q*256],vs_times(word,pos+1,q))
+    end
+  end
+  def vs_word(source: bytes, pos: integer, stop: integer, word: bytes): bytes do
+    if pos == stop do word else vs_word(source,pos+1,stop,vs_times(word,0,byte_at(source,pos)-48)) end
+  end
+  # The word's negative: every bit turned, and one more.
+  def vs_neg(word: bytes, pos: integer, carry: integer): bytes do
+    if pos == 8 do b[] else
+      t = 255-Enum.at(word,pos,0)+carry
+      if t == 256 do Enum.concat(b[0],vs_neg(word,pos+1,1)) else Enum.concat(b[t],vs_neg(word,pos+1,0)) end
+    end
+  end
+  # 1 when the bytes from pos on are all value.
+  def vs_all(word: bytes, pos: integer, value: integer): integer do
+    if pos == 8 do 1 else if Enum.at(word,pos,0) != value do 0 else vs_all(word,pos+1,value) end end
+  end
+  # RAX is the integer the digits from pos to stop write (one that fits 64
+  # bits, as decimal_status has checked), negative or not.
+  def vs_literal(source: bytes, pos: integer, stop: integer, negative: integer): bytes do
+    plain = vs_word(source,pos,stop,b[0,0,0,0,0,0,0,0])
+    word = if negative == 1 do vs_neg(plain,0,1) else plain end
+    high = Enum.at(word,3,0)
+    short = if high < 128 do vs_all(word,4,0) else vs_all(word,4,255) end
+    if short == 1 do Enum.concat(b[72,199,192],nc_slice(word,0,4)) else Enum.concat(b[72,184],word) end
+  end
+  # ---- operands ----
+  # 1 when code is one instruction that loads RAX from a constant or from a
+  # slot of the frame: it leaves every other register and the stack alone.
+  def vs_plain(code: bytes): integer do
+    size = Enum.count(code)
+    first = Enum.at(code,0,0)
+    second = Enum.at(code,1,0)
+    third = Enum.at(code,2,0)
+    if size == 5 do if first == 184 do 1 else 0 end else
+      if first != 72 do 0 else
+        if size == 10 do if second == 184 do 1 else 0 end else
+          if size == 4 do if second == 139 do if third == 69 do 1 else 0 end else 0 end else
+            if size != 7 do 0 else if second == 199 do if third == 192 do 1 else 0 end else if second == 139 do if third == 133 do 1 else 0 end else 0 end end end
+          end
+        end
+      end
+    end
+  end
+  # 1 when code loads a constant that is neither 0 nor -1.
+  def vs_divisor(code: bytes): integer do
+    if vs_plain(code) == 0 do 0 else if Enum.at(code,1,0) == 139 do 0 else
+      from = if Enum.count(code) == 5 do 1 else if Enum.count(code) == 7 do 3 else 2 end end
+      if vs_same(code,from,0)+vs_same(code,from,255) > 0 do 0 else 1 end
+    end end
+  end
+  def vs_same(code: bytes, pos: integer, value: integer): integer do
+    if pos >= Enum.count(code) do 1 else if Enum.at(code,pos,0) != value do 0 else vs_same(code,pos+1,value) end end
+  end
+  # The left operand in RCX and the right one in RAX: the left one waits in
+  # RCX when the right one is plain, on the stack otherwise.
+  def vs_pair(left: bytes, right: bytes): bytes do
+    if vs_plain(right) == 1 do nc_join(left,b[72,137,193],right) else nc_join(Enum.concat(left,b[80]),right,b[89]) end
+  end
+  # ---- division by a constant ----
+  # A quotient by a constant d from 2 up to 2**62-1 is a product (Granlund
+  # and Montgomery): with l the least for which 2**l >= d and
+  # m = 2**(63+l)/d + 1, n/d is the high half of n*(m-2**64), plus n,
+  # shifted right l-1 bits, plus one for a negative n.
+  # The quotient bits of r*2**left by d, eight to a byte, highest first.
+  def vs_quot(r: integer, d: integer, left: integer, acc: integer, fill: integer): bytes do
+    if left == 0 do b[] else
+      t = r+r
+      bit = if t >= d do 1 else 0 end
+      if fill == 7 do Enum.concat(b[acc+acc+bit],vs_quot(t-bit*d,d,left-1,0,0)) else vs_quot(t-bit*d,d,left-1,acc+acc+bit,fill+1) end
+    end
+  end
+  # l for d, counted up from p = 2**l.
+  def vs_log(d: integer, p: integer, l: integer): integer do
+    if p >= d do l else vs_log(d,p+p,l+1) end
+  end
+  def vs_two(l: integer): integer do if l == 0 do 1 else 2*vs_two(l-1) end end
+  def vs_inc(word: bytes, pos: integer, carry: integer): bytes do
+    if pos == 8 do b[] else
+      t = Enum.at(word,pos,0)+carry
+      if t == 256 do Enum.concat(b[0],vs_inc(word,pos+1,1)) else Enum.concat(b[t],vs_inc(word,pos+1,0)) end
+    end
+  end
+  # The constant the bytes of code from first to last write, lowest first;
+  # 0 for one that is negative or 2**62 and more.
+  def vs_value(code: bytes, first: integer, last: integer): integer do
+    top = Enum.at(code,last,0)
+    wide = if last-first == 7 do 1 else 0 end
+    if top >= 128 do 0 else if wide*top >= 64 do 0 else vs_sum(code,first,last) end end
+  end
+  def vs_sum(code: bytes, first: integer, last: integer): integer do
+    if first > last do 0 else Enum.at(code,first,0)+256*vs_sum(code,first+1,last) end
+  end
+  # RAX holds n: n/d, or what is left of n when rest is 1.
+  def vs_divide(d: integer, right: bytes, rest: integer): bytes do
+    l = vs_log(d,1,0)
+    q = vs_quot(vs_two(l-1),d,64,0,0)
+    m = vs_inc(b[Enum.at(q,7,0),Enum.at(q,6,0),Enum.at(q,5,0),Enum.at(q,4,0),Enum.at(q,3,0),Enum.at(q,2,0),Enum.at(q,1,0),Enum.at(q,0,0)],0,1)
+    shift = if l == 1 do b[] else b[72,193,250,l-1] end
+    quotient = nc_join(nc_join(b[72,137,193,72,184],m,b[72,247,233,72,1,202]),shift,b[72,137,200,72,193,232,63,72,1,208])
+    # RDX takes the constant as RAX would have: the instruction's second or third byte names the register.
+    constant = if Enum.count(right) == 5 do Enum.concat(b[186],nc_slice(right,1,5)) else if Enum.count(right) == 7 do Enum.concat(b[72,199,194],nc_slice(right,3,7)) else Enum.concat(b[72,186],nc_slice(right,2,10)) end end
+    if rest == 0 do quotient else nc_join(quotient,constant,b[72,15,175,194,72,41,193,72,137,200]) end
+  end
+  # left op right for integers, op being what nk_ makes. A division by a
+  # constant that is neither 0 nor -1 cannot fail and is not checked.
+  def vs_binary(left: bytes, right: bytes, op: bytes): bytes do
+    size = Enum.count(op)
+    divides = if size < 20 do 0 else if Enum.at(op,3,0) != 117 do 0 else if Enum.at(op,0,0) != 72 do 0 else if Enum.at(op,1,0) != 133 do 0 else vs_divisor(right) end end end end
+    rest = if Enum.at(op,size-1,0) == 208 do 1 else 0 end
+    from = if Enum.count(right) == 5 do 1 else if Enum.count(right) == 7 do 3 else 2 end end
+    d = if divides == 0 do 0 else vs_value(right,from,Enum.count(right)-1) end
+    if divides == 0 do Enum.concat(vs_pair(left,right),op) else
+      if d >= 2 do Enum.concat(left,vs_divide(d,right,rest)) else
+        nc_join(vs_pair(left,right),b[72,145,72,153,72,247,249],if rest == 1 do b[72,137,208] else b[] end)
+      end
+    end
+  end
+  # ---- Bitwise ----
+  # Bitwise.band, bor, bxor, bsl, bsr and bnot of integers are the code of
+  # the operators &&& ||| ^^^ <<< >>> ~~~ where they are called (nk_bits),
+  # which give what the library's functions give for every count. Anything
+  # else under that name goes the usual way.
+  def vs_or(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    inline = if nc_word(source,pos,b[66,105,116,119,105,115,101]) == 0 do b[] else vs_bitwise(source,pos,env,table,depth) end
+    if nc_pos(inline) >= 0 do inline else jn_or(source,pos,env,table,depth) end
+  end
+  def vs_bitwise(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    dot = nc_expect(source,nc_end(source,pos),b[46])
+    name = if dot < 0 do -1 else nc_start(source,dot) end
+    sign = if name < 0 do 0 else
+      if nc_word(source,name,b[98,97,110,100]) == 1 do 38 else if nc_word(source,name,b[98,111,114]) == 1 do 124 else if nc_word(source,name,b[98,120,111,114]) == 1 do 94 else
+        if nc_word(source,name,b[98,115,108]) == 1 do 60 else if nc_word(source,name,b[98,115,114]) == 1 do 62 else nc_word(source,name,b[98,110,111,116])*126 end end
+      end end end
+    end
+    begin = if sign == 0 do -1 else nc_expect(source,nc_end(source,name),b[40]) end
+    args = if begin < 0 do b[] else nc_arguments(source,begin,env,table,depth) end
+    wanted = if sign == 126 do 1 else 2 end
+    code = if sign == 126 do b[88,72,247,208] else if sign == 38 do dn_emit(8) else if sign == 124 do dn_emit(9) else if sign == 94 do dn_emit(7) else
+      if sign == 60 do b[89,88,72,133,201,121,5,72,247,217,235,15,72,131,249,64,115,5,72,211,224,235,18,49,192,235,14,72,131,249,63,118,5,185,63,0,0,0,72,211,248] else
+        b[89,88,72,133,201,121,20,72,247,217,235,0,72,131,249,64,115,5,72,211,224,235,18,49,192,235,14,72,131,249,63,118,5,185,63,0,0,0,72,211,248]
+      end
+    end end end end
+    if nc_pos(args) < 0 do b[] else if nc_arg_count(args) != wanted do b[] else if nh_integers(args,0,wanted) == 0 do b[] else
+      nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),code),b[0])
+    end end end
+  end
+  # ---- floats to integers ----
+  # floor (13), ceil (14), trunc (15) and round (16) of the float in RDI as
+  # an integer in RAX, in line when the processor's own conversion says it
+  # fits; slow is the float runtime's call and its check, which then says
+  # what is wrong with a value that does not. What is left of the value past
+  # its whole part is exact: its sign moves floor and ceil, and twice it is
+  # 1 or more from a half on, which is how round moves away from zero.
+  def vs_whole(op: integer, slow: bytes): bytes do
+    move = if op == 15 do b[] else if op == 16 do b[72,137,193,242,72,15,42,200,242,15,92,193,242,15,88,192,242,72,15,44,192,72,1,200] else
+      if op == 13 do b[242,72,15,42,200,242,15,92,193,102,72,15,126,193,72,137,202,72,193,234,63,72,1,201,15,149,193,15,182,201,72,33,209,72,41,200] else b[242,72,15,42,200,242,15,92,193,102,72,15,126,193,49,210,72,133,201,15,159,194,72,1,208] end
+    end end
+    first = nc_join(b[102,72,15,110,199,242,72,15,44,192,72,185,0,0,0,0,0,0,0,128,72,57,200,15,132],nc_u32(Enum.count(move)+5),move)
+    nc_join(first,Enum.concat(b[233],nc_u32(Enum.count(slow))),slow)
+  end
+  # ---- conditions ----
+  # A condition and the jump over skip bytes taken when it does not hold.
+  # One that ends in the comparison of two integers (nb_comparison: the
+  # flags made into 0 or 1 in RAX) jumps on the flags themselves: the seven
+  # bytes that made RAX become a jump past the test when it holds and one
+  # over skip when it does not. The test stays where it was, since a
+  # condition joined with and or or jumps to its end with RAX made.
+  def vs_test(condition: bytes, skip: integer): bytes do
+    size = Enum.count(condition)
+    cc = Enum.at(condition,size-6,0)
+    fits = if size < 10 do 0 else if nt_same(nc_slice(condition,size-10,size-6),b[72,57,193,15]) == 0 do 0 else if nt_same(nc_slice(condition,size-5,size-1),b[192,72,15,182]) == 0 do 0 else if Enum.at(condition,size-1,0) != 192 do 0 else if cc < 144 do 0 else if cc > 159 do 0 else 1 end end end end end end
+    test = Enum.concat(b[72,133,192,15,132],nc_u32(skip))
+    if fits == 0 do Enum.concat(condition,test) else
+      nc_join(nc_slice(condition,0,size-7),nc_join(b[cc-32,14,233],nc_u32(skip+9),b[]),test)
+    end
+  end
+  # Native smoke test; assembled with the compiler.
+  def main() do System.halt(0) end
+end

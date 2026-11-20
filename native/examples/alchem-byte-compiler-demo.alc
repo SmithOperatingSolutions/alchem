@@ -1,0 +1,16 @@
+defmodule ByteDemo do
+  def stamp(values: bytes, marker: integer): bytes do
+    tail = b[marker]
+    Enum.concat(values, tail)
+  end
+
+  def choose(values: bytes): bytes do
+    if Enum.count(values) > 0 do values else b[0] end
+  end
+
+  def main() do
+    original = b[40]
+    result = stamp(choose(original), 2)
+    System.halt(Enum.at(original, 0, 0) + Enum.at(result, -1, 0))
+  end
+end

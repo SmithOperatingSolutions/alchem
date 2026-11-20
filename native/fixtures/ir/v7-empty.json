@@ -1,0 +1,32 @@
+{
+  "version": 7,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "bytes.const",
+              "dest": "b",
+              "values": []
+            },
+            {
+              "op": "bytes.write",
+              "dest": "r",
+              "value": "b",
+              "stream": "stdout"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    }
+  ]
+}

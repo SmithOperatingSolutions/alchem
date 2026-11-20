@@ -1,0 +1,246 @@
+defmodule NativeTypes do
+  def nt_div(value: integer, divisor: integer): integer do
+    if value < 0 do -1 else if divisor <= 0 do -1 else
+      if value < divisor do 0 else
+        if divisor > value-divisor do 1 else
+          q = nt_div(value,divisor*2)*2
+          if value-q*divisor >= divisor do q+1 else q end
+        end
+      end
+    end end
+  end
+  def nt_mod(value: integer, divisor: integer): integer do value-nt_div(value,divisor)*divisor end
+  def nt_power(bits: integer): integer do
+    if bits <= 0 do 1 else 2*nt_power(bits-1) end
+  end
+  def nt_word(value: integer): bytes do
+    if value < 256 do b[value,0,0,0,0,0,0,0] else nt_word_tail(value,8) end
+  end
+  def nt_word_tail(value: integer, count: integer): bytes do
+    if count == 0 do b[] else
+      next = nt_div(value,256)
+      Enum.concat(b[value-next*256],nt_word_tail(next,count-1))
+    end
+  end
+  def nt_read_word(data: bytes, pos: integer): integer do
+    low = Enum.at(data,pos,0)+Enum.at(data,pos+1,0)*256+Enum.at(data,pos+2,0)*65536+Enum.at(data,pos+3,0)*16777216
+    high = Enum.at(data,pos+4,0)+Enum.at(data,pos+5,0)*256+Enum.at(data,pos+6,0)*65536+Enum.at(data,pos+7,0)*16777216
+    low+high*4294967296
+  end
+  # A type is a byte string in prefix form, at most 255 bytes and 32 levels
+  # deep: one tag byte for
+  # integer 0, byte 1, string 2, boolean 3, unknown 9, atom 22, range 23 and float 24; option 4 and list 7
+  # with their element; result 6 and map 8 with their two types; tuple 5 and
+  # function 10 with a count byte, then the fields, or the parameters and the
+  # result. An empty byte string is no type: every failure.
+  def nt_tag(kind: bytes): integer do
+    if Enum.count(kind) == 0 do -1 else Enum.at(kind,0,0) end
+  end
+  # The offset after the type that starts at offset; -1 when it is malformed or
+  # nested deeper than 32 levels.
+  def nt_end(kind: bytes, offset: integer): integer do
+    nt_end_within(kind,offset,130)
+  end
+  def nt_end_within(kind: bytes, offset: integer, depth: integer): integer do
+    tag = Enum.at(kind,offset,255)
+    if offset < 0 do -1 else if offset >= Enum.count(kind) do -1 else if depth == 0 do -1 else
+      if (tag-13)*(tag-14)*(tag-15) == 0 do if offset+4 > Enum.count(kind) do -1 else offset+4 end else
+      if tag == 16 do if offset+2+Enum.at(kind,offset+1,0) > Enum.count(kind) do -1 else offset+2+Enum.at(kind,offset+1,0) end else
+      if (tag-18)*(tag-19)*(tag-20) == 0 do if offset+5 > Enum.count(kind) do -1 else nt_ends_within(kind,nt_parts(kind,offset+4),nt_counted(kind,offset+4),depth-1) end else
+      if tag < 4 do offset+1 else if (tag-9)*(tag-22)*(tag-23)*(tag-24)*(tag-29) == 0 do offset+1 else
+        if (tag-4)*(tag-7)*(tag-25)*(tag-26) == 0 do nt_end_within(kind,offset+1,depth-1) else
+          if (tag-6)*(tag-8) == 0 do nt_ends_within(kind,offset+1,2,depth-1) else
+            if offset+2 > Enum.count(kind) do -1 else
+              if tag == 5 do nt_ends_within(kind,nt_parts(kind,offset+1),nt_counted(kind,offset+1),depth-1) else
+                if tag == 10 do nt_ends_within(kind,nt_parts(kind,offset+1),nt_counted(kind,offset+1)+1,depth-1) else -1 end
+              end
+            end
+          end
+        end
+      end end
+      end
+      end
+      end
+    end end end
+  end
+  def nt_ends_within(kind: bytes, offset: integer, count: integer, depth: integer): integer do
+    if count == 0 do offset else nt_ends_within(kind,nt_end_within(kind,offset,depth),count-1,depth) end
+  end
+  def nt_ends(kind: bytes, offset: integer, count: integer): integer do
+    nt_ends_within(kind,offset,count,130)
+  end
+  # The number of parts of a tuple, a function type or an instance of a
+  # generic type is one byte below nt_many(), else the byte 255 and three
+  # bytes. nt_counter writes it; nt_counted reads the one at offset and
+  # nt_parts gives the offset after it. nt_first is where the parts of a
+  # type start.
+  def nt_many(): integer do 255 end
+  def nt_counter(count: integer): bytes do
+    if count < nt_many() do b[count] else Enum.concat(b[255],nc_u24(count)) end
+  end
+  def nt_counted(kind: bytes, offset: integer): integer do
+    if Enum.at(kind,offset,0) == 255 do nc_cursor(kind,offset+1) else Enum.at(kind,offset,0) end
+  end
+  def nt_parts(kind: bytes, offset: integer): integer do
+    if Enum.at(kind,offset,0) == 255 do offset+4 else offset+1 end
+  end
+  def nt_first(kind: bytes): integer do
+    if (nt_tag(kind)-5)*(nt_tag(kind)-10) == 0 do nt_parts(kind,1) else if (nt_tag(kind)-18)*(nt_tag(kind)-19)*(nt_tag(kind)-20) == 0 do nt_parts(kind,4) else 1 end end
+  end
+  # Fields of a tuple, or parameters of a function.
+  # Fields of a tuple, parameters of a function, or type arguments of a
+  # generic struct or sum type (tags 18, 19 and, before it is resolved, 20:
+  # the declaration's position, the count, then the arguments).
+  def nt_count(kind: bytes): integer do
+    if (nt_tag(kind)-5)*(nt_tag(kind)-10) == 0 do nt_counted(kind,1) else if (nt_tag(kind)-18)*(nt_tag(kind)-19)*(nt_tag(kind)-20) == 0 do nt_counted(kind,4) else 0 end end
+  end
+  def nt_child(kind: bytes, index: integer): bytes do
+    first = nt_first(kind)
+    start = nt_ends(kind,first,index)
+    stop = nt_end(kind,start)
+    if stop < 0 do b[] else nc_slice(kind,start,stop) end
+  end
+  def nt_same(a: bytes, b: bytes): integer do
+    if Enum.count(a) != Enum.count(b) do 0 else nt_same_range(a,b,0,Enum.count(a)) end
+  end
+  # Halving keeps the depth small for a type of 255 bytes.
+  def nt_same_range(a: bytes, b: bytes, first: integer, stop: integer): integer do
+    middle = first+nc_half(stop-first)
+    if stop-first <= 0 do 1 else if stop-first == 1 do if Enum.at(a,first,0) == Enum.at(b,first,0) do 1 else 0 end else
+      if nt_same_range(a,b,first,middle) == 0 do 0 else nt_same_range(a,b,middle,stop) end
+    end end
+  end
+  # A constructed type must be whole, within 255 bytes and 32 levels.
+  def nt_sized(kind: bytes): bytes do
+    if nt_end(kind,0) != Enum.count(kind) do b[] else kind end
+  end
+  def nt_unary(tag: integer, inner: bytes): bytes do
+    if Enum.count(inner) == 0 do b[] else nt_sized(Enum.concat(b[tag],inner)) end
+  end
+  def nt_binary(tag: integer, first: bytes, second: bytes): bytes do
+    if Enum.count(first) == 0 do b[] else if Enum.count(second) == 0 do b[] else
+      nt_sized(nc_join(b[tag],first,second))
+    end end
+  end
+  # types: a type list with one entry per parameter, then the result's.
+  def nt_function(types: bytes, count: integer): bytes do
+    if count < 0 do b[] else nt_cells(types,count+1,0,Enum.concat(b[10],nt_counter(count))) end
+  end
+  def nt_tuple(types: bytes, count: integer): bytes do
+    if count < 0 do b[] else nt_cells(types,count,0,Enum.concat(b[5],nt_counter(count))) end
+  end
+  def nt_cells(types: bytes, count: integer, offset: integer, result: bytes): bytes do
+    if count == 0 do nt_sized(result) else
+      kind = nt_read(types,offset)
+      if Enum.count(kind) == 0 do b[] else nt_cells(types,count-1,nt_after(types,offset),Enum.concat(result,kind)) end
+    end
+  end
+  # A cell is a type after its length: one byte for a length below
+  # nt_wide(), else the byte 255 and the length in four bytes. A zero length
+  # is no type. A type list is cells one after another; value packets,
+  # environment records and argument packets hold types as cells too.
+  def nt_wide(): integer do 255 end
+  def nt_cell(kind: bytes): bytes do
+    if Enum.count(kind) < nt_wide() do Enum.concat(b[Enum.count(kind)],kind) else nc_join(b[255],nc_u32(Enum.count(kind)),kind) end
+  end
+  # The bytes a cell's length takes, the length, and the offset after the cell.
+  def nt_head(data: bytes, pos: integer): integer do
+    if Enum.at(data,pos,0) == 255 do 5 else 1 end
+  end
+  def nt_size(data: bytes, pos: integer): integer do
+    if Enum.at(data,pos,0) == 255 do nc_long(data,pos+1) else Enum.at(data,pos,0) end
+  end
+  def nt_after(data: bytes, pos: integer): integer do
+    pos+nt_head(data,pos)+nt_size(data,pos)
+  end
+  def nt_read(data: bytes, pos: integer): bytes do
+    if pos < 0 do b[] else if nt_after(data,pos) > Enum.count(data) do b[] else nc_slice(data,pos+nt_head(data,pos),nt_after(data,pos)) end end
+  end
+  # The offset of entry index of a type list, and the number of entries.
+  def nt_skip(types: bytes, offset: integer, index: integer): integer do
+    if index == 0 do offset else if offset >= Enum.count(types) do -1 else nt_skip(types,nt_after(types,offset),index-1) end end
+  end
+  def nt_item(types: bytes, index: integer): bytes do
+    nt_read(types,nt_skip(types,0,index))
+  end
+  def nt_items(types: bytes, offset: integer): integer do
+    nt_items_from(types,offset,0)
+  end
+  def nt_items_from(types: bytes, offset: integer, count: integer): integer do
+    if offset >= Enum.count(types) do count else nt_items_from(types,nt_after(types,offset),count+1) end
+  end
+  # The list with entry index replaced by kind.
+  def nt_replace(types: bytes, index: integer, kind: bytes): bytes do
+    nc_join(nc_slice(types,0,nt_skip(types,0,index)),nt_cell(kind),nc_slice(types,nt_skip(types,0,index+1),Enum.count(types)))
+  end
+  # The common type of two branches: unknown (9) gives way to the other side.
+  def nt_merge(a: bytes, b: bytes): bytes do
+    tag = nt_tag(a)
+    if tag < 0 do b[] else if nt_tag(b) < 0 do b[] else
+      if nt_same(a,b) == 1 do a else if tag == 9 do b else if nt_tag(b) == 9 do a else
+        # A range is also the list of its integers.
+        if tag != nt_tag(b) do b[] else
+          if (tag-4)*(tag-7)*(tag-25)*(tag-26) == 0 do nt_unary(tag,nt_merge(nt_child(a,0),nt_child(b,0))) else
+            if (tag-6)*(tag-8) == 0 do nt_binary(tag,nt_merge(nt_child(a,0),nt_child(b,0)),nt_merge(nt_child(a,1),nt_child(b,1))) else
+              if (tag-18)*(tag-19) == 0 do
+                if nt_same(nc_slice(a,0,nt_first(a)),nc_slice(b,0,nt_first(b))) == 0 do b[] else nt_merge_arguments(a,b,0,nc_slice(a,0,nt_first(a))) end
+              else
+              if tag != 5 do b[] else
+                if nt_count(a) != nt_count(b) do b[] else nt_merge_tuple(a,b,0,b[]) end
+              end
+              end
+            end
+          end
+        end
+      end end end
+    end end
+  end
+  # Two instances of one generic type: their arguments merge one by one.
+  def nt_merge_arguments(a: bytes, b: bytes, index: integer, result: bytes): bytes do
+    if index == nt_count(a) do nt_sized(result) else
+      child = nt_merge(nt_child(a,index),nt_child(b,index))
+      if Enum.count(child) == 0 do b[] else nt_merge_arguments(a,b,index+1,Enum.concat(result,child)) end
+    end
+  end
+  def nt_merge_tuple(a: bytes, b: bytes, index: integer, types: bytes): bytes do
+    if index == nt_count(a) do nt_tuple(types,index) else
+      child = nt_merge(nt_child(a,index),nt_child(b,index))
+      if Enum.count(child) == 0 do b[] else nt_merge_tuple(a,b,index+1,Enum.concat(types,nt_cell(child))) end
+    end
+  end
+  def nt_type(source: bytes, pos: integer, depth: integer): bytes do
+    if depth > 125 do b[] else
+      tag = if nc_word(source,pos,b[111,112,116,105,111,110]) == 1 do 4 else
+        if nc_word(source,pos,b[114,101,115,117,108,116]) == 1 do 6 else
+          if nc_word(source,pos,b[116,117,112,108,101]) == 1 do 5 else
+            if nc_word(source,pos,b[108,105,115,116]) == 1 do 7 else if nc_word(source,pos,b[115,101,116]) == 1 do 25 else if nc_word(source,pos,b[115,116,114,101,97,109]) == 1 do 26 else if nc_word(source,pos,b[109,97,112]) == 1 do 8 else if nc_word(source,pos,b[102,110]) == 1 do 10 else 0 end end end end end
+          end
+        end
+      end
+      if tag == 0 do nc_scalar_type(source,pos) else
+        begin = nc_expect(source,nc_end(source,pos),b[91])
+        if begin < 0 do b[] else
+          if tag*nc_word(source,begin,b[93]) == 5 do nc_value(nc_end(source,begin),b[],b[5,0]) else nt_type_parts(source,begin,depth+1,tag,b[]) end
+        end
+      end
+    end
+  end
+  def nt_type_parts(source: bytes, pos: integer, depth: integer, tag: integer, types: bytes): bytes do
+    if depth < 0 do b[] else
+      item = nt_type(source,pos,depth)
+      if nc_pos(item) < 0 do b[] else
+        values = Enum.concat(types,nt_cell(nc_kind(item)))
+        if nc_word(source,nc_pos(item),b[44]) == 1 do nt_type_parts(source,nc_end(source,nc_pos(item)),depth,tag,values) else
+          stop = nc_expect(source,nc_pos(item),b[93])
+          count = nt_items(values,0)
+          kind = if (tag-4)*(tag-7)*(tag-25)*(tag-26) == 0 do if count == 1 do nt_unary(tag,nt_item(values,0)) else b[] end else
+            if (tag-6)*(tag-8) == 0 do if count == 2 do nt_binary(tag,nt_item(values,0),nt_item(values,1)) else b[] end else if tag == 10 do nt_function(values,count-1) else nt_tuple(values,count) end end
+          end
+          if stop < 0 do b[] else nc_value(stop,b[],kind) end
+        end
+      end
+    end
+  end
+  # Native smoke test; standalone structural type foundation.
+  def main() do System.halt(0) end
+end

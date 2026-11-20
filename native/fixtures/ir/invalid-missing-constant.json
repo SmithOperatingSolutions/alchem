@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "const.i64",
+              "dest": "x"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "x"
+          }
+        }
+      ]
+    }
+  ]
+}

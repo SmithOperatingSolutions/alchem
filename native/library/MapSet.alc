@@ -1,0 +1,110 @@
+# MapSet: the functions written in Alchem. A set is a map from its elements
+# to true (MapSet.__map gives the map, MapSet.__set the set of a map), so
+# the map routines keep the elements in ascending order.
+#: new/0
+  def new(): set[a] do
+    MapSet.__set(%{})
+  end
+#: new/1 needs Enum.sort/1 Enum.uniq/1
+# Integers and strings: the different ones in order, which the map routine
+# takes as they come instead of putting them one by one.
+  def new(items: list[integer]): set[integer] do
+    MapSet.__set(Map.new(Enum.map(Enum.sort(Enum.uniq(items)), fn x -> {x, true} end)))
+  end
+#: new/1 form 2 needs Enum.sort/1 Enum.uniq/1
+  def new(items: list[string]): set[string] do
+    MapSet.__set(Map.new(Enum.map(Enum.sort(Enum.uniq(items)), fn x -> {x, true} end)))
+  end
+#: new/1 form 3
+  def new(items: list[a]): set[a] do
+    MapSet.__set(Map.new(Enum.map(items, fn x -> {x, true} end)))
+  end
+#: new/2
+  def new(items: list[a], f: fn[a, b]): set[b] do
+    MapSet.__set(Map.new(Enum.map(items, fn x -> {f(x), true} end)))
+  end
+#: put/2
+  def put(s: set[a], value: a): set[a] do
+    MapSet.__set(Map.o_keep(MapSet.__map(s), value, true))
+  end
+#: delete/2
+  def delete(s: set[a], value: a): set[a] do
+    MapSet.__set(Map.delete(MapSet.__map(s), value))
+  end
+#: member?/2
+  def member?(s: set[a], value: a): boolean do
+    Map.has_key?(MapSet.__map(s), value)
+  end
+#: size/1
+  def size(s: set[a]): integer do
+    Enum.count(MapSet.__map(s))
+  end
+#: to_list/1
+  def to_list(s: set[a]): list[a] do
+    Map.keys(MapSet.__map(s))
+  end
+#: to_list/1 form 2
+  def to_list(items: list[a]): list[a] do
+    items
+  end
+#: to_list/1 form 3
+  def to_list(items: map[k, v]): list[tuple[k, v]] do
+    Map.to_list(items)
+  end
+#: union/2 needs Map.merge/2
+  def union(left: set[integer], right: set[integer]): set[integer] do
+    MapSet.__set(Map.merge(MapSet.__map(left), MapSet.__map(right)))
+  end
+#: union/2 form 2 needs Map.merge/2
+  def union(left: set[string], right: set[string]): set[string] do
+    MapSet.__set(Map.merge(MapSet.__map(left), MapSet.__map(right)))
+  end
+#: union/2 form 3 needs Map.merge/2
+  def union(left: set[a], right: set[a]): set[a] do
+    MapSet.__set(Map.merge(MapSet.__map(left), MapSet.__map(right)))
+  end
+#: filter/2
+  def filter(s: set[a], f: fn[a, boolean]): set[a] do
+    MapSet.__set(Map.new(Enum.filter(Map.to_list(MapSet.__map(s)), fn pair -> f(elem(pair, 0)) end)))
+  end
+#: reject/2
+  def reject(s: set[a], f: fn[a, boolean]): set[a] do
+    MapSet.__set(Map.new(Enum.filter(Map.to_list(MapSet.__map(s)), fn pair -> not f(elem(pair, 0)) end)))
+  end
+#: split_with/2 needs filter/2 reject/2
+  def split_with(s: set[a], f: fn[a, boolean]): tuple[set[a], set[a]] do
+    yes = Enum.map(Map.keys(MapSet.__map(s)), fn x -> {x, f(x)} end)
+    {MapSet.__set(Map.new(Enum.filter(yes, fn pair -> elem(pair, 1) end))), MapSet.__set(Map.new(Enum.map(Enum.filter(yes, fn pair -> not elem(pair, 1) end), fn pair -> {elem(pair, 0), true} end)))}
+  end
+#: intersection/2
+  def intersection(left: set[a], right: set[a]): set[a] do
+    other = MapSet.__map(right)
+    MapSet.__set(Map.new(Enum.filter(Map.to_list(MapSet.__map(left)), fn pair -> Map.has_key?(other, elem(pair, 0)) end)))
+  end
+#: difference/2
+  def difference(left: set[a], right: set[a]): set[a] do
+    other = MapSet.__map(right)
+    MapSet.__set(Map.new(Enum.filter(Map.to_list(MapSet.__map(left)), fn pair -> not Map.has_key?(other, elem(pair, 0)) end)))
+  end
+#: symmetric_difference/2 needs difference/2 union/2
+  def symmetric_difference(left: set[a], right: set[a]): set[a] do
+    MapSet.union(MapSet.difference(left, right), MapSet.difference(right, left))
+  end
+#: disjoint?/2
+  def disjoint?(left: set[a], right: set[a]): boolean do
+    other = MapSet.__map(right)
+    Enum.reduce(Map.keys(MapSet.__map(left)), true, fn x, apart -> apart and not Map.has_key?(other, x) end)
+  end
+#: subset?/2
+  def subset?(left: set[a], right: set[a]): boolean do
+    other = MapSet.__map(right)
+    Enum.reduce(Map.keys(MapSet.__map(left)), true, fn x, inside -> inside and Map.has_key?(other, x) end)
+  end
+#: equal?/2
+  def equal?(left: set[a], right: set[a]): boolean do
+    left == right
+  end
+#: new/2 form 2 needs Stream.map/2 new/1
+  def new(s: stream[a], f: fn[a, b]): set[b] do
+    MapSet.new(Stream.__list(Stream.map(s, f)))
+  end

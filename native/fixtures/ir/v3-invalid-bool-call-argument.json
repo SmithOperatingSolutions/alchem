@@ -1,0 +1,100 @@
+{
+  "version": 3,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "const.i64",
+              "dest": "a",
+              "value": 1
+            },
+            {
+              "op": "const.i64",
+              "dest": "b",
+              "value": 2
+            },
+            {
+              "op": "const.i64",
+              "dest": "yes",
+              "value": 42
+            },
+            {
+              "op": "const.i64",
+              "dest": "no",
+              "value": 7
+            },
+            {
+              "op": "lt.i64",
+              "dest": "c",
+              "lhs": "a",
+              "rhs": "b"
+            },
+            {
+              "op": "if.i64",
+              "dest": "r",
+              "cond": "c",
+              "then": {
+                "instructions": [
+                  {
+                    "op": "const.i64",
+                    "dest": "private_yes",
+                    "value": 42
+                  }
+                ],
+                "value": "private_yes"
+              },
+              "else": {
+                "instructions": [
+                  {
+                    "op": "const.i64",
+                    "dest": "private_no",
+                    "value": 7
+                  }
+                ],
+                "value": "private_no"
+              }
+            },
+            {
+              "op": "call",
+              "dest": "bad",
+              "callee": "identity",
+              "args": [
+                "c"
+              ]
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    },
+    {
+      "name": "identity",
+      "params": [
+        {
+          "name": "x",
+          "type": "i64"
+        }
+      ],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [],
+          "terminator": {
+            "op": "ret",
+            "value": "x"
+          }
+        }
+      ]
+    }
+  ]
+}

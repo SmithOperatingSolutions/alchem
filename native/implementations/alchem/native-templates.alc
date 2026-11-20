@@ -1,0 +1,150 @@
+defmodule NativeTemplates do
+  # Templates (spec/alchem-templates.md). ~h"text #{value}" is
+  # Markup.template(name, ["text ", ""], [Markup.of(value)]): the name is the
+  # FNV-1a sum of the fixed pieces, each with a zero byte after it, in
+  # sixteen hexadecimal digits.
+  def mh_wanted(): integer do 7 end
+  def mh_xor(a: integer, b: integer): integer do
+    if a+b == 0 do 0 else (if a-nc_half(a)*2 == b-nc_half(b)*2 do 0 else 1 end)+2*mh_xor(nc_half(a),nc_half(b)) end
+  end
+  # The sum, eight bytes from the lowest, times the prime 2^40 + 435.
+  def mh_times(state: bytes, index: integer, carry: integer): bytes do
+    sum = carry+Enum.at(state,index,0)*179+(if index >= 1 do Enum.at(state,index-1,0) else 0 end)+(if index >= 5 do Enum.at(state,index-5,0) else 0 end)
+    if index >= 8 do b[] else Enum.concat(b[sum-nc_hi(sum)*256],mh_times(state,index+1,nc_hi(sum))) end
+  end
+  def mh_hash(state: bytes, text: bytes, first: integer, stop: integer): bytes do
+    if stop-first <= 0 do state else
+      if stop-first == 1 do mh_times(Enum.concat(b[mh_xor(Enum.at(state,0,0),Enum.at(text,first,0))],nc_slice(state,1,8)),0,0) else
+        mh_hash(mh_hash(state,text,first,first+nc_half(stop-first)),text,first+nc_half(stop-first),stop)
+      end
+    end
+  end
+  def mh_hex_digit(value: integer): integer do if value < 10 do 48+value else 87+value end end
+  def mh_hex(state: bytes, index: integer): bytes do
+    value = Enum.at(state,index,0)
+    if index < 0 do b[] else Enum.concat(b[mh_hex_digit(nc_units(value,16)),mh_hex_digit(value-nc_units(value,16)*16)],mh_hex(state,index-1)) end
+  end
+  # Text of any length as pieces of five bytes.
+  def mh_word(ctx: bytes, text: bytes, at: integer): bytes do
+    if Enum.count(text) <= 5 do mx_lit(ctx,text,at) else Enum.concat(mx_lit(ctx,nc_slice(text,0,5),at),mh_word(ctx,nc_slice(text,5,Enum.count(text)),at)) end
+  end
+  # 1 for a byte a string literal holds as it is.
+  def mh_plain(value: integer): integer do
+    if value < 32 do 0 else if (value-34)*(value-92)*(value-35) == 0 do 0 else 1 end end
+  end
+  def mh_escape(value: integer): bytes do
+    if (value-34)*(value-92)*(value-35) == 0 do b[92,value] else
+      if value == 10 do b[92,110] else if value == 9 do b[92,116] else if value == 13 do b[92,114] else
+        b[92,120,mh_hex_digit(nc_units(value,16)),mh_hex_digit(value-nc_units(value,16)*16)]
+      end end end
+    end
+  end
+  # plan: that of sg_shape (the closing delimiter, the indentation, 1 for a
+  # sigil that holds values, the closing line and where the text stops),
+  # then where the sigil stands.
+  def mh_copy(ctx: bytes, plan: bytes, first: integer, stop: integer): bytes do
+    if stop <= first do b[] else mx_fixed(ctx,first,stop,nc_cursor(plan,9)) end
+  end
+  # The text of the template from first up to stop as the inside of a
+  # string literal.
+  def mh_emit(work: bytes, ctx: bytes, plan: bytes, first: integer, stop: integer): bytes do
+    if stop-first > 32 do Enum.concat(mh_emit(work,ctx,plan,first,first+nc_half(stop-first)),mh_emit(work,ctx,plan,first+nc_half(stop-first),stop)) else mh_emit_run(work,ctx,plan,Enum.concat(nc_u24(first),nc_u24(stop)),first) end
+  end
+  def mh_emit_run(work: bytes, ctx: bytes, plan: bytes, places: bytes, run: integer): bytes do
+    pos = nc_cursor(places,0)
+    value = byte_at(work,pos)
+    kept = sg_kept(work,pos,plan)
+    next = Enum.concat(nc_u24(pos+1),nc_slice(places,3,6))
+    if pos >= nc_cursor(places,3) do mh_copy(ctx,plan,run,pos) else
+      if kept*mh_plain(value) == 1 do mh_emit_run(work,ctx,plan,next,run) else
+        nc_join(mh_copy(ctx,plan,run,pos),if kept == 1 do mx_lit(ctx,mh_escape(value),nc_cursor(plan,9)) else b[] end,mh_emit_run(work,ctx,plan,next,pos+1))
+      end
+    end
+  end
+  # How many characters a fixed piece takes in the string the pinned parser
+  # makes of the sigil, which is how it counts the columns of a value.
+  def mh_width(text: bytes, first: integer, stop: integer): integer do
+    value = Enum.at(text,first,0)
+    if stop-first <= 0 do 0 else
+      if stop-first == 1 do
+        if (value-92)*(value-34)*(value-10)*(value-13)*(value-9) == 0 do 2 else if (value-128)*(191-value) >= 0 do 0 else 1 end end
+      else mh_width(text,first,first+nc_half(stop-first))+mh_width(text,first+nc_half(stop-first),stop) end
+    end
+  end
+  def mh_runes(work: bytes, first: integer, stop: integer): integer do
+    if stop-first <= 0 do 0 else
+      if stop-first == 1 do if (byte_at(work,first)-128)*(191-byte_at(work,first)) >= 0 do 0 else 1 end else
+        mh_runes(work,first,first+nc_half(stop-first))+mh_runes(work,first+nc_half(stop-first),stop)
+      end
+    end
+  end
+  # The code of a value stands, for the pinned compiler, on the sigil's line
+  # at a column counted in that string: its pieces are anchored there.
+  # plan: the value's code (from, to), the sigil and the column of the code.
+  def mh_anchor(pieces: bytes, first: integer, stop: integer, plan: bytes): bytes do
+    if stop-first <= 0 do b[] else
+      if stop-first == 1 do mh_anchor_one(pieces,first*13,plan) else
+        Enum.concat(mh_anchor(pieces,first,first+nc_half(stop-first),plan),mh_anchor(pieces,first+nc_half(stop-first),stop,plan))
+      end
+    end
+  end
+  def mh_anchor_one(pieces: bytes, base: integer, plan: bytes): bytes do
+    flag = Enum.at(pieces,base,0)
+    place = if flag == 0 do nc_cursor(pieces,base+1) else nc_cursor(pieces,base+7) end
+    inside = if flag > 2 do 0 else if (place-nc_cursor(plan,0))*(nc_cursor(plan,3)-place) >= 0 do 1 else 0 end end
+    if inside == 0 do nc_slice(pieces,base,base+13) else
+      nc_join(Enum.concat(b[flag+4],nc_slice(pieces,base+1,base+7)),nc_slice(plan,6,9),nc_u24(nc_cursor(plan,9)+place-nc_cursor(plan,0)))
+    end
+  end
+  # One fixed piece of a template as a string literal, after a comma unless
+  # it is the first.
+  def mh_fixed(work: bytes, ctx: bytes, plan: bytes, places: bytes, count: integer): bytes do
+    at = nc_cursor(plan,9)
+    nc_join(if count == 0 do mx_lit(ctx,b[34],at) else mx_lit(ctx,b[44,32,34],at) end,mh_emit(work,ctx,plan,nc_cursor(places,0),nc_cursor(places,3)),mx_lit(ctx,b[34],at))
+  end
+  # One value: Markup.of(code). places: the #{, its closing brace and the
+  # column of the code.
+  def mh_value(work: bytes, ix: bytes, ctx: bytes, plan: bytes, places: bytes, count: integer): bytes do
+    at = nc_cursor(plan,9)
+    hole = nc_cursor(places,0)
+    close = nc_cursor(places,3)
+    inner = if close < hole+2 do mx_fail() else mx_walk(work,ix,ctx,hole+2,close,0) end
+    if Enum.count(inner) == 1 do inner else
+      nc_join(if count == 0 do b[] else mx_lit(ctx,b[44,32],at) end,mh_word(ctx,b[77,97,114,107,117,112,46,111,102,40],at),Enum.concat(mh_anchor(inner,0,nc_units(Enum.count(inner),13),nc_join(mx_two(hole+2,close),nc_u24(at),nc_slice(places,6,9))),mx_lit(ctx,b[41],at)))
+    end
+  end
+  # acc: where the next piece starts, how wide the string is so far, the sum
+  # (8 bytes), how many pieces came before, the fixed pieces after their
+  # length and the values. The result is the sum, then the same two lists.
+  def mh_parts(work: bytes, ix: bytes, ctx: bytes, plan: bytes, acc: bytes): bytes do
+    from = nc_cursor(acc,0)
+    stop = nc_cursor(plan,6)
+    count = nc_read(acc,14)
+    hole = if Enum.at(plan,2,0) == 0 do stop else sg_hole_at(work,from,stop) end
+    text = sg_text(work,from,hole,plan)
+    sum = mh_hash(mh_hash(nc_slice(acc,6,14),text,0,Enum.count(text)),b[0],0,1)
+    close = if hole >= stop do stop else sg_hole_end(work,hole+2,1) end
+    wide = nc_cursor(acc,3)+mh_width(text,0,Enum.count(text))
+    fixed = Enum.concat(nc_slice(acc,19,19+nc_cursor(acc,16)),mh_fixed(work,ctx,plan,mx_two(from,hole),count))
+    value = if hole >= stop do b[] else if close < 0 do mx_fail() else if close >= stop do mx_fail() else mh_value(work,ix,ctx,plan,nc_join(nc_u24(hole),nc_u24(close),nc_u24(wide+2)),count) end end end
+    values = nc_slice(acc,19+nc_cursor(acc,16),Enum.count(acc))
+    if count >= 65000 do b[] else if Enum.count(value) == 1 do b[] else
+      if hole >= stop do nc_join(sum,mx_pack(fixed),values) else
+        mh_parts(work,ix,ctx,plan,nc_join(nc_join(nc_u24(close+1),nc_u24(wide+mh_runes(work,hole,close+1)),sum),Enum.concat(nc_u16(count+1),mx_pack(fixed)),Enum.concat(values,value)))
+      end
+    end end
+  end
+  def mh_template(work: bytes, ix: bytes, ctx: bytes, state: bytes): bytes do
+    pos = nc_cursor(state,0)
+    shape = sg_shape(work,pos)
+    stop = nc_end(work,pos)
+    plan = Enum.concat(nc_slice(shape,3,12),nc_u24(pos))
+    made = if Enum.count(shape) == 0 do b[] else if nc_cursor(shape,12) != stop do b[] else mh_parts(work,ix,ctx,plan,nc_join(mx_two(nc_cursor(shape,0),1),b[37,35,34,132,228,156,242,203],b[0,0,0,0,0])) end end
+    head = nc_join(mx_run(ctx,nc_cursor(state,9),pos),mh_word(ctx,b[77,97,114,107,117,112,46,116,101,109,112,108,97,116,101,40,34],pos),mh_word(ctx,Enum.concat(mh_hex(made,7),b[34,44,32,91]),pos))
+    if Enum.count(made) < 11 do b[] else
+      mx_done(state,stop,stop,nc_join(nc_join(head,nc_slice(made,11,11+nc_cursor(made,8)),mx_lit(ctx,b[93,44,32,91],pos)),nc_slice(made,11+nc_cursor(made,8),Enum.count(made)),mx_lit(ctx,b[93,41],pos)))
+    end
+  end
+  # Native smoke test; assembled with the compiler.
+  def main() do System.halt(0) end
+end

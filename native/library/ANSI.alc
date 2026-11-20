@@ -1,0 +1,261 @@
+# IO.ANSI: the functions written in Alchem (the compiler looks IO.ANSI.name
+# up as ANSI.name).
+#: reset/0
+  def reset(): string do
+    "\e[0m"
+  end
+#: bright/0
+  def bright(): string do
+    "\e[1m"
+  end
+#: faint/0
+  def faint(): string do
+    "\e[2m"
+  end
+#: italic/0
+  def italic(): string do
+    "\e[3m"
+  end
+#: underline/0
+  def underline(): string do
+    "\e[4m"
+  end
+#: blink_slow/0
+  def blink_slow(): string do
+    "\e[5m"
+  end
+#: blink_rapid/0
+  def blink_rapid(): string do
+    "\e[6m"
+  end
+#: reverse/0
+  def reverse(): string do
+    "\e[7m"
+  end
+#: conceal/0
+  def conceal(): string do
+    "\e[8m"
+  end
+#: crossed_out/0
+  def crossed_out(): string do
+    "\e[9m"
+  end
+#: normal/0
+  def normal(): string do
+    "\e[22m"
+  end
+#: no_underline/0
+  def no_underline(): string do
+    "\e[24m"
+  end
+#: not_italic/0
+  def not_italic(): string do
+    "\e[23m"
+  end
+#: black/0
+  def black(): string do
+    "\e[30m"
+  end
+#: red/0
+  def red(): string do
+    "\e[31m"
+  end
+#: green/0
+  def green(): string do
+    "\e[32m"
+  end
+#: yellow/0
+  def yellow(): string do
+    "\e[33m"
+  end
+#: blue/0
+  def blue(): string do
+    "\e[34m"
+  end
+#: magenta/0
+  def magenta(): string do
+    "\e[35m"
+  end
+#: cyan/0
+  def cyan(): string do
+    "\e[36m"
+  end
+#: white/0
+  def white(): string do
+    "\e[37m"
+  end
+#: default_color/0
+  def default_color(): string do
+    "\e[39m"
+  end
+#: black_background/0
+  def black_background(): string do
+    "\e[40m"
+  end
+#: red_background/0
+  def red_background(): string do
+    "\e[41m"
+  end
+#: green_background/0
+  def green_background(): string do
+    "\e[42m"
+  end
+#: yellow_background/0
+  def yellow_background(): string do
+    "\e[43m"
+  end
+#: blue_background/0
+  def blue_background(): string do
+    "\e[44m"
+  end
+#: magenta_background/0
+  def magenta_background(): string do
+    "\e[45m"
+  end
+#: cyan_background/0
+  def cyan_background(): string do
+    "\e[46m"
+  end
+#: white_background/0
+  def white_background(): string do
+    "\e[47m"
+  end
+#: default_background/0
+  def default_background(): string do
+    "\e[49m"
+  end
+#: light_black/0
+  def light_black(): string do
+    "\e[90m"
+  end
+#: light_red/0
+  def light_red(): string do
+    "\e[91m"
+  end
+#: light_green/0
+  def light_green(): string do
+    "\e[92m"
+  end
+#: light_yellow/0
+  def light_yellow(): string do
+    "\e[93m"
+  end
+#: light_blue/0
+  def light_blue(): string do
+    "\e[94m"
+  end
+#: light_magenta/0
+  def light_magenta(): string do
+    "\e[95m"
+  end
+#: light_cyan/0
+  def light_cyan(): string do
+    "\e[96m"
+  end
+#: light_white/0
+  def light_white(): string do
+    "\e[97m"
+  end
+#: light_black_background/0
+  def light_black_background(): string do
+    "\e[100m"
+  end
+#: light_red_background/0
+  def light_red_background(): string do
+    "\e[101m"
+  end
+#: light_green_background/0
+  def light_green_background(): string do
+    "\e[102m"
+  end
+#: light_yellow_background/0
+  def light_yellow_background(): string do
+    "\e[103m"
+  end
+#: light_blue_background/0
+  def light_blue_background(): string do
+    "\e[104m"
+  end
+#: light_magenta_background/0
+  def light_magenta_background(): string do
+    "\e[105m"
+  end
+#: light_cyan_background/0
+  def light_cyan_background(): string do
+    "\e[106m"
+  end
+#: light_white_background/0
+  def light_white_background(): string do
+    "\e[107m"
+  end
+#: clear/0
+  def clear(): string do
+    "\e[2J"
+  end
+#: clear_line/0
+  def clear_line(): string do
+    "\e[2K"
+  end
+#: home/0
+  def home(): string do
+    "\e[H"
+  end
+#: cursor_up/1
+  def cursor_up(n: integer): string do
+    "\e[" <> Integer.to_string(n) <> "A"
+  end
+#: cursor_down/1
+  def cursor_down(n: integer): string do
+    "\e[" <> Integer.to_string(n) <> "B"
+  end
+#: cursor_right/1
+  def cursor_right(n: integer): string do
+    "\e[" <> Integer.to_string(n) <> "C"
+  end
+#: cursor_left/1
+  def cursor_left(n: integer): string do
+    "\e[" <> Integer.to_string(n) <> "D"
+  end
+#: color/1
+  def color(n: integer): string do
+    "\e[38;5;" <> Integer.to_string(n) <> "m"
+  end
+#: color_background/1
+  def color_background(n: integer): string do
+    "\e[48;5;" <> Integer.to_string(n) <> "m"
+  end
+#: cursor/2
+  def cursor(line: integer, column: integer): string do
+    "\e[" <> Integer.to_string(line) <> ";" <> Integer.to_string(column) <> "H"
+  end
+#: format/2
+  def format(parts: list[tuple[atom, string]], on: boolean): string do
+    out = Enum.reduce(parts, "", fn p, acc ->
+      if elem(p, 0) == :text do acc <> elem(p, 1) else
+        if on do acc <> code(elem(p, 0)) else acc end
+      end
+    end)
+    if on do out <> "\e[0m" else out end
+  end
+  defp code(name: atom): string do
+    Enum.reduce([reset: "0", bright: "1", faint: "2", italic: "3", underline: "4", blink_slow: "5", blink_rapid: "6", reverse: "7", conceal: "8", crossed_out: "9", normal: "22", no_underline: "24", not_italic: "23", black: "30", red: "31", green: "32", yellow: "33", blue: "34", magenta: "35", cyan: "36", white: "37", default_color: "39", black_background: "40", red_background: "41", green_background: "42", yellow_background: "43", blue_background: "44", magenta_background: "45", cyan_background: "46", white_background: "47", default_background: "49", light_black: "90", light_red: "91", light_green: "92", light_yellow: "93", light_blue: "94", light_magenta: "95", light_cyan: "96", light_white: "97", light_black_background: "100", light_red_background: "101", light_green_background: "102", light_yellow_background: "103", light_blue_background: "104", light_magenta_background: "105", light_cyan_background: "106", light_white_background: "107"], "", fn c, acc ->
+      if elem(c, 0) == name do "\e[" <> elem(c, 1) <> "m" else acc end
+    end)
+  end
+#: enabled?/0
+  def enabled?(): boolean do
+    System.get_env("TERM") != some("dumb") and (System.get_env("NO_COLOR") == none or System.get_env("NO_COLOR") == some("")) and device(File.read("/proc/self/fdinfo/1"), File.read("/proc/self/mountinfo"))
+  end
+  defp device(fd: result[string, string], mounts: result[string, string]): boolean do
+    case fd do
+      ok(info) ->
+        case mounts do
+          ok(table) ->
+            id = hd(String.split(hd(tl(String.split(info <> "mnt_id:\t\n", "mnt_id:\t"))), "\n"))
+            line = hd(String.split(hd(tl(String.split("\n" <> table <> "\n" <> id <> " \n", "\n" <> id <> " "))), "\n"))
+            String.contains?(line, " - devpts ") or String.contains?(line, " - devtmpfs ")
+          error(e) -> false
+        end
+      error(e) -> false
+    end
+  end

@@ -1,0 +1,41 @@
+defmodule NativeEncoder do
+  # A byte-range immediate, encoded as little-endian imm32 for MOV EDI.
+  def mov_edi_u8(value: integer): bytes do
+    b[191, value, 0, 0, 0]
+  end
+
+  def emit_exit(value: integer): bytes do
+    Enum.concat(mov_edi_u8(value), b[184, 60, 0, 0, 0, 15, 5])
+  end
+
+  # One RX load segment, process entry immediately after a 128-byte header.
+  # Internal small-image profile: total file size must fit one checked byte.
+  defp elf_header_small(file_size: integer): bytes do
+    b[127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+     2, 0, 62, 0, 1, 0, 0, 0, 128, 0, 64, 0, 0, 0, 0, 0,
+     64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+     0, 0, 0, 0, 64, 0, 56, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+     1, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+     0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0,
+     file_size, 0, 0, 0, 0, 0, 0, 0, file_size, 0, 0, 0, 0, 0, 0, 0,
+     0, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  end
+
+  def emit_elf_exit(value: integer): bytes do
+    code = emit_exit(value)
+    header = elf_header_small(128 + Enum.count(code))
+    Enum.concat(header, code)
+  end
+
+  # Native smoke test; replaced by the encoder oracle.
+  def main() do
+    code = emit_elf_exit(42)
+    if Enum.count(code) == 140 do
+      if Enum.at(code, 0, -1) == 127 do
+        if Enum.at(code, 129, -1) == 42 do
+          if Enum.at(code, 139, -1) == 5 do System.halt(0) else System.halt(1) end
+        else System.halt(1) end
+      else System.halt(1) end
+    else System.halt(1) end
+  end
+end

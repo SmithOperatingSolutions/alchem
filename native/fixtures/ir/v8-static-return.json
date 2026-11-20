@@ -1,0 +1,60 @@
+{
+  "version": 8,
+  "functions": [
+    {
+      "name": "main",
+      "params": [],
+      "return_type": "i64",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "call",
+              "dest": "b",
+              "callee": "static",
+              "args": []
+            },
+            {
+              "op": "bytes.len",
+              "dest": "r",
+              "value": "b"
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "r"
+          }
+        }
+      ]
+    },
+    {
+      "name": "static",
+      "params": [],
+      "return_type": "bytes",
+      "blocks": [
+        {
+          "label": "entry",
+          "instructions": [
+            {
+              "op": "bytes.const",
+              "dest": "b",
+              "values": [
+                97,
+                110,
+                115,
+                119,
+                101,
+                114
+              ]
+            }
+          ],
+          "terminator": {
+            "op": "ret",
+            "value": "b"
+          }
+        }
+      ]
+    }
+  ]
+}
