@@ -9,7 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from run import ROOT
+from run import ARM64_RUN, ROOT
 
 TOOLS=ROOT/'build/arm64-tools/bin'
 # (encoder call, the instructions GNU as reads for it)
@@ -107,7 +107,7 @@ def compiler_entry(root,compiler,arm):
         path=root/f'entry-{name}';path.write_bytes(made.stdout);path.chmod(0o700);built.append(path)
     for given in INPUTS:
         want=subprocess.run([str(built[0])],input=given,capture_output=True,timeout=120)
-        got=subprocess.run([str(TOOLS/'qemu-aarch64-static'),str(built[1])],input=given,capture_output=True,timeout=120)
+        got=subprocess.run([*ARM64_RUN,str(built[1])],input=given,capture_output=True,timeout=120)
         assert (got.returncode,got.stdout,got.stderr)==(want.returncode,want.stdout,want.stderr)==(0,given[::-1]+b'\x07',b''),('compiler entry',len(given),got.returncode,got.stderr[:200])
     return len(INPUTS)
 
@@ -120,7 +120,7 @@ def self_hosted(root,compiler,arm):
     made=subprocess.run([str(arm)],input=source,capture_output=True,env={'PATH':''},timeout=600)
     assert made.returncode==0 and made.stdout[18:20]==b'\xb7\x00',('the compiler built for ARM64',made.returncode,made.stderr[:200])
     hosted=root/'compiler-arm64-hosted';hosted.write_bytes(made.stdout);hosted.chmod(0o700)
-    again=subprocess.run([str(TOOLS/'qemu-aarch64-static'),str(hosted)],input=source,capture_output=True,timeout=1200)
+    again=subprocess.run([*ARM64_RUN,str(hosted)],input=source,capture_output=True,timeout=1200)
     reference=subprocess.run([str(compiler)],input=source,capture_output=True,env={'PATH':''},timeout=600)
     assert (again.returncode,again.stderr)==(0,b'') and again.stdout==reference.stdout,('the compiler under QEMU',again.returncode,again.stderr[:200],len(again.stdout),len(reference.stdout))
     return len(source)
@@ -142,7 +142,7 @@ def verify(compiler):
             made=subprocess.run([str(arm)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
             assert made.returncode==0 and made.stdout[:4]==b'\x7fELF' and made.stdout[18:20]==b'\xb7\x00',('ARM64 compiler output',source,made.returncode,made.stdout[:20])
             program=root/'program';program.write_bytes(made.stdout);program.chmod(0o700)
-            run=subprocess.run([str(TOOLS/'qemu-aarch64-static'),str(program)],capture_output=True,env={'PATH':''},timeout=120)
+            run=subprocess.run([*ARM64_RUN,str(program)],capture_output=True,env={'PATH':''},timeout=120)
             assert (run.returncode,run.stdout,run.stderr)==expected,('ARM64 run',source,run.returncode,run.stdout,run.stderr[:300])
             ran+=1
         entries=compiler_entry(root,compiler,arm)

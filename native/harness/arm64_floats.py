@@ -6,7 +6,7 @@ product as an operand one fused multiply-add, through a variable and
 through a function it inlines; its math.Log is log.go compiled so and its
 math.Exp exp_arm64.s (spec/arm64.md). A program of FORMS, each a function of
 four floats parsed at run time (so that no compiler folds them), built for
-ARM64 by the compiler and run under QEMU, must print what the same program
+ARM64 by the compiler and run (under QEMU off ARM64), must print what the same program
 built by the pinned compiler for linux/arm64 prints, and built for x86-64
 what the pinned compiler's x86-64 program prints. Those are kept in
 harness/arm64-floats.json; with build/dev/alchem-upstream at hand
@@ -25,7 +25,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from run import ROOT  # noqa: E402
+from run import ARM64_RUN, ROOT  # noqa: E402
 
 TOOLS = ROOT / 'build/arm64-tools/bin'
 FROZEN = Path(__file__).resolve().parent / 'arm64-floats.json'
@@ -88,7 +88,7 @@ def freeze():
         root = Path(d)
         (root / 'p.alc').write_text(source)
         frozen = {}
-        for name, target, run in (('amd64', [], []), ('arm64', ['-target', 'linux/arm64'], [str(TOOLS / 'qemu-aarch64-static')])):
+        for name, target, run in (('amd64', [], []), ('arm64', ['-target', 'linux/arm64'], ARM64_RUN)):
             subprocess.run([str(upstream), 'build', *target, '-o', str(root / name), str(root / 'p.alc')], check=True, env=env, timeout=600)
             frozen[name] = ran(run + [str(root / name)], root)
         FROZEN.write_text(json.dumps(frozen, indent=0) + '\n')
@@ -105,7 +105,7 @@ def verify(compiler):
         root = Path(d)
         arm = root / 'alchem-compiler-arm64'
         build.build(compiler, arm)
-        for name, made_by, run in (('amd64', compiler, []), ('arm64', arm, [str(TOOLS / 'qemu-aarch64-static')])):
+        for name, made_by, run in (('amd64', compiler, []), ('arm64', arm, ARM64_RUN)):
             made = subprocess.run([str(made_by)], input=source, capture_output=True, env={'PATH': ''}, timeout=300)
             assert made.returncode == 0, (name, made.returncode, made.stderr[:300])
             (root / name).write_bytes(made.stdout)

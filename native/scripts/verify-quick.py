@@ -165,7 +165,11 @@ def main():
     parser.add_argument('--build-only',action='store_true',help='stop after the A1==A2 fixpoint')
     args=parser.parse_args()
     if args.list:print('\n'.join(GATES));return
-    if sys.platform!='linux' or os.uname().machine!='x86_64':sys.exit('Requires Linux x86-64; use mise run linux:quick')
+    # The seed and the compiler are x86-64 executables. An ARM64 host runs
+    # them through binfmt_misc and QEMU (qemu-user-static), and the ARM64
+    # gates' programs directly.
+    x86=os.uname().machine=='x86_64' or Path('/proc/sys/fs/binfmt_misc/qemu-x86_64').exists()
+    if sys.platform!='linux' or not x86:sys.exit('Requires Linux x86-64, or ARM64 with qemu-user-static; use mise run linux:quick')
     selected=[name for name in GATES if not args.gates or any(f in name for f in args.gates)]
     if not selected:sys.exit(f'No gate matches {args.gates}; see --list')
     started=time.monotonic()

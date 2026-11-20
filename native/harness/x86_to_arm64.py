@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 from importlib.util import module_from_spec, spec_from_file_location
-from run import ROOT
+from run import ARM64_RUN, ROOT
 
 sys.path.insert(0, str(ROOT / 'scripts'))
 import arm64_runtime  # noqa: E402
@@ -314,12 +314,12 @@ def verify(count=300, seed=1, compiler=None):
             source = program(fixed, registers, memory)
             x86 = subprocess.run([str(build_x86(root, source))], capture_output=True, timeout=10)
             words = lambda b: [int.from_bytes(b[i:i + 8], 'little', signed=True) for i in range(0, len(b), 8)]
-            arm = subprocess.run([str(TOOLS / 'qemu-aarch64-static'), str(build_arm(root, source))], capture_output=True, timeout=10)
+            arm = subprocess.run([*ARM64_RUN, str(build_arm(root, source))], capture_output=True, timeout=10)
             if (x86.returncode, x86.stdout) != (arm.returncode, arm.stdout):
                 raise AssertionError(('translated sequence differs', fixed, registers, words(x86.stdout), words(arm.stdout), arm.stderr[:200]))
             checked += 1
             if both:
-                arm = subprocess.run([str(TOOLS / 'qemu-aarch64-static'), str(build_compiled(root, source, xa))], capture_output=True, timeout=10)
+                arm = subprocess.run([*ARM64_RUN, str(build_compiled(root, source, xa))], capture_output=True, timeout=10)
                 if (x86.returncode, x86.stdout) != (arm.returncode, arm.stdout):
                     raise AssertionError(('compiler translation differs', fixed, registers, words(x86.stdout), words(arm.stdout), arm.stderr[:200]))
                 compiled += 1

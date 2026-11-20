@@ -1,9 +1,10 @@
 name: Native compiler
 # The compiler written in Alchem (native/): it builds itself to a fixpoint
-# (A1 = A2) and every gate compares its programs, on x86-64 and on ARM64
-# under QEMU, with those of the Go compiler this native/ is pinned to. The
-# complete suite (scripts/verify-local.sh --with-source) runs nightly and on
-# request.
+# (A1 = A2) and every gate compares its programs with those of the Go
+# compiler this native/ is pinned to. On x86-64 the ARM64 programs run under
+# QEMU; the ARM64 job runs them on an ARM64 machine, and the x86-64 seed and
+# compiler stages under QEMU instead. The complete suite
+# (scripts/verify-local.sh --with-source) runs nightly and on request.
 on:
   pull_request:
     paths:
@@ -22,9 +23,20 @@ concurrency:
 
 jobs:
   native:
-    name: ${{ github.event_name == 'pull_request' && 'Fixpoint and gates' || 'Complete suite' }}
-    runs-on: ubuntu-latest
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86-64
+            runner: ubuntu-24.04
+            gates: ''
+          - name: ARM64
+            runner: ubuntu-24.04-arm
+            # Matches arm64, x86_to_arm64 and arm64_floats.
+            gates: arm64
     defaults:
       run:
         shell: bash
@@ -37,10 +49,16 @@ jobs:
           cache: false
       - name: Tools
         # strace for the fault-injection gates; QEMU and an ARM64 assembler
-        # unpacked into build/arm64-tools for the ARM64 gates.
+        # unpacked into build/arm64-tools for the ARM64 gates. On ARM64,
+        # qemu-user-static also registers x86-64 with binfmt_misc, so the
+        # x86-64 seed and compiler stages run as they are.
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q strace
+          if [[ "$(uname -m)" == aarch64 ]]; then
+            sudo apt-get install -y -q qemu-user-static binfmt-support
+            test -e /proc/sys/fs/binfmt_misc/qemu-x86_64
+          fi
           bash scripts/fetch-arm64-tools.sh
       - name: Memory limits
         # scripts/limited caps memory with a systemd user scope. Without a
@@ -60,12 +78,13 @@ jobs:
       - name: Dependencies
         run: mise run fetch
       - name: Fixpoint and gates
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || matrix.gates != ''
         env:
           ALCHEM_VERIFY_MEMORY: 14G
-        run: python3 scripts/verify-quick.py --jobs 4
+          GATES: ${{ matrix.gates }}
+        run: python3 scripts/verify-quick.py --jobs 4 $GATES
       - name: Complete suite
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && matrix.gates == ''
         env:
           ALCHEM_VERIFY_MEMORY: 14G
         run: bash scripts/verify-local.sh --with-source

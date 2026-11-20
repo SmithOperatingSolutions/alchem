@@ -13,7 +13,7 @@ rm -rf "$tools.new" && mkdir -p "$tools.new/debs" "$tools.new/root"
 (cd "$tools.new/debs" && apt-get download qemu-user-static binutils-aarch64-linux-gnu)
 for deb in "$tools.new"/debs/*.deb; do dpkg-deb -x "$deb" "$tools.new/root"; done
 mkdir -p "$tools.new/bin"
-libs="$tools/root/usr/lib/x86_64-linux-gnu"
+libs="$tools/root/usr/lib/$(uname -m)-linux-gnu"
 for name in as ld objcopy objdump; do
   printf '#!/bin/sh\nLD_LIBRARY_PATH=%s exec %s "$@"\n' "$libs" "$tools/root/usr/bin/aarch64-linux-gnu-$name" > "$tools.new/bin/aarch64-linux-gnu-$name"
 done
