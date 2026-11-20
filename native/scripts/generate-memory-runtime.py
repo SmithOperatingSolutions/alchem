@@ -43,7 +43,21 @@ def generate_arm64():
     return arm64_runtime.module_text('NativeMemoryDataArm64','ga_blob',data,'spec/memory-x86_64.s',[('ga_syscall',symbols['x86_syscall'])]),len(data)
 
 
-if __name__=='__main__':
+def generate_darwin():
+    """The collector for macOS (spec/darwin-arm64.md), native-memory-data-darwin.alc:
+    its system call routine calls libSystem."""
+    sys.path.insert(0,str(ROOT/'scripts'))
+    import arm64_runtime
+    data,symbols=arm64_runtime.assemble_with_symbols((ROOT/'spec/memory-x86_64.s').read_text(),['PIC','DARWIN'])
+    assert all(data[i+3]&0xfc==0x14 for i in range(0,48,4)),data[:48]
+    return arm64_runtime.module_text('NativeMemoryDataDarwin','gd_blob',data,'spec/memory-x86_64.s',[('gd_syscall',symbols['x86_syscall'])]),len(data)
+
+
+if __name__=='__main__' and '--darwin' in sys.argv:
+    text,size=generate_darwin()
+    (ROOT/'implementations/alchem/native-memory-data-darwin.alc').write_text(text)
+    print(f'{size} bytes (macOS)')
+elif __name__=='__main__':
     text,size=generate()
     (ROOT/'implementations/alchem/native-memory-data.alc').write_text(text)
     print(f'{size} bytes')

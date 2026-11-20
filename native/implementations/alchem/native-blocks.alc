@@ -110,10 +110,10 @@ defmodule NativeBlocks do
       # On ARM64 a product bound to a name keeps its factors in the two slots
       # after it (ne_factor_slots), which a read of the name makes a product
       # of again: Go's compiler fuses through a variable.
-      kept = if nc_arm() == 1 do (if ne_is_product(value) == 1 do 1 else 0 end) else 0 end
+      kept = if nc_a64() == 1 do (if ne_is_product(value) == 1 do 1 else 0 end) else 0 end
       # A name bound to a constant is one in Go's SSA: a hidden record of
       # kind 24, 197 after it says so (ne_constant_slot).
-      constant = if nc_arm() == 1 do (if nc_tag(value) == 24 do ne_go_constant(value) else 0 end) else 0 end
+      constant = if nc_a64() == 1 do (if nc_tag(value) == 24 do ne_go_constant(value) else 0 end) else 0 end
       factors = if kept == 0 do b[] else nc_join(nc_slot(b[72,137,77],slot+1),b[102,72,15,126,200],nc_slot(b[72,137,69],slot+2)) end
       held = if kept == 1 do np_hidden(np_hidden(bound,start,nc_kind(value)),start,nc_kind(value)) else if constant == 1 do np_hidden(bound,start,b[24,197]) else bound end end
       nx_done(source,nc_pos(value),nc_join(nc_code(value),nc_slot(b[72,137,69],slot),factors),held)

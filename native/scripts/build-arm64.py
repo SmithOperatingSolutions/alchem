@@ -15,21 +15,21 @@ ROOT = Path(__file__).resolve().parents[1]
 SWITCH = '  def nc_arm(): integer do 0 end\n'
 
 
-def source():
+def source(pic=False, darwin=False):
     spec = spec_from_file_location('alchem_bootstrap', ROOT / 'scripts/bootstrap-alchem-compiler.py')
     bootstrap = module_from_spec(spec)
     spec.loader.exec_module(bootstrap)
     text = bootstrap.source_text('functions', False)
     if text.count(SWITCH) != 1:
         raise ValueError('the compiler source has no single nc_arm()')
-    text = text.replace(SWITCH, '  def nc_arm(): integer do 1 end\n')
+    text = text.replace(SWITCH, '  def nc_arm(): integer do %d end\n' % (3 if darwin else 2 if pic else 1))
     return bootstrap.compact_identifiers(bootstrap.compact_source(text)).encode()
 
 
-def build(compiler, output):
-    text = source()
+def build(compiler, output, pic=False, darwin=False):
+    text = source(pic, darwin)
     made = subprocess.run([str(compiler)], input=text, capture_output=True, env={'PATH': ''}, timeout=600)
-    if made.returncode or made.stderr or made.stdout[:4] != b'\x7fELF':
+    if made.returncode or made.stderr or made.stdout[:4] not in (b'\x7fELF', b'\xcf\xfa\xed\xfe'):
         raise RuntimeError(f'the compiler did not build: {made.returncode} {made.stderr.decode(errors="replace").strip()}')
     output = Path(output)
     staged = output.with_name('.' + output.name + '.new')
@@ -43,9 +43,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--compiler', type=Path, default=ROOT / 'build/dev/A2')
     parser.add_argument('--output', type=Path, default=ROOT / 'build/dev/alchem-compiler-arm64')
+    parser.add_argument('--pic', action='store_true', help='make position-independent programs')
+    parser.add_argument('--darwin', action='store_true', help='make macOS programs (Mach-O, libSystem)')
     args = parser.parse_args()
     try:
-        size, image = build(args.compiler.resolve(), args.output)
+        size, image = build(args.compiler.resolve(), args.output, args.pic, args.darwin)
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f'E_BUILD: {error}', file=sys.stderr)
         return 1

@@ -1,0 +1,269 @@
+defmodule NativeMacho do
+  # macOS on ARM64 (nc_arm() 3, spec/darwin-arm64.md): the program as a
+  # Mach-O executable that dyld loads, its calls to the system made through
+  # libSystem (the words dyld binds, a_got), and the ad-hoc code signature
+  # without which macOS kills an ARM64 program, computed here (SHA-256).
+
+  # ---- SHA-256 ----
+  # The compiler's source has + - * and comparisons, no division and no
+  # bitwise operators, so a 32-bit word is 4 bytes, big-endian, and a table
+  # (sh_tables) gives xor and and of two bytes (from 0 and 65536, at
+  # x*256+y) and a byte shifted right by r bits and the bits it loses moved
+  # to the top (from 131072 and 133120, at r*256+x).
+  def sh_tables(): bytes do nc_join(sh_pairs(0,0,256),sh_pairs(1,0,256),Enum.concat(sh_shifts(0,0,8),sh_shifts(1,0,8))) end
+  def sh_pairs(kind: integer, first: integer, stop: integer): bytes do
+    if stop-first == 1 do sh_row(kind,first,0,256) else
+      middle = first+a_div(stop-first,2)
+      Enum.concat(sh_pairs(kind,first,middle),sh_pairs(kind,middle,stop))
+    end
+  end
+  def sh_row(kind: integer, x: integer, first: integer, stop: integer): bytes do
+    if stop-first == 1 do b[sh_bits(kind,x,first,7,0)] else
+      middle = first+a_div(stop-first,2)
+      Enum.concat(sh_row(kind,x,first,middle),sh_row(kind,x,middle,stop))
+    end
+  end
+  # Bits k down to 0 of x op y (kind 0 xor, 1 and), x and y below 2^(k+1).
+  def sh_bits(kind: integer, x: integer, y: integer, k: integer, made: integer): integer do
+    if k < 0 do made else
+      p = a_pow(k)
+      xb = if x >= p do 1 else 0 end
+      yb = if y >= p do 1 else 0 end
+      one = if kind == 0 do (if xb == yb do 0 else 1 end) else xb*yb end
+      sh_bits(kind,x-xb*p,y-yb*p,k-1,made+one*p)
+    end
+  end
+  def sh_shifts(kind: integer, first: integer, stop: integer): bytes do
+    if first == stop do b[] else Enum.concat(sh_shift_row(kind,first,0,256),sh_shifts(kind,first+1,stop)) end
+  end
+  def sh_shift_row(kind: integer, r: integer, first: integer, stop: integer): bytes do
+    if stop-first == 1 do b[sh_shift(kind,r,first,7,0)] else
+      middle = first+a_div(stop-first,2)
+      Enum.concat(sh_shift_row(kind,r,first,middle),sh_shift_row(kind,r,middle,stop))
+    end
+  end
+  # kind 0: x >> r; kind 1: the r bits it loses, at the top of a byte.
+  def sh_shift(kind: integer, r: integer, x: integer, k: integer, made: integer): integer do
+    if k < 0 do made else
+      p = a_pow(k)
+      bit = if x >= p do 1 else 0 end
+      to = if kind == 0 do (if k >= r do a_pow(k-r) else 0 end) else (if k < r do a_pow(k+8-r) else 0 end) end
+      sh_shift(kind,r,x-bit*p,k-1,made+bit*to)
+    end
+  end
+  def sh_x(t: bytes, a: bytes, b: bytes): bytes do
+    b[Enum.at(t,Enum.at(a,0,0)*256+Enum.at(b,0,0),0),Enum.at(t,Enum.at(a,1,0)*256+Enum.at(b,1,0),0),Enum.at(t,Enum.at(a,2,0)*256+Enum.at(b,2,0),0),Enum.at(t,Enum.at(a,3,0)*256+Enum.at(b,3,0),0)]
+  end
+  def sh_and(t: bytes, a: bytes, b: bytes): bytes do
+    b[Enum.at(t,65536+Enum.at(a,0,0)*256+Enum.at(b,0,0),0),Enum.at(t,65536+Enum.at(a,1,0)*256+Enum.at(b,1,0),0),Enum.at(t,65536+Enum.at(a,2,0)*256+Enum.at(b,2,0),0),Enum.at(t,65536+Enum.at(a,3,0)*256+Enum.at(b,3,0),0)]
+  end
+  # w rotated right 8q+r bits (q 0 to 3, r 0 to 7).
+  def sh_rotr(t: bytes, w: bytes, q: integer, r: integer): bytes do
+    v = if q == 0 do w else Enum.concat(nc_slice(w,4-q,4),nc_slice(w,0,4-q)) end
+    sh_bitrot(t,v,r*256)
+  end
+  def sh_bitrot(t: bytes, v: bytes, r: integer): bytes do
+    b[Enum.at(t,131072+r+Enum.at(v,0,0),0)+Enum.at(t,133120+r+Enum.at(v,3,0),0),Enum.at(t,131072+r+Enum.at(v,1,0),0)+Enum.at(t,133120+r+Enum.at(v,0,0),0),
+      Enum.at(t,131072+r+Enum.at(v,2,0),0)+Enum.at(t,133120+r+Enum.at(v,1,0),0),Enum.at(t,131072+r+Enum.at(v,3,0),0)+Enum.at(t,133120+r+Enum.at(v,2,0),0)]
+  end
+  # w shifted right 8q+r bits.
+  def sh_shr(t: bytes, w: bytes, q: integer, r: integer): bytes do
+    v = Enum.concat(nc_zeros(q),nc_slice(w,0,4-q))
+    rr = r*256
+    b[Enum.at(t,131072+rr+Enum.at(v,0,0),0),Enum.at(t,131072+rr+Enum.at(v,1,0),0)+Enum.at(t,133120+rr+Enum.at(v,0,0),0),
+      Enum.at(t,131072+rr+Enum.at(v,2,0),0)+Enum.at(t,133120+rr+Enum.at(v,1,0),0),Enum.at(t,131072+rr+Enum.at(v,3,0),0)+Enum.at(t,133120+rr+Enum.at(v,2,0),0)]
+  end
+  # a + b, modulo 2^32.
+  def sh_plus(a: bytes, b: bytes): bytes do
+    s3 = Enum.at(a,3,0)+Enum.at(b,3,0)
+    c3 = if s3 >= 256 do 1 else 0 end
+    s2 = Enum.at(a,2,0)+Enum.at(b,2,0)+c3
+    c2 = if s2 >= 256 do 1 else 0 end
+    s1 = Enum.at(a,1,0)+Enum.at(b,1,0)+c2
+    c1 = if s1 >= 256 do 1 else 0 end
+    s0 = Enum.at(a,0,0)+Enum.at(b,0,0)+c1
+    b[if s0 >= 256 do s0-256 else s0 end,s1-256*c1,s2-256*c2,s3-256*c3]
+  end
+  def sh_word(x: bytes, i: integer): bytes do nc_slice(x,i*4,i*4+4) end
+  def sh_big0(t: bytes, x: bytes): bytes do sh_x(t,sh_x(t,sh_rotr(t,x,0,2),sh_rotr(t,x,1,5)),sh_rotr(t,x,2,6)) end
+  def sh_big1(t: bytes, x: bytes): bytes do sh_x(t,sh_x(t,sh_rotr(t,x,0,6),sh_rotr(t,x,1,3)),sh_rotr(t,x,3,1)) end
+  def sh_small0(t: bytes, x: bytes): bytes do sh_x(t,sh_x(t,sh_rotr(t,x,0,7),sh_rotr(t,x,2,2)),sh_shr(t,x,0,3)) end
+  def sh_small1(t: bytes, x: bytes): bytes do sh_x(t,sh_x(t,sh_rotr(t,x,2,1),sh_rotr(t,x,2,3)),sh_shr(t,x,1,2)) end
+  # The round constants.
+  def sh_k(): bytes do b"QoovmHE3RJG1wPvP6bXbpTlWwltZ8RHxkj+CpKscXtXYB6qYEoNbASQxhb5VDH3Dcr5ddIDesf6b3AanwZvxdOSbacHvvkeGD8GdxiQMocwt6SxvSnSEqlywqdx2+YjamD5RUqgxxm2wAyfIv1l/x8bgC/PVp5FHBspjURQpKWcntwqFLhshOE0sbfxTOA0TZQpzVHZqCruBwskuknIshaK/6KGoGmZLwkuLcMdsUaPRkugZ1pkGJPQONYUQaqBwGaTBFh43bAgnSHdMNLC8tTkcDLNO2KpKW5zKT2gub/N0j4LueKVjb4TIeBSMxwIIkL7/+qRQbOu++aP3xnF48g==" end
+  # The 64 words of the schedule of the block at p of data.
+  def sh_schedule(t: bytes, data: bytes, p: integer): bytes do sh_extend(t,nc_slice(data,p,p+64),16) end
+  def sh_extend(t: bytes, w: bytes, n: integer): bytes do
+    if n == 64 do w else
+      next = sh_plus(sh_plus(sh_small1(t,sh_word(w,n-2)),sh_word(w,n-7)),sh_plus(sh_small0(t,sh_word(w,n-15)),sh_word(w,n-16)))
+      sh_extend(t,Enum.concat(w,next),n+1)
+    end
+  end
+  # A round of the state x (eight words), kw the round's constant and word added.
+  def sh_round(t: bytes, x: bytes, kw: bytes): bytes do
+    t1 = sh_t1(t,x,kw)
+    t2 = sh_t2(t,x)
+    nc_join(Enum.concat(sh_plus(t1,t2),nc_slice(x,0,12)),sh_plus(sh_word(x,3),t1),nc_slice(x,16,28))
+  end
+  def sh_t1(t: bytes, x: bytes, kw: bytes): bytes do
+    e = sh_word(x,4)
+    g = sh_word(x,6)
+    choice = sh_x(t,g,sh_and(t,e,sh_x(t,sh_word(x,5),g)))
+    sh_plus(sh_plus(sh_word(x,7),sh_big1(t,e)),sh_plus(choice,kw))
+  end
+  def sh_t2(t: bytes, x: bytes): bytes do
+    a = sh_word(x,0)
+    b = sh_word(x,1)
+    majority = sh_x(t,sh_and(t,a,b),sh_and(t,sh_word(x,2),sh_x(t,a,b)))
+    sh_plus(sh_big0(t,a),majority)
+  end
+  def sh_rounds(t: bytes, x: bytes, w: bytes, k: bytes, n: integer): bytes do
+    if n == 64 do x else sh_rounds(t,sh_round(t,x,sh_plus(sh_word(k,n),sh_word(w,n))),w,k,n+1) end
+  end
+  def sh_add(x: bytes, y: bytes, i: integer): bytes do
+    if i == 8 do b[] else Enum.concat(sh_plus(sh_word(x,i),sh_word(y,i)),sh_add(x,y,i+1)) end
+  end
+  # The state after the blocks of data from p (data padded already).
+  def sh_blocks(t: bytes, x: bytes, data: bytes, p: integer, k: bytes): bytes do
+    if p >= Enum.count(data) do x else
+      sh_blocks(t,sh_add(x,sh_rounds(t,x,sh_schedule(t,data,p),k,0),0),data,p+64,k)
+    end
+  end
+  # SHA-256 of message (of at most 2^29 bytes), given the tables.
+  def sh_hash(t: bytes, message: bytes): bytes do
+    size = Enum.count(message)
+    zeros = 63-(size+8)+64*a_div(size+8,64)
+    padded = nc_join(message,Enum.concat(b[128],nc_zeros(zeros)),Enum.concat(b[0,0,0,0],m_be32(size*8)))
+    sh_blocks(t,b"agnmZ7tnroU8bvNypU/1OlEOUn+bBWiMH4PZq1vgzRk=",padded,0,sh_k())
+  end
+  # The hashes of the 4096-byte pages of data from page first to stop.
+  def sh_pages(t: bytes, data: bytes, first: integer, stop: integer): bytes do
+    if stop-first == 1 do sh_hash(t,nc_slice(data,first*4096,if (first+1)*4096 > Enum.count(data) do Enum.count(data) else (first+1)*4096 end)) else
+      middle = first+a_div(stop-first,2)
+      Enum.concat(sh_pages(t,data,first,middle),sh_pages(t,data,middle,stop))
+    end
+  end
+  # A big-endian 32-bit word.
+  def m_be32(v: integer): bytes do
+    a = a_div(v,16777216)
+    b = a_div(v-a*16777216,65536)
+    c = a_div(v-a*16777216-b*65536,256)
+    b[a,b,c,v-a*16777216-b*65536-c*256]
+  end
+
+  # ---- the executable ----
+  def m_u32(v: integer): bytes do nc_u32(v) end
+  def m_u64(v: integer): bytes do a_u64(v) end
+  def m_round(v: integer, unit: integer): integer do a_div(v+unit-1,unit)*unit end
+  # A name of 16 bytes.
+  def m_name(text: bytes): bytes do Enum.concat(text,nc_zeros(16-Enum.count(text))) end
+  # kind: the protection, plus 256 for each section.
+  def m_segment(name: bytes, vm: integer, vmsize: integer, off: integer, size: integer, kind: integer): bytes do
+    sections = a_div(kind,256)
+    prot = kind-256*sections
+    nc_join(nc_join(m_u32(25),m_u32(72+sections*80),m_name(name)),nc_join(m_u64(vm),m_u64(vmsize),m_u64(off)),nc_join(m_u64(size),Enum.concat(m_u32(prot),m_u32(prot)),Enum.concat(m_u32(sections),m_u32(0))))
+  end
+  # The functions of libSystem the program calls, in the order of their
+  # words (a_got): their names as the symbols dyld binds.
+  def m_import_count(): integer do 8 end
+  # DYLD_CHAINED_IMPORT words (library ordinal 1, libSystem; the name's
+  # offset << 9) and the pool of names: _exit, _mmap, _write, _read, _close,
+  # _munmap, _mprotect, ___error.
+  def m_import_data(): bytes do b"AQIAAAEOAAABGgAAASgAAAE0AAABQgAAAVIAAAFmAAAAX2V4aXQAX21tYXAAX3dyaXRlAF9yZWFkAF9jbG9zZQBfbXVubWFwAF9tcHJvdGVjdABfX19lcnJvcgA=" end
+  # Mach-O, from the image gm_image makes (from the 128th byte of the ELF
+  # layout): a page of headers, then the image 128 bytes into the next page
+  # so that every offset of it is the one of Linux; the copy of the words
+  # and the table a_pic_data() further, after the words dyld binds; and the
+  # fixups and the code signature.
+  def a_macho_image(image: bytes, table: integer): bytes do
+    count = m_import_count()
+    text_size = m_round(16384+128+Enum.count(image),16384)
+    words = nc_slice(image,928,1024+table)
+    got = m_got(count,0)
+    data = nc_join(got,a_u64(12+a_div(table,8)),Enum.concat(a_u64(0),words))
+    data_size = m_round(Enum.count(data),16384)
+    data_vm = 16384+a_pic_data()
+    fixups = m_fixups(a_div(data_size,16384),data_vm)
+    linkedit_off = text_size+data_size
+    sig_off = linkedit_off+m_round(Enum.count(fixups),16)
+    pages = a_div(sig_off+4095,4096)
+    ident = b"YWxjaGVtAA=="
+    cd_size = 88+Enum.count(ident)+32*pages
+    sig_size = m_round(20+cd_size,16)
+    linkedit_size = sig_off+sig_size-linkedit_off
+    commands = m_commands(nc_join(nc_join(m_u32(text_size),m_u32(data_vm),m_u32(data_size)),nc_join(m_u32(linkedit_off),m_u32(linkedit_size),m_u32(Enum.count(fixups))),Enum.concat(m_u32(sig_off),m_u32(sig_size))))
+    header = nc_join(b[207,250,237,254,12,0,0,1,0,0,0,0,2,0,0,0],m_u32(m_command_count()),Enum.concat(m_u32(Enum.count(commands)),b[133,0,32,0,0,0,0,0]))
+    head = Enum.concat(header,commands)
+    signed = nc_join(nc_join(head,nc_zeros(16384+128-Enum.count(head)),image),nc_zeros(text_size-16384-128-Enum.count(image)),nc_join(data,nc_zeros(data_size-Enum.count(data)),Enum.concat(fixups,nc_zeros(sig_off-linkedit_off-Enum.count(fixups)))))
+    Enum.concat(signed,m_signature(signed,ident,pages,cd_size,sig_size,text_size))
+  end
+  # The bound words: each binds import i, and leads to the next (8 bytes on,
+  # in strides of 4).
+  def m_got(count: integer, i: integer): bytes do
+    if i == count do b[] else
+      next = if i+1 < count do 2 else 0 end
+      # bind 1 << 63, next << 51, ordinal i.
+      Enum.concat(Enum.concat(m_u32(i),m_u32(2147483648+next*524288)),m_got(count,i+1))
+    end
+  end
+  # LC_DYLD_CHAINED_FIXUPS: the header, the starts of the four segments (only
+  # __DATA, the third, has fixups: its first page from its start), the
+  # imports (from libSystem, the first library) and their names.
+  def m_fixups(pages: integer, offset: integer): bytes do
+    starts = nc_join(m_u32(4),nc_join(m_u32(0),m_u32(0),Enum.concat(m_u32(24),m_u32(0))),m_u32(0))
+    segment = nc_join(nc_join(m_u32(22+2*pages),b[0,64,6,0],m_u64(offset)),Enum.concat(m_u32(0),b[pages-256*a_div(pages,256),a_div(pages,256)]),Enum.concat(b[0,0],m_page_none(pages-1)))
+    in_image = Enum.concat(starts,segment)
+    padded = Enum.concat(in_image,nc_zeros(m_round(Enum.count(in_image),8)-Enum.count(in_image)))
+    imports_at = 32+Enum.count(padded)
+    names_at = imports_at+4*m_import_count()
+    head = nc_join(nc_join(m_u32(0),m_u32(32),m_u32(imports_at)),nc_join(m_u32(names_at),m_u32(m_import_count()),m_u32(1)),Enum.concat(m_u32(0),m_u32(0)))
+    made = nc_join(head,padded,m_import_data())
+    Enum.concat(made,nc_zeros(m_round(Enum.count(made),8)-Enum.count(made)))
+  end
+  def m_page_none(count: integer): bytes do if count <= 0 do b[] else Enum.concat(b[255,255],m_page_none(count-1)) end end
+  def m_command_count(): integer do 13 end
+  # layout: the text's size, the copy's address and size, the link edit's
+  # offset and size, the fixups' size, the signature's offset and size, as
+  # 4-byte words.
+  def m_commands(layout: bytes): bytes do
+    base = 4294967296
+    text_size = nc_long(layout,0)
+    data_vm = nc_long(layout,4)
+    data_size = nc_long(layout,8)
+    linkedit_off = nc_long(layout,12)
+    linkedit_size = nc_long(layout,16)
+    fixups = nc_long(layout,20)
+    sig_off = nc_long(layout,24)
+    sig_size = nc_long(layout,28)
+    zero = m_segment(b"X19QQUdFWkVSTw==",0,base,0,0,0)
+    text = nc_join(m_segment(b"X19URVhU",base,text_size,0,text_size,261),m_name(b"X190ZXh0"),Enum.concat(m_name(b"X19URVhU"),m_section(base+16384+128,text_size-16384-128,16384+128,2147484672)))
+    data = m_segment(b"X19EQVRB",base+data_vm,data_size,text_size,data_size,3)
+    link = m_segment(b"X19MSU5LRURJVA==",base+data_vm+data_size,m_round(linkedit_size,16384),linkedit_off,linkedit_size,1)
+    dyld = nc_join(m_u32(14),m_u32(32),Enum.concat(m_u32(12),Enum.concat(b"L3Vzci9saWIvZHlsZA==",nc_zeros(7))))
+    system = nc_join(nc_join(m_u32(12),m_u32(56),m_u32(24)),nc_join(m_u32(2),m_u32(86467587),m_u32(65536)),Enum.concat(b"L3Vzci9saWIvbGliU3lzdGVtLkIuZHlsaWI=",nc_zeros(6)))
+    linking = nc_join(nc_join(m_u32(2147483700),m_u32(16),m_u32(linkedit_off)),m_u32(fixups),nc_join(m_u32(2147483699),m_u32(16),Enum.concat(m_u32(linkedit_off+fixups),m_u32(0))))
+    symbols = nc_join(nc_join(m_u32(2),m_u32(24),nc_zeros(16)),Enum.concat(m_u32(11),m_u32(80)),nc_zeros(72))
+    starting = nc_join(m_u32(2147483688),m_u32(24),Enum.concat(m_u64(16384+128),m_u64(0)))
+    build = nc_join(nc_join(m_u32(50),m_u32(24),m_u32(1)),nc_join(m_u32(720896),m_u32(720896),m_u32(0)),b[])
+    sign = nc_join(m_u32(29),m_u32(16),Enum.concat(m_u32(sig_off),m_u32(sig_size)))
+    nc_join(nc_join(nc_join(zero,text,data),nc_join(link,linking,symbols),nc_join(dyld,starting,system)),Enum.concat(build,sign),b[])
+  end
+  # A section of 80 bytes after its two names: address, size, offset, align
+  # 2^2, no relocations, flags; the rest 0.
+  def m_section(address: integer, size: integer, offset: integer, flags: integer): bytes do
+    nc_join(nc_join(m_u64(address),m_u64(size),m_u32(offset)),nc_join(m_u32(2),m_u32(0),m_u32(0)),Enum.concat(m_u32(flags),nc_zeros(12)))
+  end
+  # The ad-hoc signature: a SuperBlob of one CodeDirectory (version 0x20400,
+  # flags adhoc and linker-signed, SHA-256 of each 4096-byte page up to the
+  # signature, the executable segment being __TEXT of the main binary).
+  def m_signature(signed: bytes, ident: bytes, pages: integer, cd_size: integer, sig_size: integer, text_size: integer): bytes do
+    hashes = sh_pages(sh_tables(),signed,0,pages)
+    hash_at = 88+Enum.count(ident)
+    cd = nc_join(nc_join(m_be32(4208856066),m_be32(cd_size),m_be32(132096)),nc_join(m_be32(131074),m_be32(hash_at),m_be32(88)),nc_join(Enum.concat(m_be32(0),m_be32(pages)),m_be32(Enum.count(signed)),b[32,2,0,12]))
+    tail = nc_join(nc_zeros(16),nc_zeros(8),nc_join(nc_zeros(8),Enum.concat(m_be32(0),m_be32(text_size)),Enum.concat(m_be32(0),m_be32(1))))
+    blob = nc_join(nc_join(m_be32(4208856256),m_be32(20+cd_size),m_be32(1)),Enum.concat(m_be32(0),m_be32(20)),nc_join(cd,tail,Enum.concat(ident,hashes)))
+    Enum.concat(blob,nc_zeros(sig_size-Enum.count(blob)))
+  end
+  # Native smoke test; the Mach-O writer.
+  def main() do System.halt(0) end
+end

@@ -175,7 +175,7 @@ defmodule NativeTrace do
     second = nc_join(nc_u32(nz_file_count(files,0)),nc_u32(40+Enum.count(lines)+Enum.count(files)),nc_u32(nc_records(Enum.count(table))))
     words = nc_join(nc_join(first,second,Enum.concat(nc_u32(after),nc_u32(nc_units(Enum.count(inside),4)))),nc_u32(after+Enum.count(inside)),nc_u32(nc_units(Enum.count(moved),16)))
     tables = nc_join(words,nc_join(lines,files,names),Enum.concat(inside,moved))
-    if nz_on(table) == 0 do b[] else if nc_arm() == 1 do xa_raw(Enum.concat(tr_blob_arm(),tables)) else Enum.concat(tr_blob(),tables) end end
+    if nz_on(table) == 0 do b[] else if nc_a64() == 1 do xa_raw(Enum.concat(tr_blob_arm(),tables)) else Enum.concat(tr_blob(),tables) end end
   end
   # Native smoke test; assembled with the compiler.
   def main() do System.halt(0) end

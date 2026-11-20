@@ -172,7 +172,7 @@ defmodule NativeNodes do
     # The ARM64 compiler's translation finds data ahead of what names it:
     # there the address is taken first (xa_mark).
     ahead = nc_join(Enum.concat(xa_mark(size,b[72,141,5,5,0,0,0]),b[233]),Enum.concat(nc_u32(size),Enum.concat(b[Enum.at(paths,0,0)],forms)),b[73,137,70,184])
-    store = if Enum.count(found) == 0 do b[73,199,70,184,0,0,0,0] else if nc_arm() == 1 do ahead else nc_join(Enum.concat(b[233],nc_u32(size)),Enum.concat(b[Enum.at(paths,0,0)],forms),nc_join(b[72,141,5],nq_rel(0-size-7),b[73,137,70,184])) end end
+    store = if Enum.count(found) == 0 do b[73,199,70,184,0,0,0,0] else if nc_a64() == 1 do ahead else nc_join(Enum.concat(b[233],nc_u32(size)),Enum.concat(b[Enum.at(paths,0,0)],forms),nc_join(b[72,141,5],nq_rel(0-size-7),b[73,137,70,184])) end end
     if Enum.count(paths) == 0 do made else if Enum.count(forms) == 0 do b[] else
       ty_recode(made,if last == 1 do nc_join(nc_slice(code,0,split),store,nc_slice(code,split,split+9)) else Enum.concat(store,code) end)
     end end

@@ -141,7 +141,7 @@ defmodule NativeByteRuntimeEmitter do
   # output, with the call of native_compile, are the function at io
   # (nc_io_function), their messages marked as data, and the entry calls it.
   def nc_entry_compiler(id: integer, io: integer): bytes do
-    if nc_arm() == 1 do a_entry(nc_call(io)) else nc_entry_compiler_x86(id) end
+    if nc_a64() == 1 do a_entry(nc_call(io)) else nc_entry_compiler_x86(id) end
   end
   def nc_io_function(source: bytes, table: bytes): bytes do
     index = nc_native_index(source,table,0,nc_records(Enum.count(table)))

@@ -65,6 +65,12 @@ VECTOR = {'movdqa', 'movdqu', 'pand', 'por', 'pandn', 'pslld', 'psrld', 'psllq',
           'aesdec', 'aesdeclast', 'aesimc', 'pclmulqdq'}
 
 
+# The entry's words (from 0x400420) and the table of functions (from
+# 0x400480, at most 65541 slots).
+BLOCK = 0x400420
+BLOCK_END = 0x400480 + 65541 * 8
+
+
 class Untranslated(Exception):
     pass
 
@@ -203,6 +209,16 @@ class Translator:
                 if i != first and c != 0:
                     self.emit(f'movk {name},#{c},lsl #{16 * i}')
 
+    def in_block(self, value):
+        """An address among the entry's words and the table, which a
+        position-independent program (PIC defined) reads from their copy at
+        X26 (spec/arm64.md)."""
+        return 'PIC' in self.symbols and value is not None and BLOCK <= value < BLOCK_END
+
+    def block_address(self, reg, value):
+        self.mov_imm(reg, value - BLOCK)
+        self.emit(f'add x{reg},x{reg},x26')
+
     def address(self, op, size):
         """An ARM address for a memory operand: '[xN, #d]' or '[x16]'."""
         if op.base == 'rip':
@@ -221,7 +237,15 @@ class Translator:
                 self.emit(f'add x16,x{base},x{op.index},lsl #{shift}')
             base = 16
         elif base is None:
+            if self.in_block(disp):
+                self.block_address(16, disp)
+                return '[x16]'
             self.mov_imm(16, disp)
+            return '[x16]'
+        if base == 16 and self.in_block(disp):
+            # An index into the table: X16 holds the index scaled.
+            self.mov_imm(17, disp - BLOCK)
+            self.emit('add x16,x16,x17', 'add x16,x16,x26')
             return '[x16]'
         if -256 <= disp <= 255 or (0 <= disp <= 4095 * size and disp % size == 0):
             return f'[x{base},#{disp}]'
@@ -661,7 +685,14 @@ class Translator:
                 self.emit(f'add x{dst},x{base},x{op.index},lsl #{shift}')
             base = dst
         if base is None:
+            if self.in_block(op.disp):
+                self.block_address(dst, op.disp)
+                return
             self.mov_imm(dst, op.disp)
+            return
+        if op.index is not None and self.in_block(op.disp):
+            self.mov_imm(17, op.disp - BLOCK)
+            self.emit(f'add x{dst},x{dst},x17', f'add x{dst},x{dst},x26')
             return
         if op.disp == 0:
             if base != dst:
@@ -1407,7 +1438,7 @@ def translate(text, defines=()):
     # runtime's tables).
     out.append('.text')
     out.append('.balign 4')
-    out.extend(SYSCALL.split('\n'))
+    out.extend((DARWIN_SYSCALL if 'DARWIN' in t.symbols else SYSCALL).split('\n'))
     out.extend(f'{p}:' for p in pending)
     return '\n'.join(out) + '\n'
 
@@ -1415,6 +1446,113 @@ def translate(text, defines=()):
 # x86-64's syscall, entered with X30 the way back: the number in RAX (X0), the
 # arguments in RDI, RSI, RDX, R10, R8, R9 (X5, X4, X2, X10, X8, X9); every
 # register but RCX and R11 (X1, X11) kept, the result in RAX.
+
+# On macOS (DARWIN defined, spec/darwin-arm64.md) x86-64's system calls are
+# calls of libSystem's functions, through the words dyld binds before the
+# copy of the entry's words (X26 less 80: _exit, _mmap, _write, _read,
+# _close, _munmap, _mprotect, ___error). Every register x86-64 keeps is kept,
+# the vector registers too, which libSystem need not keep; a function's -1
+# is x86-64's -errno.
+DARWIN_SYSCALL = '''x86_syscall:
+ sub sp,sp,#384
+ stp x2,x3,[sp,#0]
+ stp x4,x5,[sp,#16]
+ stp x6,x7,[sp,#32]
+ stp x8,x9,[sp,#48]
+ stp x10,x12,[sp,#64]
+ stp x13,x14,[sp,#80]
+ stp x15,x16,[sp,#96]
+ stp x17,x30,[sp,#112]
+ stp q0,q1,[sp,#128]
+ stp q2,q3,[sp,#160]
+ stp q4,q5,[sp,#192]
+ stp q6,q7,[sp,#224]
+ stp q8,q9,[sp,#256]
+ stp q10,q11,[sp,#288]
+ stp q12,q13,[sp,#320]
+ stp q14,q15,[sp,#352]
+ mov x17,x0
+ mov x0,x5
+ mov x1,x4
+ mov x3,x10
+ mov x4,x8
+ mov x5,x9
+ cmp x17,#0
+ b.eq xd_read
+ cmp x17,#1
+ b.eq xd_write
+ cmp x17,#3
+ b.eq xd_close
+ cmp x17,#9
+ b.eq xd_mmap
+ cmp x17,#10
+ b.eq xd_mprotect
+ cmp x17,#11
+ b.eq xd_munmap
+ cmp x17,#60
+ b.eq xd_exit
+ cmp x17,#231
+ b.eq xd_exit
+ mov x0,#-38
+ b xd_back
+xd_read:
+ ldur x16,[x26,#-56]
+ b xd_call
+xd_write:
+ ldur x16,[x26,#-64]
+ b xd_call
+xd_close:
+ ldur x16,[x26,#-48]
+ b xd_call
+xd_mprotect:
+ ldur x16,[x26,#-32]
+ b xd_call
+xd_munmap:
+ ldur x16,[x26,#-40]
+ b xd_call
+xd_mmap:
+ // Linux's MAP_SHARED, MAP_PRIVATE and MAP_FIXED are macOS's; MAP_ANONYMOUS
+ // 0x20 is 0x1000; MAP_NORESERVE has no meaning there.
+ mov x7,#0x13
+ and x6,x3,x7
+ tst x3,#0x20
+ b.eq 1f
+ orr x6,x6,#0x1000
+1:
+ mov x3,x6
+ ldur x16,[x26,#-72]
+ b xd_call
+xd_exit:
+ ldur x16,[x26,#-80]
+ blr x16
+xd_call:
+ blr x16
+ cmn x0,#1
+ b.ne xd_back
+ ldur x16,[x26,#-24]
+ blr x16
+ ldrsw x0,[x0]
+ neg x0,x0
+xd_back:
+ ldp x2,x3,[sp,#0]
+ ldp x4,x5,[sp,#16]
+ ldp x6,x7,[sp,#32]
+ ldp x8,x9,[sp,#48]
+ ldp x10,x12,[sp,#64]
+ ldp x13,x14,[sp,#80]
+ ldp x15,x16,[sp,#96]
+ ldp q0,q1,[sp,#128]
+ ldp q2,q3,[sp,#160]
+ ldp q4,q5,[sp,#192]
+ ldp q6,q7,[sp,#224]
+ ldp q8,q9,[sp,#256]
+ ldp q10,q11,[sp,#288]
+ ldp q12,q13,[sp,#320]
+ ldp q14,q15,[sp,#352]
+ ldp x17,x30,[sp,#112]
+ add sp,sp,#384
+ br x30
+'''
 SYSCALL = '''x86_syscall:
  stp x1,x2,[sp,#-112]!
  stp x3,x4,[sp,#16]

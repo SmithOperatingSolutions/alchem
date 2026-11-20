@@ -237,11 +237,16 @@ defmodule NativeX86Arm do
           if base < 0 do a_lsl_n(16,xr(xf(rec,6)),xa_log(xf(rec,7)),8) else a_add_shift(16,xr(base),xr(xf(rec,6)),xa_log(xf(rec,7))) end
         end
         disp = xf(rec,8)
-        if base < 0 do (if xf(rec,6) < 0 do a_mov_imm(16,disp) else Enum.concat(scaled,a_add_value(16,16,disp,0)) end) else
+        if base < 0 do (if xf(rec,6) < 0 do a_image(16,disp) else Enum.concat(scaled,xa_add_image(disp)) end) else
           if disp == 0 do scaled else Enum.concat(scaled,xa_add16(disp)) end
         end
       end
     end end
+  end
+  # X16 += disp, an address in the image (the copy, where the program is
+  # position-independent) or any other number.
+  def xa_add_image(disp: integer): bytes do
+    if nc_pic()*a_in_block(disp) == 1 do Enum.concat(a_add_value(16,16,disp-4195360,0),a_add(16,16,26,0)) else a_add_value(16,16,disp,0) end
   end
   # X16 += disp (through X17 past twelve bits).
   def xa_add16(disp: integer): bytes do
@@ -342,8 +347,8 @@ defmodule NativeX86Arm do
     pre = xa_addr(rec,mp,here)
     if op == 1 do (if xf(rec,4) == 1 do xa_wrr(xf(rec,5),xr(xf(rec,3)),size) else Enum.concat(pre,a_stur(xr(xf(rec,3)),xa_mb(rec),xa_md(rec),size)) end) else
       if op == 2 do (if xf(rec,4) == 1 do (if size == 8 do xa_wrr(xf(rec,3),xr(xf(rec,5)),8) else Enum.concat(xa_rdr(xf(rec,5),19,size,0),xa_wrr(xf(rec,3),19,size)) end) else nc_join(pre,a_ldur(19,xa_mb(rec),xa_md(rec),size,0),xa_wrr(xf(rec,3),19,size)) end) else
-        if op == 3 do nc_join(pre,a_mov_imm(19,xf(rec,9)),xa_wr(rec,19,size)) else
-          if op == 4 do Enum.concat(a_mov_imm(19,if size == 4 do xa_u32(xf(rec,9)) else xf(rec,9) end),xa_wrr(xf(rec,3),19,size)) else
+        if op == 3 do nc_join(pre,xa_imm_value(xf(rec,9),size),xa_wr(rec,19,size)) else
+          if op == 4 do Enum.concat(xa_imm_value(if size == 4 do xa_u32(xf(rec,9)) else xf(rec,9) end,size),xa_wrr(xf(rec,3),19,if size == 4 do (if nc_pic()*a_in_block(xa_u32(xf(rec,9))) == 1 do 8 else 4 end) else size end)) else
             if op == 5 do Enum.concat(xa_lea(rec,mp,here),xa_wrr(xf(rec,3),16,size)) else xa_udf(rec) end
           end
         end
@@ -351,6 +356,12 @@ defmodule NativeX86Arm do
     end
   end
   def xa_u32(v: integer): integer do if v < 0 do v+4294967296 else v end end
+  # X19 = a moved immediate. A 32-bit one among the addresses of the entry's
+  # words and the table is such an address (a slot a call or a function
+  # value names), which a position-independent program reads from the copy.
+  def xa_imm_value(v: integer, size: integer): bytes do
+    if size == 4 do a_image(19,v) else a_mov_imm(19,v) end
+  end
   # X16 = the address of the memory operand.
   def xa_lea(rec: bytes, mp: bytes, here: integer): bytes do
     if xa_simple(rec) == 1 do a_add_value(16,xr(xf(rec,5)),xf(rec,8),0) else xa_addr(rec,mp,here) end
@@ -641,7 +652,7 @@ defmodule NativeX86Arm do
           if op == 83 do a_add(31,31,31,1) else if op == 84 do a_sub(31,31,31,1) else
           if op == 82 do (if size == 8 do nc_join(a_mov(19,0),a_mov(0,xr(xf(rec,3))),a_mov(xr(xf(rec,3)),19)) else nc_join(a_movw(19,0),a_movw(0,xr(xf(rec,3))),a_movw(xr(xf(rec,3)),19)) end) else
           if (op-55)*(op-58)*(op-59)*(op-80) == 0 do b[] else
-            if op == 56 do nc_join(Enum.concat(a_adr(30,20),a_movz(16,1056,0)),Enum.concat(a_movk(16,64,1),a_ldr(16,16,0)),a_br(16)) else
+            if op == 56 do nc_join(Enum.concat(a_adr(30,12+Enum.count(a_image(16,4195360))),a_image(16,4195360)),Enum.concat(a_ldr(16,16,0),a_br(16)),b[]) else
               if op == 57 do (if xf(rec,10) == 1 do a4(3558866944) else xa_udf(rec) end) else
                 if op < 66 do xa_string(rec,st) else
                   if op < 68 do Enum.concat(xa_addr(rec,mp,here),xa_bt(rec)) else if op < 70 do Enum.concat(xa_addr(rec,mp,here),xa_bscan(rec)) else xa_sse(rec,mp,here) end end
@@ -1009,7 +1020,7 @@ defmodule NativeX86Arm do
   def xa_mark(length: integer, instruction: bytes): bytes do xa_mark_back(length,0,instruction) end
   # The bytes a marker adds: what a jump over a marked instruction adds to
   # its distance.
-  def xa_mark_size(): integer do if nc_arm() == 1 do 11 else 0 end end
+  def xa_mark_size(): integer do if nc_a64() == 1 do 11 else 0 end end
   def xa_mark_back(length: integer, back: integer, instruction: bytes): bytes do
     if nc_arm() == 0 do instruction else nc_join(b[15,11,68],Enum.concat(nc_u32(length),nc_u32(back)),instruction) end
   end

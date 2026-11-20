@@ -296,7 +296,7 @@ defmodule NativeFailures do
   # The code: a jump over the handler, the restorer, that code and its
   # message; then rt_sigaction.
   def zf_guard(table: bytes): bytes do
-    if nz_on(table) == 0 do b[] else if nc_arm() == 1 do xa_raw(zf_guard_arm(table)) else nc_join(b[233,187,0,0,0,72,139,70,16,72,61,0,16,0,0,115,15,72,141,5,68,0,0,0,72,137,130,168,0,0,0,195,72,131,236,32,49,192,72,137,4,36,72,137,68,36,8,72,137,68,36,16,72,137,68,36,24,191,11,0,0,0,72,137,230,49,210,65,186,8,0,0,0,184,13,0,0,0,15,5,72,131,196,32,195,184,15,0,0,0,15,5,72,141,53,14,0,0,0,191,254,255,255,127],nc_call(nz_slot(table)),Enum.concat(b[71,0,0,0,0,0,0,0,112,97,110,105,99,58,32,114,117,110,116,105,109,101,32,101,114,114,111,114,58,32,105,110,118,97,108,105,100,32,109,101,109,111,114,121,32,97,100,100,114,101,115,115,32,111,114,32,110,105,108,32,112,111,105,110,116,101,114,32,100,101,114,101,102,101,114,101,110,99,101,72,131,236,32,72,141,5,58,255,255,255,72,137,4,36,72,199,68,36,8,4,0,0,4,72,141,5,118,255,255,255,72,137,68,36,16,72,199,68,36,24],b[0,0,0,0,191,11,0,0,0,72,137,230,49,210,65,186,8,0,0,0,184,13,0,0,0,15,5,72,131,196,32])) end end
+    if nz_on(table) == 0 do b[] else if nc_a64() == 1 do xa_raw(zf_guard_arm(table)) else nc_join(b[233,187,0,0,0,72,139,70,16,72,61,0,16,0,0,115,15,72,141,5,68,0,0,0,72,137,130,168,0,0,0,195,72,131,236,32,49,192,72,137,4,36,72,137,68,36,8,72,137,68,36,16,72,137,68,36,24,191,11,0,0,0,72,137,230,49,210,65,186,8,0,0,0,184,13,0,0,0,15,5,72,131,196,32,195,184,15,0,0,0,15,5,72,141,53,14,0,0,0,191,254,255,255,127],nc_call(nz_slot(table)),Enum.concat(b[71,0,0,0,0,0,0,0,112,97,110,105,99,58,32,114,117,110,116,105,109,101,32,101,114,114,111,114,58,32,105,110,118,97,108,105,100,32,109,101,109,111,114,121,32,97,100,100,114,101,115,115,32,111,114,32,110,105,108,32,112,111,105,110,116,101,114,32,100,101,114,101,102,101,114,101,110,99,101,72,131,236,32,72,141,5,58,255,255,255,72,137,4,36,72,199,68,36,8,4,0,0,4,72,141,5,118,255,255,255,72,137,68,36,16,72,199,68,36,24],b[0,0,0,0,191,11,0,0,0,72,137,230,49,210,65,186,8,0,0,0,184,13,0,0,0,15,5,72,131,196,32])) end end
   end
   # The same on ARM64, as ARM64 code among the translated (xa_raw): a
   # signal handler is called with the signal, the information and the
@@ -321,7 +321,7 @@ defmodule NativeFailures do
   # The failure: Sys.panic (the function at slot) with the position
   # 0x7ffffffe and the message, which follows the code.
   def zf_guard_fail(slot: integer): bytes do
-    call = nc_join(Enum.concat(a_mov_imm(5,2147483646),a_mov_imm(11,4195456+slot*8)),Enum.concat(a_ldr(16,11,0),a_adr(30,12)),nc_join(a_push(30),a_br(16),a_udf()))
+    call = nc_join(Enum.concat(a_mov_imm(5,2147483646),a_image(11,4195456+slot*8)),Enum.concat(a_ldr(16,11,0),a_adr(30,12)),nc_join(a_push(30),a_br(16),a_udf()))
     message = b[71,0,0,0,0,0,0,0,112,97,110,105,99,58,32,114,117,110,116,105,109,101,32,101,114,114,111,114,58,32,105,110,118,97,108,105,100,32,109,101,109,111,114,121,32,97,100,100,114,101,115,115,32,111,114,32,110,105,108,32,112,111,105,110,116,101,114,32,100,101,114,101,102,101,114,101,110,99,101,0]
     nc_join(a_adr(4,4+Enum.count(call)),call,message)
   end
@@ -476,10 +476,10 @@ defmodule NativeFailures do
   # past. On ARM64 it is ARM64 code among the translated (xa_raw) whose
   # return address is the word: X11 the table's slot, as nc_call has it.
   def zf_cover_call(table: bytes, word: integer): bytes do
-    if nc_arm() == 1 do xa_raw(Enum.concat(zf_cover_arm_call(zf_cover_slot(table)),nc_u32(word))) else Enum.concat(nc_call(zf_cover_slot(table)),nc_u32(word)) end
+    if nc_a64() == 1 do xa_raw(Enum.concat(zf_cover_arm_call(zf_cover_slot(table)),nc_u32(word))) else Enum.concat(nc_call(zf_cover_slot(table)),nc_u32(word)) end
   end
   def zf_cover_arm_call(slot: integer): bytes do
-    nc_join(a_mov_imm(11,4195456+slot*8),a_ldr(16,11,0),Enum.concat(a_adr(30,12),Enum.concat(a_push(30),a_br(16))))
+    nc_join(a_image(11,4195456+slot*8),a_ldr(16,11,0),Enum.concat(a_adr(30,12),Enum.concat(a_push(30),a_br(16))))
   end
   # The ARM64 code of a program that counts, with the list of calls in the
   # routine's blob made where they stand in it: for each, 9 before its word
@@ -610,14 +610,14 @@ defmodule NativeFailures do
     # On ARM64 the routine and the trace routine are their translations, and
     # the blob is ARM64 code with its data (xa_raw); where the calls stand is
     # put in once the code is translated (zf_cover_arm_points).
-    routine = if nc_arm() == 1 do cv_blob_arm() else zf_cover_code() end
+    routine = if nc_a64() == 1 do cv_blob_arm() else zf_cover_code() end
     call = zf_cover_site(table)
     points = if Enum.at(table,15,0) != 2 do b[] else zf_points(code,call,0,Enum.count(code)-Enum.count(call)-3) end
     head = nc_join(nc_slice(routine,0,4),nc_u32(Enum.count(routine)),nc_slice(routine,8,Enum.count(routine)))
-    trace = if nc_arm() == 1 do Enum.count(tr_blob_arm()) else Enum.count(tr_blob()) end
+    trace = if nc_a64() == 1 do Enum.count(tr_blob_arm()) else Enum.count(tr_blob()) end
     # Where the code starts: after the table, which has nine more slots than the program has records.
     blob = nc_join(head,nc_join(nc_u32(4195456+nz_slot(table)*8),nc_u32(trace),Enum.concat(nc_u32(nc_units(Enum.count(points),8)),nc_u32(4195456+nc_records(Enum.count(table))*8+72))),points)
-    if Enum.at(table,15,0) != 2 do shared else nh_slot(shared,if nc_arm() == 1 do xa_raw(blob) else blob end,32) end
+    if Enum.at(table,15,0) != 2 do shared else nh_slot(shared,if nc_a64() == 1 do xa_raw(blob) else blob end,32) end
   end
   # The calls of the routine in code from first up to stop: where each
   # stands (32 bits) and the word behind it, which is the position of its
@@ -683,7 +683,7 @@ defmodule NativeFailures do
     end end end end
   end
   # String.slice's bounds before the grapheme runtime (spec/failures-x86_64.s).
-  def zf_slice_check(): bytes do if nc_arm() == 1 do zf_slice_check_marked() else zf_slice_check_plain() end end
+  def zf_slice_check(): bytes do if nc_a64() == 1 do zf_slice_check_marked() else zf_slice_check_plain() end end
   def zf_slice_check_plain(): bytes do Enum.concat(Enum.concat(b[72,137,240,72,9,208,121,12,191,87,0,0,0,184,60,0,0,0,15,5,72,137,240,72,1,208,15,129,237,0,0,0,72,59,55,15,131,228,0,0,0,72,139,15,76,141,71,8,72,133,201,116,28,65,128,56,128,15,131,206,0,0,0,65,128,56,13],b[15,132,196,0,0,0,73,255,192,72,255,201,235,223,73,137,193,77,141,92,36,96,77,57,235,118,12,255,20,37,120,4,64,0,15,31,68,0,0,73,141,124,36,8,72,141,53,100,0,0,0,185,51,0,0,0,252,243,164,73,247,217,76,137,200,72,131]),Enum.concat(b[236,32,76,141,68,36,32,185,10,0,0,0,49,210,72,247,241,128,194,48,73,255,200,65,136,16,72,133,192,117,237,72,141,76,36,32,76,41,193,76,137,198,243,164,72,131,196,32,198,7,93,72,255,199,73,141,68,36,8,72,41,199,73,137,60,36,76],b[137,230,77,137,220,191,97,0,0,0,184,60,0,0,0,15,5,112,97,110,105,99,58,32,114,117,110,116,105,109,101,32,101,114,114,111,114,58,32,115,108,105,99,101,32,98,111,117,110,100,115,32,111,117,116,32,111,102,32,114,97,110,103,101,32,91,58,45])) end
   # Native smoke test; assembled with the compiler.
   def main() do System.halt(0) end

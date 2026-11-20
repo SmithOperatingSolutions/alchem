@@ -41,6 +41,14 @@ stage is built by the one before it.
 its programs on x86-64. The design, and its one known difference from the Go
 compiler's ARM64 programs, are in [spec/arm64.md](spec/arm64.md).
 
+## macOS ARM64
+
+`scripts/build-arm64.py --darwin` builds the compiler that makes macOS ARM64
+programs: position-independent Mach-O executables that call libSystem and
+carry an ad-hoc code signature the compiler computes. It is the work of
+[spec/darwin-arm64.md](spec/darwin-arm64.md), and not complete: most system
+calls are still to come.
+
 ## Verification
 
 ```sh

@@ -3,6 +3,67 @@ defmodule NativeArm64 do
   # (spec/arm64.md). nc_arm() is 1 in that compiler and 0 here; an emitter
   # that differs between the targets asks it.
   def nc_arm(): integer do 0 end
+  # 1 for either ARM64 compiler. nc_arm() is 2 in the one whose programs are
+  # position-independent (nc_pic): the image runs wherever it is loaded, and
+  # the words the entry ends in and the table of functions are read from a
+  # copy of them that the entry relocates (a_relocate).
+  def nc_a64(): integer do if nc_arm() >= 1 do 1 else 0 end end
+  def nc_pic(): integer do if nc_arm() >= 2 do 1 else 0 end end
+  # 1 in the compiler for macOS on ARM64 (native-macho.alc), whose programs
+  # are position-independent too.
+  def nc_darwin(): integer do if nc_arm() == 3 do 1 else 0 end end
+  # Bytes from the start of the copy to its first word: on macOS the words
+  # dyld binds come first (a_got).
+  def a_pic_head(): integer do if nc_darwin() == 1 do 16+8*m_import_count() else 16 end end
+  # The word dyld binds to the address of libSystem function i of m_imports.
+  def a_got(i: integer): integer do 8*i-a_pic_head() end
+  # A call to libSystem function i from the entry: X12 to X15 kept (the
+  # arena, the initial stack pointer, a size being asked for).
+  def a_libc(i: integer): bytes do
+    keep = nc_join(Enum.concat(a_mov(21,12),a_mov(22,13)),Enum.concat(a_mov(23,14),a_mov(24,15)),Enum.concat(a_ldur(16,26,a_got(i),8,0),a4(3594452992+16*32)))
+    nc_join(keep,Enum.concat(a_mov(12,21),a_mov(13,22)),Enum.concat(a_mov(14,23),a_mov(15,24)))
+  end
+  # The words from 0x400420 and the table at 0x400480 (one slot for each of
+  # at most 65541 entries): the addresses the copy stands for.
+  def a_in_block(address: integer): integer do if address < 4195360 do 0 else if address >= 4719784 do 0 else 1 end end end
+  # Where the copy is loaded, from the image's start: past the 1 GiB the code
+  # may take. X26 holds the address of its first word; the word 16 bytes
+  # before it holds how many words it has.
+  def a_pic_data(): integer do 1073741824 end
+  def a_block_addr(rd: integer, address: integer): bytes do Enum.concat(a_mov_imm(rd,address-4195360),a_add(rd,rd,26,0)) end
+  # rd = address, an address in the image (the copy, for the words and the
+  # table) or any other number.
+  def a_image(rd: integer, address: integer): bytes do
+    if nc_pic()*a_in_block(address) == 1 do a_block_addr(rd,address) else a_mov_imm(rd,address) end
+  end
+  def a_executable(image: bytes, table: integer): bytes do
+    if nc_darwin() == 1 do a_macho_image(image,table) else a_pic_image(image,table) end
+  end
+  # A position-independent program (ELF type 3, loaded anywhere): the image
+  # (from its 128th byte) as one segment that is read and run, then the copy
+  # of the entry's words and the table, which is read and written, at
+  # a_pic_data() from the image's start. The program headers follow the copy,
+  # for the image's first 128 bytes hold the ELF header and nothing else.
+  def a_pic_image(image: bytes, table: integer): bytes do
+    text = 128+Enum.count(image)
+    at = a_div(text+65535,65536)*65536
+    words = nc_slice(image,928,1024+table)
+    data = nc_join(a_u64(12+a_div(table,8)),a_u64(0),words)
+    phoff = at+Enum.count(data)
+    header = nc_join(nc_join(b[127,69,76,70,2,1,1,0,0,0,0,0,0,0,0,0,3,0,183,0,1,0,0,0],a_u64(128),a_u64(phoff)),nc_join(a_u64(0),b[0,0,0,0,64,0,56,0,2,0,0,0,0,0,0,0],nc_zeros(64)),b[])
+    code = nc_join(nc_join(b[1,0,0,0,5,0,0,0],a_u64(0),a_u64(0)),nc_join(a_u64(0),a_u64(text),a_u64(text)),a_u64(65536))
+    copy = nc_join(nc_join(b[1,0,0,0,6,0,0,0],a_u64(at),a_u64(a_pic_data())),nc_join(a_u64(a_pic_data()),a_u64(Enum.count(data)),a_u64(Enum.count(data))),a_u64(65536))
+    nc_join(nc_join(header,image,nc_zeros(at-text)),data,Enum.concat(code,copy))
+  end
+  def a_u64(value: integer): bytes do Enum.concat(nc_u32(value-a_div(value,4294967296)*4294967296),nc_u32(a_div(value,4294967296))) end
+  # The first code of a position-independent program's entry, at the
+  # image's 128th byte: X26 is the copy, and each of its words, an address
+  # as if the image stood at 0x400000, is moved to where the image stands.
+  def a_relocate(): bytes do
+    base = nc_join(nc_join(a_adr(20,-128),a_movz(16,16384,1),a_add(26,20,16,0)),nc_join(a_add_imm(26,26,a_pic_head(),0),a_movz(16,64,1),a_sub(20,20,16,0)),Enum.concat(a_ldur(17,26,-16,8,0),a_mov(19,26)))
+    loop = nc_join(nc_join(a_cbz(17,24,8),a_ldr(16,19,0),a_add(16,16,20,0)),nc_join(a_str_post(16,19,8,8),a_sub_imm(17,17,1,0),a_b(-20)),b[])
+    Enum.concat(base,loop)
+  end
 
   # An instruction: one 32-bit word, little-endian.
   def a4(word: integer): bytes do nc_u32(word) end
@@ -133,7 +194,7 @@ defmodule NativeArm64 do
   def a_call(offset: integer): bytes do nc_join(a_adr(30,12),a_push(30),a_b(offset-8)) end
   # call [address]: the address held at an absolute address.
   def a_call_at(address: integer): bytes do
-    nc_join(Enum.concat(a_mov_imm(16,address),a_ldr(16,16,0)),a_adr(30,12),Enum.concat(a_push(30),a_br(16)))
+    nc_join(Enum.concat(a_image(16,address),a_ldr(16,16,0)),a_adr(30,12),Enum.concat(a_push(30),a_br(16)))
   end
   def a_ret(): bytes do Enum.concat(a_pop(30),a_br(30)) end
   # Conditions: eq 0, ne 1, hs 2, lo 3, mi 4, pl 5, vs 6, vc 7, hi 8, ls 9,
@@ -160,7 +221,7 @@ defmodule NativeArm64 do
   end
   def a_lsr_imm(rd: integer, rn: integer, shift: integer): bytes do a4(3544186880+shift*65536+64512+rn*32+rd) end
   # exit(status).
-  def a_exit(status: integer): bytes do nc_join(a_mov_imm(0,status),a_mov_imm(8,93),a_svc()) end
+  def a_exit(status: integer): bytes do if nc_darwin() == 1 do Enum.concat(a_mov_imm(0,status),a_libc(0)) else nc_join(a_mov_imm(0,status),a_mov_imm(8,93),a_svc()) end end
 
   # ---- the program's entry (nc_entry) ----
   # X14 keeps the initial stack pointer (argc, argv, envp); SP moves below
@@ -170,13 +231,16 @@ defmodule NativeArm64 do
   # translated as a function is (native-x86arm.alc); padded to the 1024
   # bytes of the entry, which must hold it.
   def a_entry(rest: bytes): bytes do
-    start = Enum.concat(a_add_imm(14,31,0,0),a_sub_imm(31,31,2048,0))
+    # On macOS the entry is called as main is: argv in X1, a word past argc.
+    start = nc_join(if nc_pic() == 1 do a_relocate() else b[] end,if nc_darwin() == 1 do a_sub_imm(14,1,8,0) else a_add_imm(14,31,0,0) end,a_sub_imm(31,31,2048,0))
     made = nc_join(nc_join(start,a_arena_init(),a_stack_init()),xa_function(rest),b[])
     if Enum.count(made) > 928 do b[] else Enum.concat(made,nc_zeros(1024-Enum.count(made))) end
   end
   # mmap(0, size in X1, read and write, private, anonymous, no reserve).
   def a_mmap(): bytes do
-    nc_join(Enum.concat(a_mov_imm(0,0),a_mov_imm(2,3)),Enum.concat(a_mov_imm(3,16418),a_mov_imm(4,-1)),nc_join(a_mov_imm(5,0),a_mov_imm(8,222),a_svc()))
+    if nc_darwin() == 1 do nc_join(Enum.concat(a_mov_imm(0,0),a_mov_imm(2,3)),Enum.concat(a_mov_imm(3,4098),a_mov_imm(4,-1)),Enum.concat(a_mov_imm(5,0),a_libc(1))) else
+      nc_join(Enum.concat(a_mov_imm(0,0),a_mov_imm(2,3)),Enum.concat(a_mov_imm(3,16418),a_mov_imm(4,-1)),nc_join(a_mov_imm(5,0),a_mov_imm(8,222),a_svc()))
+    end
   end
   # Ask for size in register r, halving it down to floor while the system
   # refuses (exit 71 below it); the mapping is in X0 after.
