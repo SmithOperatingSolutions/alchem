@@ -14,9 +14,10 @@ defmodule NativeSystem do
   # 1 call, 2 addr, 3 peek, 4 poke, 5 stack, 6 text, 7 len, 8 copy, 9 find, 10 byte, 11 errno, 12 same,
   # 13 top and 14 limit (where the arena's free part starts and ends), 15 hash, 16 tls,
   # 17 cover (where the coverage of a test program stands, 0 for none: zf_cover_at),
-  # 18 panic (the program fails as a panic of the pinned runtime, with that text: zf_panic_call).
+  # 18 panic (the program fails as a panic of the pinned runtime, with that text: zf_panic_call),
+  # 19 windows (1 in a program for Windows, else 0: a constant, spec/windows.md).
   def nh_op(source: bytes, dot: integer): integer do
-    if nc_word(source,dot,b[99,111,118,101,114]) == 1 do 17 else if nc_word(source,dot,b[112,97,110,105,99]) == 1 do 18 else nh_op_known(source,dot) end end
+    if nc_word(source,dot,b[99,111,118,101,114]) == 1 do 17 else if nc_word(source,dot,b[112,97,110,105,99]) == 1 do 18 else if nc_word(source,dot,b[119,105,110,100,111,119,115]) == 1 do 19 else nh_op_known(source,dot) end end end
   end
   def nh_op_known(source: bytes, dot: integer): integer do
     if nc_word(source,dot,b[99,97,108,108]) == 1 do 1 else if nc_word(source,dot,b[97,100,100,114]) == 1 do 2 else
@@ -47,9 +48,9 @@ defmodule NativeSystem do
     # Sys.errno(number): Go's text for it, from the file runtime in slot functions+1.
     # Sys.hash(block): the crypto runtime in slot functions+6 (spec/crypto-x86_64.s).
     # Sys.tls(block): the TLS runtime in slot functions+7 (spec/tls-x86_64.s).
-    if op == 18 do zf_panic_call(table,args) else if valid == 0 do b[] else if op == 17 do nc_value(nc_pos(args),zf_cover_at(table),b[0]) else if op > 14 do nc_value(nc_pos(args),nc_join(nc_arg_code(args),b[95],nc_call(functions+op-9)),b[0]) else if op == 11 do if functions+1 >= nc_slot_limit() do b[] else nc_value(nc_pos(args),nc_join(nc_arg_code(args),b[95,190,4,0,0,0],nc_call(functions+1)),b[2]) end else
+    if op == 18 do zf_panic_call(table,args) else if op == 19 do (if nc_pos(args) < 0 do b[] else if nc_arg_count(args) != 0 do b[] else nc_value(nc_pos(args),b[184,nc_win(),0,0,0],b[0]) end end) else if valid == 0 do b[] else if op == 17 do nc_value(nc_pos(args),zf_cover_at(table),b[0]) else if op > 14 do nc_value(nc_pos(args),nc_join(nc_arg_code(args),b[95],nc_call(functions+op-9)),b[0]) else if op == 11 do if functions+1 >= nc_slot_limit() do b[] else nc_value(nc_pos(args),nc_join(nc_arg_code(args),b[95,190,4,0,0,0],nc_call(functions+1)),b[2]) end else
       nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),nh_emit(op,count)),if op == 6 do b[2] else b[0] end)
-    end end end end end
+    end end end end end end
   end
   # The arguments are on the stack, the last on top; the result is in RAX.
   def nh_emit(op: integer, count: integer): bytes do

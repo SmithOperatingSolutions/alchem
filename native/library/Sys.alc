@@ -431,13 +431,15 @@
       end)
     end
   end
-# filepath.Abs.
-#: abs/1 needs File.cwd/0 Path.join/2
+# filepath.Abs (on Windows GetFullPathNameW, with \ as Go keeps it).
+#: abs/1 needs File.cwd/0 Path.join/2 Path._wfull/1
   def abs(p: string): result[string, string] do
-    if String.starts_with?(p, "/") do ok(Path.join(p, "")) else
-      case File.cwd() do
-        ok(d) -> ok(Path.join(d, p))
-        error(e) -> error(e)
+    if Sys.windows() == 1 do ok(Path._wfull(p)) else
+      if String.starts_with?(p, "/") do ok(Path.join(p, "")) else
+        case File.cwd() do
+          ok(d) -> ok(Path.join(d, p))
+          error(e) -> error(e)
+        end
       end
     end
   end

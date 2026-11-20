@@ -698,7 +698,8 @@
 25:
  ret
 10:
-# System.get_env(name[,default]): first envp entry whose key equals name exactly.
+# System.get_env(name[,default]): first envp entry whose key equals name exactly
+# (on Windows, ASCII letters in either case).
 # Stack: name record (and default above it when RAX=1 on entry). Returns
 # option[string], or the value/default string for the two-argument form.
 .section .text.na_get_env,"ax"
@@ -738,8 +739,24 @@
  jz 2b
  cmp eax,61
  je 2b
+.ifdef WINDOWS
+# Windows' names are the same in either case (GetEnvironmentVariableW, as
+# Go's os.Getenv there): ASCII letters are compared folded.
+ movzx r11d,byte ptr [rsi+rdx]
+ cmp eax,r11d
+ je 8f
+ or eax,32
+ or r11d,32
+ cmp eax,r11d
+ jne 2b
+ sub eax,97
+ cmp eax,25
+ ja 2b
+8:
+.else
  cmp al,[rsi+rdx]
  jne 2b
+.endif
  inc rdx
  jmp 3b
 4:

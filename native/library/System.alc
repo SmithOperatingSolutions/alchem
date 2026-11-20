@@ -9,19 +9,37 @@
   def env(n: string): option[string] do
     System.get_env(n)
   end
-#: user_home/0
+# os.UserHomeDir: HOME, or USERPROFILE on Windows.
+#: user_home/0 needs Path._whome/0 Path._wslash/1
   def user_home(): option[string] do
-    h = System.get_env("HOME", "")
+    h = if Sys.windows() == 1 do Path._wslash(Path._whome()) else System.get_env("HOME", "") end
     if h == "" do none else some(h) end
   end
-#: tmp_dir/0 needs tmp_dir!/0
+#: tmp_dir/0 needs tmp_dir!/0 _wtmp/0
   def tmp_dir(): option[string] do
-    some(System.tmp_dir!())
+    if Sys.windows() == 1 do
+      d = System._wtmp()
+      if d == "" do none else some(d) end
+    else
+      some(System.tmp_dir!())
+    end
   end
-#: tmp_dir!/0
+#: tmp_dir!/0 needs _wtmp/0
   def tmp_dir!(): string do
-    d = System.get_env("TMPDIR", "")
-    if d == "" do "/tmp" else d end
+    if Sys.windows() == 1 do
+      d = System._wtmp()
+      if d == "" do raise("no directory for temporary files") else d end
+    else
+      d = System.get_env("TMPDIR", "")
+      if d == "" do "/tmp" else d end
+    end
+  end
+# os.TempDir on Windows (GetTempPathW: pseudo call 1000103 of the Windows
+# layer, spec/windows.md), with / for \.
+#: _wtmp/0 needs Path._wslash/1
+  def _wtmp(): string do
+    r = Sys.call(1000103)
+    if r <= 0 do "" else Path._wslash(Sys.text(r, Sys.len(r))) end
   end
 #: find_executable/1 needs Sys.exe/1 Sys.which/1
   def find_executable(f: string): option[string] do

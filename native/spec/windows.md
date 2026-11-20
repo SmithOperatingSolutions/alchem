@@ -51,7 +51,16 @@ the words at 0x400420 to 0x400478 and the function table at 0x400480.
 
 ## The Windows layer
 
-`spec/windows-x86_64.s`, about 3 KiB of code.
+`spec/windows-x86_64.s`, about 3 KiB of code, and `spec/windows-layer.c`,
+which the assembly gives each call first (`layer_call`) and which makes the
+calls written in C, or gives the call back for the assembly to make.
+scripts/generate-windows-runtime.py compiles the C freestanding (no C
+library, no red zone, no SSE; Windows functions are `ms_abi` pointers in
+the import address table) and links the two with a linker script that puts
+code, read-only data and the import tables in `.wtext` and data, the import
+address table and zeroed data in `.wdata`. It writes the import tables
+itself, from every `imp_NAME` the two files use (`DLLS` gives the DLL of
+those not in KERNEL32).
 
 - **Entry.** The PE entry adds a vectored exception handler, keeps the
   stack Windows started the thread with, builds a Linux initial stack and
@@ -95,7 +104,57 @@ The calls made so far:
   `unlink`, `unlinkat`, `rename`, `renameat`, `renameat2`;
 - time and the process: `clock_gettime`, `nanosleep`, `getrandom`,
   `getpid`, `exit`, `exit_group`, and `ppoll` (no descriptors: a sleep;
-  with descriptors, each is taken as ready).
+  sockets: `WSAPoll`; any other descriptor is taken as ready);
+- in C: `pread64` and `pwrite64` (an offset read or write, the position
+  kept), `ftruncate`, `fsync`, `fdatasync`, `getdents64`
+  (`FileFullDirectoryInfo`), `link`, `symlink`, `chmod` and `fchmodat`
+  (read-only or not, as Go's os.Chmod), `memfd_create` (a temporary file
+  deleted on close), `mremap` (a new mapping and a copy), `mmap` of a file
+  (its bytes read into new memory: the library maps files only privately
+  to read), `dup`, `dup2`, `dup3` and `fcntl`, and the `*at` calls on a
+  directory descriptor: the path is joined to the directory's
+  (`GetFinalPathNameByHandleW`) and the call made as from the working
+  directory, the program's registers put back after (`layer_restore`);
+- sockets, in C over Winsock: `socket`, `bind`, `listen`, `accept`,
+  `accept4`, `connect`, `sendto`, `recvfrom`, `shutdown`, `getsockname`,
+  `getpeername`, `setsockopt`, `getsockopt`, and `read`, `write`, `close`,
+  `fstat`, `fcntl` and `ioctl` on a socket. Addresses are laid out alike
+  but for AF_INET6 (10, 23); options and errors are mapped to Winsock's,
+  `SO_REUSEADDR` is not set (Go sets nothing on a Windows listener), and
+  a non-blocking connect's `WSAEWOULDBLOCK` is `EINPROGRESS`.
+
+## The library's view of Windows
+
+What Go's packages do differently on Windows, the library does when
+`Sys.windows()` is 1: a primitive the compiler makes a constant
+(`nc_win()`), so the Linux and macOS programs have nothing of it but a
+branch never taken.
+
+- **Paths.** `library/Path.alc` ends in Go's path/filepath for Windows
+  (`_wvlen` volumeNameLen, `_wabs` IsAbs, `_wclean` Clean with
+  postClean, `_wjoin` Join, `_wbase`, `_wdir`, `_wext`, `_wrel` Rel with
+  parts compared in either case, `_wtype` pathType). The Path functions use
+  them there and give back `/` for `\` where the pinned library does
+  (`filepath.ToSlash`). `Path.expand`, `absname` and `Sys.abs` make a path
+  whole with `GetFullPathNameW` (pseudo call 1000102).
+- **Directories.** `File.cwd` is `GetCurrentDirectoryW` with `/` (no
+  `PWD`), `System.user_home` is `USERPROFILE`, `System.tmp_dir` is
+  `GetTempPathW` without its last `\` (pseudo call 1000103).
+- **The environment.** `System.get_env` finds a name in either case
+  (ASCII), as `GetEnvironmentVariableW` does: the Windows compiler's
+  `na_get_env` is assembled with `WINDOWS` defined
+  (scripts/generate-library-runtime.py writes both).
+- **Errors.** The layer keeps, for each errno it gives, the Windows error
+  behind it; `Sys.errno` and the file runtime's messages are then Windows'
+  text for it (pseudo call 1000101: `FormatMessageW` in US English, as
+  Go's `syscall.Errno.Error`; `winapi error #N` when Windows has none).
+  An errno the library makes itself has Go's invented text, but `ENOENT`
+  and `ENOTDIR`, which Go's syscall names for `ERROR_FILE_NOT_FOUND` and
+  `ERROR_PATH_NOT_FOUND`. The file runtime of the Windows compiler is
+  assembled with `WINDOWS` defined to ask for it
+  (scripts/generate-file-read-runtime.py). A socket error names the call
+  Go's net makes on Windows (`connectex`, `wsarecv`, `wsasend`,
+  `acceptex`, `wsasendto`: `TCP._sysop`).
 
 ## Checking
 
@@ -109,30 +168,20 @@ The reference is the pinned compiler's own windows/amd64 program
 (`alchem build -target windows/amd64`), which also runs under Wine. Under
 Wine, the Windows compiler builds itself to the same bytes, and of the
 upstream examples (scripts/upstream-examples.py) whose reference program
-succeeds, 784 of 857 print what it prints. The others need:
+succeeds, 855 of 857 print what it prints. The others: `File.ln`, whose
+reference read another example's file in the shared temporary directory,
+and `Process.report`, which needs processes.
 
-- sockets: `socket` and the calls after it (38 examples);
-- processes: `fork`, `pipe2` (`System.cmd`, `Port`);
-- `pwrite64`, `getdents64` (`File.ls`), `mremap`, `fchmodat`, `link`,
-  `symlink`, `utimensat`, `memfd_create`;
-- the library's view of Windows, which Go's packages give the pinned
-  programs: the working directory and `Path.expand` with forward slashes
-  (`Z:/tmp/...`), `C:\x` absolute and `/x` volume-relative in
-  `Path.type`, `System.user_home` from `USERPROFILE`, and Windows' texts
-  for errors (`open nope: File not found.` under Wine, from
-  `FormatMessage`, where Linux gives `no such file or directory`).
-
-The last needs the library to know it runs on Windows. One way, as
-`System.collect_garbage` already does (spec/alchem-memory.md), is a system
-call number Linux does not have, which the Windows layer answers; error
-texts then come from `FormatMessageW` for the kept Windows error, as Go's
-`syscall.Errno.Error` gets them.
+Wine's error texts are its own (`File not found.`, and none for Winsock's
+errors); the reference for them is Windows (CI).
 
 ## Still to do
 
-- The calls and the library's view above, against the pinned compiler's
-  windows/amd64 programs. Wine's error texts are its own; the reference
-  for those is Windows (CI).
+- Processes: `fork`, `execve`, `pipe2` and `wait4` (`System.cmd`, `Port`,
+  `System.find_executable` with `PATHEXT`, and `Process.report`, whose copy
+  of the program fails in earnest).
+- Time zones: the pinned program carries Go's zone database, and Windows
+  has no zone files to read (spec/alchem-time-zones.md).
 - An empty command line: Go then takes the executable's path as the one
   argument.
 - Stacks: a 1 GiB stack is committed at once. The exception dispatcher
@@ -141,4 +190,8 @@ texts then come from `FormatMessageW` for the kept Windows error, as Go's
 - `alchem build -target windows/amd64` in tools/alchem.alc.
 - The gates on Windows. CI (`.github/workflows/native.yml`, job Windows
   x64 on `windows-2025`) runs the Windows compiler the Linux job builds:
-  it must make itself again byte for byte, and make a program that runs.
+  it must make itself again byte for byte, make a program that runs, and
+  build every upstream example that prints the same on Linux and Windows
+  into a program that prints there what the Linux program prints
+  (`scripts/windows-examples.py`: `prepare` on Linux, `check` on Windows,
+  or `check --wine` under Wine; `SKIPPED` names the others).

@@ -293,6 +293,30 @@ fr_reason:
  mov rax,[rsp+24]
  cmp rax,-1
  je fr_message_eof
+.ifdef WINDOWS
+# Windows' text for the error the layer gave this errno for, as Go's
+# syscall.Errno.Error gives it (pseudo call 1000101, spec/windows.md); the
+# text below when the errno was the layer's own.
+ push r11
+ mov rdi,rax
+ mov eax,1000101
+ syscall
+ pop r11
+ test rax,rax
+ jle fr_reason_table
+ mov rsi,rax
+ xor ecx,ecx
+fr_reason_length:
+ cmp byte ptr [rsi+rcx],0
+ je fr_reason_windows
+ inc rcx
+ jmp fr_reason_length
+fr_reason_windows:
+ call fr_append
+ jmp fr_message_done
+fr_reason_table:
+ mov rax,[rsp+24]
+.endif
  cmp rax,ERRNO_COUNT
  jae fr_errno_number
  lea rsi,[rip+fr_errnos]

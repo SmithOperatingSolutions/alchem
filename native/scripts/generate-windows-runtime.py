@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Regenerate native-windows-data.alc from spec/windows-x86_64.s: the PE
+"""Regenerate native-windows-data.alc from spec/windows-x86_64.s and
+spec/windows-layer.c: the PE
 headers and the Windows layer that come before a Windows program's image
 (spec/windows.md). Optional development step; normal builds never run it.
 
@@ -25,20 +26,81 @@ def up(n, a):
     return (n + a - 1) // a * a
 
 
+# The DLL of each import the layer names (imp_NAME in its sources); any
+# other is KERNEL32's.
+DLLS = {
+    'bcryptprimitives.dll': {'ProcessPrng'},
+    'WS2_32.dll': {'WSAStartup', 'WSAGetLastError', 'WSASocketW', 'closesocket', 'ioctlsocket', 'bind',
+                   'listen', 'accept', 'connect', 'send', 'sendto', 'recv', 'recvfrom', 'shutdown',
+                   'getsockname', 'getpeername', 'setsockopt', 'getsockopt', 'WSAPoll'},
+}
+SOURCES = ('spec/windows-x86_64.s', 'spec/windows-layer.c')
+# Freestanding: no C library, no red zone (the layer runs on the stack
+# Windows gave the thread), no SSE (the program's registers are its own).
+CFLAGS = ['-O2', '-ffreestanding', '-fno-builtin', '-nostdlib', '-fno-pic', '-fno-pie', '-mno-red-zone',
+          '-mgeneral-regs-only', '-fno-stack-protector', '-fno-asynchronous-unwind-tables',
+          '-fno-unwind-tables', '-fcf-protection=none', '-fno-jump-tables', '-Wall', '-Werror']
+LINK = f"""SECTIONS {{
+  . = {BASE + CODE:#x};
+  .wtext : {{ *(.text .text.*) *(.rodata .rodata.*) *(.wimports) }}
+  . = {BASE + DATA:#x};
+  .wdata : {{ *(.data .data.*) *(.wiat) *(.bss .bss.*) *(COMMON) }}
+  data_end = .;
+  /DISCARD/ : {{ *(.comment) *(.note .note.*) *(.eh_frame) }}
+}}
+"""
+
+
+def imports():
+    """The import directory, name tables and address table for every imp_ name."""
+    import re
+    names = set()
+    for source in SOURCES:
+        names |= set(re.findall(r'imp_(\w+)', (ROOT / source).read_text()))
+    groups = {}
+    for name in sorted(names):
+        dll = next((d for d, members in DLLS.items() if name in members), 'KERNEL32.dll')
+        groups.setdefault(dll, []).append(name)
+    dlls = sorted(groups)
+    out = ['        .intel_syntax noprefix', '        .set IMAGE_BASE, %#x' % BASE,
+           '        .section .wimports, "a"', '        .balign 4', '        .globl imports', 'imports:']
+    for i, dll in enumerate(dlls):
+        out.append(f'        .long names_{i} - IMAGE_BASE, 0, 0, dll_{i} - IMAGE_BASE, iat_{i} - IMAGE_BASE')
+    out += ['        .long 0, 0, 0, 0, 0', '        .globl imports_end', 'imports_end:']
+    for i, dll in enumerate(dlls):
+        out += ['        .balign 8', f'names_{i}:']
+        out += [f'        .quad n_{name} - IMAGE_BASE' for name in groups[dll]] + ['        .quad 0']
+        for name in groups[dll]:
+            out += ['        .balign 2', f'n_{name}: .short 0', f'        .asciz "{name}"']
+        out.append(f'dll_{i}: .asciz "{dll}"')
+    out += ['        .section .wiat, "aw"', '        .balign 8', '        .globl iat', 'iat:']
+    for i, dll in enumerate(dlls):
+        out.append(f'iat_{i}:')
+        for name in groups[dll]:
+            out += [f'        .globl imp_{name}', f'imp_{name}: .quad n_{name} - IMAGE_BASE']
+        out.append('        .quad 0')
+    out += ['        .globl iat_end', 'iat_end:', '        .section .note.GNU-stack, "", @progbits', '']
+    return '\n'.join(out)
+
+
 def assemble():
     with tempfile.TemporaryDirectory(prefix='alchem-windows-runtime-') as d:
         root = Path(d)
+        (root / 'imports.s').write_text(imports())
+        (root / 'link.ld').write_text(LINK)
         subprocess.run(['as', '--64', '-o', root / 'w.o', ROOT / 'spec/windows-x86_64.s'], check=True)
-        subprocess.run(['ld', '-o', root / 'w.elf', '-e', 'start', '--no-warn-rwx-segments',
-                        '-Ttext', hex(BASE + CODE), '-Tdata', hex(BASE + DATA), root / 'w.o'], check=True)
-        for name in ('text', 'data'):
+        subprocess.run(['as', '--64', '-o', root / 'i.o', root / 'imports.s'], check=True)
+        subprocess.run(['gcc', *CFLAGS, '-c', '-o', root / 'c.o', ROOT / 'spec/windows-layer.c'], check=True)
+        subprocess.run(['ld', '-o', root / 'w.elf', '-e', 'start', '--no-warn-rwx-segments', '-T', root / 'link.ld',
+                        root / 'w.o', root / 'c.o', root / 'i.o'], check=True)
+        for name in ('wtext', 'wdata'):
             subprocess.run(['objcopy', '-O', 'binary', '-j', '.' + name, root / 'w.elf', root / (name + '.bin')], check=True)
         symbols = {}
         for line in subprocess.run(['nm', root / 'w.elf'], capture_output=True, text=True, check=True).stdout.splitlines():
             parts = line.split()
             if len(parts) == 3:
                 symbols[parts[2]] = int(parts[0], 16)
-        return (root / 'text.bin').read_bytes(), (root / 'data.bin').read_bytes(), symbols
+        return (root / 'wtext.bin').read_bytes(), (root / 'wdata.bin').read_bytes(), symbols
 
 
 def prefix():

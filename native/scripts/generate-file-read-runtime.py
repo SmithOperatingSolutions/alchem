@@ -21,8 +21,21 @@ def generate():
     assert 'ERRNO_COUNT' in asm and '# ERRNO_DATA' in asm and '# UTF8_WIDTH' in asm
     asm=asm.replace('# UTF8_WIDTH',macro).replace('ERRNO_COUNT',str(len(messages)))
     asm=asm.replace('# ERRNO_DATA','\n'.join(' .byte '+','.join(map(str,packed[i:i+32])) for i in range(0,len(packed),32)))
-    raw,found=shared.assemble_sites(asm)
-    text=shared.module_text('NativeFileData','fr',raw,'Generated from spec/file-read-x86_64.s and spec/errno-messages.json.','generated File.read runtime',found)
+    raw,_=shared.assemble_sites(asm)
+    # The Windows compiler's has errors in Windows' words (WINDOWS defined,
+    # spec/windows.md); the Linux one stays as it was.
+    windows,found=shared.assemble_sites('.set WINDOWS,1\n'+asm)
+    def parts(prefix,code):
+        text=shared.module_text('NativeFileData',prefix,code,'','')
+        body=text[text.index('\n',text.index('\n')+1)+1:text.index(f'  def {prefix}_blob()')]
+        top=text[text.index(f'  def {prefix}_blob(): bytes do ')+len(f'  def {prefix}_blob(): bytes do '):]
+        return body,top[:top.index(' end\n')]
+    linux_body,linux_top=parts('fr',raw)
+    windows_body,windows_top=parts('frw',windows)
+    text=('defmodule NativeFileData do\n  # Generated from spec/file-read-x86_64.s and spec/errno-messages.json.\n'
+          +linux_body+windows_body
+          +f'  def fr_blob(): bytes do if nc_win() == 1 do {shared.windows_sites.wrap(windows_top,found)} else {linux_top} end end\n'
+          '  # Native smoke test; generated File.read runtime.\n  def main() do System.halt(0) end\nend\n')
     return text,len(raw)
 
 

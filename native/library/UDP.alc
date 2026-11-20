@@ -112,7 +112,7 @@
       UDP._sendto(g, fd, text, to)
     else r end
   end
-#: send/3 needs Enum.filter/2 Process._check/1 Process._g/0 TCP._addrs/2 TCP._first4/1 TCP._host/1 TCP._named/2 TCP._sa6/3 TCP._saport/1 _sendto/4
+#: send/3 needs Enum.filter/2 Process._check/1 Process._g/0 TCP._addrs/2 TCP._first4/1 TCP._host/1 TCP._named/2 TCP._sa6/3 TCP._saport/1 _sendto/4 TCP._sysop/1
   def send(s: socket, a: string, text: string): result[tuple[], string] do
     g = Process._g()
     Process._check(g)
@@ -130,7 +130,7 @@
             p = Sys.addr(x)
             to = if wide and byte_size(x) == 16 do TCP._sa6([0, 0, 0, 0, 0, if Sys.peek(p + 4) == 0 do 0 else 65535 end, Sys.byte(p + 4) * 256 + Sys.byte(p + 5), Sys.byte(p + 6) * 256 + Sys.byte(p + 7)], 0, TCP._saport(x)) else x end
             r = UDP._sendto(g, Sys.peek(b), text, to)
-            if r < 0 do error("write udp " <> here <> "->" <> TCP._named(a, x) <> ": sendto: " <> Sys.errno(0 - r)) else ok({}) end
+            if r < 0 do error("write udp " <> here <> "->" <> TCP._named(a, x) <> ": " <> TCP._sysop("sendto") <> ": " <> Sys.errno(0 - r)) else ok({}) end
           end
         end
       end
