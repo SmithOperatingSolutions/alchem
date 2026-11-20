@@ -41,10 +41,10 @@
     r = Sys.call(1000103)
     if r <= 0 do "" else Path._wslash(Sys.text(r, Sys.len(r))) end
   end
-#: find_executable/1 needs Sys.exe/1 Sys.which/1
+#: find_executable/1 needs Sys.exe/1 Sys.which/1 Sys._wwhich/1 Path._wslash/1 String.contains?/2
   def find_executable(f: string): option[string] do
-    w = if String.contains?(f, "/") do {if Sys.exe(f) do 0 else 2 end, f} else Sys.which(f) end
-    if elem(w, 0) == 0 do some(elem(w, 1)) else none end
+    w = if Sys.windows() == 1 do Sys._wwhich(f) else if String.contains?(f, "/") do {if Sys.exe(f) do 0 else 2 end, f} else Sys.which(f) end end
+    if elem(w, 0) == 0 do some(if Sys.windows() == 1 do Path._wslash(elem(w, 1)) else elem(w, 1) end) else none end
   end
 # os.Setenv.
 #: put_env/2 needs Sys.env/0 Sys.held/4 Sys.z/1
@@ -154,7 +154,7 @@
     System.cmd(c, a, [])
   end
 # exec.Command(c, a...) with its output collected, as upstream runs it.
-#: cmd/3 needs Enum.any?/2 Sys.abs/1 Sys.env/0 Sys.fail/3 Sys.got/0 Sys.keep/2 Sys.load/1 Sys.pad/0 Sys.push/2 Sys.spawn/5 Sys.stat/2 Sys.thin/3 Sys.wait/4 Sys.which/1 Sys.z/1
+#: cmd/3 needs Enum.any?/2 Sys.abs/1 Sys.env/0 Sys.fail/3 Sys.got/0 Sys.keep/2 Sys.load/1 Sys.pad/0 Sys.push/2 Sys.spawn/5 Sys.stat/2 Sys.thin/3 Sys.wait/4 Sys.which/1 Sys.z/1 Sys._wcommand/1 Sys._notfound/1 String.contains?/2
   def cmd(c: string, a: list[string], o: list[tuple[atom, string]]): tuple[string, integer] do
     none: list[string] = []
     v = Enum.reduce(o, {"", none, 0, 0}, fn x, v ->
@@ -169,9 +169,9 @@
       end
     end)
     d = elem(v, 0)
-    w = if c == "" or String.contains?(c, "/") do {0, c} else Sys.which(c) end
+    w = if c == "" do {0, c} else if Sys.windows() == 1 do Sys._wcommand(c) else if String.contains?(c, "/") do {0, c} else Sys.which(c) end end end
     if c == "" do raise("could not run : exec: no command") end
-    if elem(w, 0) == 2 do raise("could not run " <> c <> ": exec: " <> inspect(c) <> ": executable file not found in $PATH") end
+    if elem(w, 0) >= 2 do raise("could not run " <> c <> ": exec: " <> inspect(c) <> ": " <> Sys._notfound(elem(w, 0))) end
     if elem(w, 0) == 1 do raise("could not run " <> c <> ": exec: " <> inspect(c) <> ": cannot run executable found relative to current directory") end
     p = if d == "" or elem(v, 2) == 1 do "" else
       case Sys.abs(d) do
@@ -179,7 +179,7 @@
         error(e) -> raise("could not run " <> c <> ": " <> e)
       end
     end
-    e = if elem(v, 2) == 1 do elem(v, 1) else if d == "" do none else ["PWD=" <> p] end end
+    e = if elem(v, 2) == 1 do elem(v, 1) else if d == "" or Sys.windows() == 1 do none else ["PWD=" <> p] end end
     if Enum.any?(e, fn x -> Sys.z(x) == 0 end) do raise("could not run " <> c <> ": exec: environment variable contains NUL") end
     r = if d == "" do 0 else Sys.stat(d, 1) end
     if r < 0 do raise("could not run " <> c <> ": " <> Sys.fail("chdir", d, r)) end
@@ -201,5 +201,5 @@
     Sys.call(3, elem(f, 1))
     Sys.wait(61, elem(f, 0), s + 512, 0)
     t = rem(Sys.peek(s + 512), 65536)
-    {Sys.got(), if rem(t, 128) == 0 do div(t, 256) else -1 end}
+    {Sys.got(), if Sys.windows() == 1 do div(Sys.peek(s + 512), 256) else if rem(t, 128) == 0 do div(t, 256) else -1 end end}
   end

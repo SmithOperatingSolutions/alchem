@@ -14,10 +14,10 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = 0x3C0000
+BASE = 0x380000
 CODE = 0x1000           # the layer's code and import tables, RX
 DATA = 0x10000          # its data and the import address table, RW
-IMAGE = 0x40000         # the program's image, at 0x400000, RX
+IMAGE = 0x80000         # the program's image, at 0x400000, RX
 SECTION_ALIGN = 0x1000
 FILE_ALIGN = 0x200
 
@@ -30,6 +30,7 @@ def up(n, a):
 # other is KERNEL32's.
 DLLS = {
     'bcryptprimitives.dll': {'ProcessPrng'},
+    'ntdll.dll': {'RtlRestoreContext'},
     'WS2_32.dll': {'WSAStartup', 'WSAGetLastError', 'WSASocketW', 'closesocket', 'ioctlsocket', 'bind',
                    'listen', 'accept', 'connect', 'send', 'sendto', 'recv', 'recvfrom', 'shutdown',
                    'getsockname', 'getpeername', 'setsockopt', 'getsockopt', 'WSAPoll'},

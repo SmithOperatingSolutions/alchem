@@ -9,7 +9,8 @@ the native Linux compiler builds and runs to exit 0 into DIR as NNNN.alc,
 with what it printed as NNNN.out and its name in names.txt; the examples
 whose output is not the same on Windows (SKIPPED) are left out. What
 Linux prints is what the pinned compiler's windows/amd64 programs print for
-all the others, under Wine (scripts/run-windows).
+all the others, under Wine (scripts/run-windows). WINDOWS_ONLY adds
+programs for Windows alone, with what they print there.
 
 check (on Windows) builds each with the Windows compiler, runs it in an
 empty directory and compares what it prints; it ends 1 if any differs.
@@ -33,15 +34,32 @@ SKIPPED = {
     # Under Wine a symbolic link Windows makes does not resolve, for the
     # pinned compiler's program too.
     'lib/File/File.ln_s/1',
-    # Named time zones: Windows has no zone files, and the pinned program
-    # carries Go's own database (time/tzdata), which these do not yet
-    # (spec/windows.md).
-    'lib/DateTime/DateTime.from_naive/1', 'lib/DateTime/DateTime.now/1', 'lib/DateTime/DateTime.shift/1',
-    'lib/DateTime/DateTime.shift_zone/1', 'lib/DateTime/DateTime.shift_zone!/1',
-    # A copy of the program fails in earnest (fork), still to do
-    # (spec/windows.md).
-    'lib/Process/Process.report/1',
 }
+
+
+# Programs for Windows alone, with what they print there (the pinned
+# compiler's windows/amd64 programs print the same): processes through
+# cmd.exe, which every Windows has.
+WINDOWS_ONLY = [
+    ('windows/System.cmd', 'defmodule T do\n  def main() do\n'
+     '    IO.puts(inspect(System.cmd("cmd", ["/c", "echo", "hello there"])))\n'
+     '    IO.puts(inspect(System.cmd("cmd", ["/c", "exit 300"])))\n'
+     '    IO.puts(inspect(System.cmd("cmd", ["/c", "echo err 1>&2"], [{:stderr_to_stdout, "true"}])))\n'
+     '    IO.puts(inspect(System.find_executable("alchem-no-such-program")))\n'
+     '  end\nend\n',
+     '{"\\"hello there\\"\\r\\n", 0}\n{"", 300}\n{"err \\r\\n", 0}\nnone\n'),
+    ('windows/Port', 'defmodule T do\n  def main() do\n'
+     '    me: pid[PortEvent] = Process.self(16)\n'
+     '    IO.puts(inspect(case Port.open("cmd", ["/c", "echo from port&& echo second"], me) do\n'
+     '      ok(_) -> true\n      error(e) -> false\n    end))\n'
+     '    assert_receive(me, PortEvent.data(first), 5000)\n    IO.puts(inspect(first))\n'
+     '    assert_receive(me, PortEvent.data(second), 5000)\n    IO.puts(inspect(second))\n'
+     '    assert_receive(me, PortEvent.exit(status), 5000)\n    IO.puts(inspect(status))\n'
+     '    IO.puts(inspect(case Port.open("alchem-no-such-program", Enum.take([""], 0), me) do\n'
+     '      ok(_) -> "started"\n      error(e) -> e\n    end))\n'
+     '  end\nend\n',
+     'true\n"from port"\n"second"\n0\n"exec: \\"alchem-no-such-program\\": executable file not found in %PATH%"\n'),
+]
 
 
 def load_examples():
@@ -68,6 +86,11 @@ def prepare(out, compiler):
         number = f'{len(names):04}'
         (out / (number + '.alc')).write_text(source)
         (out / (number + '.out')).write_text(result[2])
+        names.append(name)
+    for name, source, printed in WINDOWS_ONLY:
+        number = f'{len(names):04}'
+        (out / (number + '.alc')).write_text(source)
+        (out / (number + '.out')).write_text(printed)
         names.append(name)
     (out / 'names.txt').write_text(''.join(n + '\n' for n in names))
     print(f'{len(names)} examples in {out}')

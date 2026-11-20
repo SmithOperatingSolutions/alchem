@@ -28,47 +28,53 @@
 #: _spawn/4 needs Sys.state/0 Sys.wait/4
   def _spawn(p: integer, a: integer, e: integer, m: integer): tuple[integer, integer, integer] do
     s = Sys.state() + 512
-    Sys.call(293, s, 0x80000)
-    Sys.call(293, s + 8, 0x80000)
-    Sys.call(293, s + 32, 0x80000)
-    o = rem(div(Sys.peek(s), 4294967296), 4294967296)
-    r = rem(Sys.peek(s), 4294967296)
-    w = rem(div(Sys.peek(s + 8), 4294967296), 4294967296)
-    x = rem(Sys.peek(s + 8), 4294967296)
-    i = rem(Sys.peek(s + 32), 4294967296)
-    j = rem(div(Sys.peek(s + 32), 4294967296), 4294967296)
-    c = Sys.call(57)
-    if c == 0 do
-      y = Sys.call(72, o, 1030, 3)
-      Sys.call(33, Sys.call(72, i, 1030, 3), 0)
-      Sys.call(33, y, 1)
-      if m == 0 do Sys.call(33, y, 2) end
-      if m == 1 do Sys.call(33, Sys.call(257, -100, Sys.addr("/dev/null\x00"), 0x80001, 0), 2) end
-      f = Sys.call(59, p, a, e)
-      Sys.poke(s + 16, 0 - f)
-      Sys.call(1, w, s + 16, 8)
-      Sys.call(60, 253)
+    if Sys.windows() == 1 do
+      # CreateProcessW (pseudo call 1000104, spec/windows.md), its input a pipe.
+      c = Sys.call(1000104, p, a, e, 0, 1 + (if m == 0 do 2 else if m == 1 do 4 else 0 end end), s)
+      {c, if c < 0 do -1 else Sys.peek(s + 8) end, if c < 0 do -1 else Sys.peek(s) end}
+    else
+      Sys.call(293, s, 0x80000)
+      Sys.call(293, s + 8, 0x80000)
+      Sys.call(293, s + 32, 0x80000)
+      o = rem(div(Sys.peek(s), 4294967296), 4294967296)
+      r = rem(Sys.peek(s), 4294967296)
+      w = rem(div(Sys.peek(s + 8), 4294967296), 4294967296)
+      x = rem(Sys.peek(s + 8), 4294967296)
+      i = rem(Sys.peek(s + 32), 4294967296)
+      j = rem(div(Sys.peek(s + 32), 4294967296), 4294967296)
+      c = Sys.call(57)
+      if c == 0 do
+        y = Sys.call(72, o, 1030, 3)
+        Sys.call(33, Sys.call(72, i, 1030, 3), 0)
+        Sys.call(33, y, 1)
+        if m == 0 do Sys.call(33, y, 2) end
+        if m == 1 do Sys.call(33, Sys.call(257, -100, Sys.addr("/dev/null\x00"), 0x80001, 0), 2) end
+        f = Sys.call(59, p, a, e)
+        Sys.poke(s + 16, 0 - f)
+        Sys.call(1, w, s + 16, 8)
+        Sys.call(60, 253)
+      end
+      Sys.call(3, i)
+      Sys.call(3, o)
+      Sys.call(3, w)
+      n = if c < 0 do 0 else Sys.wait(0, x, s + 16, 8) end
+      Sys.call(3, x)
+      if c < 0 or n > 0 do
+        Sys.call(3, r)
+        Sys.call(3, j)
+      end
+      if n > 0 do Sys.wait(61, c, s + 24, 0) end
+      {if c < 0 do c else if n > 0 do 0 - Sys.peek(s + 16) else c end end, j, r}
     end
-    Sys.call(3, i)
-    Sys.call(3, o)
-    Sys.call(3, w)
-    n = if c < 0 do 0 else Sys.wait(0, x, s + 16, 8) end
-    Sys.call(3, x)
-    if c < 0 or n > 0 do
-      Sys.call(3, r)
-      Sys.call(3, j)
-    end
-    if n > 0 do Sys.wait(61, c, s + 24, 0) end
-    {if c < 0 do c else if n > 0 do 0 - Sys.peek(s + 16) else c end end, j, r}
   end
 # exec.Command(c, a...) started as a port of the process o; h and m as
 # above, k how its output is cut (0 lines, 1 as it comes, 2 packets).
-#: _start/4 needs Enum.any?/2 String.contains?/2 Sys.env/0 Sys.fail/3 Sys.keep/2 Sys.pad/0 Sys.push/2 Sys.which/1 Sys.z/1 _opened/4 _spawn/4
+#: _start/4 needs Enum.any?/2 String.contains?/2 Sys.env/0 Sys.fail/3 Sys.keep/2 Sys.pad/0 Sys.push/2 Sys.which/1 Sys.z/1 _opened/4 _spawn/4 Sys._wcommand/1 Sys._notfound/1
   def _start(c: string, a: list[string], o: integer, v: tuple[integer, integer, integer]): result[port, string] do
     {k, h, m} = v
-    w = if c == "" or String.contains?(c, "/") do {0, c} else Sys.which(c) end
+    w = if c == "" do {0, c} else if Sys.windows() == 1 do Sys._wcommand(c) else if String.contains?(c, "/") do {0, c} else Sys.which(c) end end end
     if c == "" do error("exec: no command") else
-      if elem(w, 0) == 2 do error("exec: " <> inspect(c) <> ": executable file not found in $PATH") else
+      if elem(w, 0) >= 2 do error("exec: " <> inspect(c) <> ": " <> Sys._notfound(elem(w, 0))) else
         if elem(w, 0) == 1 do error("exec: " <> inspect(c) <> ": cannot run executable found relative to current directory") else
           g = [c] ++ a
           s = Sys.pad()
@@ -213,7 +219,8 @@
       Port._status(g, b)
     else
       t = rem(Sys.peek(g + 200), 65536)
-      if r < 0 do -1 else if rem(t, 128) == 0 do div(t, 256) else -1 end end
+      # Windows has no signals: the whole exit code, in a word (spec/windows.md).
+      if r < 0 do -1 else if Sys.windows() == 1 do div(Sys.peek(g + 200), 256) else if rem(t, 128) == 0 do div(t, 256) else -1 end end end
     end
   end
 # The output ended: a last line without its end is sent as it is.
