@@ -12,7 +12,7 @@ mise run build
 On other hosts (for example Apple Silicon) run the same steps in the linux/amd64
 container: `mise run linux:fetch` and `mise run linux:build`. Emulated x86-64 can
 build and run the compiler but cannot pass the ptrace/strace gates of the full
-suite; see [the developer handoff](HANDOFF.md).
+suite.
 
 The build itself runs offline. It builds the bootstrap tools, assembles the Alchem source, produces
 A1/A2/A3, requires equal bytes and an executable smoke, then publishes A3 as
@@ -120,9 +120,7 @@ verification result: run `mise run verify` before committing.
 The full suite checks native profiles, source/components, A1/A2/A3, all generated
 stages' correctness/rejections and measured arena limits. Ptrace/strace permission
 is needed for fault injection and register measurements; skips are not passes.
-See [the initial baseline](self-hosting-benchmarks.md) and
-[developer handoff](HANDOFF.md). Production Alchem is unchanged; no Actions runs
-or PR merge are part of local verification.
+See [the initial baseline](self-hosting-benchmarks.md).
 
 Try examples/alchem-collections-demo.alc for signed integer/string lists,
 map/filter/reduce, sorted map entries and library output. Native byte buffers

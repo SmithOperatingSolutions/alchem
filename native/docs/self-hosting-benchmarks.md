@@ -106,7 +106,7 @@ checkout, compile it with the current native compiler and save its executable.
 Then run scripts/benchmark-compiler-pair.py with --before that executable,
 --after build/native/alchem-compiler, --source build/native/compiler-source.alc,
 --before-commit 43b62f599b0a4e81a31d4419c25539a83468eaa4 and --output a JSON path.
-Use the toolchain/tracing environment from HANDOFF.md. Every emitted image must
+Use the toolchain of mise.toml with ptrace permitted. Every emitted image must
 match the final compiler. The old source/compiler hashes are in the feature
 baseline and the pair JSON; neither binary is committed.
 

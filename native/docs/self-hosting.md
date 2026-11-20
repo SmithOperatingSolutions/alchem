@@ -102,7 +102,6 @@ optimization claims; separate compiler throughput from generated-program speed.
 Then broaden the source profile deliberately (larger/multiple modules and storage,
 option/result, String APIs and general IO as needed), preserving the self-build chain at each checkpoint.
 Full production compatibility and production integration are separate work.
-See [the developer handoff](HANDOFF.md) for the exact resume point and commands.
 
 Source/input capacity is now 4,194,303 bytes with24-bit source metadata; see
 [source capacity](../spec/source-capacity.md) for packet/layout boundaries.

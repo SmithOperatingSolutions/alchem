@@ -1,112 +1,64 @@
-# Alchem Native
+# Native compiler
 
-Independent research laboratory for a native Alchem compiler, isolated from the production [Alchem](https://github.com/SmithOperatingSolutions/alchem) repository.
+A compiler for Alchem written in Alchem. It builds native executables for
+Linux x86-64, and for Linux ARM64 by translating each function, without Go,
+a C compiler or LLVM in the compilation path. It compiles itself: the
+compiler it builds from its own source builds the same bytes again
+(A1 = A2 = A3). The aim is an Alchem that is self-hosted.
 
-## Research tracks
+All 871 counted examples of the syntax and library references give the same
+output, status and errors as programs built by the Go compiler of this
+repository. Where the two still differ, `spec/` says so and why.
 
-- **Go:** reference architecture and experimental native code generator.
-- **Rust:** equivalent native compiler implementation.
-- **Alchem:** a native compiler written in Alchem, with verified self-rebuilds for its documented native profile.
+## Build and run
 
-## Self-hosted compiler
+Requires Linux x86-64 and [mise](https://mise.jdx.dev), which installs the
+Go, Rust and Python of `mise.toml`. From this directory:
 
 ```sh
-bash scripts/build-native.sh
+mise install
+mise run fetch
+mise run build
 build/native/alchem-compiler < examples/alchem-byte-compiler-demo.alc > /tmp/demo
 chmod 700 /tmp/demo
 /tmp/demo
 echo "$?"  # 42
 ```
 
-A1, A2 and A3 rebuild the actual assembled source with identical bytes and pass
-correctness/rejection tests with empty PATH. The standard build publishes A3,
-its source and hash manifest, plus five self-hosted core tools. See
-[core module coverage](docs/core-modules.md), [quickstart](docs/quickstart.md),
-[self-hosting evidence](docs/self-hosting.md) and
-[initial measurements](docs/self-hosting-benchmarks.md). This is bounded native
-profile compatibility; production Alchem remains unchanged.
+On other hosts run the same steps in the linux/amd64 container
+(`mise run linux:fetch`, `mise run linux:build`). See
+[the quickstart](docs/quickstart.md).
 
-The compiler also supports typed strings, concatenation, byte_size, Integer formatting and main-body
-IO.puts/write. Try examples/alchem-string-demo.alc; its native executable prints
-`Hello, Alchem!`. See [the string contract](spec/alchem-string-profile.md).
+Go and Rust build only the seed: the Go compiler's frontend
+(`adapters/alchem`) and a Rust backend (`implementations/rust`) build the
+compiler written in Alchem (`implementations/alchem`) once, and every later
+stage is built by the one before it.
 
-Stored booleans and byte/string predicates are also native; try
-examples/alchem-predicate-demo.alc. See
-[boolean and predicate support](spec/alchem-boolean-profile.md). Source assembly
-compacts formatting; native rebuilds consume the exact same compact source.
+## Linux ARM64
 
-Pinned-runtime grapheme length/slice/first/last, recursive options, tuples and results and
-short-circuit boolean operators are now native too. Try
-examples/alchem-grapheme-options-demo.alc; see [grapheme compatibility](spec/alchem-grapheme-profile.md)
-and [typed options](spec/alchem-options-profile.md).
-[Structural types](spec/alchem-structural-types.md) preserve nested values across
-calls and returns; try examples/alchem-structural-types-demo.alc.
+`scripts/build-arm64.py` builds the compiler that targets ARM64;
+`scripts/fetch-arm64-tools.sh` fetches QEMU and an assembler to run and check
+its programs on x86-64. The design, and its one known difference from the Go
+compiler's ARM64 programs, are in [spec/arm64.md](spec/arm64.md).
 
-The native source limit is now 4,194,303 bytes; see [source capacity](spec/source-capacity.md).
-
-## Bootstrap foundation
-
-1. Specify a minimal typed intermediate representation and Linux x86-64 ABI.
-2. Define shared positive and negative compiler fixtures.
-3. Build Go and Rust prototypes that emit executables without invoking an external compiler in the Alchem compilation path.
-4. Run differential correctness tests and record compile time, peak memory, binary size, and execution performance.
-5. Document decisions and progress before any integration into the production compiler.
-
-**Rules:** test-first changes; deterministic outputs; no modifications to the production Alchem repository; pin dependencies; report measurements rather than assuming Rust or Go wins.
-
-See `docs/architecture.md`, `docs/progress.md`, and `spec/ir.md` for the evolving design.
-
-## Try the experimental source compiler
-
-The [invoice example](examples/invoice.alc) now compiles from real Alchem source
-using the Rust backend. Follow [the quickstart](docs/quickstart.md) to build the
-two prebuilt tools, then:
+## Verification
 
 ```sh
-build/native/alchem-native --source examples/invoice.alc --output /tmp/invoice
-/tmp/invoice
-echo "$?"  # 42
+python3 scripts/verify-quick.py             # the fixpoint and every gate, in parallel
+bash scripts/verify-local.sh --with-source  # the complete suite
 ```
 
-The [hello example](examples/hello-native.alc) prints a literal line using native
-IO.puts. [Developer handoff](docs/HANDOFF.md) records the resume point and next task.
+The complete suite needs ptrace permission for fault injection and register
+measurements; a skip is not a pass. The Go compiler of this repository is the
+reference the gates compare against.
 
-Supported: one main, integer bindings/arithmetic, bounded recursive integer helper
-functions with up to six parameters, signed comparisons, conditional values,
-checked computed byte lists/concatenation and byte-valued helpers, literal IO.puts, and a final System.halt.
-Executable source uses V6 native status checks: values outside 0..255 emit
-E_HALT_STATUS and exit 70. Main/helpers are not executed during compilation.
-This remains a restricted subset; production Alchem is unchanged.
+## Documents
 
-## Local verification
-
-`bash scripts/verify-local.sh` runs the Go baseline. After fetching the locked
-Rust dependencies, `bash scripts/verify-local.sh --with-rust` runs both backends
-and the shared differential suite. See `implementations/rust/README.md` for setup.
-
-`bash scripts/verify-local.sh --with-source` additionally tests the pinned Alchem
-frontend's integer functions and restricted executable-main adapter. It needs Go 1.27 and the cached upstream
-module; see `adapters/alchem/README.md`. This is not a complete source frontend.
-
-Local measurements and their limits are in `docs/benchmarks.md`; pinned upstream
-integration boundaries are in `docs/frontend-boundaries.md`.
-
-The [self-hosting roadmap](docs/self-hosting.md) tracks the path to a compiler written in Alchem; functions/calls, typed conditionals, bounded recursion and immutable bytes are verified. The first compiler
-component written in Alchem is [a bounded ASCII expression lexer](implementations/alchem/lexer.alc),
-with checked integer conversion and an arithmetic parser/evaluator. Bounded runtime byte construction is verified too. Compiler
-declarations/semantics, binary source output and file IO are next.
-An [emitter written in Alchem](implementations/alchem/encoder.alc) now builds
-complete 140-byte Linux ELF images. Try `python3 scripts/emit-alchem-executable.py
---status 42 --output /tmp/exit42` after building the bootstrap tools. It is a
-small executable-producing component, not a general or self-hosted compiler.
-[Self-hosting benchmark gates](docs/self-hosting-benchmarks.md) remain explicit;
-no self-rebuild performance result is claimed.
-
-General signed-integer/string/nested lists, immutable maps and typed named-function
-map/filter/reduce are now native. Try examples/alchem-collections-demo.alc; see
-[collections](spec/alchem-collections-profile.md) and
-[additional library APIs](spec/alchem-library-profile.md). Byte buffers now use
-explicit bytes/b[...] syntax. Source input capacity is 4,194,303 bytes.
+- [Architecture](docs/architecture.md) and [self-hosting](docs/self-hosting.md).
+- `spec/`: the IR, the ABI and executable format, the memory collector, the
+  processes, every profile of the language, and the differences that remain.
+- [Benchmarks](docs/benchmarks.md) and [self-hosting
+  measurements](docs/self-hosting-benchmarks.md).
 
 ## License
 
