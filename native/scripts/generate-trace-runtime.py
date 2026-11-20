@@ -9,8 +9,8 @@ shared=importlib.util.module_from_spec(spec);spec.loader.exec_module(shared)
 
 
 def generate():
-    raw=shared.assemble((ROOT/'spec/trace-x86_64.s').read_text())
-    text=shared.module_text('NativeTraceData','tr',raw,'Generated from spec/trace-x86_64.s.','generated failure-trace runtime')
+    raw,found=shared.assemble_sites((ROOT/'spec/trace-x86_64.s').read_text())
+    text=shared.module_text('NativeTraceData','tr',raw,'Generated from spec/trace-x86_64.s.','generated failure-trace runtime',found)
     return text,len(raw)
 
 

@@ -8,7 +8,7 @@ defmodule NativeTraceData do
   def tr_group_0_0(): bytes do nc_join(tr_part_0(),tr_part_1(),tr_part_2()) end
   def tr_group_0_1(): bytes do nc_join(tr_part_3(),tr_part_4(),b[]) end
   def tr_group_1_0(): bytes do nc_join(tr_group_0_0(),tr_group_0_1(),b[]) end
-  def tr_blob(): bytes do tr_group_1_0() end
+  def tr_blob(): bytes do nc_os(tr_group_1_0(),b[16,3,0,0,12,5,0,0]) end
   # Native smoke test; generated failure-trace runtime.
   def main() do System.halt(0) end
 end

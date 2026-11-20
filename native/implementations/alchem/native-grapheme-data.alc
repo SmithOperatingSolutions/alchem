@@ -19,7 +19,7 @@ defmodule NativeGraphemeData do
   def ng_group_1_0(): bytes do nc_join(ng_group_0_0(),ng_group_0_1(),ng_group_0_2()) end
   def ng_group_1_1(): bytes do nc_join(ng_group_0_3(),b[],b[]) end
   def ng_group_2_0(): bytes do nc_join(ng_group_1_0(),ng_group_1_1(),b[]) end
-  def ng_blob(): bytes do ng_group_2_0() end
+  def ng_blob(): bytes do nc_os(ng_group_2_0(),b[140,2,0,0]) end
   # Native smoke test; assembled with the compiler.
   def main() do System.halt(0) end
 end

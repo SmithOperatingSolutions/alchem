@@ -19,7 +19,7 @@ defmodule NativeFileData do
   def fr_group_1_0(): bytes do nc_join(fr_group_0_0(),fr_group_0_1(),fr_group_0_2()) end
   def fr_group_1_1(): bytes do nc_join(fr_group_0_3(),b[],b[]) end
   def fr_group_2_0(): bytes do nc_join(fr_group_1_0(),fr_group_1_1(),b[]) end
-  def fr_blob(): bytes do fr_group_2_0() end
+  def fr_blob(): bytes do nc_os(fr_group_2_0(),b[221,0,0,0,36,1,0,0,174,2,0,0,232,2,0,0,95,3,0,0,126,3,0,0,103,5,0,0,116,5,0,0]) end
   # Native smoke test; generated File.read runtime.
   def main() do System.halt(0) end
 end

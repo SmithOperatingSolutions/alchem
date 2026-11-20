@@ -1,0 +1,42 @@
+defmodule NativeWindows do
+  # Windows x64 (spec/windows.md). nc_win() is 1 in the compiler
+  # scripts/build-windows.py makes and 0 here: the x86-64 code is the same,
+  # but each system call is ud2 (0F 0B), which the vectored exception
+  # handler of the Windows layer (spec/windows-x86_64.s) makes with kernel32,
+  # and the image is a PE file.
+  def nc_win(): integer do 0 end
+
+  # The second byte of a system call: 0F 05 syscall, or 0F 0B ud2.
+  def nc_sc(): integer do if nc_win() == 1 do 11 else 5 end end
+
+  # code, a runtime assembled from spec/*-x86_64.s, with the system call at
+  # each offset in sites (four bytes each, scripts/windows_sites.py) made
+  # ud2 on Windows.
+  def nc_os(code: bytes, sites: bytes): bytes do
+    if nc_win() == 0 do code else nw_os_at(code,sites,0,0) end
+  end
+  def nw_os_at(code: bytes, sites: bytes, i: integer, from: integer): bytes do
+    if i >= Enum.count(sites) do nc_slice(code,from,Enum.count(code)) else
+      at = nc_long(sites,i)
+      nc_join(nc_slice(code,from,at+1),b[11],nw_os_at(code,sites,i+4,at+2))
+    end
+  end
+
+  # The PE file of an image (its ELF header and code, loaded at 0x400000):
+  # the headers and the Windows layer (native-windows-data.alc), then the
+  # image in a section of its own at 0x400000, padded to 512 bytes.
+  # The executable of the image with its ELF header: a PE file on Windows.
+  def nc_elf_or_pe(elf: bytes): bytes do if nc_win() == 1 do nw_pe(elf) else elf end end
+  def nw_pe(image: bytes): bytes do
+    size = Enum.count(image)
+    padded = nc_units(size+511,512)*512
+    head = nw_put(nw_put(nw_put(nw_prefix(),nw_size_of_image(),nw_image_rva()+nc_units(size+4095,4096)*4096),nw_image_vsize(),size),nw_image_raw(),padded)
+    nc_join(head,image,nc_zeros(padded-size))
+  end
+  def nw_put(data: bytes, at: integer, value: integer): bytes do
+    nc_join(nc_slice(data,0,at),nc_u32(value),nc_slice(data,at+4,Enum.count(data)))
+  end
+
+  # Native smoke test; the Windows helpers.
+  def main() do System.halt(0) end
+end

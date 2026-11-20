@@ -21,8 +21,8 @@ def generate():
     assert 'ERRNO_COUNT' in asm and '# ERRNO_DATA' in asm and '# UTF8_WIDTH' in asm
     asm=asm.replace('# UTF8_WIDTH',macro).replace('ERRNO_COUNT',str(len(messages)))
     asm=asm.replace('# ERRNO_DATA','\n'.join(' .byte '+','.join(map(str,packed[i:i+32])) for i in range(0,len(packed),32)))
-    raw=shared.assemble(asm)
-    text=shared.module_text('NativeFileData','fr',raw,'Generated from spec/file-read-x86_64.s and spec/errno-messages.json.','generated File.read runtime')
+    raw,found=shared.assemble_sites(asm)
+    text=shared.module_text('NativeFileData','fr',raw,'Generated from spec/file-read-x86_64.s and spec/errno-messages.json.','generated File.read runtime',found)
     return text,len(raw)
 
 

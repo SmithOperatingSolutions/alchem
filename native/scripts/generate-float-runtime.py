@@ -9,8 +9,8 @@ shared=importlib.util.module_from_spec(spec);spec.loader.exec_module(shared)
 
 
 def generate():
-    raw=shared.assemble((ROOT/'spec/float-x86_64.s').read_text())
-    text=shared.module_text('NativeFloatData','fl',raw,'Generated from spec/float-x86_64.s.','generated float runtime')
+    raw,found=shared.assemble_sites((ROOT/'spec/float-x86_64.s').read_text())
+    text=shared.module_text('NativeFloatData','fl',raw,'Generated from spec/float-x86_64.s.','generated float runtime',found)
     return text,len(raw)
 
 
