@@ -209,7 +209,12 @@ def reference(directory, pinned_compiler, compiler, runner):
                 except subprocess.TimeoutExpired:
                     got.append(('timed out', b''))
             if got[0] != got[1]:
-                failed.append((name, f'pinned {got[0][0]} {got[0][1][:300]!r}\n  native {got[1][0]} {got[1][1][:300]!r}'))
+                import difflib
+                lines = difflib.unified_diff(got[0][1].decode(errors='replace').split('\n'),
+                                             got[1][1].decode(errors='replace').split('\n'),
+                                             'pinned', 'native', lineterm='', n=0)
+                diff = '\n'.join('    ' + line[:240] for line in list(lines)[:40])
+                failed.append((name, f'status pinned {got[0][0]}, native {got[1][0]}\n{diff}'))
     for name, why in failed:
         print(f'FAIL {name}: {why}')
     print(f'{len(names) - timed - len(failed)} of {len(names) - timed} print what the pinned compiler\'s Windows programs print'
