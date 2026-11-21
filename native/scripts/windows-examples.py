@@ -293,28 +293,39 @@ def check_one(directory, compiler, number, name, runner):
     want = (directory / (number + '.out')).read_bytes()
     coded = directory / (number + '.code')
     status = int(coded.read_text()) if coded.exists() else 0
-    with tempfile.TemporaryDirectory() as d:
-        d = Path(d)
-        # A temporary directory of its own: gate programs name files there.
-        (d / 'tmp').mkdir()
-        # Under Wine as a path of its drive Z:, which it takes there.
-        tmp = ('Z:' + str(d / 'tmp').replace('/', '\\')) if runner else str(d / 'tmp')
-        env = dict(os.environ, TMP=tmp, TEMP=tmp)
-        built = subprocess.run([*runner, compiler], input=source, capture_output=True, timeout=300)
-        if built.returncode:
-            return name, f'did not build: {built.stderr.decode(errors="replace")[:300]}'
-        program = d / 'p.exe'
-        program.write_bytes(built.stdout)
-        run = d / 'run'
-        run.mkdir()
-        try:
-            got = subprocess.run([*runner, str(program)], capture_output=True, timeout=120, cwd=run, stdin=subprocess.DEVNULL, env=env)
-        except subprocess.TimeoutExpired:
-            return name, 'timed out'
-        if got.returncode != status or got.stdout != want:
-            return name, (f'exit {got.returncode}\n  want {want[:300]!r}\n  got  {got.stdout[:300]!r}\n'
-                          f'  stderr {got.stderr.decode(errors="replace")[:300]!r}')
-    return name, None
+    d = Path(tempfile.mkdtemp())
+    why = check_in(d, compiler, source, want, status, runner)
+    # A process the program left running holds p.exe on Windows.
+    try:
+        shutil.rmtree(d)
+    except OSError as e:
+        held = f'a process of it outlived it, holding {Path(e.filename).name}'
+        why = f'{why}; {held}' if why else held
+    return name, why
+
+
+def check_in(d, compiler, source, want, status, runner):
+    """Why the program in d prints other than it should, or None."""
+    # A temporary directory of its own: gate programs name files there.
+    (d / 'tmp').mkdir()
+    # Under Wine as a path of its drive Z:, which it takes there.
+    tmp = ('Z:' + str(d / 'tmp').replace('/', '\\')) if runner else str(d / 'tmp')
+    env = dict(os.environ, TMP=tmp, TEMP=tmp)
+    built = subprocess.run([*runner, compiler], input=source, capture_output=True, timeout=300)
+    if built.returncode:
+        return f'did not build: {built.stderr.decode(errors="replace")[:300]}'
+    program = d / 'p.exe'
+    program.write_bytes(built.stdout)
+    run = d / 'run'
+    run.mkdir()
+    try:
+        got = subprocess.run([*runner, str(program)], capture_output=True, timeout=120, cwd=run, stdin=subprocess.DEVNULL, env=env)
+    except subprocess.TimeoutExpired:
+        return 'timed out'
+    if got.returncode != status or got.stdout != want:
+        return (f'exit {got.returncode}\n  want {want[:300]!r}\n  got  {got.stdout[:300]!r}\n'
+                f'  stderr {got.stderr.decode(errors="replace")[:300]!r}')
+    return None
 
 
 def check(directory, compiler, jobs, runner):
@@ -331,8 +342,6 @@ def check(directory, compiler, jobs, runner):
     failed = [(n, why) for n, why in results if why]
     for name, why in failed:
         print(f'FAIL {name}: {why}')
-    for name in held:
-        print(f'note: a process of {name} outlived it, holding its directory')
     print(f'{len(names) - len(failed)} of {len(names)} programs print on Windows what they print on Linux')
     return 1 if failed else 0
 
