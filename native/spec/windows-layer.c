@@ -104,6 +104,7 @@ extern W u32 (*imp_GetFullPathNameW)(const u16 *, u32, u16 *, u16 **);
 extern W u32 (*imp_GetFileType)(u64);
 extern W i32 (*imp_PeekNamedPipe)(u64, void *, u32, u32 *, u32 *, u32 *);
 extern W u64 (*imp_CreateThread)(void *, u64, void *, void *, u32, u32 *);
+extern W i32 (*imp_SetNamedPipeHandleState)(u64, u32 *, u32 *, u32 *);
 extern W i32 (*imp_DeleteFileW)(const u16 *);
 extern W i32 (*imp_RemoveDirectoryW)(const u16 *);
 extern W void (*imp_SetLastError)(u32);
@@ -1387,16 +1388,19 @@ int copy_fault(u8 *record) {
    has ended (it is the one thread), so a copy that wrote more than the
    pipe holds would wait for ever: what it writes is kept, and written by
    a thread of its own once the program runs again, to a duplicate of the
-   handle that it closes after (the reader's end of file). One pipe, the
-   first the copy writes to that is not the program's standard output or
-   errors, which someone else reads; the first 16 bytes kept are the
-   handle and the length. */
+   handle that it closes after (the reader's end of file). What the pipe
+   has room for is written before the program runs again, as a copy that
+   never waited would have left it: the program then finds its trace
+   there and does not let other processes run while it waits for it. One
+   pipe, the first the copy writes to that is not the program's standard
+   output or errors, which someone else reads; the first 32 bytes kept
+   are the handle, the length left and where it starts. */
 #define SPILL_ROOM (1ull << 32)
 static u8 *spill;
 static u64 spill_handle, spill_used, spill_committed, fork_standard[3];
 
 static W u32 spill_writer(void *given) {
-  u8 *kept = given, *at = kept + 16;
+  u8 *kept = given, *at = *(u8 **)(kept + 16);
   u64 h = *(u64 *)kept, left = *(u64 *)(kept + 8);
   while (left) {
     u32 done = 0;
@@ -1417,7 +1421,7 @@ static i64 spill_write(i64 fd, i64 data, i64 n) {
   for (int k = 0; k < 3; k++) if (h == fork_standard[k]) return NOT_MINE;
   if (!spill) {
     if (!(spill = imp_VirtualAlloc(0, SPILL_ROOM, 0x2000, 4))) return NOT_MINE;
-    spill_used = 16;
+    spill_used = 32;
     spill_committed = 0;
   }
   if (spill_used + (u64)n > SPILL_ROOM) return -ENOSPC;
@@ -1436,9 +1440,24 @@ static i64 spill_write(i64 fd, i64 data, i64 n) {
 static void spill_send(void) {
   if (spill) {
     u64 me = imp_GetCurrentProcess(), h = 0, thread = 0;
-    if (imp_DuplicateHandle(me, spill_handle, me, &h, 0, 0, 2)) {
+    u8 *at = spill + 32;
+    u64 left = spill_used - 32;
+    /* What fits, without waiting (PIPE_NOWAIT, then PIPE_WAIT again). */
+    u32 mode = 1;
+    if (imp_SetNamedPipeHandleState(spill_handle, &mode, 0, 0)) {
+      while (left) {
+        u32 done = 0;
+        if (!imp_WriteFile(spill_handle, at, left > 4096 ? 4096 : (u32)left, &done, 0) || !done) break;
+        at += done;
+        left -= done;
+      }
+      mode = 0;
+      imp_SetNamedPipeHandleState(spill_handle, &mode, 0, 0);
+    }
+    if (left && imp_DuplicateHandle(me, spill_handle, me, &h, 0, 0, 2)) {
       *(u64 *)spill = h;
-      *(u64 *)(spill + 8) = spill_used - 16;
+      *(u64 *)(spill + 8) = left;
+      *(u8 **)(spill + 16) = at;
       thread = imp_CreateThread(0, 0, spill_writer, spill, 0, 0);
       if (thread) imp_CloseHandle(thread);
       else { imp_CloseHandle(h); imp_VirtualFree(spill, 0, 0x8000); }
