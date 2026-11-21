@@ -930,7 +930,8 @@
       f
     else
       n = Sys.peek(g + 240)
-      m = Sys.call(9, 0, n, 3, 16418, -1, 0)
+      # MAP_STACK too on Windows: the layer commits it as it is used.
+      m = Sys.call(9, 0, n, 3, if Sys.windows() == 1 do 16418 + 131072 else 16418 end, -1, 0)
       if m < 0 do
         if n <= 262144 do System.halt(71) end
         Sys.poke(g + 240, if n >= 2097152 do div(n, 8) else 262144 end)

@@ -82,15 +82,23 @@ those not in KERNEL32).
   one (the 16 GiB arena, `MAP_NORESERVE`) is only reserved, and the handler
   commits 64 KiB around an address when touching it faults. A buffer the
   kernel reads or writes for a call is committed first, since Windows does
-  not fault it in for the kernel as Linux does. Stacks (the main one of
-  1 GiB, a process's of 256 MiB) are committed whole although they are
-  `MAP_NORESERVE`: Windows writes the record of an exception on the stack
-  that faulted, so a page of a stack first touched uncommitted could not
-  even reach the handler, and Windows grows only the stack a thread was
-  started with, not those the program switches to itself. Committing
-  costs commit charge, not memory: a page is made when touched. When the
-  charge runs out the library takes smaller stacks, an eighth at a time,
-  as it does on Linux under a limit (spec/alchem-processes.md).
+  not fault it in for the kernel as Linux does.
+- **Stacks** grow as Windows grows a thread's. A Windows program maps its
+  main stack and each process's with `MAP_STACK`; the layer reserves it
+  whole, commits its top 64 KiB, and puts 68 KiB of guard pages below
+  them. The kernel commits a guard page when it is touched and moves the
+  guard down, while the TEB names the stack (`StackBase`, `StackLimit`,
+  `DeallocationStack`): the program sets them when it starts on its stack
+  and at each switch of processes (`nw_stack_teb`, `nw_stack_keep`), and
+  the stack's first page keeps its limit and top while another runs.
+  Windows writes the record of an exception on the stack that faulted, so
+  a stack could not be grown by the handler; and the collector and other
+  routines go deep without a function's check, as the kernel lets them on
+  Linux. The stack guarantee (64 KiB, `SetThreadStackGuarantee`) keeps the
+  band that deep; a function with a frame of more than 32 KiB touches its
+  pages from the top down first (`nw_probe`, as `__chkstk`). The handler
+  runs on the thread's own stack, 512 KiB of which are committed at the
+  start.
 - **Faults.** The SIGSEGV handler `rt_sigaction` installs (`zf_guard`) is
   called as Linux would, with the address in its siginfo and RIP in its
   ucontext; if it moves RIP the program goes on there.

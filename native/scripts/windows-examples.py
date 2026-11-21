@@ -260,7 +260,9 @@ def check_one(directory, compiler, number, name, runner):
         d = Path(d)
         # A temporary directory of its own: gate programs name files there.
         (d / 'tmp').mkdir()
-        env = dict(os.environ, TMP=str(d / 'tmp'), TEMP=str(d / 'tmp'))
+        # Under Wine as a path of its drive Z:, which it takes there.
+        tmp = ('Z:' + str(d / 'tmp').replace('/', '\\')) if runner else str(d / 'tmp')
+        env = dict(os.environ, TMP=tmp, TEMP=tmp)
         built = subprocess.run([*runner, compiler], input=source, capture_output=True, timeout=300)
         if built.returncode:
             return name, f'did not build: {built.stderr.decode(errors="replace")[:300]}'
@@ -282,8 +284,13 @@ def check(directory, compiler, jobs, runner):
     directory = Path(directory)
     compiler = str(Path(compiler).resolve())
     names = (directory / 'names.txt').read_text().split('\n')[:-1]
+    # Wine takes no TMP of a program's own: there the programs that name
+    # files in the temporary directory (DiskStore's) run one at a time.
+    alone = [i for i in range(len(names)) if runner and names[i].startswith('gate/diskstore/')]
+    together = [i for i in range(len(names)) if i not in alone]
     with ThreadPoolExecutor(jobs) as pool:
-        results = list(pool.map(lambda i: check_one(directory, compiler, f'{i:04}', names[i], runner), range(len(names))))
+        results = list(pool.map(lambda i: check_one(directory, compiler, f'{i:04}', names[i], runner), together))
+    results += [check_one(directory, compiler, f'{i:04}', names[i], runner) for i in alone]
     failed = [(n, why) for n, why in results if why]
     for name, why in failed:
         print(f'FAIL {name}: {why}')

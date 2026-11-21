@@ -1279,6 +1279,56 @@ void copy_resume_c(void) {
   imp_RtlRestoreContext(c, 0);
 }
 
+/* --- Stacks ---------------------------------------------------------------
+
+   A stack (an anonymous mapping with MAP_STACK, which a Windows program gives
+   its main stack and each process's) is reserved whole and grows as
+   Windows grows a thread's stack: its top 64 KiB committed, below them a
+   band of guard pages, which the kernel commits when one is touched and
+   moves down, as long as the TEB names the stack (StackBase, StackLimit,
+   DeallocationStack). Windows writes the record of an exception on the
+   stack that faulted, so the stack could not grow through the handler.
+   The program sets the TEB when it starts on its stack and when it
+   switches stacks (nc_stack_init, Process.__switch); a stack's first page
+   keeps its limit and top while another runs: its first word the limit
+   (the lowest committed address), its second the top. The stack guarantee
+   (64 KiB, set at the start) keeps the band of guard pages that deep, so a
+   frame of up to 64 KiB does not step over it; a function with a larger
+   frame touches its pages from the top down first (nc_guard). */
+
+#define STACK_TOP (64 << 10)
+#define STACK_GUARD (68 << 10)
+
+static i64 sys_mmap_anonymous(i64 size, i64 flags) {
+  u64 n = ((u64)size + 4095) & ~4095ull;
+  if (!n) return -EINVAL;
+  if (n > 0x100000000ull) {
+    void *m = imp_VirtualAlloc(0, n, 0x2000, 4);                 /* MEM_RESERVE */
+    if (!m) return -ENOMEM;
+    region_add((u64)m, n);
+    return (i64)m;
+  }
+  if ((flags & 0x20000) && n >= (256 << 10)) {                   /* MAP_STACK */
+    u8 *m = imp_VirtualAlloc(0, n, 0x2000, 4);
+    if (!m) return -ENOMEM;
+    u64 top = (u64)m + n, limit = top - STACK_TOP;
+    /* PAGE_READWRITE | PAGE_GUARD for the band. */
+    if (!imp_VirtualAlloc((void *)limit, STACK_TOP, 0x1000, 4) || !imp_VirtualAlloc((void *)(limit - STACK_GUARD), STACK_GUARD, 0x1000, 0x104)
+        || !imp_VirtualAlloc(m, 4096, 0x1000, 4)) {
+      imp_VirtualFree(m, 0, 0x8000);
+      return -ENOMEM;
+    }
+    ((u64 *)m)[0] = limit;
+    ((u64 *)m)[1] = top;
+    region_add((u64)m, n);
+    return (i64)m;
+  }
+  void *m = imp_VirtualAlloc(0, n, 0x3000, 4);
+  if (!m) return -ENOMEM;
+  region_add((u64)m, n);
+  return (i64)m;
+}
+
 /* --- Processes -------------------------------------------------------- */
 
 /* The processes started (pid, handle); a pid is looked up here for wait4
@@ -1638,7 +1688,7 @@ i64 layer_call(unsigned char *c) {
   case 17: return sys_pio(ARG(c, 0), ARG(c, 1), ARG(c, 2), ARG(c, 3), 0);
   case 18: return sys_pio(ARG(c, 0), ARG(c, 1), ARG(c, 2), ARG(c, 3), 1);
   case 9:                                                      /* mmap */
-    if (ARG(c, 3) & 0x20 || ARG(c, 4) < 0) return NOT_MINE;
+    if (ARG(c, 3) & 0x20 || ARG(c, 4) < 0) return sys_mmap_anonymous(ARG(c, 1), ARG(c, 3));
     return sys_mmap_file(ARG(c, 1), ARG(c, 4), ARG(c, 5));
   case 25: return sys_mremap(ARG(c, 0), ARG(c, 1), ARG(c, 2), ARG(c, 3));
   case 74: case 75: return sys_fsync(ARG(c, 0));               /* fsync, fdatasync */

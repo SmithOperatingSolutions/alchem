@@ -22,6 +22,20 @@
         .globl start
 start:
         sub rsp, 40
+        # The handler runs on this thread's own stack, which stops growing
+        # once the TEB names the program's (windows-layer.c, Stacks): 512 KiB
+        # of it are touched now, from the top down, while it still grows.
+        mov rax, rsp
+        mov ecx, 128
+.Lprobe:
+        sub rax, 4096
+        cmp byte ptr [rax], 0
+        dec ecx
+        jnz .Lprobe
+        # A band of 64 KiB of guard pages below each stack's committed part.
+        mov dword ptr [rsp+32], 65536
+        lea rcx, [rsp+32]
+        call [rip+imp_SetThreadStackGuarantee]
         mov ecx, 1
         lea rdx, [rip+handler]
         call [rip+imp_AddVectoredExceptionHandler]

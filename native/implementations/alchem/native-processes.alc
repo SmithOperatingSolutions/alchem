@@ -63,7 +63,10 @@ defmodule NativeProcesses do
   # The arguments are on the stack, the last on top; the result is in RAX.
   def ac_emit(op: integer): bytes do
     if op > 6 do dn_emit(op) else if op < 3 do b[88] else if op == 3 do
-      b[94,95,72,141,5,81,0,0,0,80,72,137,39,72,137,111,8,76,137,127,16,73,139,70,240,72,137,71,24,73,139,70,248,72,137,71,32,72,139,135,0,1,0,0,72,133,192,116,6,72,137,96,248,235,7,73,137,166,8,254,255,255,72,139,38,72,139,110,8,76,139,126,16,72,139,70,24,73,137,70,240,72,139,70,32,73,137,70,248,195,49,192]
+      # A Windows program also keeps the stack's limit as the kernel has
+      # grown it and names the next stack in the TEB (nw_stack_keep,
+      # nw_stack_teb); the address it resumes at moves by their length.
+      nc_join(nc_join(b[94,95,72,141,5,81+Enum.count(nw_stack_keep())+Enum.count(nw_stack_teb()),0,0,0,80,72,137,39,72,137,111,8,76,137,127,16,73,139,70,240,72,137,71,24,73,139,70,248,72,137,71,32],nw_stack_keep(),b[72,139,135,0,1,0,0,72,133,192,116,6,72,137,96,248,235,7,73,137,166,8,254,255,255,72,139,38,72,139,110,8,76,139,126,16,72,139,70,24,73,137,70,240,72,139,70,32,73,137,70,248]),nw_stack_teb(),b[195,49,192])
     else if op == 6 do b[65,95,49,192] else if op == 4 do b[235,7,65,90,65,255,18,15,11,72,141,5,242,255,255,255] else
       b[76,139,84,36,8,72,139,60,36,65,255,18,72,133,192,116,239,72,131,196,16]
     end end end end end
