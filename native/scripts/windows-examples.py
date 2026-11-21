@@ -104,6 +104,7 @@ GATE_SKIPPED = {
     '89358ba4d72c650c': 'tls: connectex texts',
     'f228da4432c4b763': 'tls: connectex, File not found. texts',
     'e82096a75dc06a41': 'tls: connectex texts',
+    'c9f23f8f91d42206': 'system 68: a wildcard that ends in a backslash, which parts directories on Windows',
     'e685b07ea56d3832': 'system 0: Windows\' file, path and exec texts, Unix programs and places',
     '7fff6bf2872953ce': 'system 1: Windows\' file, path and exec texts, Unix programs and places',
     'e50e781459c7b456': 'system 2: Windows\' file, path and exec texts, Unix programs and places',
@@ -425,7 +426,7 @@ def load_examples():
 
 # The fewest upstream examples prepare may write: fewer means the Linux
 # compiler no longer builds or runs some, which would pass unseen here.
-EXAMPLES_AT_LEAST = 830
+EXAMPLES_AT_LEAST = 850
 
 
 def prepare(out, compiler):
