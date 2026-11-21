@@ -235,6 +235,11 @@ jobs:
       - name: The upstream examples and the gates' programs
         # Each prints on Windows what it prints on Linux (spec/windows.md).
         run: python windows-examples.py check examples ./alchem-compiler-windows.exe --jobs 4
+      - name: The programs with processes, twenty times each
+        # A result that depends on how processes fall in time shows as one
+        # run in a few: none may.
+        if: ${{ !cancelled() }}
+        run: python windows-examples.py check examples ./alchem-compiler-windows.exe --jobs 4 --only gate/processes/ --repeat 20
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: ${{ !cancelled() }}
         with:

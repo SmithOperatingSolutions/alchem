@@ -2,7 +2,7 @@
 """The upstream examples on Windows (spec/windows.md).
 
     windows-examples.py prepare DIR [--compiler build/dev/A2]
-    windows-examples.py check DIR COMPILER.exe [--jobs N] [--wine]
+    windows-examples.py check DIR COMPILER.exe [--jobs N] [--wine] [--only PREFIX --repeat N]
     windows-examples.py pinned OUT.exe
     windows-examples.py reference DIR PINNED.exe COMPILER.exe [--wine]
 
@@ -18,7 +18,9 @@ programs for Windows alone, with what they print there.
 
 check (on Windows) builds each with the Windows compiler, runs it in an
 empty directory and compares what it prints; it ends 1 if any differs.
-With --wine it runs them under Wine (scripts/run-windows) on Linux.
+With --wine it runs them under Wine (scripts/run-windows) on Linux. With
+--only PREFIX --repeat N it runs the programs whose name starts with PREFIX
+N times each: those whose processes could fall otherwise in time.
 
 What Windows prints otherwise (SKIPPED, GATE_SKIPPED) is not passed over:
 prepare writes those programs into DIR/reference too, and reference (on
@@ -498,10 +500,21 @@ def check_in(d, compiler, directory, case, runner):
     return None
 
 
-def check(directory, compiler, jobs, runner):
+def check(directory, compiler, jobs, runner, only='', repeat=1):
     directory = Path(directory)
     compiler = str(Path(compiler).resolve())
     names = (directory / 'names.txt').read_text().split('\n')[:-1]
+    if only:
+        # Some of them, each several times: a program whose result depends
+        # on how its processes fall in time fails one run in a few.
+        chosen = [i for i in range(len(names)) if names[i].startswith(only)] * repeat
+        with ThreadPoolExecutor(jobs) as pool:
+            results = list(pool.map(lambda i: check_one(directory, compiler, f'{i:04}', names[i], runner), chosen))
+        failed = [(n, why) for n, why in results if why]
+        for name, why in failed:
+            print(f'FAIL {name}: {why}')
+        print(f'{len(chosen) - len(failed)} of {len(chosen)} runs of {len(chosen) // repeat} programs ({only}, {repeat} times each) print what they print on Linux')
+        return 1 if failed or not chosen else 0
     # Wine takes no TMP of a program's own: there the programs that name
     # files in the temporary directory (DiskStore's) run one at a time.
     alone = [i for i in range(len(names)) if runner and names[i].startswith('gate/diskstore/')]
@@ -533,7 +546,9 @@ def main():
     if len(args) >= 3 and args[0] == 'check':
         jobs = int(args[args.index('--jobs') + 1]) if '--jobs' in args else 4
         runner = [str(ROOT / 'scripts/run-windows')] if '--wine' in args else []
-        return check(args[1], args[2], jobs, runner)
+        only = args[args.index('--only') + 1] if '--only' in args else ''
+        repeat = int(args[args.index('--repeat') + 1]) if '--repeat' in args else 1
+        return check(args[1], args[2], jobs, runner, only, repeat)
     sys.exit(__doc__)
 
 
