@@ -341,6 +341,15 @@ REFERENCE_TIMING = {'3dc7ee2df1372fb7': 'processes: the parts a pipe is read in'
                     'c73676a8ef191eae': 'nodes: Process.count as Go schedules on Windows'}
 
 
+def named(text, source):
+    """Output with the file the pinned compiler was given as <stdin>, which
+    the Windows compiler reads its program from: the pinned compiler names
+    it with slashes."""
+    for form in (str(source), str(source).replace('\\', '/')):
+        text = text.replace(form.encode(), b'<stdin>')
+    return text
+
+
 def reference(directory, pinned_compiler, compiler, runner):
     import hashlib
     directory = Path(directory) / 'reference'
@@ -376,7 +385,7 @@ def reference(directory, pinned_compiler, compiler, runner):
                 env = dict(os.environ, TMP=str(run / 'tmp'), TEMP=str(run / 'tmp'), **case['env'])
                 try:
                     r = subprocess.run([*runner, str(d / program)], capture_output=True, timeout=120, cwd=run, env=env, **given(case))
-                    got.append((r.returncode, *(normal(text, run).replace(str(d / 'p.alc').encode(), b'<stdin>') for text in (r.stdout, r.stderr))))
+                    got.append((r.returncode, *(named(normal(text, run), d / 'p.alc') for text in (r.stdout, r.stderr))))
                 except subprocess.TimeoutExpired:
                     # Never equal to the other's, which may have timed out too.
                     got.append((f'{program} timed out', b'', b''))
