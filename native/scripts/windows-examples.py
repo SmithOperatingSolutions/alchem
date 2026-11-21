@@ -107,47 +107,179 @@ GATE_SKIPPED = {
 }
 
 
-def gate_runs():
-    """(name, program, status, output) of every gate program frozen as
-    (program, status, output, errors) that Windows prints alike."""
+# Programs compared with the pinned compiler's on Windows alone (reference):
+# what the Windows layer and the library's view of Windows were found, by
+# reading, to do otherwise than Go there. (name, program, environment).
+REFERENCE_PROGRAMS = [
+    # A failing process's trace is written by a copy of the program into a
+    # pipe the program reads once the copy has ended: one longer than the pipe.
+    ('windows/a trace longer than its pipe', 'defmodule T do\n  def main() do\n'
+     '    w: pid[integer] = Process.spawn(fn(self: pid[integer]): integer do raise(String.duplicate("x", 2000000)) end, 1)\n'
+     '    {ended, why} = Process.await(w, 20000)\n'
+     '    IO.puts(inspect({ended, byte_size(why)}))\n'
+     '    IO.puts(inspect(byte_size(Process.report(w))))\n'
+     '  end\nend\n', {}),
+    # Copies made at many depths of the stack, and what the program holds
+    # after each: the copy's pages are put back, none of the program's lost.
+    ('windows/failing processes at many depths', 'defmodule T do\n'
+     '  def deep(n: integer): integer do\n    if n == 0 do raise("at the bottom") else 1 + deep(n - 1) end\n  end\n'
+     '  def fill(n: integer, kept: list[integer]): list[integer] do\n    if n == 0 do kept else fill(n - 1, [n * 7 | kept]) end\n  end\n'
+     '  def rounds(i: integer, bad: integer): integer do\n    if i > 300 do bad else\n'
+     '      w: pid[integer] = Process.spawn(fn(self: pid[integer]): integer do deep(i * 37) end, 1)\n'
+     '      {ended, why} = Process.await(w, 20000)\n'
+     '      fine = ended and why == "at the bottom" and String.starts_with?(Process.report(w), "<stdin>:3:")\n'
+     '      rounds(i + 1, if fine do bad else bad + 1 end)\n    end\n  end\n'
+     '  def main() do\n    kept = fill(200000, [])\n    before = Enum.sum(kept)\n'
+     '    IO.puts(inspect(rounds(0, 0)))\n'
+     '    IO.puts(inspect({Enum.sum(kept) == before, Enum.sum(fill(200000, [])) == before}))\n'
+     '  end\nend\n', {}),
+    # More mappings in a program's life than the layer's table of them has
+    # room for, then a copy, then mappings again.
+    ('windows/more mappings than the table holds', 'defmodule T do\n'
+     '  def churn(n: integer, total: integer): integer do\n'
+     '    if n == 0 do total else churn(n - 1, total + length(Enum.uniq([n, n, 1, 2, 1]))) end\n  end\n'
+     '  def main() do\n    IO.puts(inspect(churn(3000, 0)))\n'
+     '    kept = Enum.to_list(1..100000)\n'
+     '    w: pid[integer] = Process.spawn(fn(self: pid[integer]): integer do raise("after the table") end, 1)\n'
+     '    IO.puts(inspect(Process.await(w, 20000)))\n    IO.puts(Process.report(w))\n'
+     '    IO.puts(inspect({churn(3000, 0), Enum.sum(kept)}))\n'
+     '  end\nend\n', {}),
+    # os.Setenv on Windows sets the variable whatever case it has.
+    ('windows/put_env in another case', 'defmodule T do\n  def main() do\n'
+     '    IO.puts(inspect(System.get_env("ALCHEMCASE")))\n'
+     '    System.put_env("ALCHEMCASE", "two")\n'
+     '    IO.puts(inspect({System.get_env("alchemcase"), System.get_env("AlchemCase")}))\n'
+     '    IO.puts(inspect(System.cmd("cmd", ["/c", "echo %ALCHEMCASE%"])))\n'
+     '  end\nend\n', {'AlchemCase': 'one'}),
+    # os.Stat follows a link, os.Lstat does not; a link to a directory, its
+    # target written from the link's directory, is a directory's.
+    ('windows/links', 'defmodule T do\n'
+     '  def kind(r: result[File.Stat, string]): string do\n    case r do\n'
+     '      ok(s) -> inspect({s.size, s.type})\n      error(e) -> e\n    end\n  end\n'
+     '  def main() do\n    File.write("t.txt", "hello")\n    File.mkdir_p("d/sub")\n    File.write("d/sub/f.txt", "x")\n'
+     '    IO.puts(inspect(File.ln_s("t.txt", "l.txt")))\n'
+     '    IO.puts(kind(File.stat("l.txt")))\n    IO.puts(kind(File.lstat("l.txt")))\n'
+     '    IO.puts(inspect(File.read("l.txt")))\n'
+     '    IO.puts(inspect(File.ln_s("sub", "d/link")))\n'
+     '    IO.puts(inspect({File.dir?("d/link"), File.ls("d/link"), File.read("d/link/f.txt")}))\n'
+     '  end\nend\n', {}),
+    # exec.LookPath with no extensions to try takes the file as it is named.
+    ('windows/a program found without extensions', 'defmodule T do\n  def main() do\n'
+     '    File.write("tool", "")\n    File.write("other.exe", "")\n'
+     '    IO.puts(inspect({System.find_executable(Path.expand("tool")) == some(Path.expand("tool")), System.find_executable(Path.expand("other"))  == none}))\n'
+     '  end\nend\n', {'PATHEXT': ';'}),
+    # An environment of more than a million characters, given to a program.
+    ('windows/a large environment', 'defmodule T do\n'
+     '  def set(n: integer): integer do\n'
+     '    if n == 0 do 0 else\n      System.put_env("ALCHEM_LARGE_#{n}", String.duplicate("v", 30000))\n      set(n - 1)\n    end\n  end\n'
+     '  def main() do\n    set(40)\n'
+     '    IO.puts(inspect(System.cmd("cmd", ["/c", "echo ok"])))\n'
+     '  end\nend\n', {}),
+    # filepath.Base, Dir and the library's slashes.
+    ('windows/names of roots', 'defmodule T do\n  def main() do\n'
+     '    IO.puts(inspect([Path.basename("/"), Path.basename("C:\\\\"), Path.basename("a\\\\b"), Path.basename("C:"), Path.basename("\\\\\\\\host\\\\share\\\\")]))\n'
+     '    IO.puts(inspect([Path.dirname("/"), Path.dirname("C:\\\\"), Path.dirname("a\\\\b"), Path.dirname("C:\\\\a")]))\n'
+     '  end\nend\n', {}),
+]
+
+
+# The gates whose RUNS are not programs with a frozen result: speed and
+# memory_reclaim measure, arm64 names programs of examples/, and testing
+# runs test files with alchem (CI runs alchem.exe test on Windows).
+NOT_PROGRAMS = {'arm64', 'memory_reclaim', 'speed', 'testing'}
+
+
+def gate_case(gate, module, i, run):
+    """A record of RUNS as a program: its source, status, output, errors,
+    environment, input and the files of its directory. Each gate keeps its
+    own form; one that is none of these is an error, not passed over."""
+    kinds = tuple(type(x).__name__ for x in run)
+    case = {'name': f'gate/{gate}/{i}', 'env': {}, 'stdin': b'', 'files': {}}
+    if kinds == ('str', 'int', 'bytes', 'bytes'):
+        case.update(source=run[0], status=run[1], out=run[2], err=run[3])
+    elif kinds == ('str', 'int', 'bytes', 'bytes', 'dict', 'bytes'):
+        case.update(source=run[0], status=run[1], out=run[2], err=run[3], env=run[4], stdin=run[5],
+                    files=getattr(module, 'FILES', {}))
+    elif kinds == ('str', 'bytes', 'int', 'int', 'bytes', 'bytes'):  # system: input, whether root may run it
+        case.update(source=run[0], stdin=run[1], status=run[3], out=run[4], err=run[5])
+    elif kinds == ('dict', 'int', 'bytes', 'bytes'):
+        # A program of several files is bundled where it is compiled, with
+        # that directory in its errors: the one file is taken as it is.
+        if set(run[0]) != {'main.alc'}:
+            return None
+        case.update(source=run[0]['main.alc'], status=run[1], out=run[2], err=run[3].replace(b'@/main.alc', b'<stdin>'))
+    else:
+        raise AssertionError(f'{gate}: a record of RUNS of a form unknown here: {kinds}')
+    return case
+
+
+def gate_cases():
+    """(the programs of the gates that Windows prints alike, those of
+    GATE_SKIPPED, how many programs of several files were left out)."""
     import hashlib
     import importlib.util
     sys.path.insert(0, str(ROOT / 'harness'))
-    found = []
+    alike, otherwise, bundles = [], [], 0
     for path in sorted((ROOT / 'harness').glob('*.py')):
         text = path.read_text()
-        if '\nRUNS=' not in text and '\nRUNS =' not in text:
+        if ('\nRUNS=' not in text and '\nRUNS =' not in text) or path.stem in NOT_PROGRAMS:
             continue
         spec = importlib.util.spec_from_file_location('gate_' + path.stem, path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        for i, run in enumerate(getattr(module, 'RUNS', None) or []):
-            if len(run) != 4 or not isinstance(run[0], str) or not isinstance(run[1], int):
-                continue
-            if hashlib.sha1(run[0].encode()).hexdigest()[:16] in GATE_SKIPPED:
-                continue
-            found.append((f'gate/{path.stem}/{i}', run[0], run[1], run[2]))
-    return found
+        for i, run in enumerate(module.RUNS):
+            case = gate_case(path.stem, module, i, run)
+            if case is None:
+                bundles += 1
+            elif hashlib.sha1(case['source'].encode()).hexdigest()[:16] in GATE_SKIPPED:
+                otherwise.append(case)
+            else:
+                alike.append(case)
+    named = {hashlib.sha1(c['source'].encode()).hexdigest()[:16] for c in otherwise}
+    assert named == set(GATE_SKIPPED), f'programs of GATE_SKIPPED are gone: take them out: {sorted(set(GATE_SKIPPED) - named)}'
+    return alike, otherwise, bundles
 
 
-def skipped_gate_runs():
-    """(name, program) of the gate programs GATE_SKIPPED names."""
-    import hashlib
-    import importlib.util
-    sys.path.insert(0, str(ROOT / 'harness'))
-    found = []
-    for path in sorted((ROOT / 'harness').glob('*.py')):
-        text = path.read_text()
-        if '\nRUNS=' not in text and '\nRUNS =' not in text:
-            continue
-        spec = importlib.util.spec_from_file_location('gate_' + path.stem, path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        for i, run in enumerate(getattr(module, 'RUNS', None) or []):
-            if len(run) == 4 and isinstance(run[0], str) and hashlib.sha1(run[0].encode()).hexdigest()[:16] in GATE_SKIPPED:
-                found.append((f'gate/{path.stem}/{i}', run[0]))
-    assert len(found) == len(GATE_SKIPPED), 'a program of GATE_SKIPPED is gone: take it out'
-    return found
+def write_case(directory, number, case):
+    """A program for check or reference: NNNN.alc, with NNNN.out, NNNN.err
+    and NNNN.json (status, environment, files) where a result is frozen,
+    and NNNN.in, its input."""
+    import json
+    (directory / (number + '.alc')).write_text(case['source'])
+    (directory / (number + '.in')).write_bytes(case.get('stdin', b''))
+    if 'out' in case:
+        (directory / (number + '.out')).write_bytes(case['out'])
+    if 'err' in case:
+        (directory / (number + '.err')).write_bytes(case['err'])
+    files = None
+    if case.get('files'):
+        files = case['name'].split('/')[1]
+        for name, data in case['files'].items():
+            (directory / 'files' / files / name).parent.mkdir(parents=True, exist_ok=True)
+            (directory / 'files' / files / name).write_bytes(data)
+    (directory / (number + '.json')).write_text(json.dumps({'status': case.get('status', 0), 'env': case.get('env', {}), 'files': files}))
+
+
+def read_case(directory, number):
+    import json
+    case = json.loads((directory / (number + '.json')).read_text())
+    case['source'] = (directory / (number + '.alc')).read_bytes()
+    case['stdin'] = (directory / (number + '.in')).read_bytes()
+    for part in ('out', 'err'):
+        if (directory / (number + '.' + part)).exists():
+            case[part] = (directory / (number + '.' + part)).read_bytes()
+    return case
+
+
+def given(case):
+    """The program's standard input: its bytes, or none."""
+    return {'input': case['stdin']} if case['stdin'] else {'stdin': subprocess.DEVNULL}
+
+
+def place(directory, case, run):
+    """The files of the program's directory, in run."""
+    if case['files']:
+        shutil.copytree(directory / 'files' / case['files'], run, dirs_exist_ok=True)
 
 
 def pinned(out):
@@ -185,24 +317,24 @@ REFERENCE_TIMING = {'3dc7ee2df1372fb7': 'processes: the parts a pipe is read in'
 
 def reference(directory, pinned_compiler, compiler, runner):
     import hashlib
-    directory = Path(directory)
-    names = (directory / 'reference' / 'names.txt').read_text().split('\n')[:-1]
+    directory = Path(directory) / 'reference'
+    names = (directory / 'names.txt').read_text().split('\n')[:-1]
     failed = []
     held = []
     timed = 0
     for i, name in enumerate(names):
-        if hashlib.sha1((directory / 'reference' / f'{i:04}.alc').read_bytes()).hexdigest()[:16] in REFERENCE_TIMING:
+        case = read_case(directory, f'{i:04}')
+        if hashlib.sha1(case['source']).hexdigest()[:16] in REFERENCE_TIMING:
             timed += 1
             continue
-        source = directory / 'reference' / f'{i:04}.alc'
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
             d = Path(d)
-            (d / 'p.alc').write_bytes(source.read_bytes())
+            (d / 'p.alc').write_bytes(case['source'])
             # Under Wine the pinned compiler is the Linux one (it has a Go
             # toolchain there), which builds windows/amd64 programs as well.
             made = subprocess.run([*([] if runner and not str(pinned_compiler).endswith('.exe') else runner), str(pinned_compiler), 'build', '-target', 'windows/amd64', '-o', str(d / 'pinned.exe'), str(d / 'p.alc')],
                                   capture_output=True, timeout=600)
-            ours = subprocess.run([*runner, str(compiler)], input=source.read_bytes(), capture_output=True, timeout=300)
+            ours = subprocess.run([*runner, str(compiler)], input=case['source'], capture_output=True, timeout=300)
             if made.returncode or ours.returncode:
                 failed.append((name, f'did not build: {made.stderr[:200]!r} {ours.stderr[:200]!r}'))
                 continue
@@ -214,12 +346,14 @@ def reference(directory, pinned_compiler, compiler, runner):
                 run = d / ('run-' + program[:-4])
                 run.mkdir()
                 (run / 'tmp').mkdir()
-                env = dict(os.environ, TMP=str(run / 'tmp'), TEMP=str(run / 'tmp'))
+                place(directory, case, run)
+                env = dict(os.environ, TMP=str(run / 'tmp'), TEMP=str(run / 'tmp'), **case['env'])
                 try:
-                    r = subprocess.run([*runner, str(d / program)], capture_output=True, timeout=120, cwd=run, stdin=subprocess.DEVNULL, env=env)
-                    got.append((r.returncode, normal(r.stdout, run).replace(str(d / 'p.alc').encode(), b'<stdin>')))
+                    r = subprocess.run([*runner, str(d / program)], capture_output=True, timeout=120, cwd=run, env=env, **given(case))
+                    got.append((r.returncode, *(normal(text, run).replace(str(d / 'p.alc').encode(), b'<stdin>') for text in (r.stdout, r.stderr))))
                 except subprocess.TimeoutExpired:
-                    got.append(('timed out', b''))
+                    # Never equal to the other's, which may have timed out too.
+                    got.append((f'{program} timed out', b'', b''))
             for program in ('pinned', 'native'):
                 try:
                     shutil.rmtree(d / ('run-' + program))
@@ -227,11 +361,16 @@ def reference(directory, pinned_compiler, compiler, runner):
                     held.append(f'{name} ({program})')
             if got[0] != got[1]:
                 import difflib
-                lines = difflib.unified_diff(got[0][1].decode(errors='replace').split('\n'),
-                                             got[1][1].decode(errors='replace').split('\n'),
-                                             'pinned', 'native', lineterm='', n=0)
-                diff = '\n'.join('    ' + line[:240] for line in list(lines)[:40])
-                failed.append((name, f'status pinned {got[0][0]}, native {got[1][0]}\n{diff}'))
+                diff = ''
+                for part, said in ((1, 'output'), (2, 'errors')):
+                    lines = difflib.unified_diff(got[0][part].decode(errors='replace').split('\n'),
+                                                 got[1][part].decode(errors='replace').split('\n'),
+                                                 'pinned ' + said, 'native ' + said, lineterm='', n=0)
+                    diff += ''.join('\n    ' + line[:240] for line in list(lines)[:40])
+                failed.append((name, f'status pinned {got[0][0]}, native {got[1][0]}{diff}'))
+            elif name.startswith('windows/'):
+                # What both print is not frozen anywhere: it is shown.
+                print(f'same {name}: {got[0][0]} {got[0][1][:300]!r} {got[0][2][:200]!r}')
     for name, why in failed:
         print(f'FAIL {name}: {why}')
     for name in held:
@@ -249,6 +388,11 @@ def load_examples():
     return module
 
 
+# The fewest upstream examples prepare may write: fewer means the Linux
+# compiler no longer builds or runs some, which would pass unseen here.
+EXAMPLES_AT_LEAST = 830
+
+
 def prepare(out, compiler):
     examples = load_examples()
     out = Path(out)
@@ -258,43 +402,31 @@ def prepare(out, compiler):
     cases = [(n, s) for n, s in examples.cases() if not n.startswith('syntax/extern') and n not in SKIPPED]
     with ThreadPoolExecutor(os.cpu_count() or 4) as pool:
         results = list(pool.map(lambda c: examples.native(c[1], str(compiler)), cases))
-    names = []
-    for (name, source), result in zip(cases, results):
-        if result[0] != 'ran' or result[1] != 0:
-            continue
-        number = f'{len(names):04}'
-        (out / (number + '.alc')).write_text(source)
-        (out / (number + '.out')).write_text(result[2])
-        names.append(name)
-    for name, source, status, printed in gate_runs():
-        number = f'{len(names):04}'
-        (out / (number + '.alc')).write_text(source)
-        (out / (number + '.out')).write_bytes(printed)
-        (out / (number + '.code')).write_text(str(status))
-        names.append(name)
-    for name, source, printed in WINDOWS_ONLY:
-        number = f'{len(names):04}'
-        (out / (number + '.alc')).write_text(source)
-        (out / (number + '.out')).write_text(printed)
-        names.append(name)
-    (out / 'names.txt').write_text(''.join(n + '\n' for n in names))
-    # What Windows prints otherwise, for reference.
-    others = [(n, s) for n, s in examples.cases() if n in SKIPPED] + skipped_gate_runs()
+    alike, otherwise, bundles = gate_cases()
+    programs = [{'name': name, 'source': source, 'out': result[2].encode()}
+                for (name, source), result in zip(cases, results) if result[0] == 'ran' and result[1] == 0]
+    assert len(programs) >= EXAMPLES_AT_LEAST, f'only {len(programs)} upstream examples build and run to exit 0 on Linux'
+    programs += alike
+    programs += [{'name': name, 'source': source, 'out': printed.encode()} for name, source, printed in WINDOWS_ONLY]
+    for i, case in enumerate(programs):
+        write_case(out, f'{i:04}', case)
+    (out / 'names.txt').write_text(''.join(c['name'] + '\n' for c in programs))
+    # What Windows prints otherwise, for reference: no result is frozen.
+    others = [{'name': n, 'source': s} for n, s in examples.cases() if n in SKIPPED]
+    others += [{k: v for k, v in c.items() if k not in ('out', 'err', 'status')} for c in otherwise]
+    others += [{'name': name, 'source': source, 'env': env} for name, source, env in REFERENCE_PROGRAMS]
     against = out / 'reference'
     against.mkdir()
-    for i, (name, source) in enumerate(others):
-        (against / f'{i:04}.alc').write_text(source)
-    (against / 'names.txt').write_text(''.join(n + '\n' for n, _ in others))
-    print(f'{len(names)} programs in {out}, {len(others)} to compare with the pinned compiler\'s')
+    for i, case in enumerate(others):
+        write_case(against, f'{i:04}', case)
+    (against / 'names.txt').write_text(''.join(c['name'] + '\n' for c in others))
+    print(f'{len(programs)} programs in {out} ({len(alike)} of the gates; {bundles} of several files left out),'
+          f' {len(others)} to compare with the pinned compiler\'s')
 
 
 def check_one(directory, compiler, number, name, runner):
-    source = (directory / (number + '.alc')).read_bytes()
-    want = (directory / (number + '.out')).read_bytes()
-    coded = directory / (number + '.code')
-    status = int(coded.read_text()) if coded.exists() else 0
     d = Path(tempfile.mkdtemp())
-    why = check_in(d, compiler, source, want, status, runner)
+    why = check_in(d, compiler, directory, read_case(directory, number), runner)
     # A process the program left running holds p.exe on Windows.
     try:
         shutil.rmtree(d)
@@ -304,27 +436,29 @@ def check_one(directory, compiler, number, name, runner):
     return name, why
 
 
-def check_in(d, compiler, source, want, status, runner):
+def check_in(d, compiler, directory, case, runner):
     """Why the program in d prints other than it should, or None."""
     # A temporary directory of its own: gate programs name files there.
     (d / 'tmp').mkdir()
     # Under Wine as a path of its drive Z:, which it takes there.
     tmp = ('Z:' + str(d / 'tmp').replace('/', '\\')) if runner else str(d / 'tmp')
-    env = dict(os.environ, TMP=tmp, TEMP=tmp)
-    built = subprocess.run([*runner, compiler], input=source, capture_output=True, timeout=300)
+    env = dict(os.environ, TMP=tmp, TEMP=tmp, **case['env'])
+    built = subprocess.run([*runner, compiler], input=case['source'], capture_output=True, timeout=300)
     if built.returncode:
         return f'did not build: {built.stderr.decode(errors="replace")[:300]}'
     program = d / 'p.exe'
     program.write_bytes(built.stdout)
     run = d / 'run'
     run.mkdir()
+    place(directory, case, run)
     try:
-        got = subprocess.run([*runner, str(program)], capture_output=True, timeout=120, cwd=run, stdin=subprocess.DEVNULL, env=env)
+        got = subprocess.run([*runner, str(program)], capture_output=True, timeout=120, cwd=run, env=env, **given(case))
     except subprocess.TimeoutExpired:
         return 'timed out'
-    if got.returncode != status or got.stdout != want:
-        return (f'exit {got.returncode}\n  want {want[:300]!r}\n  got  {got.stdout[:300]!r}\n'
-                f'  stderr {got.stderr.decode(errors="replace")[:300]!r}')
+    # An upstream example's errors are not frozen (it ends 0); a gate's are.
+    if got.returncode != case['status'] or got.stdout != case['out'] or got.stderr != case.get('err', got.stderr):
+        return (f'exit {got.returncode}, want {case["status"]}\n  want {case["out"][:300]!r}\n  got  {got.stdout[:300]!r}\n'
+                f'  want errors {case.get("err", b"")[:400]!r}\n  got errors  {got.stderr[:400]!r}')
     return None
 
 

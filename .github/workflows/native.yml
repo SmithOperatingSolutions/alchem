@@ -7,8 +7,8 @@ name: Native compiler
 # for macOS as a macOS program, which four macOS jobs check side by side
 # (scripts/verify-darwin.py --shard). The complete suite
 # (scripts/verify-local.sh --with-source) runs nightly and on request. The
-# x86-64 job also builds the Windows compiler (native/spec/windows.md),
-# which the Windows job runs: it must make itself again byte for byte.
+# Windows compiler (native/spec/windows.md) is built in a job of its own
+# too, and the Windows job runs it: it must make itself again byte for byte.
 on:
   pull_request:
     paths:
@@ -99,10 +99,33 @@ jobs:
         env:
           ALCHEM_VERIFY_MEMORY: 14G
         run: bash scripts/verify-local.sh --with-source
-      - name: Windows compiler
-        if: matrix.gates == ''
+
+  windows-compiler:
+    # spec/windows.md: the Windows compiler, the programs it is checked with
+    # and the pinned compiler as a Windows program, built on Linux beside the
+    # gates.
+    name: Compiler for Windows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: native
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          working_directory: native
+          cache: false
+      - name: Dependencies
+        run: mise run fetch
+      - name: Build
+        # One build at a time: no memory ceiling (scripts/limited would cap
+        # address space here, with no systemd user manager).
+        env:
+          ALCHEM_VERIFY_LIMITED: '1'
         run: |
-          test -x build/dev/A2 || python3 scripts/verify-quick.py --build-only
+          python3 scripts/verify-quick.py --build-only
           mkdir -p build/windows
           python3 scripts/build-windows.py --source build/windows/compiler-source.alc --output build/windows/alchem-compiler-windows.exe
           cp examples/hello-native.alc build/windows/hello.alc
@@ -111,9 +134,7 @@ jobs:
           python3 scripts/windows-examples.py pinned build/windows/alchem-upstream.exe
           python3 scripts/build-alchem.py --windows --compiler build/dev/alchem-compiler-windows-cross --output build/windows/alchem.exe
           cp -r ../examples/testing build/windows/testing
-      - name: Keep the Windows compiler
-        if: matrix.gates == ''
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-compiler
           path: native/build/windows
@@ -185,7 +206,7 @@ jobs:
 
   windows:
     name: Windows x64
-    needs: native
+    needs: windows-compiler
     runs-on: windows-2025
     timeout-minutes: 45
     defaults:

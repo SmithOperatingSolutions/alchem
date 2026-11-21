@@ -107,6 +107,10 @@ def build(compiler, output, darwin=False, windows=False):
     made = subprocess.run([str(compiler)], input=source, capture_output=True, env={'PATH': ''}, timeout=600)
     if made.returncode or made.stderr or made.stdout[:4] not in (b'\x7fELF', b'\xcf\xfa\xed\xfe') and made.stdout[:2] != b'MZ':
         raise RuntimeError(f'the compiler did not build alchem: {made.returncode} {made.stderr.decode(errors="replace").strip()}')
+    if windows and made.stdout[:2] != b'MZ':
+        # A compiler for another system would make an alchem that takes
+        # itself for Windows' and is not: --compiler must be the cross compiler.
+        raise RuntimeError(f'--windows needs a compiler that makes Windows programs: {compiler} made none')
     output = Path(output)
     staged = output.with_name('.' + output.name + '.new')
     staged.write_bytes(made.stdout)
