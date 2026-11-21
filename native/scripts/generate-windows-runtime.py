@@ -34,7 +34,7 @@ DLLS = {
     'ADVAPI32.dll': {'RegOpenKeyExW', 'RegEnumKeyExW', 'RegQueryValueExW', 'RegLoadMUIStringW', 'RegCloseKey'},
     'WS2_32.dll': {'WSAStartup', 'WSAGetLastError', 'WSASocketW', 'closesocket', 'ioctlsocket', 'bind',
                    'listen', 'accept', 'connect', 'send', 'sendto', 'recv', 'recvfrom', 'shutdown',
-                   'getsockname', 'getpeername', 'setsockopt', 'getsockopt', 'WSAPoll', 'GetAddrInfoW', 'FreeAddrInfoW', 'select'},
+                   'getsockname', 'getpeername', 'setsockopt', 'getsockopt', 'WSAPoll', 'GetAddrInfoW', 'FreeAddrInfoW', 'select', 'WSAIoctl'},
 }
 SOURCES = ('spec/windows-x86_64.s', 'spec/windows-layer.c')
 # Freestanding: no C library, no red zone (the layer runs on the stack

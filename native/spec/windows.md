@@ -142,7 +142,12 @@ The calls made so far:
   `fstat`, `fcntl` and `ioctl` on a socket. Addresses are laid out alike
   but for AF_INET6 (10, 23); options and errors are mapped to Winsock's,
   `SO_REUSEADDR` is not set (Go sets nothing on a Windows listener), and
-  a non-blocking connect's `WSAEWOULDBLOCK` is `EINPROGRESS`.
+  a non-blocking connect's `WSAEWOULDBLOCK` is `EINPROGRESS`. A connect to
+  the machine itself asks for no SYN retransmission
+  (`SIO_TCP_INITIAL_RTO`), as Go's net does, so that a closed port is
+  refused at once rather than after 2 s; `ppoll` asks `select` of a
+  socket waiting to be written to, as `WSAPoll` may not tell of a failed
+  connect.
 
 ## Processes
 

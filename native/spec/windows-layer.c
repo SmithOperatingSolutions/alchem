@@ -73,6 +73,7 @@ extern W i32 (*imp_getpeername)(SOCKET, void *, i32 *);
 extern W i32 (*imp_setsockopt)(SOCKET, i32, i32, const void *, i32);
 extern W i32 (*imp_getsockopt)(SOCKET, i32, i32, void *, i32 *);
 extern W i32 (*imp_WSAPoll)(void *, u32, i32);
+extern W i32 (*imp_WSAIoctl)(SOCKET, u32, void *, u32, void *, u32, u32 *, void *, void *);
 extern W i32 (*imp_select)(i32, void *, void *, void *, const void *);
 extern W i32 (*imp_GetAddrInfoW)(const u16 *, const u16 *, const void *, void **);
 extern W void (*imp_FreeAddrInfoW)(void *);
@@ -265,6 +266,21 @@ static i64 sys_connect(i64 fd, i64 address, i64 length) {
   u8 to[128];
   i32 n = to_windows((u8 *)address, length, to);
   if (n < 0) return -EINVAL;
+  /* To the machine itself, Go's net asks for no retransmission of SYN
+     (SIO_TCP_INITIAL_RTO), so that a port nothing listens on is refused at
+     once, not after 2 s; an ioctl that fails changes nothing. */
+  u16 family = *(u16 *)to;
+  static const u8 loop6[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+  int loopback = (family == 2 && to[4] == 127);
+  if (family == WINDOWS_INET6) {
+    loopback = 1;
+    for (int i = 0; i < 16; i++) if (to[8 + i] != loop6[i]) loopback = 0;
+  }
+  if (loopback) {
+    u8 params[4] = {0xFF, 0xFF, 0xFE, 0};     /* Rtt unspecified; TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS */
+    u32 out = 0;
+    imp_WSAIoctl(handles[fd], 0x98000011, params, 4, 0, 0, &out, 0, 0);
+  }
   if (imp_connect(handles[fd], to, n) == 0) return 0;
   i64 r = wsa_fail();
   return r == -EAGAIN ? -EINPROGRESS : r;
