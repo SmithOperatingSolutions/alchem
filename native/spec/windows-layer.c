@@ -73,6 +73,8 @@ extern W i32 (*imp_getpeername)(SOCKET, void *, i32 *);
 extern W i32 (*imp_setsockopt)(SOCKET, i32, i32, const void *, i32);
 extern W i32 (*imp_getsockopt)(SOCKET, i32, i32, void *, i32 *);
 extern W i32 (*imp_WSAPoll)(void *, u32, i32);
+extern W i32 (*imp_GetAddrInfoW)(const u16 *, const u16 *, const void *, void **);
+extern W void (*imp_FreeAddrInfoW)(void *);
 extern W i32 (*imp_ReadFile)(u64, void *, u32, u32 *, void *);
 extern W i32 (*imp_WriteFile)(u64, const void *, u32, u32 *, void *);
 extern W i32 (*imp_SetFilePointerEx)(u64, i64, i64 *, u32);
@@ -406,6 +408,39 @@ static i64 sys_getsockopt(i64 fd, i64 level, i64 name, i64 value, i64 room) {
   memcpy((void *)value, v, r < 4 ? r : 4);
   *(u32 *)room = 4;
   return 0;
+}
+
+/* --- Names ------------------------------------------------------------
+
+   Pseudo call 1000107 (TCP._resolve): the addresses of the host name at
+   name as Go's net has them on Windows, from GetAddrInfoW (which reads the
+   system's hosts file and knows localhost), into out (room bytes): each a
+   length byte and the address as Linux lays it out (AF_INET6 10), port 0.
+   Their count, or -ENOENT. */
+static i64 sys_resolve(i64 name, i64 out, i64 room) {
+  if (!start()) return -ENOSYS;
+  if (!wide((const char *)name, wpath1)) return -ENOENT;
+  i32 hints[12] = {0};
+  hints[2] = 1;                                  /* SOCK_STREAM: each address once */
+  u8 *list = 0;
+  if (imp_GetAddrInfoW(wpath1, 0, hints, (void **)&list) != 0) return -ENOENT;
+  u8 *o = (u8 *)out;
+  commit_range(o, (u64)room);
+  i64 used = 0, count = 0;
+  for (u8 *a = list; a; a = *(u8 **)(a + 40)) {
+    i32 family = *(i32 *)(a + 4);
+    u8 *sa = *(u8 **)(a + 32);
+    u64 n = family == 2 ? 16 : family == WINDOWS_INET6 ? 28 : 0;
+    if (!n || !sa || used + 1 + (i64)n > room) continue;
+    o[used] = (u8)n;
+    memcpy(o + used + 1, sa, n);
+    *(u16 *)(o + used + 1) = family == 2 ? 2 : LINUX_INET6;
+    *(u16 *)(o + used + 3) = 0;
+    used += 1 + (i64)n;
+    count++;
+  }
+  imp_FreeAddrInfoW(list);
+  return count ? count : -ENOENT;
 }
 
 /* --- ppoll ------------------------------------------------------------- */
@@ -1673,6 +1708,7 @@ i64 layer_call(unsigned char *c) {
   case 1000102: return full_path(ARG(c, 0));
   case 1000103: return temp_dir();
   case 1000105: return local_lookup(ARG(c, 0), ARG(c, 1));
+  case 1000107: return sys_resolve(ARG(c, 0), ARG(c, 1), ARG(c, 2));
   case 1000104: return sys_spawn(ARG(c, 0), ARG(c, 1), ARG(c, 2), ARG(c, 3), ARG(c, 4), ARG(c, 5));
   case 61: return sys_wait4(ARG(c, 0), ARG(c, 1), ARG(c, 2));
   case 22: case 293: return sys_pipe2(ARG(c, 0));             /* pipe, pipe2 */

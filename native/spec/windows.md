@@ -209,6 +209,10 @@ branch never taken.
   `zoneinfo_abbrs_windows.go`, which the generator compiles in), else from
   the table under the zone's English name in the registry, else the
   capitals of its name. `$TZ` plays no part, as for Go.
+- **Names of hosts** are Windows' to resolve, as Go's net leaves them to
+  `GetAddrInfoW` there (pseudo call 1000107, `TCP._wresolve`): it reads
+  the system's hosts file and knows `localhost`; there is no
+  `/etc/hosts` or `/etc/resolv.conf` to read.
 - **The environment.** `System.get_env` finds a name in either case
   (ASCII), as `GetEnvironmentVariableW` does: the Windows compiler's
   `na_get_env` is assembled with `WINDOWS` defined
