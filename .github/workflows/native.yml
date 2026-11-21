@@ -131,6 +131,10 @@ jobs:
           cp examples/hello-native.alc build/windows/hello.alc
           cp scripts/windows-examples.py build/windows/
           python3 scripts/windows-examples.py prepare build/windows/examples
+          # One file of them: the Windows runner does not unpack an artifact
+          # of 14,000 files.
+          tar -czf build/windows/examples.tar.gz -C build/windows examples
+          rm -r build/windows/examples
           python3 scripts/windows-examples.py pinned build/windows/alchem-upstream.exe
           python3 scripts/build-alchem.py --windows --compiler build/dev/alchem-compiler-windows-cross --output build/windows/alchem.exe
           cp -r ../examples/testing build/windows/testing
@@ -220,6 +224,7 @@ jobs:
           path: windows
       - name: The compiler makes itself
         run: |
+          tar -xzf examples.tar.gz
           ./alchem-compiler-windows.exe < compiler-source.alc > again.exe
           cmp again.exe alchem-compiler-windows.exe
       - name: A program
