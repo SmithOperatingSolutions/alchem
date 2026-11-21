@@ -631,6 +631,18 @@ static i64 sys_mmap_file(i64 length, i64 fd, i64 offset) {
   return (i64)m;
 }
 
+/* A mapping that was let go is no region of the program's any more:
+   Windows may give its addresses to something else. */
+static void region_remove(u64 at) {
+  for (u32 i = 0; i < region_count; i++)
+    if (regions[i][0] == at) {
+      regions[i][0] = regions[region_count - 1][0];
+      regions[i][1] = regions[region_count - 1][1];
+      region_count--;
+      return;
+    }
+}
+
 /* mremap(old, size, new size, MREMAP_MAYMOVE): a new mapping with the old
    contents; the old one is released. */
 static i64 sys_mremap(i64 old, i64 size, i64 grown, i64 flags) {
@@ -640,8 +652,12 @@ static i64 sys_mremap(i64 old, i64 size, i64 grown, i64 flags) {
   if (!m) return -ENOMEM;
   commit_range((void *)old, (u64)size);
   memcpy(m, (void *)old, (u64)size);
-  if (!imp_VirtualFree((void *)old, 0, 0x8000))           /* MEM_RELEASE */
-    imp_VirtualFree((void *)old, (u64)size, 0x4000);       /* MEM_DECOMMIT */
+  /* While a copy runs the old mapping is the parent's, and stays. */
+  if (!copying) {
+    if (!imp_VirtualFree((void *)old, 0, 0x8000))         /* MEM_RELEASE */
+      imp_VirtualFree((void *)old, (u64)size, 0x4000);     /* MEM_DECOMMIT */
+    else region_remove((u64)old);
+  }
   region_add((u64)m, (u64)grown);
   return (i64)m;
 }
@@ -2017,11 +2033,14 @@ i64 layer_call(unsigned char *c) {
   case 319: return sys_memfd();
   case 4: case 6: return sys_stat_path(ARG(c, 0), ARG(c, 1), nr == 4);   /* stat, lstat */
   case 262: {                                                  /* newfstatat */
+    /* AT_EMPTY_PATH with no path is the descriptor's: the assembly's. */
+    const char *path = (const char *)ARG(c, 1);
+    if (!path) return NOT_MINE;
+    commit_range((void *)path, 1);
+    if ((ARG(c, 3) & 0x1000) && !*path) return NOT_MINE;
     i64 r = at_call(c, 0);
     if (r != NOT_MINE) return r;
-    const char *path = (const char *)ARG(c, 1);
-    /* AT_EMPTY_PATH with no path is the descriptor's: the assembly's. */
-    if (!path || ((ARG(c, 3) & 0x1000) && !*path)) return NOT_MINE;
+    path = (const char *)ARG(c, 1);
     return sys_stat_path((i64)path, ARG(c, 2), !(ARG(c, 3) & 0x100));   /* AT_SYMLINK_NOFOLLOW */
   }
   case 280: {                                                  /* utimensat */

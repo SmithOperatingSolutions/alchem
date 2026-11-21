@@ -109,7 +109,7 @@ those not in KERNEL32).
   Windows error (`errno_map`; any other is EIO), and keeps the Windows
   error (`last_error`).
 - **Paths** are UTF-8, given to the `...W` calls in UTF-16; `/dev/null` is
-  `NUL`. A directory opens with `FILE_FLAG_BACKUP_SEMANTICS`, and a file
+  no path, as for the pinned programs (`NUL` is). A directory opens with `FILE_FLAG_BACKUP_SEMANTICS`, and a file
   created without write permission is read-only. A file is shared for
   reading and writing, not for deleting, as Go's `syscall.Open` opens it:
   one that is open cannot be removed or renamed over, as for the pinned

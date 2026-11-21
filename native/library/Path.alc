@@ -208,7 +208,9 @@
 # filepath.Glob, sorted.
 #: wildcard/1 needs Enum.sort/1 glob/2
   def wildcard(p: string): list[string] do
-    r = Path.glob(p, 0)
+    # On Windows a backslash parts the directories of a pattern, as for
+    # filepath.Glob there, and escapes nothing.
+    r = Path.glob(if Sys.windows() == 1 do String.replace(p, "\\", "/") else p end, 0)
     if "\x00" in r do raise("malformed wildcard pattern") end
     Enum.sort(r)
   end

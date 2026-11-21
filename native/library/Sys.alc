@@ -127,7 +127,8 @@
 # The reason Elixir gives a failed file operation, else Go's text.
 #: why/3 needs fail/3
   def why(op: string, p: string, r: integer): string do
-    if r == -2 do "enoent" else if r == -13 or r == -1 do "eacces" else if r == -17 or r == -39 do "eexist" else Sys.fail(op, p, r) end end end
+    # On Windows Go's ENOTDIR is the path that was not found: no such file.
+    if r == -2 or (r == -20 and Sys.windows() == 1) do "enoent" else if r == -13 or r == -1 do "eacces" else if r == -17 or r == -39 do "eexist" else Sys.fail(op, p, r) end end end
   end
 # stat (f 1) or lstat of p into the stat record; 0 or the error.
 #: stat/2 needs at/5 state/0
