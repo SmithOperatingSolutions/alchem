@@ -47,13 +47,14 @@
     if elem(w, 0) == 0 do some(if Sys.windows() == 1 do Path._wslash(elem(w, 1)) else elem(w, 1) end) else none end
   end
 # os.Setenv.
-#: put_env/2 needs Sys.env/0 Sys.held/4 Sys.z/1
+#: put_env/2 needs Sys.env/0 Sys.held/4 Sys._wheld/4 Sys.z/1
   def put_env(k: string, v: string): tuple[] do
     t = k <> "=" <> v
     if k == "" or String.contains?(k, "=") or Sys.z(t) == 0 do raise("could not set " <> k <> ": setenv: invalid argument") end
     s = Sys.env()
     n = Sys.peek(s + 8)
-    i = Sys.held(Sys.peek(s), n, Sys.addr(t), byte_size(k) + 1)
+    # os.Setenv on Windows sets the variable whatever case its name is kept in.
+    i = if Sys.windows() == 1 do Sys._wheld(Sys.peek(s), n, Sys.addr(t), byte_size(k) + 1) else Sys.held(Sys.peek(s), n, Sys.addr(t), byte_size(k) + 1) end
     if i < 0 and n + 2 > Sys.peek(s + 16) do
       Sys.poke(s, Sys.call(25, Sys.peek(s), Sys.peek(s + 16) * 8, Sys.peek(s + 16) * 16, 1))
       Sys.poke(s + 16, Sys.peek(s + 16) * 2)

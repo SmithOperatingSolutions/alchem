@@ -15,8 +15,10 @@ As for ARM64 (spec/arm64.md), the target is a constant of the build:
 - `build/dev/alchem-compiler-windows.exe`: the same source compiled by the
   cross compiler. On Windows it must make itself again byte for byte.
 
-The Linux compiler takes the other branch everywhere, so its output stays
-byte for byte what it was.
+The Linux compiler takes the other branch everywhere, so the code it emits
+stays byte for byte what it was. The library is one for every system: a
+program that uses a function with a branch for Windows carries it, and
+local time carries the zone database (spec/alchem-time-zones.md).
 
 ## The code is the Linux code
 
@@ -109,7 +111,7 @@ those not in KERNEL32).
   Windows error (`errno_map`; any other is EIO), and keeps the Windows
   error (`last_error`).
 - **Paths** are UTF-8, given to the `...W` calls in UTF-16; `/dev/null` is
-  `NUL`. A directory opens with `FILE_FLAG_BACKUP_SEMANTICS`, and a file
+  no path, as for the pinned programs (`NUL` is). A directory opens with `FILE_FLAG_BACKUP_SEMANTICS`, and a file
   created without write permission is read-only. A file is shared for
   reading and writing, not for deleting, as Go's `syscall.Open` opens it:
   one that is open cannot be removed or renamed over, as for the pinned
@@ -120,7 +122,9 @@ The calls made so far:
 - memory and signals: `mmap`, `munmap`, `madvise` (`MADV_DONTNEED` and
   `MADV_FREE` decommit), `rt_sigaction`, `rt_sigprocmask`, `sigaltstack`;
 - descriptors: `read`, `write`, `open`, `openat`, `close`, `lseek`,
-  `fstat`, `stat`, `lstat`, `newfstatat`;
+  `fstat`, `stat`, `lstat`, `newfstatat` (a link is followed, or told as
+  one of no size, as `os.Stat` and `os.Lstat`; a directory opened for
+  writing is `EISDIR`, as Go's `syscall.Open` makes of the refusal);
 - the file system: `getcwd`, `chdir`, `mkdir`, `mkdirat`, `rmdir`,
   `unlink`, `unlinkat`, `rename`, `renameat`, `renameat2`;
 - time and the process: `clock_gettime`, `nanosleep`, `getrandom`,
@@ -129,7 +133,10 @@ The calls made so far:
 - in C: `pread64` and `pwrite64` (an offset read or write, the position
   kept), `ftruncate`, `fsync`, `fdatasync`, `getdents64`
   (`FileFullDirectoryInfo`), `link`, `symlink`, `chmod` and `fchmodat`
-  (read-only or not, as Go's os.Chmod), `memfd_create` (a temporary file
+  (read-only or not, as Go's os.Chmod), `readlink` and `readlinkat` (the
+  reparse point, as `os.Readlink`), `utimensat`, `unlink` as the file's
+  half of `os.Remove` (a link to a directory, a file that may not be
+  written), `memfd_create` (a temporary file
   deleted on close), `mremap` (a new mapping and a copy), `mmap` of a file
   (its bytes read into new memory: the library maps files only privately
   to read), `dup`, `dup2`, `dup3` and `fcntl`, and the `*at` calls on a
@@ -179,14 +186,20 @@ The calls made so far:
   copy, with the parent kept: its CONTEXT, the descriptor table (a close
   only leaves the table; what the copy opens is closed after), the stack
   it runs on from just below its pointer up (copied whole: Windows writes
-  its exception records on the stack that faults), and every other page of
+  its exception records on the stack that faults: all of the stack, since
+  the copy goes deeper than where it was made and pages a deeper call left
+  committed there must take those records), and every other page of
   the program's memory, made read-only and copied the first time the copy
   writes to it (`copy_fault`, and `commit_range` for what the layer
   writes). Pages the copy commits are decommitted after, as free memory
   must be zero. When the copy exits, the layer puts that back on a stack of
   its own (`copy_resume`: Windows' records of the exception lie on the
   program's) and resumes the parent with `RtlRestoreContext`, its fork
-  giving the copy's number, which `wait4` reaps. The memory is the
+  giving the copy's number, which `wait4` reaps. What the copy writes to a
+  pipe is kept and written by a thread once the program runs again: the
+  program reads the pipe only then, and a trace longer than the pipe would
+  wait for it for ever. `copy_file_range` is not made (`ENOSYS`: the
+  library reads and writes). The memory is the
   program's regions: what `mmap` and the layer map for it, and the block
   of the initial stack (1024 at most).
 
@@ -267,23 +280,37 @@ reference read another example's file in the shared temporary directory.
 Wine's error texts are its own (`File not found.`, and none for Winsock's
 errors); the reference for them is Windows (CI). CI's Windows job
 (`.github/workflows/native.yml`, `windows-2025`) runs the Windows compiler
-the Linux job builds: it must make itself again byte for byte, and build
+a Linux job builds: it must make itself again byte for byte, and build
 every upstream example and every program of the gates that print the same
-on Linux and Windows into one that prints there what was frozen on Linux
-(`scripts/windows-examples.py`: `prepare` on Linux, `check` on Windows, or
-`check --wine` under Wine): 2,632 programs. The 33 whose output Windows
-gives otherwise (`SKIPPED`, `GATE_SKIPPED`: Windows' error texts, Unix
-programs) are not passed over: the job builds each also with the pinned
-compiler there (`pinned` builds it for Windows on Linux; the Go toolchain
-it builds with is set up on the runner) and both programs must print the
-same (`reference`).
+on Linux and Windows into one that prints there what was frozen on Linux,
+standard error too (`scripts/windows-examples.py`: `prepare` on Linux,
+`check` on Windows, or `check --wine` under Wine): 2,915 programs, 2,051
+of them the gates'. A gate's record has one of four forms (with an
+environment, standard input and the files of its directory); one of
+another form is an error. What Windows gives otherwise (`SKIPPED`,
+`GATE_SKIPPED`: Windows' error texts, Unix programs and places) is not
+passed over: the job builds each also with the pinned compiler there
+(`pinned` builds it for Windows on Linux; the Go toolchain it builds with
+is set up on the runner) and both programs must print the same, output and
+errors, neither timing out (`reference`): 66 programs, with those of
+`REFERENCE_PROGRAMS`, which are there for what the layer and the library
+were once found to do otherwise than Go on Windows (a failing process
+below a deep call, a trace longer than its pipe, links, `put_env` in
+another case, a large environment).
 
 ## Still to do
 
 - The gates whose checks are code of their own rather than programs with
   their frozen results: they drive the Linux compilers and tools
   (`scripts/limited`, `/bin/sh`, `/proc`, `ptrace`), and run on Linux.
-  CI's Windows job runs every program of the gates that keep them (38 of
-  them, 1,792 programs) on Windows, with the examples
-  (`scripts/windows-examples.py`), 24 of them against the pinned compiler's
-  Windows programs there.
+  Of the gates that keep programs, CI's Windows job runs 34; speed and
+  memory_reclaim measure, testing runs test files with `alchem` (CI runs
+  `alchem.exe test`), and the 12 programs of several files (macros,
+  protocols) are bundled where they are compiled.
+- The layer's table of mappings (1024) only lets go what `mremap` moved:
+  `munmap` decommits a mapping and keeps its entry. A program that maps
+  more often than that ran as it should in the reference program for it,
+  but a copy made after would not keep what it wrote to the later ones.
+- `read` and `write` give Windows a count of 32 bits: one of 4 GiB or more
+  is cut. `renameat` with two directory descriptors takes the second path
+  from the working directory. Nothing of the library reaches either.

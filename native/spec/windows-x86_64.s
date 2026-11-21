@@ -601,26 +601,12 @@ fail:
         ret
 
 # The UTF-8 path at rcx in UTF-16 at rdx (32768 units); eax 0 if it does
-# not convert. /dev/null is NUL.
+# not convert. /dev/null is no path here, as for Go's os.Open on Windows.
         .globl wide
 wide:
         sub rsp, 56
         mov r8, rcx
         mov r9, rdx
-        lea r10, [rip+dev_null]
-        xor eax, eax
-.Lwd:
-        mov r11b, [r10+rax]
-        cmp r11b, [r8+rax]
-        jne .Lwd_convert
-        inc eax
-        test r11b, r11b
-        jnz .Lwd
-        mov dword ptr [r9], 0x0055004E      # "NU"
-        mov dword ptr [r9+4], 0x0000004C    # "L"
-        mov eax, 4
-        jmp .Lwd_out
-.Lwd_convert:
         mov [rsp+32], r9
         mov dword ptr [rsp+40], 32768
         mov ecx, 65001
@@ -633,6 +619,7 @@ wide:
 
 # A Linux stat at rcx from Windows attributes and times at rdx (attributes,
 # then creation, access and write times as FILETIMEs), the size in r8.
+        .globl fill_stat
 fill_stat:
         push rdi
         mov rdi, rcx
@@ -1358,7 +1345,6 @@ emulate:
         ret
 
 hexdigits: .ascii "0123456789abcdef"
-dev_null: .asciz "/dev/null"
 # Windows errors and the Linux errno each stands for; any other is EIO.
         .balign 2
 errno_map:

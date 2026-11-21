@@ -249,7 +249,9 @@
     Sys.pad()
     r = Sys.walk(a, Path.join(b, "."))
     l = String.split(Sys.got(), "\x00")
-    if elem(r, 0) < 0 do error(Sys.why(elem(r, 1), elem(r, 2), elem(r, 0))) else ok(Enum.take(l, length(l) - 1)) end
+    # filepath.WalkDir names what it finds with the system's separator.
+    w = Enum.take(l, length(l) - 1)
+    if elem(r, 0) < 0 do error(Sys.why(elem(r, 1), elem(r, 2), elem(r, 0))) else ok(if Sys.windows() == 1 do Enum.map(w, fn x -> String.replace(x, "/", "\\") end) else w end) end
   end
 #: write/3 exact needs Enum.all?/2 Sys.open/3 Sys.put/3 Sys.why/3
   def write(p: string, t: string, m: list[atom]): result[tuple[], string] do

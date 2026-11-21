@@ -1,8 +1,8 @@
 # Native compiler
 
 A compiler for Alchem written in Alchem. It builds native executables for
-Linux x86-64, and for Linux ARM64 by translating each function, without Go,
-a C compiler or LLVM in the compilation path. It compiles itself: the
+Linux x86-64 and Windows x64, and for Linux ARM64 and macOS by translating
+each function, without Go, a C compiler or LLVM in the compilation path. It compiles itself: the
 compiler it builds from its own source builds the same bytes again
 (A1 = A2 = A3). The aim is an Alchem that is self-hosted.
 
@@ -55,6 +55,15 @@ python3 scripts/build-arm64.py --darwin --compiler build/dev/A2 \
   --output build/dev/alchem-compiler-darwin --macos build/dev/alchem-compiler-macos
 python3 scripts/verify-darwin.py build/dev/alchem-compiler-macos   # on macOS
 ```
+
+## Windows x64
+
+`scripts/build-windows.py` builds the compiler that makes Windows programs,
+and that compiler as a Windows program: PE executables whose code is the
+Linux image, its system calls made by a layer over kernel32 and Winsock
+([spec/windows.md](spec/windows.md)). CI runs it on Windows, where it must
+make itself again byte for byte and its programs print what those of the Go
+compiler print there (`scripts/windows-examples.py`).
 
 ## Verification
 

@@ -24,7 +24,7 @@ typedef unsigned char u8;
 enum {
   EPERM = 1, ENOENT = 2, EINTR = 4, EIO = 5, EBADF = 9, EAGAIN = 11,
   ENOMEM = 12, EACCES = 13, EFAULT = 14, EEXIST = 17, ENODEV = 19,
-  EINVAL = 22, EMFILE = 24, ENOSPC = 28, EPIPE = 32, ENOSYS = 38,
+  EINVAL = 22, EMFILE = 24, ENAMETOOLONG = 36, ENOSPC = 28, EPIPE = 32, ENOSYS = 38,
   ENOTSOCK = 88, EDESTADDRREQ = 89, EMSGSIZE = 90, ENOPROTOOPT = 92,
   EPROTONOSUPPORT = 93, EOPNOTSUPP = 95, EAFNOSUPPORT = 97,
   EADDRINUSE = 98, EADDRNOTAVAIL = 99, ENETDOWN = 100, ENETUNREACH = 101,
@@ -41,6 +41,7 @@ extern W u64 handle_of(u64 fd);
 extern W i64 new_fd(u64 handle);
 extern W i64 fail(void);
 extern W i32 wide(const char *path, u16 *to);
+extern W void fill_stat(void *stat, const void *data, u64 size);
 extern W void wait_for(const i64 *timespec);
 extern u16 wpath1[32768], wpath2[32768];
 extern u64 regions[][2];
@@ -91,6 +92,7 @@ extern W i32 (*imp_WideCharToMultiByte)(u32, u32, const u16 *, i32, char *, i32,
 extern W i32 (*imp_CreateHardLinkW)(const u16 *, const u16 *, void *);
 extern W u8 (*imp_CreateSymbolicLinkW)(const u16 *, const u16 *, u32);
 extern W u32 (*imp_GetFileAttributesW)(const u16 *);
+extern W i32 (*imp_GetFileAttributesExW)(const u16 *, u32, void *);
 extern W i32 (*imp_SetFileAttributesW)(const u16 *, u32);
 extern W u32 (*imp_GetTempPathW)(u32, u16 *);
 extern W u32 (*imp_GetCurrentProcessId)(void);
@@ -101,6 +103,17 @@ extern W u32 (*imp_FormatMessageW)(u32, const void *, u32, u32, u16 *, u32, void
 extern W u32 (*imp_GetFullPathNameW)(const u16 *, u32, u16 *, u16 **);
 extern W u32 (*imp_GetFileType)(u64);
 extern W i32 (*imp_PeekNamedPipe)(u64, void *, u32, u32 *, u32 *, u32 *);
+extern W u64 (*imp_CreateThread)(void *, u64, void *, void *, u32, u32 *);
+extern W i32 (*imp_SetNamedPipeHandleState)(u64, u32 *, u32 *, u32 *);
+extern W i32 (*imp_DeleteFileW)(const u16 *);
+extern W i32 (*imp_RemoveDirectoryW)(const u16 *);
+extern W void (*imp_SetLastError)(u32);
+extern W i32 (*imp_DeviceIoControl)(u64, u32, void *, u32, void *, u32, u32 *, void *);
+extern W u64 (*imp_FindFirstFileW)(const u16 *, void *);
+extern W i32 (*imp_FindClose)(u64);
+extern W i32 (*imp_GetFileInformationByHandle)(u64, void *);
+extern W i32 (*imp_SetFileTime)(u64, const u64 *, const u64 *, const u64 *);
+extern W void (*imp_GetSystemTimeAsFileTime)(u64 *);
 extern W u64 (*imp_GetTickCount64)(void);
 extern W i32 (*imp_MultiByteToWideChar)(u32, u32, const char *, i32, u16 *, i32);
 extern W u32 (*imp_GetEnvironmentVariableW)(const u16 *, u16 *, u32);
@@ -619,6 +632,18 @@ static i64 sys_mmap_file(i64 length, i64 fd, i64 offset) {
   return (i64)m;
 }
 
+/* A mapping that was let go is no region of the program's any more:
+   Windows may give its addresses to something else. */
+static void region_remove(u64 at) {
+  for (u32 i = 0; i < region_count; i++)
+    if (regions[i][0] == at) {
+      regions[i][0] = regions[region_count - 1][0];
+      regions[i][1] = regions[region_count - 1][1];
+      region_count--;
+      return;
+    }
+}
+
 /* mremap(old, size, new size, MREMAP_MAYMOVE): a new mapping with the old
    contents; the old one is released. */
 static i64 sys_mremap(i64 old, i64 size, i64 grown, i64 flags) {
@@ -628,8 +653,12 @@ static i64 sys_mremap(i64 old, i64 size, i64 grown, i64 flags) {
   if (!m) return -ENOMEM;
   commit_range((void *)old, (u64)size);
   memcpy(m, (void *)old, (u64)size);
-  if (!imp_VirtualFree((void *)old, 0, 0x8000))           /* MEM_RELEASE */
-    imp_VirtualFree((void *)old, (u64)size, 0x4000);       /* MEM_DECOMMIT */
+  /* While a copy runs the old mapping is the parent's, and stays. */
+  if (!copying) {
+    if (!imp_VirtualFree((void *)old, 0, 0x8000))         /* MEM_RELEASE */
+      imp_VirtualFree((void *)old, (u64)size, 0x4000);     /* MEM_DECOMMIT */
+    else region_remove((u64)old);
+  }
   region_add((u64)m, (u64)grown);
   return (i64)m;
 }
@@ -739,9 +768,140 @@ static i64 sys_link(i64 old, i64 made, int symbolic) {
   /* Relative targets stay relative to the link; a directory's link is a
      directory link. SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE. */
   for (u16 *w = wpath1; *w; w++) if (*w == '/') *w = '\\';
-  u32 attributes = imp_GetFileAttributesW(wpath1);
+  /* What the target is, is asked from the link's directory, where a
+     relative one is resolved (as Go's os.Symlink joins them). */
+  const u16 *probe = wpath1;
+  static u16 wprobe[32768];
+  if (wpath1[0] != '\\' && !(wpath1[0] && wpath1[1] == ':')) {
+    u64 cut = 0, n = 0, m = 0;
+    for (; wpath2[n]; n++) if (wpath2[n] == '\\' || wpath2[n] == '/') cut = n + 1;
+    while (wpath1[m]) m++;
+    if (cut + m < 32768) {
+      for (u64 i = 0; i < cut; i++) wprobe[i] = wpath2[i];
+      for (u64 i = 0; i <= m; i++) wprobe[cut + i] = wpath1[i];
+      probe = wprobe;
+    }
+  }
+  u32 attributes = imp_GetFileAttributesW(probe);
   u32 flags = 2 | ((attributes != 0xFFFFFFFF && (attributes & 0x10)) ? 1 : 0);
   return imp_CreateSymbolicLinkW(wpath2, wpath1, flags) ? 0 : fail();
+}
+
+/* stat and lstat of a path, as Go's os.Stat and os.Lstat: a link is
+   followed (the file it names, opened) or told as one, of no size. */
+static i64 sys_stat_path(i64 path, i64 st, int follow) {
+  u8 data[36], found[592], info[52];
+  if (!wide((const char *)path, wpath1)) return -ENOENT;
+  commit_range((void *)st, 144);
+  if (!imp_GetFileAttributesExW(wpath1, 0, data)) return fail();
+  int link = 0;
+  if (*(u32 *)data & 0x400) {                   /* FILE_ATTRIBUTE_REPARSE_POINT */
+    /* Its tag, where a directory's entry gives it: a symbolic link or a
+       mount point (a junction). */
+    u64 h = imp_FindFirstFileW(wpath1, found);
+    if (h != (u64)-1) {
+      u32 tag = *(u32 *)(found + 36);
+      link = tag == 0xA000000C || tag == 0xA0000003;
+      imp_FindClose(h);
+    }
+  }
+  if (link && follow) {
+    /* No access asked, shared with all, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS. */
+    u64 h = imp_CreateFileW(wpath1, 0, 7, 0, 3, 0x02000000, 0);
+    if (h == (u64)-1) return fail();
+    i32 ok = imp_GetFileInformationByHandle(h, info);
+    if (!ok) { i64 r = fail(); imp_CloseHandle(h); return r; }
+    imp_CloseHandle(h);
+    memcpy(data, info, 28);
+    *(u32 *)(data + 28) = *(u32 *)(info + 32);
+    *(u32 *)(data + 32) = *(u32 *)(info + 36);
+    link = 0;
+  }
+  u64 size = link ? 0 : ((u64)*(u32 *)(data + 28) << 32) | *(u32 *)(data + 32);
+  if (link) *(u32 *)data &= ~0x10u;             /* a link to a directory is a link */
+  fill_stat((void *)st, data, size);
+  if (link) *(u32 *)((u8 *)st + 24) = 0120666;  /* S_IFLNK */
+  return 0;
+}
+
+/* unlink, as the file's half of Go's os.Remove on Windows: a link to a
+   directory is removed as a directory is, and a file that may not be
+   written is made writable and deleted. */
+static i64 sys_unlink(i64 path) {
+  if (!wide((const char *)path, wpath1)) return -ENOENT;
+  if (imp_DeleteFileW(wpath1)) return 0;
+  u32 why = imp_GetLastError();
+  u32 a = imp_GetFileAttributesW(wpath1);
+  if (a != 0xFFFFFFFF) {
+    if ((a & 0x410) == 0x410 && imp_RemoveDirectoryW(wpath1)) return 0;
+    if (!(a & 0x10) && (a & 1) && imp_SetFileAttributesW(wpath1, (a & ~1u) ? (a & ~1u) : 0x80)) {
+      if (imp_DeleteFileW(wpath1)) return 0;
+      why = imp_GetLastError();
+      imp_SetFileAttributesW(wpath1, a);
+    }
+  }
+  imp_SetLastError(why);
+  return fail();
+}
+
+/* readlink(path, buffer, size), as Go's os.Readlink: where the link's
+   reparse point says it leads, without the \??\ of an absolute one. */
+static i64 sys_readlink(i64 path, i64 buffer, i64 size) {
+  static u8 point[16384];
+  if (!wide((const char *)path, wpath1)) return -ENOENT;
+  if (size <= 0) return -EINVAL;
+  /* No access asked, shared with all, OPEN_EXISTING,
+     FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS. */
+  u64 h = imp_CreateFileW(wpath1, 0, 7, 0, 3, 0x02200000, 0);
+  if (h == (u64)-1) return fail();
+  u32 got = 0;
+  i32 ok = imp_DeviceIoControl(h, 0x900A8, 0, 0, point, sizeof point, &got, 0);   /* FSCTL_GET_REPARSE_POINT */
+  if (!ok) { i64 r = fail(); imp_CloseHandle(h); return r == -EIO ? -EINVAL : r; }
+  imp_CloseHandle(h);
+  u32 tag = *(u32 *)point;
+  u16 *names;
+  int relative = 0;
+  if (tag == 0xA000000C) { names = (u16 *)(point + 20); relative = *(u32 *)(point + 16) & 1; }
+  else if (tag == 0xA0000003) names = (u16 *)(point + 16);
+  else return -EINVAL;
+  u16 *name = names + *(u16 *)(point + 8) / 2;
+  i32 n = *(u16 *)(point + 10) / 2;
+  if (!relative && n >= 4 && name[0] == '\\' && name[1] == '?' && name[2] == '?' && name[3] == '\\') {
+    name += 4;
+    n -= 4;
+    /* \??\UNC\host\share is \\host\share. */
+    if (n >= 4 && name[0] == 'U' && name[1] == 'N' && name[2] == 'C' && name[3] == '\\') {
+      name += 2;
+      n -= 2;
+      name[0] = '\\';
+    }
+  }
+  if (!n) return 0;
+  commit_range((void *)buffer, (u64)size);
+  i32 m = imp_WideCharToMultiByte(65001, 0, name, n, (char *)buffer, (i32)(size > 0x7FFFFFFF ? 0x7FFFFFFF : size), 0, 0);
+  return m > 0 ? m : -ENAMETOOLONG;
+}
+
+/* utimensat(dir, path, times, flags): the access and write times, each
+   the time given, now (no times, or UTIME_NOW) or left (UTIME_OMIT). */
+static i64 sys_utimens(i64 path, i64 times) {
+  if (!wide((const char *)path, wpath1)) return -ENOENT;
+  u64 now, set[2];
+  const u64 *use[2] = {0, 0};
+  imp_GetSystemTimeAsFileTime(&now);
+  if (times) commit_range((void *)times, 32);
+  for (int k = 0; k < 2; k++) {
+    i64 seconds = times ? ((i64 *)times)[2 * k] : 0, nanos = times ? ((i64 *)times)[2 * k + 1] : 0x3FFFFFFF;
+    if (nanos == 0x3FFFFFFE) continue;
+    set[k] = nanos == 0x3FFFFFFF ? now : (u64)(seconds * 10000000 + nanos / 100 + 116444736000000000LL);
+    use[k] = &set[k];
+  }
+  /* FILE_WRITE_ATTRIBUTES, shared with all, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS. */
+  u64 h = imp_CreateFileW(wpath1, 0x100, 7, 0, 3, 0x02000000, 0);
+  if (h == (u64)-1) return fail();
+  i64 r = imp_SetFileTime(h, 0, use[0], use[1]) ? 0 : fail();
+  imp_CloseHandle(h);
+  return r;
 }
 
 /* fchmodat(dir, path, mode): Windows keeps only whether a file can be
@@ -1224,6 +1384,89 @@ int copy_fault(u8 *record) {
   return 1;
 }
 
+/* What a copy writes to a pipe. The program reads the pipe once the copy
+   has ended (it is the one thread), so a copy that wrote more than the
+   pipe holds would wait for ever: what it writes is kept, and written by
+   a thread of its own once the program runs again, to a duplicate of the
+   handle that it closes after (the reader's end of file). What the pipe
+   has room for is written before the program runs again, as a copy that
+   never waited would have left it: the program then finds its trace
+   there and does not let other processes run while it waits for it. One
+   pipe, the first the copy writes to that is not the program's standard
+   output or errors, which someone else reads; the first 32 bytes kept
+   are the handle, the length left and where it starts. */
+#define SPILL_ROOM (1ull << 32)
+static u8 *spill;
+static u64 spill_handle, spill_used, spill_committed, fork_standard[3];
+
+static W u32 spill_writer(void *given) {
+  u8 *kept = given, *at = *(u8 **)(kept + 16);
+  u64 h = *(u64 *)kept, left = *(u64 *)(kept + 8);
+  while (left) {
+    u32 done = 0;
+    if (!imp_WriteFile(h, at, left > 65536 ? 65536 : (u32)left, &done, 0) || !done) break;
+    at += done;
+    left -= done;
+  }
+  imp_CloseHandle(h);
+  imp_VirtualFree(kept, 0, 0x8000);
+  return 0;
+}
+
+static i64 spill_write(i64 fd, i64 data, i64 n) {
+  if (fd < 0 || fd >= FDS || is_socket(fd) || n < 0) return NOT_MINE;
+  u64 h = handle_of((u64)fd);
+  if (!h || imp_GetFileType(h) != 3) return NOT_MINE;        /* FILE_TYPE_PIPE */
+  if (spill_handle && spill_handle != h) return NOT_MINE;
+  for (int k = 0; k < 3; k++) if (h == fork_standard[k]) return NOT_MINE;
+  if (!spill) {
+    if (!(spill = imp_VirtualAlloc(0, SPILL_ROOM, 0x2000, 4))) return NOT_MINE;
+    spill_used = 32;
+    spill_committed = 0;
+  }
+  if (spill_used + (u64)n > SPILL_ROOM) return -ENOSPC;
+  while (spill_used + (u64)n > spill_committed) {
+    if (!imp_VirtualAlloc(spill + spill_committed, 1 << 20, 0x1000, 4)) return -ENOMEM;
+    spill_committed += 1 << 20;
+  }
+  spill_handle = h;
+  commit_range((void *)data, (u64)n);
+  memcpy(spill + spill_used, (void *)data, (u64)n);
+  spill_used += (u64)n;
+  return n;
+}
+
+/* The copy ends: what it wrote goes to its pipe from a thread. */
+static void spill_send(void) {
+  if (spill) {
+    u64 me = imp_GetCurrentProcess(), h = 0, thread = 0;
+    u8 *at = spill + 32;
+    u64 left = spill_used - 32;
+    /* What fits, without waiting (PIPE_NOWAIT, then PIPE_WAIT again). */
+    u32 mode = 1;
+    if (imp_SetNamedPipeHandleState(spill_handle, &mode, 0, 0)) {
+      while (left) {
+        u32 done = 0;
+        if (!imp_WriteFile(spill_handle, at, left > 4096 ? 4096 : (u32)left, &done, 0) || !done) break;
+        at += done;
+        left -= done;
+      }
+      mode = 0;
+      imp_SetNamedPipeHandleState(spill_handle, &mode, 0, 0);
+    }
+    if (left && imp_DuplicateHandle(me, spill_handle, me, &h, 0, 0, 2)) {
+      *(u64 *)spill = h;
+      *(u64 *)(spill + 8) = left;
+      *(u8 **)(spill + 16) = at;
+      thread = imp_CreateThread(0, 0, spill_writer, spill, 0, 0);
+      if (thread) imp_CloseHandle(thread);
+      else { imp_CloseHandle(h); imp_VirtualFree(spill, 0, 0x8000); }
+    } else imp_VirtualFree(spill, 0, 0x8000);
+  }
+  spill = 0;
+  spill_handle = spill_used = spill_committed = 0;
+}
+
 /* fork: the copy starts (0), or -errno. */
 static i64 sys_fork(unsigned char *c) {
   if (copying) return -11;                                   /* EAGAIN */
@@ -1235,6 +1478,7 @@ static i64 sys_fork(unsigned char *c) {
   }
   copy_used = 0;
   store_committed = 0;
+  for (u64 k = 0; k < 3; k++) fork_standard[k] = handle_of(k);
   protected_count = committed_count = 0;
   memcpy(copy_context, c, sizeof copy_context);
   memcpy(copy_handles, handles, sizeof copy_handles);
@@ -1243,19 +1487,31 @@ static i64 sys_fork(unsigned char *c) {
   /* The stack it runs on, from just below its pointer to its region's end. */
   u64 rsp = *(u64 *)(c + 0x98);
   int s = region_index(rsp);
-  stack_low = (rsp - 4096) & ~4095ull;
+  /* The whole stack, not only what lies above its pointer: the copy goes
+     deeper than where it was made (the failure passes on, the trace is
+     written, each call of the layer leaves Windows' records there), and a
+     page of the stack kept read-only could not take the record of its own
+     fault. Pages a deeper call left committed below the pointer are
+     written as they are. */
+  stack_low = s < 0 ? ((rsp - 4096) & ~4095ull) : regions[s][0];
   stack_high = s < 0 ? ((rsp + 65536) & ~4095ull) : regions[s][0] + regions[s][1];
-  if (s >= 0 && stack_low < regions[s][0]) stack_low = regions[s][0];
   u64 stack_size = stack_high - stack_low;
-  stack_copy = imp_VirtualAlloc(0, stack_size, 0x3000, 4);
+  stack_copy = imp_VirtualAlloc(0, stack_size, 0x2000, 4);
   if (!stack_copy) return -12;
-  /* Only what is committed of it is there to keep. */
+  /* Only what is committed and written of it is there to keep (not the
+     guard pages below, which a read would take for a growing stack). */
   for (u64 a = stack_low; a < stack_high;) {
     u8 info[48];
     if (!imp_VirtualQuery((void *)a, info, sizeof info)) break;
     u64 base = *(u64 *)info, size = *(u64 *)(info + 24);
     u64 end = base + size > stack_high ? stack_high : base + size;
-    if (*(u32 *)(info + 32) == 0x1000) memcpy(stack_copy + (a - stack_low), (void *)a, end - a);
+    if (*(u32 *)(info + 32) == 0x1000 && *(u32 *)(info + 36) == 4) {
+      if (!imp_VirtualAlloc(stack_copy + (a - stack_low), end - a, 0x1000, 4)) {
+        imp_VirtualFree(stack_copy, 0, 0x8000);
+        return -12;
+      }
+      memcpy(stack_copy + (a - stack_low), (void *)a, end - a);
+    }
     a = end;
   }
   /* Every other committed, writable page of the program's memory. */
@@ -1289,6 +1545,7 @@ static i64 sys_fork(unsigned char *c) {
 /* The copy exits with status: the parent is put back and its fork returns
    the copy's number. */
 static i64 copy_exit(unsigned char *c, i64 status) {
+  spill_send();
   /* Descriptors: the parent's table; what the copy opened is closed. */
   for (int fd = 0; fd < FDS; fd++) {
     if (!handles[fd]) continue;
@@ -1326,12 +1583,13 @@ static i64 copy_exit(unsigned char *c, i64 status) {
 /* On the layer's stack: the parent's stack as it was, then the parent at
    its fork, which gives the copy's number. */
 void copy_resume_c(void) {
-  for (u64 a = stack_low; a < stack_high;) {
+  /* What was kept of the stack: the committed parts of the copy of it. */
+  for (u64 a = 0, n = stack_high - stack_low; a < n;) {
     u8 info[48];
-    if (!imp_VirtualQuery((void *)a, info, sizeof info)) break;
+    if (!imp_VirtualQuery(stack_copy + a, info, sizeof info)) break;
     u64 base = *(u64 *)info, size = *(u64 *)(info + 24);
-    u64 end = base + size > stack_high ? stack_high : base + size;
-    if (*(u32 *)(info + 32) == 0x1000) memcpy((void *)a, stack_copy + (a - stack_low), end - a);
+    u64 end = base + size - (u64)stack_copy > n ? n : base + size - (u64)stack_copy;
+    if (*(u32 *)(info + 32) == 0x1000) memcpy((void *)(stack_low + a), stack_copy + a, end - a);
     a = end;
   }
   imp_VirtualFree(stack_copy, 0, 0x8000);
@@ -1422,7 +1680,7 @@ static int child_of(i64 pid) {
 
 /* What is built for CreateProcessW: the command line, the environment
    block and the directory, in UTF-16; and UTF-8 room to build them in. */
-#define SPAWN_UNITS (1 << 20)
+#define SPAWN_UNITS (1 << 23)
 static u16 *spawn_wide;
 static char *spawn_text;
 
@@ -1498,7 +1756,9 @@ static i64 sys_spawn(i64 path, i64 argv, i64 envp, i64 dir, i64 flags, i64 out) 
   /* The environment: each name once, its last value (dedupEnvCase), and
      SYSTEMROOT, which Windows programs need (addCriticalEnv). */
   u16 *block = line + n;
-  u64 left = SPAWN_UNITS - (u64)n - 8;
+  /* Room is kept after it for the name of a file for the errors. */
+  if ((u64)n + 40000 > SPAWN_UNITS) return -7;
+  u64 left = SPAWN_UNITS - (u64)n - 40000;
   u64 used = 0;
   int has_root = 0;
   for (i64 i = 0; env && env[i]; i++) {
@@ -1506,16 +1766,17 @@ static i64 sys_spawn(i64 path, i64 argv, i64 envp, i64 dir, i64 flags, i64 out) 
     for (i64 j = i + 1; env[j]; j++) if (same_key(env[i], env[j])) { later = 1; break; }
     if (later) continue;
     if (same_key(env[i], "SYSTEMROOT=")) has_root = 1;
+    if (left - used < 2) return -7;
     i32 m = imp_MultiByteToWideChar(65001, 0, env[i], -1, block + used, (i32)(left - used));
     if (m <= 0) return -7;
     used += (u64)m;
   }
-  if (!has_root) {
+  if (!has_root && left - used > 40000) {
     const char *name = "SYSTEMROOT=";
     u64 k = 0;
     for (; name[k]; k++) block[used + k] = (u16)name[k];
     u16 *value = block + used + k;
-    u32 v = imp_GetEnvironmentVariableW(u"SYSTEMROOT", value, (u32)(left - used - k - 2));
+    u32 v = imp_GetEnvironmentVariableW(u"SYSTEMROOT", value, 32768);
     if (v) used += k + v + 1;
   }
   if (!used) block[used++] = 0;
@@ -1720,11 +1981,26 @@ static int empty_path(i64 p) {
   return 1;
 }
 
+/* open for writing of what is a directory: EISDIR, as Go's syscall.Open
+   makes of Windows' refusal (with O_EXCL the file exists, as there). */
+static i64 open_directory(i64 path, i64 flags) {
+  if (!path || !(flags & 3) || (flags & 0xC0) == 0xC0) return NOT_MINE;
+  if (!wide((const char *)path, wpath1)) return NOT_MINE;
+  u32 a = imp_GetFileAttributesW(wpath1);
+  if (a == 0xFFFFFFFF || !(a & 0x10)) return NOT_MINE;
+  last_error = 0;
+  return -21;                                                /* EISDIR */
+}
+
 /* The system call in the CONTEXT at c (its number in RAX): its result, or
    NOT_MINE for the assembly to make. */
 i64 layer_call(unsigned char *c) {
   i64 nr = *(i64 *)(c + 0x78);
   last_error = 0;
+  if (copying && nr == 1) {
+    i64 r = spill_write(ARG(c, 0), ARG(c, 1), ARG(c, 2));
+    if (r != NOT_MINE) return r;
+  }
   switch (nr) {
   case 57: case 58: return sys_fork(c);                      /* fork, vfork */
   case 60: case 231: return copying ? copy_exit(c, ARG(c, 0)) : NOT_MINE;
@@ -1751,7 +2027,7 @@ i64 layer_call(unsigned char *c) {
   case 0: case 1: case 5: case 16:
     return is_socket(ARG(c, 0)) ? socket_call(nr, c) : NOT_MINE;
   case 72: return is_socket(ARG(c, 0)) ? socket_call(nr, c) : sys_fcntl(ARG(c, 0), ARG(c, 1), ARG(c, 2));
-  case 2: return empty_path(ARG(c, 0)) ? -ENOENT : NOT_MINE;  /* open */
+  case 2: return empty_path(ARG(c, 0)) ? -ENOENT : open_directory(ARG(c, 0), ARG(c, 1));  /* open */
   case 32: return sys_dup(ARG(c, 0), 3);
   case 33: case 292: return sys_dup2(ARG(c, 0), ARG(c, 1));
   case 17: return sys_pio(ARG(c, 0), ARG(c, 1), ARG(c, 2), ARG(c, 3), 0);
@@ -1774,9 +2050,43 @@ i64 layer_call(unsigned char *c) {
     return sys_chmod(path, mode);
   }
   case 319: return sys_memfd();
-  case 257: case 258: case 262: case 263:                     /* openat, mkdirat, newfstatat, unlinkat */
-    if (nr == 257 && empty_path(ARG(c, 1))) return -ENOENT;
-    return at_call(c, 0);
+  case 4: case 6: return sys_stat_path(ARG(c, 0), ARG(c, 1), nr == 4);   /* stat, lstat */
+  case 262: {                                                  /* newfstatat */
+    /* AT_EMPTY_PATH with no path is the descriptor's: the assembly's. */
+    const char *path = (const char *)ARG(c, 1);
+    if (!path) return NOT_MINE;
+    commit_range((void *)path, 1);
+    if ((ARG(c, 3) & 0x1000) && !*path) return NOT_MINE;
+    i64 r = at_call(c, 0);
+    if (r != NOT_MINE) return r;
+    path = (const char *)ARG(c, 1);
+    return sys_stat_path((i64)path, ARG(c, 2), !(ARG(c, 3) & 0x100));   /* AT_SYMLINK_NOFOLLOW */
+  }
+  case 280: {                                                  /* utimensat */
+    i64 r = at_call(c, 0);
+    if (r != NOT_MINE) return r;
+    return ARG(c, 1) ? sys_utimens(ARG(c, 1), ARG(c, 2)) : -EINVAL;
+  }
+  /* copy_file_range: not here; the library reads and writes instead. */
+  case 326: return -ENOSYS;
+  case 87: return sys_unlink(ARG(c, 0));
+  case 89: return sys_readlink(ARG(c, 0), ARG(c, 1), ARG(c, 2));
+  case 267: {                                                  /* readlinkat */
+    i64 r = at_call(c, 0);
+    if (r != NOT_MINE) return r;
+    return ARG(c, 1) ? sys_readlink(ARG(c, 1), ARG(c, 2), ARG(c, 3)) : -EINVAL;
+  }
+  case 263: {                                                  /* unlinkat */
+    i64 r = at_call(c, 0);
+    if (r != NOT_MINE || (ARG(c, 2) & 0x200) || !ARG(c, 1)) return r;   /* AT_REMOVEDIR: the assembly's */
+    return sys_unlink(ARG(c, 1));
+  }
+  case 257: {                                                  /* openat */
+    if (empty_path(ARG(c, 1))) return -ENOENT;
+    i64 r = at_call(c, 0);
+    return r != NOT_MINE ? r : open_directory(ARG(c, 1), ARG(c, 2));
+  }
+  case 258: return at_call(c, 0);                              /* mkdirat */
   case 264: case 316: {                                        /* renameat, renameat2 */
     if (ARG(c, 2) != -100 && ARG(c, 0) == -100) {
       /* Only the second is relative to a directory: not made. */
