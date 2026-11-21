@@ -73,6 +73,7 @@ extern W i32 (*imp_getpeername)(SOCKET, void *, i32 *);
 extern W i32 (*imp_setsockopt)(SOCKET, i32, i32, const void *, i32);
 extern W i32 (*imp_getsockopt)(SOCKET, i32, i32, void *, i32 *);
 extern W i32 (*imp_WSAPoll)(void *, u32, i32);
+extern W i32 (*imp_select)(i32, void *, void *, void *, const void *);
 extern W i32 (*imp_GetAddrInfoW)(const u16 *, const u16 *, const void *, void **);
 extern W void (*imp_FreeAddrInfoW)(void *);
 extern W i32 (*imp_ReadFile)(u64, void *, u32, u32 *, void *);
@@ -497,6 +498,12 @@ static i64 sys_ppoll(i64 fds, i64 count, i64 timeout) {
     i64 spent = (i64)(imp_GetTickCount64() - start);
     i64 left = limit < 0 ? -1 : (limit > spent ? limit - spent : 0);
     i32 wait = ready ? 0 : pipes ? (left == 0 ? 0 : 1) : (i32)(left > 0x7FFFFFFF ? 0x7FFFFFFF : left);
+    /* WSAPoll may not tell of a connect that failed: while a socket waits to
+       be written to, it is asked of select's exceptions between short waits
+       (which leaves its SO_ERROR for the program). */
+    int writers = 0;
+    for (i64 i = 0; i < count; i++) if (p[i].fd >= 0 && is_socket(p[i].fd) && (p[i].events & 4)) writers = 1;
+    if (writers && (wait < 0 || wait > 5)) wait = 5;
     if (n) {
       i32 r = imp_WSAPoll(polled, n, wait);
       if (r < 0) return wsa_fail();
@@ -509,6 +516,11 @@ static i64 sys_ppoll(i64 fds, i64 count, i64 timeout) {
         if (w & 0x1) got |= 8;                 /* POLLERR */
         if (w & 0x2) got |= 0x10;              /* POLLHUP */
         if (w & 0x4) got |= 0x20;              /* POLLNVAL */
+        if (!got && (p[i].events & 4)) {
+          u64 except[2] = {1, handles[p[i].fd]};   /* fd_set: one socket */
+          i32 zero[2] = {0, 0};
+          if (imp_select(0, 0, 0, except, zero) == 1) got = 4 | 8;   /* POLLOUT | POLLERR */
+        }
         p[i].revents = got;
         if (got) ready++;
       }
