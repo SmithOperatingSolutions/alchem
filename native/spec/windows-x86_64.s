@@ -39,6 +39,15 @@ start:
         mov ecx, 1
         lea rdx, [rip+handler]
         call [rip+imp_AddVectoredExceptionHandler]
+        # The TEB's stack of this thread, which the handler runs on: it is
+        # put back there while the handler runs (Windows' functions probe
+        # their frames against it, __chkstk).
+        mov rax, gs:[0x8]
+        mov [rip+thread_teb], rax
+        mov rax, gs:[0x10]
+        mov [rip+thread_teb+8], rax
+        mov rax, gs:[0x1478]
+        mov [rip+thread_teb+16], rax
         call linux_stack
         mov [rip+win_rsp], rsp
         mov rsp, rax
@@ -289,6 +298,19 @@ handler:
         cmp byte ptr [rip+busy], 0
         jne .Lout               # an exception inside the handler: Windows'
         mov byte ptr [rip+busy], 1
+        # The program's stack in the TEB is kept, the thread's put there.
+        mov rax, gs:[0x8]
+        mov [rip+program_teb], rax
+        mov rax, gs:[0x10]
+        mov [rip+program_teb+8], rax
+        mov rax, gs:[0x1478]
+        mov [rip+program_teb+16], rax
+        mov rax, [rip+thread_teb]
+        mov gs:[0x8], rax
+        mov rax, [rip+thread_teb+8]
+        mov gs:[0x10], rax
+        mov rax, [rip+thread_teb+16]
+        mov gs:[0x1478], rax
         mov rbx, [rcx]          # EXCEPTION_RECORD
         mov r12, [rcx+8]        # CONTEXT
         mov rsp, [rip+win_rsp]
@@ -364,6 +386,16 @@ handler:
 .Lcontinue:
         mov eax, -1             # EXCEPTION_CONTINUE_EXECUTION
 .Ldone:
+        # The program's stack in the TEB again (the thread's limit kept, as
+        # the kernel may have moved it).
+        mov rcx, gs:[0x10]
+        mov [rip+thread_teb+8], rcx
+        mov rcx, [rip+program_teb]
+        mov gs:[0x8], rcx
+        mov rcx, [rip+program_teb+8]
+        mov gs:[0x10], rcx
+        mov rcx, [rip+program_teb+16]
+        mov gs:[0x1478], rcx
         mov byte ptr [rip+busy], 0
 .Lout:
         mov rsp, rbp
@@ -1368,6 +1400,9 @@ region_count: .long 0
         .globl last_error
 last_error: .long 0
 busy:   .byte 0
+        .balign 8
+thread_teb: .quad 0, 0, 0       # StackBase, StackLimit, DeallocationStack
+program_teb: .quad 0, 0, 0
 
 # The rest starts as zeros, which the file does not hold.
         .bss
