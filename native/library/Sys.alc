@@ -431,6 +431,19 @@
   def held(m: integer, k: integer, p: integer, n: integer): integer do
     if k == 0 do -1 else if Sys.same(Sys.peek(m + 8 * k - 8), p, n) == 1 do k - 1 else Sys.held(m, k - 1, p, n) end end
   end
+# held, the name in either case (ASCII), as Windows keeps its environment.
+#: _wheld/4 needs _wsame/3
+  def _wheld(m: integer, k: integer, p: integer, n: integer): integer do
+    if k == 0 do -1 else if Sys._wsame(Sys.peek(m + 8 * k - 8), p, n) do k - 1 else Sys._wheld(m, k - 1, p, n) end end
+  end
+#: _wsame/3
+  def _wsame(a: integer, b: integer, n: integer): boolean do
+    if n == 0 do true else
+      x = Sys.byte(a)
+      y = Sys.byte(b)
+      if (if x >= 97 and x <= 122 do x - 32 else x end) != (if y >= 97 and y <= 122 do y - 32 else y end) do false else Sys._wsame(a + 1, b + 1, n - 1) end
+    end
+  end
 # Whether the file at p can be run, as exec.LookPath asks.
 #: exe/1 needs at/5 kind/0 stat/2 state/0
   def exe(p: string): boolean do
@@ -699,12 +712,17 @@
       Enum.map(Enum.filter(String.split(String.downcase(x), ";"), fn e -> e != "" end), fn e -> if String.starts_with?(e, ".") do e else "." <> e end end)
     end
   end
-# findExecutable: the file itself when it has an extension and is a
-# program, else the first of it with an extension of exts that is; "".
+# findExecutable: with no extensions to try the file itself; else the file
+# when it has an extension and is a program, else the first of it with an
+# extension of exts that is; "".
 #: _wfind/2 needs _wchk/1 _wext/1
   def _wfind(f: string, exts: list[string]): string do
-    if Sys._wext(f) and Sys._wchk(f) do f else
-      Enum.reduce(exts, "", fn e, r -> if r != "" do r else if Sys._wchk(f <> e) do f <> e else "" end end end)
+    if length(exts) == 0 do
+      if Sys._wchk(f) do f else "" end
+    else
+      if Sys._wext(f) and Sys._wchk(f) do f else
+        Enum.reduce(exts, "", fn e, r -> if r != "" do r else if Sys._wchk(f <> e) do f <> e else "" end end end)
+      end
     end
   end
 # chkStat: there, and not a directory.

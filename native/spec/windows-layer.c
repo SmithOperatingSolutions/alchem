@@ -24,7 +24,7 @@ typedef unsigned char u8;
 enum {
   EPERM = 1, ENOENT = 2, EINTR = 4, EIO = 5, EBADF = 9, EAGAIN = 11,
   ENOMEM = 12, EACCES = 13, EFAULT = 14, EEXIST = 17, ENODEV = 19,
-  EINVAL = 22, EMFILE = 24, ENOSPC = 28, EPIPE = 32, ENOSYS = 38,
+  EINVAL = 22, EMFILE = 24, ENAMETOOLONG = 36, ENOSPC = 28, EPIPE = 32, ENOSYS = 38,
   ENOTSOCK = 88, EDESTADDRREQ = 89, EMSGSIZE = 90, ENOPROTOOPT = 92,
   EPROTONOSUPPORT = 93, EOPNOTSUPP = 95, EAFNOSUPPORT = 97,
   EADDRINUSE = 98, EADDRNOTAVAIL = 99, ENETDOWN = 100, ENETUNREACH = 101,
@@ -104,6 +104,10 @@ extern W u32 (*imp_GetFullPathNameW)(const u16 *, u32, u16 *, u16 **);
 extern W u32 (*imp_GetFileType)(u64);
 extern W i32 (*imp_PeekNamedPipe)(u64, void *, u32, u32 *, u32 *, u32 *);
 extern W u64 (*imp_CreateThread)(void *, u64, void *, void *, u32, u32 *);
+extern W i32 (*imp_DeleteFileW)(const u16 *);
+extern W i32 (*imp_RemoveDirectoryW)(const u16 *);
+extern W void (*imp_SetLastError)(u32);
+extern W i32 (*imp_DeviceIoControl)(u64, u32, void *, u32, void *, u32, u32 *, void *);
 extern W u64 (*imp_FindFirstFileW)(const u16 *, void *);
 extern W i32 (*imp_FindClose)(u64);
 extern W i32 (*imp_GetFileInformationByHandle)(u64, void *);
@@ -801,6 +805,64 @@ static i64 sys_stat_path(i64 path, i64 st, int follow) {
   fill_stat((void *)st, data, size);
   if (link) *(u32 *)((u8 *)st + 24) = 0120666;  /* S_IFLNK */
   return 0;
+}
+
+/* unlink, as the file's half of Go's os.Remove on Windows: a link to a
+   directory is removed as a directory is, and a file that may not be
+   written is made writable and deleted. */
+static i64 sys_unlink(i64 path) {
+  if (!wide((const char *)path, wpath1)) return -ENOENT;
+  if (imp_DeleteFileW(wpath1)) return 0;
+  u32 why = imp_GetLastError();
+  u32 a = imp_GetFileAttributesW(wpath1);
+  if (a != 0xFFFFFFFF) {
+    if ((a & 0x410) == 0x410 && imp_RemoveDirectoryW(wpath1)) return 0;
+    if (!(a & 0x10) && (a & 1) && imp_SetFileAttributesW(wpath1, (a & ~1u) ? (a & ~1u) : 0x80)) {
+      if (imp_DeleteFileW(wpath1)) return 0;
+      why = imp_GetLastError();
+      imp_SetFileAttributesW(wpath1, a);
+    }
+  }
+  imp_SetLastError(why);
+  return fail();
+}
+
+/* readlink(path, buffer, size), as Go's os.Readlink: where the link's
+   reparse point says it leads, without the \??\ of an absolute one. */
+static i64 sys_readlink(i64 path, i64 buffer, i64 size) {
+  static u8 point[16384];
+  if (!wide((const char *)path, wpath1)) return -ENOENT;
+  if (size <= 0) return -EINVAL;
+  /* No access asked, shared with all, OPEN_EXISTING,
+     FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS. */
+  u64 h = imp_CreateFileW(wpath1, 0, 7, 0, 3, 0x02200000, 0);
+  if (h == (u64)-1) return fail();
+  u32 got = 0;
+  i32 ok = imp_DeviceIoControl(h, 0x900A8, 0, 0, point, sizeof point, &got, 0);   /* FSCTL_GET_REPARSE_POINT */
+  if (!ok) { i64 r = fail(); imp_CloseHandle(h); return r == -EIO ? -EINVAL : r; }
+  imp_CloseHandle(h);
+  u32 tag = *(u32 *)point;
+  u16 *names;
+  int relative = 0;
+  if (tag == 0xA000000C) { names = (u16 *)(point + 20); relative = *(u32 *)(point + 16) & 1; }
+  else if (tag == 0xA0000003) names = (u16 *)(point + 16);
+  else return -EINVAL;
+  u16 *name = names + *(u16 *)(point + 8) / 2;
+  i32 n = *(u16 *)(point + 10) / 2;
+  if (!relative && n >= 4 && name[0] == '\\' && name[1] == '?' && name[2] == '?' && name[3] == '\\') {
+    name += 4;
+    n -= 4;
+    /* \??\UNC\host\share is \\host\share. */
+    if (n >= 4 && name[0] == 'U' && name[1] == 'N' && name[2] == 'C' && name[3] == '\\') {
+      name += 2;
+      n -= 2;
+      name[0] = '\\';
+    }
+  }
+  if (!n) return 0;
+  commit_range((void *)buffer, (u64)size);
+  i32 m = imp_WideCharToMultiByte(65001, 0, name, n, (char *)buffer, (i32)(size > 0x7FFFFFFF ? 0x7FFFFFFF : size), 0, 0);
+  return m > 0 ? m : -ENAMETOOLONG;
 }
 
 /* utimensat(dir, path, times, flags): the access and write times, each
@@ -1958,7 +2020,19 @@ i64 layer_call(unsigned char *c) {
   }
   /* copy_file_range: not here; the library reads and writes instead. */
   case 326: return -ENOSYS;
-  case 257: case 258: case 263:                               /* openat, mkdirat, unlinkat */
+  case 87: return sys_unlink(ARG(c, 0));
+  case 89: return sys_readlink(ARG(c, 0), ARG(c, 1), ARG(c, 2));
+  case 267: {                                                  /* readlinkat */
+    i64 r = at_call(c, 0);
+    if (r != NOT_MINE) return r;
+    return ARG(c, 1) ? sys_readlink(ARG(c, 1), ARG(c, 2), ARG(c, 3)) : -EINVAL;
+  }
+  case 263: {                                                  /* unlinkat */
+    i64 r = at_call(c, 0);
+    if (r != NOT_MINE || (ARG(c, 2) & 0x200) || !ARG(c, 1)) return r;   /* AT_REMOVEDIR: the assembly's */
+    return sys_unlink(ARG(c, 1));
+  }
+  case 257: case 258:                                         /* openat, mkdirat */
     if (nr == 257 && empty_path(ARG(c, 1))) return -ENOENT;
     return at_call(c, 0);
   case 264: case 316: {                                        /* renameat, renameat2 */

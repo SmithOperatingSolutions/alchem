@@ -143,7 +143,7 @@ REFERENCE_PROGRAMS = [
      '    w: pid[integer] = Process.spawn(fn(self: pid[integer]): integer do raise(String.duplicate("x", 2000000)) end, 1)\n'
      '    {ended, why} = Process.await(w, 20000)\n'
      '    IO.puts(inspect({ended, byte_size(why)}))\n'
-     '    IO.puts(inspect(byte_size(Process.report(w))))\n'
+     '    IO.puts(inspect(byte_size(Process.report(w)) > 2000000))\n'
      '  end\nend\n', {}),
     # Copies made at many depths of the stack, and what the program holds
     # after each: the copy's pages are put back, none of the program's lost.
@@ -153,7 +153,7 @@ REFERENCE_PROGRAMS = [
      '  def rounds(i: integer, bad: integer): integer do\n    if i > 300 do bad else\n'
      '      w: pid[integer] = Process.spawn(fn(self: pid[integer]): integer do deep(i * 37) end, 1)\n'
      '      {ended, why} = Process.await(w, 20000)\n'
-     '      fine = ended and why == "at the bottom" and String.starts_with?(Process.report(w), "<stdin>:3:")\n'
+     '      fine = ended and why == "at the bottom" and String.contains?(Process.report(w), ": at the bottom\\n  at T.deep")\n'
      '      rounds(i + 1, if fine do bad else bad + 1 end)\n    end\n  end\n'
      '  def main() do\n    kept = fill(200000, [])\n    before = Enum.sum(kept)\n'
      '    IO.puts(inspect(rounds(0, 0)))\n'
