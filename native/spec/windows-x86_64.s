@@ -633,6 +633,7 @@ wide:
 
 # A Linux stat at rcx from Windows attributes and times at rdx (attributes,
 # then creation, access and write times as FILETIMEs), the size in r8.
+        .globl fill_stat
 fill_stat:
         push rdi
         mov rdi, rcx
