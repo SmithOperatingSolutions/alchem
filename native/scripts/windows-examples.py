@@ -161,7 +161,12 @@ def pinned(out):
 def normal(text, where):
     """Output with what differs from run to run as N: ports, the directory."""
     import re
-    text = text.replace(str(where).encode(), b'DIR').replace(str(where).replace('\\', '/').encode(), b'DIR')
+    # As written, with slashes for backslashes, with each backslash doubled
+    # as inspect writes it, and under Wine as Z: and the Linux path in
+    # Windows' form.
+    windows = str(where) if '\\' in str(where) else 'Z:' + str(where).replace('/', '\\')
+    for form in sorted({str(where), windows, windows.replace('\\', '/'), windows.replace('\\', '\\\\')}, key=len, reverse=True):
+        text = text.replace(form.encode(), b'DIR')
     return re.sub(rb'(127\.0\.0\.1|\[::1\]|localhost):\d+', rb'\1:N', text)
 
 
@@ -169,7 +174,13 @@ def normal(text, where):
 # sh of Git for Windows writes printf 'one\ntwo' to a pipe in two writes,
 # which the pinned runtime's blocking read finds apart and a read when the
 # pipe is ready finds together.
-REFERENCE_TIMING = {'3dc7ee2df1372fb7': 'processes: the parts a pipe is read in'}
+#
+# And the pinned nodes program counts its processes (Process.count) while
+# Go's scheduler on Windows has yet to start a server Node.serve made, or
+# to end the process of a cast of the wrong type: 50 ms later its counts
+# are these programs' and those of both compilers on Linux.
+REFERENCE_TIMING = {'3dc7ee2df1372fb7': 'processes: the parts a pipe is read in',
+                    'c73676a8ef191eae': 'nodes: Process.count as Go schedules on Windows'}
 
 
 def reference(directory, pinned_compiler, compiler, runner):
@@ -177,13 +188,14 @@ def reference(directory, pinned_compiler, compiler, runner):
     directory = Path(directory)
     names = (directory / 'reference' / 'names.txt').read_text().split('\n')[:-1]
     failed = []
+    held = []
     timed = 0
     for i, name in enumerate(names):
         if hashlib.sha1((directory / 'reference' / f'{i:04}.alc').read_bytes()).hexdigest()[:16] in REFERENCE_TIMING:
             timed += 1
             continue
         source = directory / 'reference' / f'{i:04}.alc'
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
             d = Path(d)
             (d / 'p.alc').write_bytes(source.read_bytes())
             # Under Wine the pinned compiler is the Linux one (it has a Go
@@ -197,9 +209,9 @@ def reference(directory, pinned_compiler, compiler, runner):
             (d / 'native.exe').write_bytes(ours.stdout)
             got = []
             for program in ('pinned.exe', 'native.exe'):
-                run = d / 'run'
-                if run.exists():
-                    shutil.rmtree(run)
+                # A directory of its own for each: a process a program
+                # leaves behind can hold its directory on Windows.
+                run = d / ('run-' + program[:-4])
                 run.mkdir()
                 (run / 'tmp').mkdir()
                 env = dict(os.environ, TMP=str(run / 'tmp'), TEMP=str(run / 'tmp'))
@@ -208,6 +220,11 @@ def reference(directory, pinned_compiler, compiler, runner):
                     got.append((r.returncode, normal(r.stdout, run).replace(str(d / 'p.alc').encode(), b'<stdin>')))
                 except subprocess.TimeoutExpired:
                     got.append(('timed out', b''))
+            for program in ('pinned', 'native'):
+                try:
+                    shutil.rmtree(d / ('run-' + program))
+                except OSError:
+                    held.append(f'{name} ({program})')
             if got[0] != got[1]:
                 import difflib
                 lines = difflib.unified_diff(got[0][1].decode(errors='replace').split('\n'),
@@ -217,6 +234,8 @@ def reference(directory, pinned_compiler, compiler, runner):
                 failed.append((name, f'status pinned {got[0][0]}, native {got[1][0]}\n{diff}'))
     for name, why in failed:
         print(f'FAIL {name}: {why}')
+    for name in held:
+        print(f'note: a process of {name} outlived it, holding its directory')
     print(f'{len(names) - timed - len(failed)} of {len(names) - timed} print what the pinned compiler\'s Windows programs print'
           f' ({timed} a matter of timing, REFERENCE_TIMING)')
     return 1 if failed else 0
@@ -312,6 +331,8 @@ def check(directory, compiler, jobs, runner):
     failed = [(n, why) for n, why in results if why]
     for name, why in failed:
         print(f'FAIL {name}: {why}')
+    for name in held:
+        print(f'note: a process of {name} outlived it, holding its directory')
     print(f'{len(names) - len(failed)} of {len(names)} programs print on Windows what they print on Linux')
     return 1 if failed else 0
 
