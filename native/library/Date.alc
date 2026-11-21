@@ -903,12 +903,20 @@
 # is no $TZ, and UTC when $TZ is empty or names no zone file. $ZONEINFO
 # plays no part.
   def dl(s: integer, u: integer): list[integer] do
-    t = case System.get_env("TZ") do
-      some(v) -> if String.starts_with?(v, ":") do Kernel.binary_part(v, 1, byte_size(v)-1) else v end
-      none -> "/etc/localtime"
+    if Sys.windows() == 1 do
+      # Windows: the system's zone, as Go's time.Local there (pseudo call
+      # 1000105 of the Windows layer, spec/windows.md); $TZ plays no part.
+      o = Sys.state() + 512
+      Sys.call(1000105, s + u, o)
+      [1, Sys.peek(o), Sys.peek(o + 8), Sys.peek(o + 16), Sys.peek(o + 24), Sys.peek(o + 32)]
+    else
+      t = case System.get_env("TZ") do
+        some(v) -> if String.starts_with?(v, ":") do Kernel.binary_part(v, 1, byte_size(v)-1) else v end
+        none -> "/etc/localtime"
+      end
+      r = if t == "" or t == "UTC" or byte_size(t)>255 or String.contains?(t, "\x00") do 0 else tzn("\x01"<>t, t, if String.starts_with?(t, "/") do [""] else ["/usr/share/zoneinfo/", "/usr/share/lib/zoneinfo/", "/usr/lib/locale/TZ/", "/etc/zoneinfo/"] end) end
+      if r == 0 do [1, 0, tzi(0), tzi(1), Sys.addr("UTC"), 3] else tzl(r, s+u) end
     end
-    r = if t == "" or t == "UTC" or byte_size(t)>255 or String.contains?(t, "\x00") do 0 else tzn("\x01"<>t, t, if String.starts_with?(t, "/") do [""] else ["/usr/share/zoneinfo/", "/usr/share/lib/zoneinfo/", "/usr/lib/locale/TZ/", "/etc/zoneinfo/"] end) end
-    if r == 0 do [1, 0, tzi(0), tzi(1), Sys.addr("UTC"), 3] else tzl(r, s+u) end
   end
 # The record kept under the name k, or else that of the file n in the
 # first of the directories that has it as a zone file.

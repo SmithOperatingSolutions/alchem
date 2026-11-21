@@ -120,8 +120,10 @@ defmodule NativeByteRuntimeEmitter do
   # stack pointer in R14; R15 counts active calls and RBP starts at 0. The
   # word below the limit is the innermost handler of a try, 0 for none.
   # Its last instruction starts the collector (gm_start, native-memory.alc).
+  # A Windows program maps its stack with MAP_STACK as well, which its
+  # layer commits as it is used (spec/windows.md).
   def nc_stack_init(): bytes do
-    b[65,191,0,0,0,64,184,9,0,0,0,49,255,76,137,254,186,3,0,0,0,65,186,34,64,0,0,73,199,192,255,255,255,255,69,49,201,15,nc_sc(),72,61,1,240,255,255,114,24,73,209,239,73,129,255,0,0,16,0,115,203,191,71,0,0,0,184,60,0,0,0,15,nc_sc(),74,141,36,56,72,5,0,0,1,0,73,137,70,248,69,49,255,49,237,73,137,110,240,255,20,37,96,4,64,0]
+    nc_join(b[65,191,0,0,0,64,184,9,0,0,0,49,255,76,137,254,186,3,0,0,0,65,186,34,64,nc_win()*2,0,73,199,192,255,255,255,255,69,49,201,15,nc_sc(),72,61,1,240,255,255,114,24,73,209,239,73,129,255,0,0,16,0,115,203,191,71,0,0,0,184,60,0,0,0,15,nc_sc(),74,141,36,56,72,5,0,0,1,0,73,137,70,248],nw_stack_teb(),b[69,49,255,49,237,73,137,110,240,255,20,37,96,4,64,0])
   end
   # Every function and lambda starts by checking the stack against its limit
   # (exit 70 past it), then makes its frame: sixteen slots, the position of
@@ -131,7 +133,10 @@ defmodule NativeByteRuntimeEmitter do
     size = if peak <= 160 do 160 else nc_units(peak+15,16)*16 end
     # A frame that the 64 KiB below the limit might not hold is checked whole.
     check = if size <= 16384 do b[73,59,102,248,115,12] else nc_join(Enum.concat(b[76,141,156,36],nq_rel(0-size)),b[77,59,94,248],b[115,12]) end
-    nc_join(check,b[191,70,0,0,0,184,60,0,0,0,15,nc_sc(),85,72,137,229,72,129,236],nc_u32(size))
+    # A Windows program's stack grows through guard pages: a larger frame
+    # than they cover is touched page by page first (nw_probe).
+    checked = Enum.concat(check,b[191,70,0,0,0,184,60,0,0,0,15,nc_sc()])
+    nc_join(checked,if nc_win() == 1 do (if size > 32768 do nw_probe(size) else b[] end) else b[] end,Enum.concat(b[85,72,137,229,72,129,236],nc_u32(size)))
   end
   # Leave the program with the status in RAX; one outside 0..255 exits 70.
   def nc_exit_status(): bytes do

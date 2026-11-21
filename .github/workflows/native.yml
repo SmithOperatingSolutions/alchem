@@ -108,6 +108,7 @@ jobs:
           cp examples/hello-native.alc build/windows/hello.alc
           cp scripts/windows-examples.py build/windows/
           python3 scripts/windows-examples.py prepare build/windows/examples
+          python3 scripts/windows-examples.py pinned build/windows/alchem-upstream.exe
           python3 scripts/build-alchem.py --windows --compiler build/dev/alchem-compiler-windows-cross --output build/windows/alchem.exe
           cp -r ../examples/testing build/windows/testing
       - name: Keep the Windows compiler
@@ -186,7 +187,7 @@ jobs:
     name: Windows x64
     needs: native
     runs-on: windows-2025
-    timeout-minutes: 30
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
@@ -205,9 +206,15 @@ jobs:
           ./alchem-compiler-windows.exe < hello.alc > hello.exe
           out="$(./hello.exe)"
           test "$out" = 'Hello from native Alchem!'
-      - name: The upstream examples
+      - name: The upstream examples and the gates' programs
         # Each prints on Windows what it prints on Linux (spec/windows.md).
         run: python windows-examples.py check examples ./alchem-compiler-windows.exe --jobs 4
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+      - name: What Windows prints otherwise, against the pinned compiler's Windows programs
+        run: python windows-examples.py reference examples ./alchem-upstream.exe ./alchem-compiler-windows.exe
       - name: alchem.exe
         # The test, run and build commands on Windows (build-alchem.py --windows).
         run: |

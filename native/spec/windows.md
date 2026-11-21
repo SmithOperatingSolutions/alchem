@@ -83,6 +83,22 @@ those not in KERNEL32).
   commits 64 KiB around an address when touching it faults. A buffer the
   kernel reads or writes for a call is committed first, since Windows does
   not fault it in for the kernel as Linux does.
+- **Stacks** grow as Windows grows a thread's. A Windows program maps its
+  main stack and each process's with `MAP_STACK`; the layer reserves it
+  whole, commits its top 64 KiB, and puts 68 KiB of guard pages below
+  them. The kernel commits a guard page when it is touched and moves the
+  guard down, while the TEB names the stack (`StackBase`, `StackLimit`,
+  `DeallocationStack`): the program sets them when it starts on its stack
+  and at each switch of processes (`nw_stack_teb`, `nw_stack_keep`), and
+  the stack's first page keeps its limit and top while another runs.
+  Windows writes the record of an exception on the stack that faulted, so
+  a stack could not be grown by the handler; and the collector and other
+  routines go deep without a function's check, as the kernel lets them on
+  Linux. The stack guarantee (64 KiB, `SetThreadStackGuarantee`) keeps the
+  band that deep; a function with a frame of more than 32 KiB touches its
+  pages from the top down first (`nw_probe`, as `__chkstk`). The handler
+  runs on the thread's own stack, 512 KiB of which are committed at the
+  start.
 - **Faults.** The SIGSEGV handler `rt_sigaction` installs (`zf_guard`) is
   called as Linux would, with the address in its siginfo and RIP in its
   ucontext; if it moves RIP the program goes on there.
@@ -94,7 +110,10 @@ those not in KERNEL32).
   error (`last_error`).
 - **Paths** are UTF-8, given to the `...W` calls in UTF-16; `/dev/null` is
   `NUL`. A directory opens with `FILE_FLAG_BACKUP_SEMANTICS`, and a file
-  created without write permission is read-only.
+  created without write permission is read-only. A file is shared for
+  reading and writing, not for deleting, as Go's `syscall.Open` opens it:
+  one that is open cannot be removed or renamed over, as for the pinned
+  programs; an empty path is `ERROR_FILE_NOT_FOUND`, as there.
 
 The calls made so far:
 
@@ -123,7 +142,13 @@ The calls made so far:
   `fstat`, `fcntl` and `ioctl` on a socket. Addresses are laid out alike
   but for AF_INET6 (10, 23); options and errors are mapped to Winsock's,
   `SO_REUSEADDR` is not set (Go sets nothing on a Windows listener), and
-  a non-blocking connect's `WSAEWOULDBLOCK` is `EINPROGRESS`.
+  a non-blocking connect's `WSAEWOULDBLOCK` is `EINPROGRESS`. A connect to
+  the machine itself asks for no SYN retransmission
+  (`SIO_TCP_INITIAL_RTO`), as Go's net does, so that a closed port is
+  refused at once rather than after 2 s; a connect to the zero address
+  (`0.0.0.0`, `::`) is one to the machine itself, as Go dials it there; `ppoll` asks `select` of a
+  socket waiting to be written to, as `WSAPoll` may not tell of a failed
+  connect.
 
 ## Processes
 
@@ -182,6 +207,18 @@ branch never taken.
 - **Directories.** `File.cwd` is `GetCurrentDirectoryW` with `/` (no
   `PWD`), `System.user_home` is `USERPROFILE`, `System.tmp_dir` is
   `GetTempPathW` without its last `\` (pseudo call 1000103).
+- **Local time** (`Date.dl`, Logger's times) is the system's zone, as
+  Go's `time.Local` there (pseudo call 1000105): `GetTimeZoneInformation`,
+  one zone without summer time, else two with their transitions for the
+  hundred years around now (`pseudoUnix`), and the abbreviations from Go's
+  table of Windows zone names (the pinned toolchain's
+  `zoneinfo_abbrs_windows.go`, which the generator compiles in), else from
+  the table under the zone's English name in the registry, else the
+  capitals of its name. `$TZ` plays no part, as for Go.
+- **Names of hosts** are Windows' to resolve, as Go's net leaves them to
+  `GetAddrInfoW` there (pseudo call 1000107, `TCP._wresolve`): it reads
+  the system's hosts file and knows `localhost`; there is no
+  `/etc/hosts` or `/etc/resolv.conf` to read.
 - **The environment.** `System.get_env` finds a name in either case
   (ASCII), as `GetEnvironmentVariableW` does: the Windows compiler's
   `na_get_env` is assembled with `WINDOWS` defined
@@ -228,19 +265,25 @@ succeeds, 856 of 857 print what it prints. The other is `File.ln`, whose
 reference read another example's file in the shared temporary directory.
 
 Wine's error texts are its own (`File not found.`, and none for Winsock's
-errors); the reference for them is Windows (CI).
+errors); the reference for them is Windows (CI). CI's Windows job
+(`.github/workflows/native.yml`, `windows-2025`) runs the Windows compiler
+the Linux job builds: it must make itself again byte for byte, and build
+every upstream example and every program of the gates that print the same
+on Linux and Windows into one that prints there what was frozen on Linux
+(`scripts/windows-examples.py`: `prepare` on Linux, `check` on Windows, or
+`check --wine` under Wine): 2,632 programs. The 33 whose output Windows
+gives otherwise (`SKIPPED`, `GATE_SKIPPED`: Windows' error texts, Unix
+programs) are not passed over: the job builds each also with the pinned
+compiler there (`pinned` builds it for Windows on Linux; the Go toolchain
+it builds with is set up on the runner) and both programs must print the
+same (`reference`).
 
 ## Still to do
 
-- Local time: Go takes it on Windows from the system's zone
-  (`GetDynamicTimeZoneInformation`); the library takes `$TZ` or UTC.
-- Stacks: a 1 GiB stack is committed at once. The exception dispatcher
-  pushes its record on the faulting stack, so a stack committed as it is
-  touched would need room there.
-- The gates on Windows. CI (`.github/workflows/native.yml`, job Windows
-  x64 on `windows-2025`) runs the Windows compiler the Linux job builds:
-  it must make itself again byte for byte, make a program that runs, and
-  build every upstream example that prints the same on Linux and Windows
-  into a program that prints there what the Linux program prints
-  (`scripts/windows-examples.py`: `prepare` on Linux, `check` on Windows,
-  or `check --wine` under Wine; `SKIPPED` names the others).
+- The gates whose checks are code of their own rather than programs with
+  their frozen results: they drive the Linux compilers and tools
+  (`scripts/limited`, `/bin/sh`, `/proc`, `ptrace`), and run on Linux.
+  CI's Windows job runs every program of the gates that keep them (38 of
+  them, 1,792 programs) on Windows, with the examples
+  (`scripts/windows-examples.py`), 24 of them against the pinned compiler's
+  Windows programs there.
