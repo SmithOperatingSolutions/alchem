@@ -217,7 +217,6 @@ jobs:
       - name: Probe (temporary)
         continue-on-error: true
         run: |
-          (cd probe && go mod init probe >/dev/null 2>&1; go run probe.go)
           python windows-examples.py reference probe/nodes ./alchem-upstream.exe ./alchem-compiler-windows.exe || true
       - name: What Windows prints otherwise, against the pinned compiler's Windows programs
         run: python windows-examples.py reference examples ./alchem-upstream.exe ./alchem-compiler-windows.exe
