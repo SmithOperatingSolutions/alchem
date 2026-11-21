@@ -1,0 +1,154 @@
+defmodule P1 do
+  def main() do
+    IO.inspect({:count, 1, Process.count()})
+    IO.inspect({Node.self(), Node.address(), Node.list()})
+    IO.inspect({:count, 2, Process.count()})
+    IO.inspect(Node.connect("127.0.0.1:1"))
+    IO.inspect({:count, 3, Process.count()})
+    early: result[stream[integer], string] = Node.stream("nobody", :s)
+    IO.inspect({:count, 4, Process.count()})
+    IO.inspect(case early do
+      ok(_) -> "stream"
+      error(why) -> why
+    end)
+    IO.inspect({:count, 5, Process.count()})
+    IO.inspect(Node.start("", "127.0.0.1:0", "s"))
+    IO.inspect({:count, 6, Process.count()})
+    IO.inspect(Node.start("a", "127.0.0.1:0", ""))
+    IO.inspect({:count, 7, Process.count()})
+    IO.inspect(Node.start("a", "nonsense", "s", [encrypted: false]))
+    IO.inspect({:count, 8, Process.count()})
+    IO.inspect(Node.start("a", "127.0.0.1:99999", "s", [encrypted: false]))
+    IO.inspect({:count, 9, Process.count()})
+    IO.inspect(Node.start("a", "127.0.0.1:0"))
+    IO.inspect({:count, 10, Process.count()})
+    IO.inspect(Node.start("a", "127.0.0.1:0", "s", [encrypted: false, encrypted: true, encrypted: false]))
+    IO.inspect({:count, 11, Process.count()})
+    IO.inspect(Node.start("b", "127.0.0.1:0", "s"))
+    IO.inspect({:count, 12, Process.count()})
+    IO.inspect(Node.start("", "", "", [x: true]))
+    IO.inspect({:count, 13, Process.count()})
+    IO.inspect({Node.self(), Node.list()})
+    IO.inspect({:count, 14, Process.count()})
+    IO.inspect(Node.connect("127.0.0.1:1"))
+    IO.inspect({:count, 15, Process.count()})
+    IO.inspect(Node.connect("127.0.0.1:1", [reconnect: true]))
+    IO.inspect({:count, 16, Process.count()})
+    IO.inspect(Node.connect("127.0.0.1:1", [reconnect: 3]))
+    IO.inspect({:count, 17, Process.count()})
+    IO.inspect(Node.connect("127.0.0.1:1", []))
+    IO.inspect({:count, 18, Process.count()})
+    IO.inspect(Node.connect("nowhere"))
+    IO.inspect({:count, 19, Process.count()})
+    IO.inspect(Node.connect(Node.address()))
+    IO.inspect({:count, 20, Process.count()})
+    r = Node.monitor("nobody")
+    IO.inspect({:count, 21, Process.count()})
+    {arrived, ref, id, reason} = Process.event(100)
+    IO.inspect({:count, 22, Process.count()})
+    IO.inspect({arrived, ref == r, id, reason})
+    IO.inspect({:count, 23, Process.count()})
+    w = Node.monitor_nodes()
+    IO.inspect({:count, 24, Process.count()})
+    IO.inspect(Process.event(10) == {false, 0, 0, ""})
+    IO.inspect({:count, 25, Process.count()})
+    f: option[pid[string]] = Node.whereis("nobody", :x, 10)
+    IO.inspect({:count, 26, Process.count()})
+    IO.inspect(case f do
+      some(_) -> 1
+      none -> 0
+    end)
+    IO.inspect({:count, 27, Process.count()})
+    c: result[integer, string] = Node.call("nobody", :x, 1)
+    IO.inspect({:count, 28, Process.count()})
+    IO.inspect(c)
+    IO.inspect({:count, 29, Process.count()})
+    IO.inspect(Node.cast("nobody", :x, 1))
+    IO.inspect({:count, 30, Process.count()})
+    late: result[stream[integer], string] = Node.stream("nobody", :s)
+    IO.inspect({:count, 31, Process.count()})
+    IO.inspect(case late do
+      ok(_) -> "stream"
+      error(why) -> why
+    end)
+    IO.inspect({:count, 32, Process.count()})
+    IO.inspect(Node.disconnect("nobody"))
+    IO.inspect({:count, 33, Process.count()})
+    IO.inspect(Node.serve(:slow, fn(n: integer): integer do
+      Process.sleep(300)
+      n
+    end))
+    IO.inspect({:count, 34, Process.count()})
+    IO.inspect(Node.serve(:slow, fn(n: integer): integer do n end))
+    IO.inspect({:count, 35, Process.count()})
+    IO.inspect(Node.serve(:slow, fn(n: string): integer do 0 end))
+    IO.inspect({:count, 36, Process.count()})
+    t: result[integer, string] = Node.call("a", :slow, 5, 50)
+    IO.inspect({:count, 37, Process.count()})
+    IO.inspect(t)
+    IO.inspect({:count, 38, Process.count()})
+    u: result[integer, string] = Node.call("a", :slow, 6)
+    IO.inspect({:count, 39, Process.count()})
+    IO.inspect(u)
+    IO.inspect({:count, 40, Process.count()})
+    v: result[string, string] = Node.call("a", :slow, 6)
+    IO.inspect({:count, 41, Process.count()})
+    IO.inspect(v)
+    IO.inspect({:count, 42, Process.count()})
+    x: result[integer, string] = Node.call("a", :slow, "six")
+    IO.inspect({:count, 43, Process.count()})
+    IO.inspect(x)
+    IO.inspect({:count, 44, Process.count()})
+    IO.inspect(Node.cast("a", :slow, 1))
+    IO.inspect({:count, 45, Process.count()})
+    IO.inspect(Node.cast("a", :slow, "one"))
+    IO.inspect({:count, 46, Process.count()})
+    IO.inspect(Node.cast("a", :nothing, 1))
+    IO.inspect({:count, 47, Process.count()})
+    IO.inspect(Process.count())
+    IO.inspect({:count, 48, Process.count()})
+    me: pid[integer] = Process.self(2)
+    IO.inspect({:count, 49, Process.count()})
+    IO.inspect(Process.register(me, :me))
+    IO.inspect({:count, 50, Process.count()})
+    IO.inspect(Node.register_global(me, :me))
+    IO.inspect({:count, 51, Process.count()})
+    IO.inspect(Node.register_global(me, :me2))
+    IO.inspect({:count, 52, Process.count()})
+    a: option[pid[integer]] = Process.whereis(:me2)
+    IO.inspect({:count, 53, Process.count()})
+    b: option[pid[string]] = Process.whereis(:me2)
+    IO.inspect({:count, 54, Process.count()})
+    g: option[pid[integer]] = Node.whereis_global(:me)
+    IO.inspect({:count, 55, Process.count()})
+    h: option[pid[string]] = Node.whereis_global(:me)
+    IO.inspect({:count, 56, Process.count()})
+    IO.inspect({case a do
+      some(_) -> 1
+      none -> 0
+    end, case b do
+      some(_) -> 1
+      none -> 0
+    end, case g do
+      some(_) -> 1
+      none -> 0
+    end, case h do
+      some(_) -> 1
+      none -> 0
+    end})
+    IO.inspect({:count, 57, Process.count()})
+    IO.inspect(Stream.publish(:s, fn -> Stream.from_index(1) end))
+    IO.inspect({:count, 58, Process.count()})
+    IO.inspect(Stream.publish(:s, fn -> Stream.from_index(1) end))
+    IO.inspect({:count, 59, Process.count()})
+    own: result[stream[integer], string] = Node.stream("a", :s)
+    IO.inspect({:count, 60, Process.count()})
+    IO.inspect(case own do
+      ok(_) -> "stream"
+      error(why) -> why
+    end)
+    IO.inspect({:count, 61, Process.count()})
+    IO.inspect(Process.count())
+    IO.inspect({:count, 62, Process.count()})
+  end
+end

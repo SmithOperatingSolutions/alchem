@@ -145,7 +145,8 @@ The calls made so far:
   a non-blocking connect's `WSAEWOULDBLOCK` is `EINPROGRESS`. A connect to
   the machine itself asks for no SYN retransmission
   (`SIO_TCP_INITIAL_RTO`), as Go's net does, so that a closed port is
-  refused at once rather than after 2 s; `ppoll` asks `select` of a
+  refused at once rather than after 2 s; a connect to the zero address
+  (`0.0.0.0`, `::`) is one to the machine itself, as Go dials it there; `ppoll` asks `select` of a
   socket waiting to be written to, as `WSAPoll` may not tell of a failed
   connect.
 

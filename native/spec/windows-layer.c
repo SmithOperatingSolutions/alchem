@@ -270,6 +270,11 @@ static i64 sys_connect(i64 fd, i64 address, i64 length) {
      (SIO_TCP_INITIAL_RTO), so that a port nothing listens on is refused at
      once, not after 2 s; an ioctl that fails changes nothing. */
   u16 family = *(u16 *)to;
+  /* Go's net dials the zero address (0.0.0.0, ::, an empty host) on
+     Windows as the machine itself (internetSocket, toLocal), where Windows
+     refuses it as an address not valid in its context. */
+  if (family == 2 && *(u32 *)(to + 4) == 0) *(u32 *)(to + 4) = 0x0100007F;
+  if (family == WINDOWS_INET6 && *(u64 *)(to + 8) == 0 && *(u64 *)(to + 16) == 0) to[23] = 1;
   static const u8 loop6[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
   int loopback = (family == 2 && to[4] == 127);
   if (family == WINDOWS_INET6) {
