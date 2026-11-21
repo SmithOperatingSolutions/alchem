@@ -284,7 +284,7 @@ a Linux job builds: it must make itself again byte for byte, and build
 every upstream example and every program of the gates that print the same
 on Linux and Windows into one that prints there what was frozen on Linux,
 standard error too (`scripts/windows-examples.py`: `prepare` on Linux,
-`check` on Windows, or `check --wine` under Wine): 2,916 programs, 2,052
+`check` on Windows, or `check --wine` under Wine): 2,915 programs, 2,051
 of them the gates'. A gate's record has one of four forms (with an
 environment, standard input and the files of its directory); one of
 another form is an error. What Windows gives otherwise (`SKIPPED`,
@@ -292,7 +292,7 @@ another form is an error. What Windows gives otherwise (`SKIPPED`,
 passed over: the job builds each also with the pinned compiler there
 (`pinned` builds it for Windows on Linux; the Go toolchain it builds with
 is set up on the runner) and both programs must print the same, output and
-errors, neither timing out (`reference`): 65 programs, with those of
+errors, neither timing out (`reference`): 66 programs, with those of
 `REFERENCE_PROGRAMS`, which are there for what the layer and the library
 were once found to do otherwise than Go on Windows (a failing process
 below a deep call, a trace longer than its pipe, links, `put_env` in
