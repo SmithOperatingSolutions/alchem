@@ -1946,6 +1946,17 @@ static int empty_path(i64 p) {
   return 1;
 }
 
+/* open for writing of what is a directory: EISDIR, as Go's syscall.Open
+   makes of Windows' refusal (with O_EXCL the file exists, as there). */
+static i64 open_directory(i64 path, i64 flags) {
+  if (!path || !(flags & 3) || (flags & 0xC0) == 0xC0) return NOT_MINE;
+  if (!wide((const char *)path, wpath1)) return NOT_MINE;
+  u32 a = imp_GetFileAttributesW(wpath1);
+  if (a == 0xFFFFFFFF || !(a & 0x10)) return NOT_MINE;
+  last_error = 0;
+  return -21;                                                /* EISDIR */
+}
+
 /* The system call in the CONTEXT at c (its number in RAX): its result, or
    NOT_MINE for the assembly to make. */
 i64 layer_call(unsigned char *c) {
@@ -1981,7 +1992,7 @@ i64 layer_call(unsigned char *c) {
   case 0: case 1: case 5: case 16:
     return is_socket(ARG(c, 0)) ? socket_call(nr, c) : NOT_MINE;
   case 72: return is_socket(ARG(c, 0)) ? socket_call(nr, c) : sys_fcntl(ARG(c, 0), ARG(c, 1), ARG(c, 2));
-  case 2: return empty_path(ARG(c, 0)) ? -ENOENT : NOT_MINE;  /* open */
+  case 2: return empty_path(ARG(c, 0)) ? -ENOENT : open_directory(ARG(c, 0), ARG(c, 1));  /* open */
   case 32: return sys_dup(ARG(c, 0), 3);
   case 33: case 292: return sys_dup2(ARG(c, 0), ARG(c, 1));
   case 17: return sys_pio(ARG(c, 0), ARG(c, 1), ARG(c, 2), ARG(c, 3), 0);
@@ -2032,9 +2043,12 @@ i64 layer_call(unsigned char *c) {
     if (r != NOT_MINE || (ARG(c, 2) & 0x200) || !ARG(c, 1)) return r;   /* AT_REMOVEDIR: the assembly's */
     return sys_unlink(ARG(c, 1));
   }
-  case 257: case 258:                                         /* openat, mkdirat */
-    if (nr == 257 && empty_path(ARG(c, 1))) return -ENOENT;
-    return at_call(c, 0);
+  case 257: {                                                  /* openat */
+    if (empty_path(ARG(c, 1))) return -ENOENT;
+    i64 r = at_call(c, 0);
+    return r != NOT_MINE ? r : open_directory(ARG(c, 1), ARG(c, 2));
+  }
+  case 258: return at_call(c, 0);                              /* mkdirat */
   case 264: case 316: {                                        /* renameat, renameat2 */
     if (ARG(c, 2) != -100 && ARG(c, 0) == -100) {
       /* Only the second is relative to a directory: not made. */

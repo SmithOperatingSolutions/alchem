@@ -536,7 +536,10 @@
       end)
     end
     if f >= 0 do Sys.call(3, f) end
-    t = if f == -999 or f == -2 or elem(n, 0) < 0 or (f == -20 and l < 0) do 0 else Sys.at(263, d, b, 512, 0) end
+    t0 = if f == -999 or f == -2 or elem(n, 0) < 0 or (f == -20 and l < 0) do 0 else Sys.at(263, d, b, 512, 0) end
+    # On Windows os.RemoveAll makes a directory it may not remove writable
+    # (os.Chmod) and removes it again.
+    t = if t0 == -13 and Sys.windows() == 1 and Sys.at(268, d, b, 0o700, 0) == 0 do Sys.at(263, d, b, 512, 0) else t0 end
     if u == 0 or u == -2 or f == -2 or elem(n, 0) == -2 or (f != -999 and (t == 0 or t == -2) and not (f == -20 and l < 0) and elem(n, 0) == 0) do {0, "", ""} else
       if f == -999 or (f == -20 and l < 0) do {u, "unlinkat", b} else
         if elem(n, 0) < 0 do {elem(n, 0), "readdirnames", b} else if elem(e, 0) < 0 do e else {t, "unlinkat", b} end end
