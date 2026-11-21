@@ -73,6 +73,10 @@ extern W i32 (*imp_getpeername)(SOCKET, void *, i32 *);
 extern W i32 (*imp_setsockopt)(SOCKET, i32, i32, const void *, i32);
 extern W i32 (*imp_getsockopt)(SOCKET, i32, i32, void *, i32 *);
 extern W i32 (*imp_WSAPoll)(void *, u32, i32);
+extern W i32 (*imp_WSAIoctl)(SOCKET, u32, void *, u32, void *, u32, u32 *, void *, void *);
+extern W i32 (*imp_select)(i32, void *, void *, void *, const void *);
+extern W i32 (*imp_GetAddrInfoW)(const u16 *, const u16 *, const void *, void **);
+extern W void (*imp_FreeAddrInfoW)(void *);
 extern W i32 (*imp_ReadFile)(u64, void *, u32, u32 *, void *);
 extern W i32 (*imp_WriteFile)(u64, const void *, u32, u32 *, void *);
 extern W i32 (*imp_SetFilePointerEx)(u64, i64, i64 *, u32);
@@ -113,6 +117,13 @@ extern W void (*imp_RtlRestoreContext)(void *, void *);
 extern void copy_resume(void);
 extern W u64 (*imp_VirtualQuery)(const void *, void *, u64);
 extern W i32 (*imp_VirtualProtect)(void *, u64, u32, u32 *);
+extern W u32 (*imp_GetTimeZoneInformation)(void *);
+extern W void (*imp_GetSystemTime)(u16 *);
+extern W i32 (*imp_RegOpenKeyExW)(u64, const u16 *, u32, u32, u64 *);
+extern W i32 (*imp_RegEnumKeyExW)(u64, u32, u16 *, u32 *, void *, void *, void *, void *);
+extern W i32 (*imp_RegQueryValueExW)(u64, const u16 *, void *, u32 *, void *, u32 *);
+extern W i32 (*imp_RegLoadMUIStringW)(u64, const u16 *, u16 *, u32, u32 *, u32, const u16 *);
+extern W i32 (*imp_RegCloseKey)(u64);
 extern W u64 (*imp_CreateFileW)(const u16 *, u32, u32, void *, u32, u32, u64);
 
 /* gcc may call these even in freestanding code. */
@@ -255,6 +266,26 @@ static i64 sys_connect(i64 fd, i64 address, i64 length) {
   u8 to[128];
   i32 n = to_windows((u8 *)address, length, to);
   if (n < 0) return -EINVAL;
+  /* To the machine itself, Go's net asks for no retransmission of SYN
+     (SIO_TCP_INITIAL_RTO), so that a port nothing listens on is refused at
+     once, not after 2 s; an ioctl that fails changes nothing. */
+  u16 family = *(u16 *)to;
+  /* Go's net dials the zero address (0.0.0.0, ::, an empty host) on
+     Windows as the machine itself (internetSocket, toLocal), where Windows
+     refuses it as an address not valid in its context. */
+  if (family == 2 && *(u32 *)(to + 4) == 0) *(u32 *)(to + 4) = 0x0100007F;
+  if (family == WINDOWS_INET6 && *(u64 *)(to + 8) == 0 && *(u64 *)(to + 16) == 0) to[23] = 1;
+  static const u8 loop6[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+  int loopback = (family == 2 && to[4] == 127);
+  if (family == WINDOWS_INET6) {
+    loopback = 1;
+    for (int i = 0; i < 16; i++) if (to[8 + i] != loop6[i]) loopback = 0;
+  }
+  if (loopback) {
+    u8 params[4] = {0xFF, 0xFF, 0xFE, 0};     /* Rtt unspecified; TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS */
+    u32 out = 0;
+    imp_WSAIoctl(handles[fd], 0x98000011, params, 4, 0, 0, &out, 0, 0);
+  }
   if (imp_connect(handles[fd], to, n) == 0) return 0;
   i64 r = wsa_fail();
   return r == -EAGAIN ? -EINPROGRESS : r;
@@ -401,6 +432,39 @@ static i64 sys_getsockopt(i64 fd, i64 level, i64 name, i64 value, i64 room) {
   return 0;
 }
 
+/* --- Names ------------------------------------------------------------
+
+   Pseudo call 1000107 (TCP._resolve): the addresses of the host name at
+   name as Go's net has them on Windows, from GetAddrInfoW (which reads the
+   system's hosts file and knows localhost), into out (room bytes): each a
+   length byte and the address as Linux lays it out (AF_INET6 10), port 0.
+   Their count, or -ENOENT. */
+static i64 sys_resolve(i64 name, i64 out, i64 room) {
+  if (!start()) return -ENOSYS;
+  if (!wide((const char *)name, wpath1)) return -ENOENT;
+  i32 hints[12] = {0};
+  hints[2] = 1;                                  /* SOCK_STREAM: each address once */
+  u8 *list = 0;
+  if (imp_GetAddrInfoW(wpath1, 0, hints, (void **)&list) != 0) return -ENOENT;
+  u8 *o = (u8 *)out;
+  commit_range(o, (u64)room);
+  i64 used = 0, count = 0;
+  for (u8 *a = list; a; a = *(u8 **)(a + 40)) {
+    i32 family = *(i32 *)(a + 4);
+    u8 *sa = *(u8 **)(a + 32);
+    u64 n = family == 2 ? 16 : family == WINDOWS_INET6 ? 28 : 0;
+    if (!n || !sa || used + 1 + (i64)n > room) continue;
+    o[used] = (u8)n;
+    memcpy(o + used + 1, sa, n);
+    *(u16 *)(o + used + 1) = family == 2 ? 2 : LINUX_INET6;
+    *(u16 *)(o + used + 3) = 0;
+    used += 1 + (i64)n;
+    count++;
+  }
+  imp_FreeAddrInfoW(list);
+  return count ? count : -ENOENT;
+}
+
 /* --- ppoll ------------------------------------------------------------- */
 
 struct linux_pollfd { i32 fd; i16 events, revents; };
@@ -455,6 +519,12 @@ static i64 sys_ppoll(i64 fds, i64 count, i64 timeout) {
     i64 spent = (i64)(imp_GetTickCount64() - start);
     i64 left = limit < 0 ? -1 : (limit > spent ? limit - spent : 0);
     i32 wait = ready ? 0 : pipes ? (left == 0 ? 0 : 1) : (i32)(left > 0x7FFFFFFF ? 0x7FFFFFFF : left);
+    /* WSAPoll may not tell of a connect that failed: while a socket waits to
+       be written to, it is asked of select's exceptions between short waits
+       (which leaves its SO_ERROR for the program). */
+    int writers = 0;
+    for (i64 i = 0; i < count; i++) if (p[i].fd >= 0 && is_socket(p[i].fd) && (p[i].events & 4)) writers = 1;
+    if (writers && (wait < 0 || wait > 5)) wait = 5;
     if (n) {
       i32 r = imp_WSAPoll(polled, n, wait);
       if (r < 0) return wsa_fail();
@@ -467,6 +537,11 @@ static i64 sys_ppoll(i64 fds, i64 count, i64 timeout) {
         if (w & 0x1) got |= 8;                 /* POLLERR */
         if (w & 0x2) got |= 0x10;              /* POLLHUP */
         if (w & 0x4) got |= 0x20;              /* POLLNVAL */
+        if (!got && (p[i].events & 4)) {
+          u64 except[2] = {1, handles[p[i].fd]};   /* fd_set: one socket */
+          i32 zero[2] = {0, 0};
+          if (imp_select(0, 0, 0, except, zero) == 1) got = 4 | 8;   /* POLLOUT | POLLERR */
+        }
         p[i].revents = got;
         if (got) ready++;
       }
@@ -757,6 +832,217 @@ static i64 sys_fcntl(i64 fd, i64 command, i64 value) {
   case 4: return handle_of((u64)fd) ? 0 : -EBADF;           /* F_SETFL */
   }
   return -EINVAL;
+}
+
+/* --- Local time ----------------------------------------------------------
+
+   Go's time.Local on Windows (time/zoneinfo_windows.go): the system's zone
+   from GetTimeZoneInformation, one zone when it has no summer time, else
+   two and their transitions for the hundred years around now (pseudoUnix),
+   the abbreviations from Go's table of Windows zone names (generated from
+   the pinned toolchain's zoneinfo_abbrs_windows.go: abbrs.h), else from the
+   table under the zone's English name in the registry, else the capitals
+   of its name. Pseudo call 1000105 (Date.dl) is Location.lookup. */
+
+#include "abbrs.h"
+
+static struct {
+  int ready, zones;
+  i64 offset[2];
+  int dst[2];
+  char name[2][64];
+  u32 length[2];
+  int count;
+  i64 when[400];
+  u8 index[400];
+} local;
+
+static int same_name(const u16 *w, const char *a) {
+  for (; *a; w++, a++) if (*w != (u16)(u8)*a) return 0;
+  return *w == 0;
+}
+
+static void caps(const u16 *w, int z) {
+  u32 n = 0;
+  for (; *w && n < 63; w++) if (*w >= 'A' && *w <= 'Z') local.name[z][n++] = (char)*w;
+  local.name[z][n] = 0;
+  local.length[z] = n;
+}
+
+static void named(int z, const char *a) {
+  u32 n = 0;
+  for (; a[n] && n < 63; n++) local.name[z][n] = a[n];
+  local.name[z][n] = 0;
+  local.length[z] = n;
+}
+
+/* Go's table, by a name. */
+static int from_table(const u16 *name) {
+  for (u32 k = 0; k < sizeof abbrs / sizeof abbrs[0]; k++)
+    if (same_name(name, abbrs[k][0])) {
+      named(0, abbrs[k][1]);
+      named(1, abbrs[k][2]);
+      return 1;
+    }
+  return 0;
+}
+
+static int same_wide(const u16 *a, const u16 *b) {
+  for (; *a && *a == *b; a++, b++) {}
+  return *a == *b;
+}
+
+/* toEnglishName: the key under Time Zones whose standard and summer names
+   (MUI_Std and MUI_Dlt, else Std and Dlt) are these, in name. */
+static int english(const u16 *std, const u16 *dlt, u16 *name) {
+  u64 zones;
+  if (imp_RegOpenKeyExW(0xFFFFFFFF80000002ull, u"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Time Zones", 0, 0x20019, &zones)) return 0;
+  int found = 0;
+  for (u32 i = 0; !found; i++) {
+    u32 n = 256;
+    if (imp_RegEnumKeyExW(zones, i, name, &n, 0, 0, 0, 0)) break;
+    u64 key;
+    if (imp_RegOpenKeyExW(zones, name, 0, 0x20019, &key)) continue;
+    u16 a[256], b[256];
+    u32 an = 0, bn = 0;
+    int ok = !imp_RegLoadMUIStringW(key, u"MUI_Std", a, sizeof a, &an, 0, 0) && !imp_RegLoadMUIStringW(key, u"MUI_Dlt", b, sizeof b, &bn, 0, 0);
+    if (!ok) {
+      u32 type, size = sizeof a;
+      ok = !imp_RegQueryValueExW(key, u"Std", 0, &type, a, &size);
+      a[255] = 0;
+      size = sizeof b;
+      ok = ok && !imp_RegQueryValueExW(key, u"Dlt", 0, &type, b, &size);
+      b[255] = 0;
+    }
+    if (ok && same_wide(a, std) && (same_wide(b, dlt) || same_wide(dlt, std))) found = 1;
+    imp_RegCloseKey(key);
+  }
+  imp_RegCloseKey(zones);
+  return found;
+}
+
+static i64 days_from_civil(i64 y, i64 m, i64 d) {
+  y -= m <= 2;
+  i64 era = (y >= 0 ? y : y - 399) / 400;
+  i64 yoe = y - era * 400;
+  i64 doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  i64 doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + doe - 719468;
+}
+
+static int days_in(int m, i64 y) {
+  static const u8 n[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if (m == 2 && ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0)) return 29;
+  return n[m - 1];
+}
+
+/* pseudoUnix: the moment in year the SYSTEMTIME rule d names (the day-th
+   weekday of the month, 5 the last), as seconds since 1970 read as UTC. */
+static i64 pseudo_unix(i64 year, const u16 *d) {
+  i64 first = days_from_civil(year, d[1], 1);
+  i64 weekday = ((first % 7) + 11) % 7;          /* 1970-01-01 was a Thursday */
+  i64 day = 1;
+  i64 i = (i64)d[2] - weekday;
+  if (i < 0) i += 7;
+  day += i;
+  i64 week = (i64)d[3] - 1;
+  if (week < 4) day += week * 7;
+  else {
+    day += 4 * 7;
+    if (day > days_in(d[1], year)) day -= 7;
+  }
+  return (first + day - 1) * 86400 + (i64)d[4] * 3600 + (i64)d[5] * 60 + d[6];
+}
+
+static void local_init(void) {
+  u8 info[172];
+  memset(info, 0, sizeof info);
+  local.ready = 1;
+  if (imp_GetTimeZoneInformation(info) == 0xFFFFFFFF) {
+    local.zones = 0;
+    return;
+  }
+  i32 bias = *(i32 *)info, standard_bias = *(i32 *)(info + 84), daylight_bias = *(i32 *)(info + 168);
+  const u16 *std_name = (u16 *)(info + 4), *dst_name = (u16 *)(info + 88);
+  u16 *std_date = (u16 *)(info + 68), *dst_date = (u16 *)(info + 152);
+  /* The names may fill their 32 units without an end. */
+  u16 std[33], dst[33];
+  memcpy(std, std_name, 64); std[32] = 0;
+  memcpy(dst, dst_name, 64); dst[32] = 0;
+  if (!from_table(std)) {
+    u16 key[256];
+    if (!english(std, dst, key) || !from_table(key)) { caps(std, 0); caps(dst, 1); }
+  }
+  local.dst[0] = 0;
+  local.dst[1] = 1;
+  if (std_date[1] == 0) {
+    local.zones = 1;
+    local.offset[0] = -(i64)bias * 60;
+    local.count = 1;
+    local.when[0] = -9223372036854775807LL - 1;
+    local.index[0] = 0;
+    return;
+  }
+  local.zones = 2;
+  local.offset[0] = -(i64)(bias + standard_bias) * 60;
+  local.offset[1] = -(i64)(bias + daylight_bias) * 60;
+  u16 *d0 = std_date, *d1 = dst_date;
+  int i0 = 0, i1 = 1;
+  if (d0[1] > d1[1]) { u16 *t = d0; d0 = d1; d1 = t; i0 = 1; i1 = 0; }
+  u16 now[8];
+  imp_GetSystemTime(now);
+  i64 year = now[0];
+  int n = 0;
+  for (i64 y = year - 100; y < year + 100; y++) {
+    local.when[n] = pseudo_unix(y, d0) - local.offset[i1];
+    local.index[n++] = (u8)i0;
+    local.when[n] = pseudo_unix(y, d1) - local.offset[i0];
+    local.index[n++] = (u8)i1;
+  }
+  local.count = n;
+}
+
+/* Location.lookup of Local at sec: out gets the offset, where its span
+   starts and ends, and the abbreviation's address and length. */
+static i64 local_lookup(i64 sec, i64 out) {
+  if (!local.ready) local_init();
+  i64 *o = (i64 *)out;
+  commit_range(o, 40);
+  const i64 alpha = -9223372036854775807LL - 1, omega = 9223372036854775807LL;
+  if (local.zones == 0) {
+    static char utc[] = "UTC";
+    o[0] = 0; o[1] = alpha; o[2] = omega; o[3] = (i64)utc; o[4] = 3;
+    return 0;
+  }
+  if (local.zones == 1) {
+    o[0] = local.offset[0]; o[1] = alpha; o[2] = omega;
+    o[3] = (i64)local.name[0]; o[4] = local.length[0];
+    return 0;
+  }
+  int z;
+  i64 start, end = omega;
+  if (sec < local.when[0]) {
+    /* lookupFirstZone: the first zone is used by the transitions; when the
+       first is to summer time, the standard zone before it, else the first
+       standard zone. */
+    z = 0;
+    if (local.dst[local.index[0]]) {
+      for (int k = local.index[0] - 1; k >= 0; k--) if (!local.dst[k]) { z = k; break; }
+    }
+    start = alpha;
+    end = local.when[0];
+  } else {
+    int lo = 0, hi = local.count;
+    while (hi - lo > 1) {
+      int m = (lo + hi) / 2;
+      if (sec < local.when[m]) { end = local.when[m]; hi = m; } else lo = m;
+    }
+    z = local.index[lo];
+    start = local.when[lo];
+  }
+  o[0] = local.offset[z]; o[1] = start; o[2] = end;
+  o[3] = (i64)local.name[z]; o[4] = local.length[z];
+  return 0;
 }
 
 /* --- The library's view of Windows ---------------------------------- */
@@ -1059,6 +1345,56 @@ void copy_resume_c(void) {
      the handler's CONTEXT may name is not in this copy of it. */
   *(u32 *)(c + 0x30) = 0x10000B;
   imp_RtlRestoreContext(c, 0);
+}
+
+/* --- Stacks ---------------------------------------------------------------
+
+   A stack (an anonymous mapping with MAP_STACK, which a Windows program gives
+   its main stack and each process's) is reserved whole and grows as
+   Windows grows a thread's stack: its top 64 KiB committed, below them a
+   band of guard pages, which the kernel commits when one is touched and
+   moves down, as long as the TEB names the stack (StackBase, StackLimit,
+   DeallocationStack). Windows writes the record of an exception on the
+   stack that faulted, so the stack could not grow through the handler.
+   The program sets the TEB when it starts on its stack and when it
+   switches stacks (nc_stack_init, Process.__switch); a stack's first page
+   keeps its limit and top while another runs: its first word the limit
+   (the lowest committed address), its second the top. The stack guarantee
+   (64 KiB, set at the start) keeps the band of guard pages that deep, so a
+   frame of up to 64 KiB does not step over it; a function with a larger
+   frame touches its pages from the top down first (nc_guard). */
+
+#define STACK_TOP (64 << 10)
+#define STACK_GUARD (68 << 10)
+
+static i64 sys_mmap_anonymous(i64 size, i64 flags) {
+  u64 n = ((u64)size + 4095) & ~4095ull;
+  if (!n) return -EINVAL;
+  if (n > 0x100000000ull) {
+    void *m = imp_VirtualAlloc(0, n, 0x2000, 4);                 /* MEM_RESERVE */
+    if (!m) return -ENOMEM;
+    region_add((u64)m, n);
+    return (i64)m;
+  }
+  if ((flags & 0x20000) && n >= (256 << 10)) {                   /* MAP_STACK */
+    u8 *m = imp_VirtualAlloc(0, n, 0x2000, 4);
+    if (!m) return -ENOMEM;
+    u64 top = (u64)m + n, limit = top - STACK_TOP;
+    /* PAGE_READWRITE | PAGE_GUARD for the band. */
+    if (!imp_VirtualAlloc((void *)limit, STACK_TOP, 0x1000, 4) || !imp_VirtualAlloc((void *)(limit - STACK_GUARD), STACK_GUARD, 0x1000, 0x104)
+        || !imp_VirtualAlloc(m, 4096, 0x1000, 4)) {
+      imp_VirtualFree(m, 0, 0x8000);
+      return -ENOMEM;
+    }
+    ((u64 *)m)[0] = limit;
+    ((u64 *)m)[1] = top;
+    region_add((u64)m, n);
+    return (i64)m;
+  }
+  void *m = imp_VirtualAlloc(0, n, 0x3000, 4);
+  if (!m) return -ENOMEM;
+  region_add((u64)m, n);
+  return (i64)m;
 }
 
 /* --- Processes -------------------------------------------------------- */
@@ -1374,6 +1710,16 @@ static i64 socket_call(i64 nr, unsigned char *c) {
   return NOT_MINE;
 }
 
+/* Go's syscall.Open on Windows refuses an empty path as
+   ERROR_FILE_NOT_FOUND (CreateFileW would say the path is not found). */
+static int empty_path(i64 p) {
+  if (!p) return 0;
+  commit_range((void *)p, 1);
+  if (*(const char *)p) return 0;
+  last_error = 2;
+  return 1;
+}
+
 /* The system call in the CONTEXT at c (its number in RAX): its result, or
    NOT_MINE for the assembly to make. */
 i64 layer_call(unsigned char *c) {
@@ -1394,6 +1740,8 @@ i64 layer_call(unsigned char *c) {
   case 1000101: return error_text(ARG(c, 0));
   case 1000102: return full_path(ARG(c, 0));
   case 1000103: return temp_dir();
+  case 1000105: return local_lookup(ARG(c, 0), ARG(c, 1));
+  case 1000107: return sys_resolve(ARG(c, 0), ARG(c, 1), ARG(c, 2));
   case 1000104: return sys_spawn(ARG(c, 0), ARG(c, 1), ARG(c, 2), ARG(c, 3), ARG(c, 4), ARG(c, 5));
   case 61: return sys_wait4(ARG(c, 0), ARG(c, 1), ARG(c, 2));
   case 22: case 293: return sys_pipe2(ARG(c, 0));             /* pipe, pipe2 */
@@ -1403,12 +1751,13 @@ i64 layer_call(unsigned char *c) {
   case 0: case 1: case 5: case 16:
     return is_socket(ARG(c, 0)) ? socket_call(nr, c) : NOT_MINE;
   case 72: return is_socket(ARG(c, 0)) ? socket_call(nr, c) : sys_fcntl(ARG(c, 0), ARG(c, 1), ARG(c, 2));
+  case 2: return empty_path(ARG(c, 0)) ? -ENOENT : NOT_MINE;  /* open */
   case 32: return sys_dup(ARG(c, 0), 3);
   case 33: case 292: return sys_dup2(ARG(c, 0), ARG(c, 1));
   case 17: return sys_pio(ARG(c, 0), ARG(c, 1), ARG(c, 2), ARG(c, 3), 0);
   case 18: return sys_pio(ARG(c, 0), ARG(c, 1), ARG(c, 2), ARG(c, 3), 1);
   case 9:                                                      /* mmap */
-    if (ARG(c, 3) & 0x20 || ARG(c, 4) < 0) return NOT_MINE;
+    if (ARG(c, 3) & 0x20 || ARG(c, 4) < 0) return sys_mmap_anonymous(ARG(c, 1), ARG(c, 3));
     return sys_mmap_file(ARG(c, 1), ARG(c, 4), ARG(c, 5));
   case 25: return sys_mremap(ARG(c, 0), ARG(c, 1), ARG(c, 2), ARG(c, 3));
   case 74: case 75: return sys_fsync(ARG(c, 0));               /* fsync, fdatasync */
@@ -1425,7 +1774,9 @@ i64 layer_call(unsigned char *c) {
     return sys_chmod(path, mode);
   }
   case 319: return sys_memfd();
-  case 257: case 258: case 262: case 263: return at_call(c, 0);   /* openat, mkdirat, newfstatat, unlinkat */
+  case 257: case 258: case 262: case 263:                     /* openat, mkdirat, newfstatat, unlinkat */
+    if (nr == 257 && empty_path(ARG(c, 1))) return -ENOENT;
+    return at_call(c, 0);
   case 264: case 316: {                                        /* renameat, renameat2 */
     if (ARG(c, 2) != -100 && ARG(c, 0) == -100) {
       /* Only the second is relative to a directory: not made. */

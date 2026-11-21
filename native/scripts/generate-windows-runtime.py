@@ -31,9 +31,10 @@ def up(n, a):
 DLLS = {
     'bcryptprimitives.dll': {'ProcessPrng'},
     'ntdll.dll': {'RtlRestoreContext'},
+    'ADVAPI32.dll': {'RegOpenKeyExW', 'RegEnumKeyExW', 'RegQueryValueExW', 'RegLoadMUIStringW', 'RegCloseKey'},
     'WS2_32.dll': {'WSAStartup', 'WSAGetLastError', 'WSASocketW', 'closesocket', 'ioctlsocket', 'bind',
                    'listen', 'accept', 'connect', 'send', 'sendto', 'recv', 'recvfrom', 'shutdown',
-                   'getsockname', 'getpeername', 'setsockopt', 'getsockopt', 'WSAPoll'},
+                   'getsockname', 'getpeername', 'setsockopt', 'getsockopt', 'WSAPoll', 'GetAddrInfoW', 'FreeAddrInfoW', 'select', 'WSAIoctl'},
 }
 SOURCES = ('spec/windows-x86_64.s', 'spec/windows-layer.c')
 # Freestanding: no C library, no red zone (the layer runs on the stack
@@ -84,6 +85,20 @@ def imports():
     return '\n'.join(out)
 
 
+def abbreviations():
+    """Go's table of abbreviations by Windows zone name (time.abbrs) as the
+    pinned toolchain has it, for the local zone (windows-layer.c)."""
+    import re
+    goroot = subprocess.run(['go', 'env', 'GOROOT'], capture_output=True, text=True, check=True, cwd=ROOT).stdout.strip()
+    text = (Path(goroot) / 'src/time/zoneinfo_abbrs_windows.go').read_text()
+    rows = re.findall(r'^\s*"([^"]+)":\s*\{"([^"]*)", "([^"]*)"\}', text, re.M)
+    assert len(rows) > 100, len(rows)
+    lines = ['static const char *const abbrs[][3] = {']
+    lines += [f'  {{"{a}", "{b}", "{c}"}},' for a, b, c in rows]
+    lines.append('};')
+    return '\n'.join(lines) + '\n'
+
+
 def assemble():
     with tempfile.TemporaryDirectory(prefix='alchem-windows-runtime-') as d:
         root = Path(d)
@@ -91,7 +106,8 @@ def assemble():
         (root / 'link.ld').write_text(LINK)
         subprocess.run(['as', '--64', '-o', root / 'w.o', ROOT / 'spec/windows-x86_64.s'], check=True)
         subprocess.run(['as', '--64', '-o', root / 'i.o', root / 'imports.s'], check=True)
-        subprocess.run(['gcc', *CFLAGS, '-c', '-o', root / 'c.o', ROOT / 'spec/windows-layer.c'], check=True)
+        (root / 'abbrs.h').write_text(abbreviations())
+        subprocess.run(['gcc', *CFLAGS, '-I', root, '-c', '-o', root / 'c.o', ROOT / 'spec/windows-layer.c'], check=True)
         subprocess.run(['ld', '-o', root / 'w.elf', '-e', 'start', '--no-warn-rwx-segments', '-T', root / 'link.ld',
                         root / 'w.o', root / 'c.o', root / 'i.o'], check=True)
         for name in ('wtext', 'wdata'):

@@ -25,6 +25,31 @@ defmodule NativeWindows do
   # The PE file of an image (its ELF header and code, loaded at 0x400000):
   # the headers and the Windows layer (native-windows-data.alc), then the
   # image in a section of its own at 0x400000, padded to 512 bytes.
+  # A Windows program's stacks grow as Windows grows a thread's: through
+  # guard pages, while the TEB names the stack (spec/windows.md). These set
+  # it to the stack whose limit L is in RAX (the stack's first page, at
+  # L - 64 KiB, keeps its limit and its top):
+  #   lea rdx,[rax-65536]; mov gs:[0x1478],rdx (DeallocationStack);
+  #   mov rcx,[rdx+8]; mov gs:[8],rcx (StackBase);
+  #   mov rcx,[rdx]; mov gs:[16],rcx (StackLimit)
+  def nw_stack_teb(): bytes do
+    if nc_win() == 0 do b[] else
+      b[72,141,144,0,0,255,255,101,72,137,20,37,120,20,0,0,72,139,74,8,101,72,137,12,37,8,0,0,0,72,139,10,101,72,137,12,37,16,0,0,0]
+    end
+  end
+  # The limit the kernel has moved the running stack's to (StackLimit), kept
+  # in its first page before another stack runs; L in RAX:
+  #   mov rdx,gs:[16]; mov [rax-65536],rdx
+  def nw_stack_keep(): bytes do
+    if nc_win() == 0 do b[] else b[101,72,139,20,37,16,0,0,0,72,137,144,0,0,255,255] end
+  end
+  # A frame larger than the guard pages cover is touched a page at a time
+  # from the top down first, as Windows' __chkstk does:
+  #   mov r11,-4096; again: cmp byte [rsp+r11],0; sub r11,4096;
+  #   cmp r11,-size; jge again
+  def nw_probe(size: integer): bytes do
+    nc_join(b[73,199,195,0,240,255,255,66,128,60,28,0,73,129,235,0,16,0,0,73,129,251],nq_rel(0-size),b[125,235])
+  end
   # The executable of the image with its ELF header: a PE file on Windows.
   def nc_elf_or_pe(elf: bytes): bytes do if nc_win() == 1 do nw_pe(elf) else elf end end
   def nw_pe(image: bytes): bytes do

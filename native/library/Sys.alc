@@ -745,17 +745,25 @@
       end
     end
   end
-# The program's name as exec.Command finds it on Windows: looked for in the
-# path when it is a bare name; when it is absolute, as it is if its
-# extension is one of PATHEXT, else with one (lookExtensions); as it is
-# otherwise. What _wwhich gives.
-#: _wcommand/1 needs _wwhich/1 _wexts/0 Path._wbase/1 Path._wabs/1 Path._wext/1 Enum.member?/2
-  def _wcommand(c: string): tuple[integer, string] do
-    if Path._wbase(c) == c do Sys._wwhich(c) else
-      if Path._wabs(c) do
-        e = String.downcase(Path._wext(c))
-        if e != "" and Enum.member?(Sys._wexts(), e) do {0, c} else Sys._wwhich(c) end
-      else {0, c} end
+# The program's name as exec.Command and Cmd.Start find it on Windows: a
+# bare name looked for in the path (LookPath), then every path through
+# lookExtensions against the directory d ("" for the working one): as it
+# is when its extension is one of PATHEXT, else LookPath of it, with d
+# before it when it is relative. What _wwhich gives.
+#: _wcommand/2 needs _wwhich/1 _wexts/0 Path._wbase/1 Path._wext/1 Path._wvlen/1 Path._wjoin/1 Path._wsep/1 Path._wat/2 Enum.member?/2
+  def _wcommand(c: string, d: string): tuple[integer, string] do
+    w = if Path._wbase(c) == c do Sys._wwhich(c) else {0, c} end
+    if elem(w, 0) != 0 do w else
+      given = elem(w, 1)
+      p = if Path._wbase(given) == given do ".\\" <> given else given end
+      e = String.downcase(Path._wext(p))
+      if e != "" and Enum.member?(Sys._wexts(), e) do {0, p} else
+        if d == "" or Path._wvlen(p) > 0 or (byte_size(p) > 1 and Path._wsep(Path._wat(p, 0))) do Sys._wwhich(p) else
+          dp = Path._wjoin([d, p])
+          r = Sys._wwhich(dp)
+          if elem(r, 0) != 0 do r else {0, p <> Sys.text(Sys.addr(elem(r, 1)) + byte_size(dp), byte_size(elem(r, 1)) - byte_size(dp))} end
+        end
+      end
     end
   end
 # Why exec found no program: Go's ErrNotFound (%PATH% on Windows).

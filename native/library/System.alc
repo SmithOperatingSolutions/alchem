@@ -154,7 +154,7 @@
     System.cmd(c, a, [])
   end
 # exec.Command(c, a...) with its output collected, as upstream runs it.
-#: cmd/3 needs Enum.any?/2 Sys.abs/1 Sys.env/0 Sys.fail/3 Sys.got/0 Sys.keep/2 Sys.load/1 Sys.pad/0 Sys.push/2 Sys.spawn/5 Sys.stat/2 Sys.thin/3 Sys.wait/4 Sys.which/1 Sys.z/1 Sys._wcommand/1 Sys._notfound/1 String.contains?/2
+#: cmd/3 needs Enum.any?/2 Sys.abs/1 Sys.env/0 Sys.fail/3 Sys.got/0 Sys.keep/2 Sys.load/1 Sys.pad/0 Sys.push/2 Sys.spawn/5 Sys.stat/2 Sys.thin/3 Sys.wait/4 Sys.which/1 Sys.z/1 Sys._wcommand/2 Sys._notfound/1 String.contains?/2
   def cmd(c: string, a: list[string], o: list[tuple[atom, string]]): tuple[string, integer] do
     none: list[string] = []
     v = Enum.reduce(o, {"", none, 0, 0}, fn x, v ->
@@ -169,7 +169,7 @@
       end
     end)
     d = elem(v, 0)
-    w = if c == "" do {0, c} else if Sys.windows() == 1 do Sys._wcommand(c) else if String.contains?(c, "/") do {0, c} else Sys.which(c) end end end
+    w = if c == "" do {0, c} else if Sys.windows() == 1 do Sys._wcommand(c, d) else if String.contains?(c, "/") do {0, c} else Sys.which(c) end end end
     if c == "" do raise("could not run : exec: no command") end
     if elem(w, 0) >= 2 do raise("could not run " <> c <> ": exec: " <> inspect(c) <> ": " <> Sys._notfound(elem(w, 0))) end
     if elem(w, 0) == 1 do raise("could not run " <> c <> ": exec: " <> inspect(c) <> ": cannot run executable found relative to current directory") end

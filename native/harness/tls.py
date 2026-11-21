@@ -542,7 +542,15 @@ def serving(directory,chain,key,minv=None,maxv=None,ciphers=None,suites=None,gro
                 time.sleep(2);return
             if plain is not None:
                 raw.recv(100);raw.sendall(plain);return
-            secured=context.wrap_socket(raw,server_side=True)
+            try:secured=context.wrap_socket(raw,server_side=True)
+            except ssl.SSLError:
+                # A handshake refused (a certificate required, 1.3) is closed
+                # once what the client wrote after it is read: closing with it
+                # unread resets the connection, and the client's write then
+                # fails or not as the reset comes before it or after.
+                raw.shutdown(socket.SHUT_WR);raw.settimeout(2)
+                while raw.recv(65536):pass
+                return
             data=secured.recv(65536)
             while big and not data.endswith(b'\n'):data+=secured.recv(65536)
             if data.startswith(b'GET '):secured.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nhi\n')

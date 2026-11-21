@@ -381,7 +381,8 @@
     if r < 0 do "#{z}" else Sys.text(s, Sys.len(s)) end
   end
 # An address the host h is written as, without a lookup: "" when it is a
-# name. Go's own reading first, then the C library's.
+# name. Go's own reading first, then the C library's (inet_aton's 127.1,
+# 0x7f.0.0.1, 2130706433), which Windows' GetAddrInfoW does not have.
 #: _literal/1 needs Enum.at/3 Enum.take/2 _aton/4 _ip4/2 _ip6/2 _sa4/2 _sa6/3 _sub/3 _zone/1
   def _literal(h: string): string do
     n = byte_size(h)
@@ -395,7 +396,7 @@
           TCP._sa6(g, if z < 0 do 0 else TCP._zone(TCP._sub(h, z + 1, n - z - 1)) end, 0)
         end
       else
-        w = if n == 0 do -1 else TCP._aton(p, n, 0, 0) end
+        w = if n == 0 do -1 else if Sys.windows() == 1 do -1 else TCP._aton(p, n, 0, 0) end end
         if w >= 0 do TCP._sa4(w, 0) else "" end
       end
     end
@@ -424,17 +425,31 @@
 # asked of the name servers of /etc/resolv.conf, which is the order the C
 # library's getaddrinfo follows for the pinned runtime on a system set up
 # the usual way ("hosts: files dns").
-#: _resolve/1 needs Process._g/0 _dns/1 _file/1 _hostname/2 _hosts/3 _literal/1 _lower/1 _sub/3 _usable/1
+#: _resolve/1 needs Process._g/0 _dns/1 _file/1 _hostname/2 _hosts/3 _literal/1 _lower/1 _sub/3 _usable/1 _wresolve/1
   def _resolve(h: string): list[string] do
     l = TCP._literal(h)
     if l != "" do [l] else
       n = byte_size(h)
       bare = TCP._lower(if n > 1 and Sys.byte(Sys.addr(h) + n - 1) == 46 do TCP._sub(h, 0, n - 1) else h end)
-      t = TCP._file("/etc/hosts")
-      found = TCP._hosts(Sys.addr(t), byte_size(t), bare)
       Sys.poke(Process._g() + 384, 0)
-      TCP._usable(if found != [] or TCP._hostname(Sys.addr(h), n) == 0 do found else TCP._dns(h) end)
+      if Sys.windows() == 1 do TCP._usable(TCP._wresolve(bare)) else
+        t = TCP._file("/etc/hosts")
+        found = TCP._hosts(Sys.addr(t), byte_size(t), bare)
+        TCP._usable(if found != [] or TCP._hostname(Sys.addr(h), n) == 0 do found else TCP._dns(h) end)
+      end
     end
+  end
+# Windows: the addresses of a name as Go's net has them there, from
+# GetAddrInfoW (pseudo call 1000107 of the Windows layer, spec/windows.md).
+#: _wresolve/1 needs _wgot/3
+  def _wresolve(name: string): list[string] do
+    room = String.duplicate("\x00", 8192)
+    r = Sys.call(1000107, Sys.addr(name <> "\x00"), Sys.addr(room), 8192)
+    if r <= 0 do [] else TCP._wgot(Sys.addr(room), r, []) end
+  end
+#: _wgot/3 needs Enum.reverse/1
+  def _wgot(p: integer, n: integer, done: list[string]): list[string] do
+    if n == 0 do Enum.reverse(done) else TCP._wgot(p + 1 + Sys.byte(p), n - 1, [Sys.text(p + 1, Sys.byte(p)) | done]) end
   end
 # An address as text: host:port, the host of an IPv6 address in brackets.
 #: _show/1 needs _host/1 _saport/1
