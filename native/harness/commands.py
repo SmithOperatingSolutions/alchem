@@ -196,8 +196,13 @@ REFUSING={'lib.alc':LIBRARY,
     'deep/lib.alc':'defmodule Deep do\n  def f(n: integer): integer do Other.g(n) end\nend\n',
     'deep.alc':entry('    IO.puts(Integer.to_string(Deep.f(1)))\n', ('deep/lib.alc',)),
     'syntax.alc':entry('    x = [1, 2\n'),
-    'gone.alc':entry('    IO.puts("x")\n', ('nothere.alc',))}
-REFUSALS=[line for name in ('missing', 'private', 'arity', 'reference', 'fits', 'twomains', 'protocols', 'deep', 'syntax', 'gone') for line in (['check', name + '.alc'], ['check', '--json', name + '.alc'])]
+    'gone.alc':entry('    IO.puts("x")\n', ('nothere.alc',)),
+    # What the checker finds before any body: AlchemAnalyze.
+    'void.alc':'defmodule Main do\n  def helper() do\n    IO.puts("x")\n  end\n  def main() do\n    helper()\n  end\nend\n',
+    'name.alc':'defmodule Main do\n  def Bad(): integer do 1 end\n  def main() do\n    IO.puts("x")\n  end\nend\n',
+    'mainargs.alc':'defmodule Main do\n  def main(x: integer) do\n    IO.puts("x")\n  end\nend\n',
+    'testsmain.alc':'defmodule MainTest do\n  test "a" do\n    assert(true)\n  end\n  def main() do\n    IO.puts("x")\n  end\nend\n'}
+REFUSALS=[line for name in ('missing', 'private', 'arity', 'reference', 'fits', 'twomains', 'protocols', 'deep', 'syntax', 'gone', 'void', 'name', 'mainargs', 'testsmain') for line in (['check', name + '.alc'], ['check', '--json', name + '.alc'])]
 SCENES=[
     ('alx',{'lib.alc':'defmodule Lib do\n  @doc "Twice a number."\n  def twice(n: integer): integer do n * 2 end\nend\n'},ALX),
     ('reads',{},READS),

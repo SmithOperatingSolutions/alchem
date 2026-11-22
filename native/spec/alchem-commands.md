@@ -141,8 +141,10 @@ parsed as its `ParseModule` parses one and checked as it is then
 (`tools/alchem-lower.alc`: constants, arities, clauses), then checked as
 one program as the pinned loader checks it (an import missing, a private
 function, the arity of another module's function, `main` in an imported
-module, a protocol declared twice). What it finds is said as the pinned
-command says it, place and message:
+module, a protocol declared twice), and through the first of the pinned
+checker's passes (a function without a return type, a name no function may
+have, `main`'s form). What it finds is said as the pinned command says it,
+place and message:
 
     /home/me/app/lib/lib.alc:4:3: unsupported syntax: expected ) "", found identifier "end"
     /home/me/app/main.alc:2:3: import "lib/lib.alc": /home/me/app/lib/lib.alc: read source: open /home/me/app/lib/lib.alc: no such file or directory

@@ -1,0 +1,149 @@
+defmodule AlchemAnalyze do
+  import "alchem-lexer.alc"
+  import "alchem-json.alc"
+  import "alchem-parse.alc"
+  import "alchem-types.alc"
+  import "alchem-lower.alc"
+  # The pinned compiler's checks after the program is loaded (syntax.Analyze
+  # of the pinned tree), as far as they are followed here; each finds what
+  # the pinned one finds, in its order, and where it reaches a check that is
+  # not here it finds nothing, so that what it does find is the pinned
+  # compiler's first problem. Now: the pass over every function before any
+  # body is checked, and a module with both tests and main.
+
+  def g(o: AlchemJson.J, name: string): AlchemJson.J do AlchemJson.get(o, name) end
+  def tx(o: AlchemJson.J, name: string): string do AlchemJson.text_of(AlchemJson.get(o, name)) end
+  def its(o: AlchemJson.J, name: string): list[AlchemJson.J] do AlchemJson.items_of(AlchemJson.get(o, name)) end
+  def truth(o: AlchemJson.J, name: string): boolean do AlchemJson.truth_of(AlchemJson.get(o, name)) end
+  def num(o: AlchemJson.J, name: string): integer do AlchemJson.int_of(AlchemJson.get(o, name)) end
+
+  # A function as the loader gives it to the checker: its name in the
+  # program (Module.name, or main), the name its module gave it once its
+  # clauses were merged (name, name/2, name#2), its first clause, its
+  # return type and the file it is in.
+  struct Defined do
+    name: string
+    local: string
+    clause: AlchemJson.J
+    type: string
+    path: string
+  end
+
+  # The forms mergeClauses makes of a module's functions, in order: one for
+  # each group of clauses of one name, or more where the clauses' types make
+  # forms of it, the later named name#2, name#3; a test or a setup block
+  # stays as it is.
+  def forms_of(functions: list[AlchemJson.J]): list[tuple[string, AlchemJson.J, string]] do
+    case functions do
+      [] -> []
+      [first | rest] ->
+        count = AlchemLower.group_end(functions, first, rest, 0)
+        group = [first | Enum.take(rest, count)]
+        left = Enum.drop(rest, count)
+        made = if tx(first, "Test") != "" or truth(first, "Setup") do [{tx(first, "Name"), first, tx(first, "Type")}] else
+          Enum.map(Enum.with_index(AlchemLower.forms(group)), fn {form, n} ->
+            clause = hd(form)
+            plain = length(form) == 1 and AlchemJson.null?(g(clause, "Guard")) and Enum.all?(its(clause, "Params"), fn p -> AlchemJson.null?(g(p, "Pattern")) and tx(p, "Type") != "" end)
+            returns = if plain do tx(clause, "Type") else
+              case Enum.filter(Enum.map(form, fn c -> tx(c, "Type") end), fn t -> t != "void" end) do
+                [t | _] -> t
+                [] -> "void"
+              end
+            end
+            {if n > 0 do tx(first, "Name") <> "#" <> Integer.to_string(n + 1) else tx(first, "Name") end, clause, returns}
+          end)
+        end
+        made ++ forms_of(left)
+    end
+  end
+
+  # Qualify: a module's own type in a type, named under the module.
+  # ast.Join: a type of no parts is its head, but for tuple[].
+  def qualified_type(t: string, module: string, types: list[string]): string do
+    if t == "" do t else
+      {head, args} = AlchemTypeNames.split_type(t)
+      named = if head in types do module <> "." <> head else head end
+      if args == [] and named != "tuple" do named else
+        named <> "[" <> Enum.join(Enum.map(args, fn a -> qualified_type(a, module, types) end), ",") <> "]"
+      end
+    end
+  end
+
+  # The program's functions in the order the loader gives them.
+  def functions(units: list[tuple[string, AlchemJson.J, list[AlchemJson.J]]], entry: string): list[Defined] do
+    Enum.flat_map(units, fn {path, tree, renamed} ->
+      module = tx(tree, "Module")
+      types = Enum.map(its(tree, "Types"), fn d -> tx(d, "Local") end)
+      Enum.map(forms_of(renamed), fn {local, clause, returns} ->
+        name = if path == entry and local == "main" do "main" else module <> "." <> local end
+        %Defined{name: name, local: local, clause: clause, type: qualified_type(returns, module, types), path: path}
+      end)
+    end)
+  end
+
+  def at(f: Defined, message: string): string do
+    f.path <> ":" <> Integer.to_string(num(f.clause, "Line")) <> ":" <> Integer.to_string(num(f.clause, "Column")) <> ": " <> message
+  end
+
+  def builtin_name?(name: string): boolean do
+    name != "main" and AlchemParse.member_name?(name) and not AlchemParse.binding_name?(name)
+  end
+
+  def trim_marks(name: string): string do
+    if String.ends_with?(name, "?") or String.ends_with?(name, "!") do trim_marks(binary_part(name, 0, byte_size(name) - 1)) else name end
+  end
+  def marks(name: string): integer do
+    length(String.split(name, "?")) - 1 + length(String.split(name, "!")) - 1
+  end
+
+  # functionLocalName: what a function is called in its messages.
+  def local_name(f: Defined): string do
+    if tx(f.clause, "ProtocolFunction") != "" do tx(f.clause, "ProtocolFunction") else AlchemLower.plain_name(f.local) end
+  end
+
+  # The pass over every function before any body: a name defined twice, a
+  # name no function may have, main's form, a return type that is none.
+  def first_pass(all: list[Defined]): string do
+    nothing: list[string] = []
+    {found, _} = Enum.reduce(all, {"", nothing}, fn f, {wrong, seen} ->
+      if wrong != "" do {wrong, seen} else
+        if f.name in seen do {at(f, "duplicate function " <> AlchemLexer.go_quote(f.name)), seen} else
+          {checked(f), seen ++ [f.name]}
+        end
+      end
+    end)
+    found
+  end
+
+  def checked(f: Defined): string do
+    if f.name == "main" do
+      if its(f.clause, "Params") != [] or f.type != "void" do at(f, "main must have zero parameters and no return annotation") else "" end
+    else
+      if tx(f.clause, "Test") != "" or truth(f.clause, "Setup") do "" else
+        name = local_name(f)
+        plain = trim_marks(name)
+        if (not AlchemParse.binding_name?(plain) and not builtin_name?(plain)) or marks(name) > 1 do
+          if AlchemParse.member_name?(name) do at(f, name <> " is reserved for a builtin and cannot name a function") else at(f, AlchemLexer.go_quote(name) <> " is not a valid function name") end
+        else
+          if not AlchemTypeNames.valid?(f.type) do at(f, name <> " returns " <> f.type <> ", which is not a valid type") else "" end
+        end
+      end
+    end
+  end
+
+  # The problem the checks followed here find, or "". A program with an
+  # extern function is not followed: its checks are not here.
+  def problem(units: list[tuple[string, AlchemJson.J, list[AlchemJson.J]]], entry: string): string do
+    all = functions(units, entry)
+    if Enum.any?(all, fn f -> tx(f.clause, "Extern") != "" end) do "" else
+      found = first_pass(all)
+      if found != "" do found else
+        tests = Enum.any?(all, fn f -> tx(f.clause, "Test") != "" end)
+        case Enum.filter(all, fn f -> f.name == "main" end) do
+          [entry_main | _] -> if tests do at(entry_main, "a module with tests cannot define main; the test runner is the entry point") else "" end
+          [] -> ""
+        end
+      end
+    end
+  end
+end
