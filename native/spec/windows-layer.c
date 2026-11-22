@@ -1641,18 +1641,7 @@ void copy_resume_c(void) {
 static i64 sys_mmap_anonymous(i64 size, i64 flags) {
   u64 n = ((u64)size + 4095) & ~4095ull;
   if (!n) return -EINVAL;
-  /* More than 4 GiB, or MAP_NORESERVE (the collector's tables, about a
-     seventh of the arena): reserved only, and committed 64 KiB at a time
-     as it is touched, so that it costs commit only as Linux would charge
-     it memory. Committed whole, the tables alone were 2.3 GiB of commit
-     for every process (#104). */
-  if (n > 0x100000000ull || (flags & 0x4000)) {
-    void *m = imp_VirtualAlloc(0, n, 0x2000, 4);                 /* MEM_RESERVE */
-    if (!m) return -ENOMEM;
-    region_add((u64)m, n);
-    return (i64)m;
-  }
-  if ((flags & 0x20000) && n >= (256 << 10)) {                   /* MAP_STACK */
+  if ((flags & 0x20000) && n >= (256 << 10) && n <= 0x100000000ull) {   /* MAP_STACK */
     u8 *m = imp_VirtualAlloc(0, n, 0x2000, 4);
     if (!m) return -ENOMEM;
     u64 top = (u64)m + n, limit = top - STACK_TOP;
@@ -1664,6 +1653,18 @@ static i64 sys_mmap_anonymous(i64 size, i64 flags) {
     }
     ((u64 *)m)[0] = limit;
     ((u64 *)m)[1] = top;
+    region_add((u64)m, n);
+    return (i64)m;
+  }
+  /* More than 4 GiB, or MAP_NORESERVE (the arena, and the collector's
+     tables beside it, about a seventh of the arena): reserved only, and
+     committed 64 KiB at a time as it is touched, so that it costs commit
+     only as Linux would charge it memory. Committed whole, the tables
+     alone were 2.3 GiB of commit for every process (#104). A stack asks
+     for MAP_NORESERVE too, and is made as a stack above. */
+  if (n > 0x100000000ull || (flags & 0x4000)) {
+    void *m = imp_VirtualAlloc(0, n, 0x2000, 4);                 /* MEM_RESERVE */
+    if (!m) return -ENOMEM;
     region_add((u64)m, n);
     return (i64)m;
   }
