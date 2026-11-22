@@ -130,6 +130,7 @@ jobs:
           python3 scripts/build-windows.py --source build/windows/compiler-source.alc --output build/windows/alchem-compiler-windows.exe
           cp examples/hello-native.alc build/windows/hello.alc
           cp scripts/windows-examples.py build/windows/
+          cp harness/commands.py build/windows/
           python3 scripts/windows-examples.py prepare build/windows/examples
           # One file of them: the Windows runner does not unpack an artifact
           # of 14,000 files.
@@ -277,6 +278,10 @@ jobs:
       - name: What Windows prints otherwise, against the pinned compiler's Windows programs
         if: ${{ !cancelled() }}
         run: python windows-examples.py reference examples ./alchem-upstream.exe ./alchem-compiler-windows.exe
+      - name: alchem.exe's help, syntax, doc, docs, agent-guide and agent-install
+        if: ${{ !cancelled() }}
+        # What the pinned command line prints and writes on Windows.
+        run: python commands.py --against ./alchem-upstream.exe ./alchem.exe
       - name: alchem.exe
         if: ${{ !cancelled() }}
         # The test, run and build commands on Windows (build-alchem.py --windows).

@@ -77,6 +77,7 @@ from gaps import verify as verify_gaps
 from described import verify as verify_described
 from nil_forms import verify as verify_nil_forms
 from test_driver import verify as verify_test_driver
+from commands import verify as verify_commands
 from json_library import verify as verify_json_library
 from time_zones import verify as verify_time_zones
 from logger import verify as verify_logger
@@ -123,7 +124,7 @@ def verify(frontend,backends):
         # A1, A2 and A3 were just shown to be the same bytes, so the gates run
         # once, on A3, and side by side: each compiles and runs its own programs.
         compiler=stages[2]
-        gates=[verify_integers,verify_bytes,verify_enum,verify_strings,verify_booleans,verify_options,verify_structural,verify_collections,verify_maps,verify_library_expansion,verify_integer_parse,verify_io_input,verify_system_env,verify_effect_helpers,verify_file_read,verify_string_ops,verify_string_case,verify_string_graphemes,verify_modules,verify_closures,verify_pipes,verify_records,verify_equality,verify_patterns,verify_generics,verify_inference,verify_long_bodies,verify_statements,verify_traces,verify_packages,verify_literals,verify_wide,verify_operators,verify_inspection,verify_library,verify_forms,verify_atoms,verify_failures,verify_tail_calls,verify_lists,verify_ordering,verify_sets,verify_streams,verify_exceptions,verify_ranges,verify_system,verify_sigils,verify_regex,verify_crypto,verify_nodes,verify_tls,verify_json_library,verify_time_zones,verify_logger,verify_gen,verify_testing,verify_macros,verify_protocols,verify_templates,verify_parsing,verify_clauses,verify_comprehensions,verify_floats,verify_collection_memory,verify_type_words,verify_capacity,verify_graphemes,verify_processes,verify_network,verify_diskstore,verify_gaps,verify_memory_reclaim,verify_described,verify_speed,verify_nil_forms,verify_test_driver]
+        gates=[verify_integers,verify_bytes,verify_enum,verify_strings,verify_booleans,verify_options,verify_structural,verify_collections,verify_maps,verify_library_expansion,verify_integer_parse,verify_io_input,verify_system_env,verify_effect_helpers,verify_file_read,verify_string_ops,verify_string_case,verify_string_graphemes,verify_modules,verify_closures,verify_pipes,verify_records,verify_equality,verify_patterns,verify_generics,verify_inference,verify_long_bodies,verify_statements,verify_traces,verify_packages,verify_literals,verify_wide,verify_operators,verify_inspection,verify_library,verify_forms,verify_atoms,verify_failures,verify_tail_calls,verify_lists,verify_ordering,verify_sets,verify_streams,verify_exceptions,verify_ranges,verify_system,verify_sigils,verify_regex,verify_crypto,verify_nodes,verify_tls,verify_json_library,verify_time_zones,verify_logger,verify_gen,verify_testing,verify_macros,verify_protocols,verify_templates,verify_parsing,verify_clauses,verify_comprehensions,verify_floats,verify_collection_memory,verify_type_words,verify_capacity,verify_graphemes,verify_processes,verify_network,verify_diskstore,verify_gaps,verify_memory_reclaim,verify_described,verify_speed,verify_nil_forms,verify_test_driver,verify_commands]
         # Each gate is a process of its own: threads that write and start
         # executables in one process trip over each other's open files.
         def run(gate):

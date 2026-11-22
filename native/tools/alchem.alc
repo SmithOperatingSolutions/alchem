@@ -1,9 +1,12 @@
 defmodule AlchemCommand do
   import "alchem-bundle.alc"
   import "alchem-compiler.alc"
+  import "alchem-guide.alc"
   # alchem COMMAND ...: the pinned command line's test, run, build, check
   # and new, with the bundler and the compiler in the same program
-  # (scripts/build-alchem.py puts the three together).
+  # (scripts/build-alchem.py puts them together), and the commands that
+  # print documentation (AlchemGuide, tools/alchem-guide.alc): version,
+  # help, syntax, doc, docs, agent-guide and agent-install.
   #
   #     alchem test [flags] PATH...
   #     alchem run FILE [ARGUMENT...]
@@ -847,7 +850,20 @@ defmodule AlchemCommand do
       ["build" | rest] -> build_command(rest, "", false)
       ["check" | rest] -> check(rest, false)
       ["new" | rest] -> new(rest)
-      _ -> complain("usage: alchem test [flags] PATH... | run FILE [ARGUMENT...] | build [-o OUT] FILE | check FILE | new DIRECTORY", 2)
+      [] -> complain(String.trim_trailing(AlchemGuide.usage(), "\n"), 2)
+      ["--version" | _] -> AlchemGuide.run("version", [])
+      [command | rest] ->
+        if command in ["help", "-h", "--help"] do
+          IO.write(AlchemGuide.usage())
+          0
+        else
+          if AlchemGuide.documents?(command) do AlchemGuide.run(command, rest) else
+            # The pinned command's other commands are not in this one yet.
+            if AlchemGuide.command?(command) do complain("alchem " <> command <> " is not in this alchem yet", 2) else
+              complain("unknown command: " <> command <> "\n\n" <> String.trim_trailing(AlchemGuide.usage(), "\n"), 2)
+            end
+          end
+        end
     end
     System.halt(status)
   end
