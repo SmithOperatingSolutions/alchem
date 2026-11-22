@@ -9,6 +9,9 @@ name: Native compiler
 # (scripts/verify-local.sh --with-source) runs nightly and on request. The
 # Windows compiler (native/spec/windows.md) is built in a job of its own
 # too, and the Windows job runs it: it must make itself again byte for byte.
+# A pull request whose inputs to these jobs (.github/scripts/native-verified.sh)
+# have passed them already, in a run of this repository, is not checked
+# again; the nightly and requested runs always check.
 on:
   pull_request:
     paths:
@@ -26,8 +29,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  verified:
+    name: Already verified
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      key: ${{ steps.look.outputs.key }}
+      run: ${{ steps.look.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: look
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          key=$(bash .github/scripts/native-verified.sh key)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          run=''
+          if [[ "$EVENT" == pull_request ]]; then
+            run=$(bash .github/scripts/native-verified.sh run "$REPO" "$key")
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          if [[ -n "$run" ]]; then
+            echo "The native jobs' inputs ($key) passed in $run: they are not checked again." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The native jobs' inputs ($key) have not passed before: they are checked." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   native:
     name: ${{ matrix.name }}
+    needs: verified
+    if: needs.verified.outputs.run == ''
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -105,6 +141,8 @@ jobs:
     # and the pinned compiler as a Windows program, built on Linux beside the
     # gates.
     name: Compiler for Windows
+    needs: verified
+    if: needs.verified.outputs.run == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
@@ -150,6 +188,8 @@ jobs:
     # compiles its own source into the compiler as a macOS program. Its stages
     # are Linux x86-64 programs, so it is built here, beside the gates.
     name: Compiler for macOS
+    needs: verified
+    if: needs.verified.outputs.run == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
@@ -306,3 +346,22 @@ jobs:
           set -e
           test "$out" = '["a", "b c"]'
           test "$status" = 3
+
+  record:
+    # Every job passed: the inputs are recorded as verified, by an artifact
+    # named for their key, which native-verified.sh looks for.
+    name: Record as verified
+    needs: [verified, native, windows-compiler, macos-compiler, macos, windows]
+    if: needs.verified.outputs.run == ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          KEY: ${{ needs.verified.outputs.key }}
+          SHA: ${{ github.sha }}
+        run: echo "$KEY $SHA" > verified.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-verified-${{ needs.verified.outputs.key }}
+          path: verified.txt
+          retention-days: 30
