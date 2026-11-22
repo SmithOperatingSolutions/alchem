@@ -3,6 +3,7 @@ defmodule AlchemCheck do
   import "alchem-json.alc"
   import "alchem-parse.alc"
   import "alchem-lower.alc"
+  import "alchem-analyze.alc"
   # What the pinned compiler says of a program it refuses, as far as this
   # module follows it (spec/alchem-front-end.md): the program an entry file
   # makes with the files it imports, read as the pinned compiler's
@@ -223,8 +224,9 @@ defmodule AlchemCheck do
   # What loadProjectAs finds once every file is read: a protocol declared
   # twice, main in an imported module, a call of a module the file does not
   # import or of another module's private function, and the arity of a call
-  # of another module's function (ResolveArities). none for a program with
-  # macros, a use, a require or a doctest, whose steps are not followed here.
+  # of another module's function (ResolveArities), then what the checker
+  # finds (AlchemAnalyze). none for a program with macros, a use, a require
+  # or a doctest, whose steps are not followed here.
   def merged(loaded: Loaded, entry: string): option[Problem] do
     trees = Enum.map(loaded.order, fn u -> u.tree end)
     skipped = Enum.any?(trees, fn t -> its(t, "Macros") != [] or its(t, "Uses") != [] or its(t, "Requires") != [] or its(t, "Doctests") != [] end)
@@ -241,7 +243,10 @@ defmodule AlchemCheck do
           end)
           if found != "" do some(plain(found)) else
             arity = arities_problem(renamed, entry)
-            if arity != "" do some(plain(arity)) else none end
+            if arity != "" do some(plain(arity)) else
+              analyzed = AlchemAnalyze.problem(Enum.map(renamed, fn {u, functions} -> {shown(u.path), u.tree, functions} end), shown(entry))
+              if analyzed != "" do some(plain(analyzed)) else none end
+            end
           end
       end
     end

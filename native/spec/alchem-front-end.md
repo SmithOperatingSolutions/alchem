@@ -67,6 +67,20 @@ function, and the arity of a call of another module's function
 (`ExpandMacros`, `documented`) are not here. Paths are kept with `/` and
 shown with the system's separators, as Go's `filepath` shows them.
 
+## The checker: `tools/alchem-analyze.alc`
+
+`AlchemAnalyze.problem` follows the pinned compiler's checker
+(`syntax.Analyze`) on the program as the loader leaves it: each function as
+`mergeClauses` makes it (one for each form, named `name`, `name/2` or
+`name#2`, with the form's return type), named `Module.name` or `main`. It
+is followed in pieces, each finding what the pinned one finds in its order;
+where it reaches a check that is not here yet it finds nothing, so that
+what it finds is always the pinned compiler's first problem. Now: the pass
+over every function before any body (a function defined twice, a name no
+function may have, `main`'s form, a return type that is not a type, such
+as none at all) and a module with both tests and `main`. A program with an
+`extern` function is not followed. The bodies of functions come next.
+
 ## The check
 
 `harness/front_end.py` (the gate `front_end`) holds 3,004 texts: the
@@ -87,7 +101,7 @@ the pinned place. The cases also hold what the pinned command's `check`
 says of each text as a file of its own; `alchem check` must say the same,
 or, where the front end does not reach the reason, the native compiler's
 or bundler's own message (`E_COMPILE`, `E_BUNDLE`). It says the same for
-1,890 of the 2,005 texts the pinned compiler refuses; the gate holds that
+1,892 of the 2,005 texts the pinned compiler refuses; the gate holds that
 count as the least it may give (`EXPLAINED`). `scripts/generate-front-end-cases.py` makes
 the file; `scripts/compare-lexer.py` compares the lexers on any files.
 
