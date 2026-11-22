@@ -817,7 +817,7 @@ defmodule AlchemCommand do
               end
               case made do
                 ok(_) ->
-                  IO.puts("created " <> target)
+                  IO.puts("created " <> AlchemGuide.shown(target))
                   ""
                 error(message) -> message
               end
