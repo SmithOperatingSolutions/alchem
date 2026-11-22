@@ -134,7 +134,25 @@ program the compiler does not take is reported with its one message.
 ## A program the compiler refuses
 
 The compiler refuses a program by making no image, with one message for
-every reason. `alchem` then asks it which function it could not make
+every reason. `build`, `run` and `check` first read the program as the
+pinned compiler reads it (`AlchemCheck.load`, `tools/alchem-check.alc`):
+the entry and the files it imports, in the pinned compiler's order, each
+parsed as its `ParseModule` parses one and checked as it is then
+(`tools/alchem-lower.alc`: constants, arities, clauses), then checked as
+one program as the pinned loader checks it (an import missing, a private
+function, the arity of another module's function, `main` in an imported
+module, a protocol declared twice). What it finds is said as the pinned
+command says it, place and message:
+
+    /home/me/app/lib/lib.alc:4:3: unsupported syntax: expected ) "", found identifier "end"
+    /home/me/app/main.alc:2:3: import "lib/lib.alc": /home/me/app/lib/lib.alc: read source: open /home/me/app/lib/lib.alc: no such file or directory
+
+`check` does so for a program the compiler takes too, since it takes some
+the pinned compiler refuses. A bundler's refusal is explained the same way.
+The checks after these (names, arities of calls, types) are not here yet.
+
+Where the front end finds nothing, `alchem` asks the compiler which
+function it could not make
 (`nc_explain`, in `implementations/alchem/native-compiler.alc`): the program
 is compiled as before up to its functions, and those are compiled again one
 by one, halves first, as `nc_build` compiles them, until one makes no code.
@@ -178,9 +196,13 @@ declares no module and directories with `.git` and `artifacts`.
   A file that declares no module is refused in this command's own words.
 - `doc host/owner/repo@v1.2.3/lib/name.alc`, a package's file named as an
   import names it, is not fetched.
-- `build`, `run`, `check` and `alx` say where a refused program's
-  function is, not what is wrong in it, where the pinned compiler gives
-  the line and the reason (`** line 1: undefined function nope`). It decides what a statement
+- `build`, `run`, `check` and `alx` give the pinned message for a mistake
+  in a program's syntax, constants, arities and clauses, and for a file
+  it cannot import. For a mistake the checks after those would find (an
+  undefined name, a call of the wrong arity, a type), they say where the
+  refused function is, not what is wrong in it, where the pinned compiler
+  gives the line and the reason (`** line 1: undefined function nope`).
+  `alx` reads no input with the front end. It decides what a statement
   binds from its text: a statement that binds after other statements in
   one input is run and not shown, and a comment alone runs nothing.
 - `lsp` is in the list of commands and not in `alchem` yet: it says so and

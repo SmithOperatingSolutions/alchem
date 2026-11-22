@@ -1,0 +1,381 @@
+defmodule AlchemCheck do
+  import "alchem-lexer.alc"
+  import "alchem-json.alc"
+  import "alchem-parse.alc"
+  import "alchem-lower.alc"
+  # What the pinned compiler says of a program it refuses, as far as this
+  # module follows it (spec/alchem-front-end.md): the program an entry file
+  # makes with the files it imports, read as the pinned compiler's
+  # loadProjectAs reads them, file by file in its order, and each parsed as
+  # ParseModule parses it. A problem is the pinned compiler's error: its
+  # text, and the place and message of the diagnostic `check --json` gives.
+
+  struct Problem do
+    # The error as the pinned command prints it.
+    text: string
+    # The diagnostic inside it: its file, line, column and message; the
+    # file is "" where there is none.
+    file: string
+    line: integer
+    column: integer
+    message: string
+  end
+
+  # A file of the program once it is read: its path, its tree and the
+  # paths its imports name, in the order it names them.
+  struct Unit do
+    path: string
+    tree: AlchemJson.J
+    targets: list[tuple[string, string]]
+  end
+
+  struct Loaded do
+    names: map[string, string]
+    active: list[string]
+    done: list[string]
+    # An import of a package, which is not followed here.
+    remote: boolean
+    # The files read, each after those it imports.
+    order: list[Unit]
+  end
+
+  # Paths are kept with / and a drive's letter (C:/...) where there is one,
+  # and shown with the system's separators, as Go's filepath gives them.
+  def shown(path: string): string do
+    if Sys.windows() == 1 do String.replace(path, "/", "\\") else path end
+  end
+  def kept(path: string): string do
+    if Sys.windows() == 1 do String.replace(path, "\\", "/") else path end
+  end
+
+  def diagnostic(file: string, line: integer, column: integer, message: string): Problem do
+    %Problem{text: shown(file) <> ":" <> Integer.to_string(line) <> ":" <> Integer.to_string(column) <> ": " <> message, file: shown(file), line: line, column: column, message: message}
+  end
+  def plain(text: string): Problem do %Problem{text: text, file: "", line: 0, column: 0, message: ""} end
+
+  # A path that starts at a root: / or a drive's letter, C:/.
+  def rooted?(path: string): boolean do
+    String.starts_with?(path, "/") or Regex.match?(~r/^[A-Za-z]:\//, path)
+  end
+
+  # filepath.Clean of a path that starts at a root.
+  def clean(path: string): string do
+    {root, rest} = if Regex.match?(~r/^[A-Za-z]:\//, path) do {binary_part(path, 0, 2) <> "/", binary_part(path, 3, byte_size(path) - 3)} else {"/", path} end
+    nothing: list[string] = []
+    parts = Enum.reduce(String.split(rest, "/"), nothing, fn part, sofar ->
+      if part == "" or part == "." do sofar else
+        if part == ".." do (if sofar == [] do sofar else tl(sofar) end) else [part | sofar] end
+      end
+    end)
+    root <> Enum.join(Enum.reverse(parts), "/")
+  end
+  def directory_of(path: string): string do
+    case Enum.reverse(String.split(path, "/")) do
+      [_ | rest] -> if rest == [""] or rest == [] do "/" else Enum.join(Enum.reverse(rest), "/") end
+      [] -> "/"
+    end
+  end
+
+  def reserved?(name: string): boolean do
+    name in ["IO", "List", "Map", "Process", "Supervisor", "Server", "String", "Integer", "Float", "File", "System", "Time",
+      "Kernel", "Enum", "Stream", "MapSet", "Path", "Base", "Bitwise", "Regex", "Task", "Agent", "Function", "JSON", "Date", "DateTime", "NaiveDateTime", "Calendar", "URI", "Version", "Duration", "Logger", "OptionParser", "Atom", "Keyword", "Port", "Node", "Registry", "DynamicSupervisor", "TCP", "HTTP", "Task.Supervisor", "TCP.Event", "UDP", "UDP.Event", "Gen", "IO.ANSI", "Port.Info", "File.Stat", "Version.Requirement", "PortEvent", "Range", "WebSocket", "WebSocket.Event", "Markup.Value", "Markup.Parts", "Crypto", "Markup", "DiskStore"]
+  end
+  def retiring?(name: string): boolean do name in ["DiskStore", "WebSocket", "Version", "OptionParser"] end
+
+  # What Go says of a file that cannot be opened, from the library's word.
+  def reason(code: string): string do
+    case code do
+      "enoent" -> "no such file or directory"
+      "eacces" -> "permission denied"
+      "enotdir" -> "not a directory"
+      "eisdir" -> "is a directory"
+      "eloop" -> "too many levels of symbolic links"
+      "enametoolong" -> "file name too long"
+      _ -> code
+    end
+  end
+
+  # The problem the pinned compiler finds in the files of the program an
+  # entry makes, or none: none too where a file imports a package, which is
+  # not fetched here. directory is the working directory an entry that is
+  # not absolute is read from.
+  def load(entry: string, directory: string): option[Problem] do
+    absolute = clean(if rooted?(kept(entry)) do kept(entry) else kept(directory) <> "/" <> kept(entry) end)
+    path = case File.stat(absolute) do
+      ok(info) -> if info.type == :directory do clean(absolute <> "/main.alc") else absolute end
+      error(_) -> absolute
+    end
+    names: map[string, string] = %{}
+    nothing: list[string] = []
+    none_read: list[Unit] = []
+    case visit(path, %Loaded{names: names, active: nothing, done: nothing, remote: false, order: none_read}) do
+      error(problem) -> some(problem)
+      ok(loaded) -> if loaded.remote do none else merged(loaded, path) end
+    end
+  end
+
+  def visit(path: string, given: Loaded): result[Loaded, Problem] do
+    if given.remote or path in given.done do ok(given) else
+      if path in given.active do error(plain(shown(path) <> ": import cycle")) else
+        if not String.ends_with?(path, ".alc") do error(plain(shown(path) <> ": source must have .alc extension")) else
+          case File.read_binary(path) do
+            error(why) -> error(plain(shown(path) <> ": read source: open " <> shown(path) <> ": " <> unopened(why)))
+            ok(text) ->
+              if byte_size(text) > 1048576 do error(plain(path <> ": read source: source exceeds 1048576 bytes")) else
+                case AlchemParse.parse_module(text) do
+                  error(why) -> error(syntax_problem(path, why))
+                  ok(tree) ->
+                    lowered = AlchemLower.problem(tree)
+                    if lowered != "" do error(syntax_problem(path, lowered)) else declared(path, tree, given) end
+                end
+              end
+          end
+        end
+      end
+    end
+  end
+
+  # Why a file could not be opened, as Go says it: the library's word, or
+  # the system's text after the path it names.
+  def unopened(why: string): string do
+    windows = Enum.filter(["The system cannot find the file specified.", "The system cannot find the path specified.", "Access is denied."], fn text -> String.ends_with?(why, text) end)
+    case windows do
+      [text | _] -> text
+      [] ->
+        case Regex.run(~r/^open .*: ([^:]*)$/, why) do
+          some([_, text]) -> text
+          _ -> reason(why)
+        end
+    end
+  end
+
+  # syntaxDiagnostic: a message with its place is unsupported syntax there.
+  def syntax_problem(path: string, why: string): Problem do
+    case Regex.run(~r/^([0-9]+):([0-9]+): (.*)$/, why) do
+      some([_, line, column, message]) -> diagnostic(path, String.to_integer(line), String.to_integer(column), "unsupported syntax: " <> message)
+      _ -> diagnostic(path, 1, 1, why)
+    end
+  end
+
+  # filepath.IsAbs: on Windows a drive's letter and a separator, or a path
+  # that starts \\\\ (a share); elsewhere a path that starts /.
+  def absolute?(path: string): boolean do
+    if Sys.windows() == 1 do Regex.match?(~r/^[A-Za-z]:[\/\\]/, path) or String.starts_with?(path, "\\\\") or String.starts_with?(path, "//") else String.starts_with?(path, "/") end
+  end
+
+  def number(v: AlchemJson.J, name: string): integer do AlchemJson.int_of(AlchemJson.get(v, name)) end
+
+  def declared(path: string, tree: AlchemJson.J, given: Loaded): result[Loaded, Problem] do
+    name = AlchemJson.text_of(AlchemJson.get(tree, "Module"))
+    line = number(tree, "ModuleLine")
+    column = number(tree, "ModuleColumn")
+    case Map.get(given.names, name) do
+      some(previous) -> error(diagnostic(path, line, column, "duplicate module " <> name <> " (also " <> shown(previous) <> ")"))
+      none ->
+        if reserved?(name) and not retiring?(name) do error(diagnostic(path, line, column, "reserved module name " <> name)) else
+          imports = Enum.map(AlchemJson.items_of(AlchemJson.get(tree, "Imports")), fn v -> AlchemJson.text_of(v) end)
+          positions = AlchemJson.items_of(AlchemJson.get(tree, "ImportPositions"))
+          placed = Enum.zip(imports, positions)
+          started = %Loaded{given | names: Map.put(given.names, name, path), active: [path | given.active]}
+          case imported(path, Enum.sort(imports), placed, started) do
+            error(problem) -> error(problem)
+            ok(after_it) ->
+              targets = Enum.map(imports, fn imp -> {imp, clean(directory_of(path) <> "/" <> kept(imp))} end)
+              ok(%Loaded{after_it | active: Enum.filter(after_it.active, fn p -> p != path end), done: [path | after_it.done], order: after_it.order ++ [%Unit{path: path, tree: tree, targets: targets}]})
+          end
+        end
+    end
+  end
+
+  def imported(path: string, imports: list[string], placed: list[tuple[string, AlchemJson.J]], given: Loaded): result[Loaded, Problem] do
+    case imports do
+      [] -> ok(given)
+      [imp | rest] ->
+        {line, column} = case Enum.filter(placed, fn {value, _} -> value == imp end) do
+          [{_, position} | _] -> {number(position, "Line"), number(position, "Column")}
+          [] -> {1, 1}
+        end
+        if imp == "" or String.contains?(imp, "\u{0}") or String.contains?(imp, "\r") or String.contains?(imp, "\n") or absolute?(imp) do
+          error(diagnostic(path, line, column, "imports must be nonempty relative .alc paths"))
+        else
+          if String.contains?(imp, "@") do ok(%Loaded{given | remote: true}) else
+            case visit(clean(directory_of(path) <> "/" <> kept(imp)), given) do
+              error(inner) ->
+                # wrapImport: the place of the import, and inside it the
+                # diagnostic of the file, or this place where there is none.
+                outer = diagnostic(path, line, column, "import " <> AlchemLexer.go_quote(imp) <> ": " <> inner.text)
+                error(if inner.file == "" do outer else %Problem{outer | file: inner.file, line: inner.line, column: inner.column, message: inner.message} end)
+              ok(next) -> imported(path, rest, placed, next)
+            end
+          end
+        end
+    end
+  end
+
+  # --- the program as one, as loadProjectAs makes it ---------------------------------------
+
+  def tx(o: AlchemJson.J, name: string): string do AlchemJson.text_of(AlchemJson.get(o, name)) end
+  def its(o: AlchemJson.J, name: string): list[AlchemJson.J] do AlchemJson.items_of(AlchemJson.get(o, name)) end
+  def at_text(path: string, v: AlchemJson.J, message: string): string do
+    shown(path) <> ":" <> Integer.to_string(number(v, "Line")) <> ":" <> Integer.to_string(number(v, "Column")) <> ": " <> message
+  end
+
+  # What loadProjectAs finds once every file is read: a protocol declared
+  # twice, main in an imported module, a call of a module the file does not
+  # import or of another module's private function, and the arity of a call
+  # of another module's function (ResolveArities). none for a program with
+  # macros, a use, a require or a doctest, whose steps are not followed here.
+  def merged(loaded: Loaded, entry: string): option[Problem] do
+    trees = Enum.map(loaded.order, fn u -> u.tree end)
+    skipped = Enum.any?(trees, fn t -> its(t, "Macros") != [] or its(t, "Uses") != [] or its(t, "Requires") != [] or its(t, "Doctests") != [] end)
+    if skipped do none else
+      case protocols_problem(loaded.order) do
+        some(problem) -> some(problem)
+        none ->
+          protocols = Enum.flat_map(trees, fn t -> Enum.map(its(t, "Protocols"), fn p -> tx(p, "Name") end) end)
+          renamed = Enum.map(loaded.order, fn u -> {u, elem(AlchemLower.separate_arities(u.tree), 0)} end)
+          private = Enum.flat_map(renamed, fn {u, functions} -> Enum.flat_map(functions, fn f -> if AlchemJson.truth_of(AlchemJson.get(f, "Private")) do [tx(u.tree, "Module") <> "." <> tx(f, "Name")] else [] end end) end)
+          module_of = Enum.map(loaded.order, fn u -> {u.path, tx(u.tree, "Module")} end)
+          found = Enum.reduce(renamed, "", fn {u, functions}, sofar ->
+            if sofar != "" do sofar else unit_problem(u, functions, entry, protocols, private, module_of) end
+          end)
+          if found != "" do some(plain(found)) else
+            arity = arities_problem(renamed, entry)
+            if arity != "" do some(plain(arity)) else none end
+          end
+      end
+    end
+  end
+
+  def protocols_problem(order: list[Unit]): option[Problem] do
+    nothing: list[tuple[string, string]] = []
+    {found, _} = Enum.reduce(order, {"", nothing}, fn u, {wrong, seen} ->
+      Enum.reduce(its(u.tree, "Protocols"), {wrong, seen}, fn p, {more, known} ->
+        if more != "" do {more, known} else
+          case Enum.filter(known, fn {name, _} -> name == tx(p, "Name") end) do
+            [{_, other} | _] -> {at_text(u.path, p, "protocol " <> tx(p, "Name") <> " is also declared in " <> shown(other)), known}
+            [] -> {"", known ++ [{tx(p, "Name"), u.path}]}
+          end
+        end
+      end)
+    end)
+    if found == "" do none else
+      case Regex.run(~r/^(.*):([0-9]+):([0-9]+): (.*)$/, found) do
+        some([_, file, line, column, message]) -> some(diagnostic(file, String.to_integer(line), String.to_integer(column), message))
+        _ -> some(plain(found))
+      end
+    end
+  end
+
+  # Qualify: a module's own type, and a variant of it, named as Module.Type.
+  def qualified(name: string, module: string, types: list[string]): string do
+    first = hd(String.split(name, "."))
+    if first in types do (if retiring?(module) and first == module do name else module <> "." <> name end) else name end
+  end
+
+  def upper?(name: string): boolean do
+    name != "" and Sys.byte(Sys.addr(name)) >= 65 and Sys.byte(Sys.addr(name)) <= 90
+  end
+
+  # The name a call has once Qualify and the loader have seen it, with
+  # whether it is one of the module's own functions written unqualified.
+  def resolved_name(e: AlchemJson.J, module: string, types: list[string]): string do
+    name = tx(e, "Name")
+    seen = if upper?(name) do qualified(name, module, types) else name end
+    if String.starts_with?(seen, "Kernel.") and not String.contains?(binary_part(seen, 7, byte_size(seen) - 7), ".") do binary_part(seen, 7, byte_size(seen) - 7) else seen end
+  end
+
+  # The calls the loader's resolve walks, in its order: the expression, its
+  # left and right, its arguments and keys, its body; of a statement its
+  # expression, then and else, and each arm's guard and body.
+  def resolve_expr(e: AlchemJson.J, done: list[AlchemJson.J]): list[AlchemJson.J] do
+    if AlchemJson.null?(e) do done else
+      with_left = resolve_expr(AlchemJson.get(e, "Right"), resolve_expr(AlchemJson.get(e, "Left"), [e | done]))
+      with_args = Enum.reduce(its(e, "Args") ++ its(e, "Keys"), with_left, fn a, sofar -> resolve_expr(a, sofar) end)
+      resolve_block(its(e, "Body"), with_args)
+    end
+  end
+  def resolve_block(body: list[AlchemJson.J], done: list[AlchemJson.J]): list[AlchemJson.J] do
+    Enum.reduce(body, done, fn s, sofar ->
+      inner = resolve_block(its(s, "Else"), resolve_block(its(s, "Then"), resolve_expr(AlchemJson.get(s, "Expr"), sofar)))
+      Enum.reduce(its(s, "Arms"), inner, fn arm, more -> resolve_block(its(arm, "Body"), resolve_expr(AlchemJson.get(arm, "Guard"), more)) end)
+    end)
+  end
+
+  def calls_of(walked: list[AlchemJson.J]): list[AlchemJson.J] do
+    Enum.filter(Enum.reverse(walked), fn e -> tx(e, "Kind") == "call" or tx(e, "Kind") == "funcref" end)
+  end
+
+  def unit_problem(u: Unit, functions: list[AlchemJson.J], entry: string, protocols: list[string], private: list[string], module_of: list[tuple[string, string]]): string do
+    module = tx(u.tree, "Module")
+    types = Enum.map(its(u.tree, "Types"), fn d -> tx(d, "Local") end)
+    imported_modules = Enum.flat_map(u.targets, fn {_, target} -> Enum.flat_map(module_of, fn {p, m} -> if p == target do [m] else [] end end) end)
+    allowed = [module | imported_modules]
+    locals = Enum.map(functions, fn f -> tx(f, "Name") end)
+    Enum.reduce(functions, "", fn f, sofar ->
+      if sofar != "" do sofar else
+        if u.path != entry and tx(f, "Name") == "main" do at_text(u.path, f, "imported modules cannot define main") else
+          none_yet: list[AlchemJson.J] = []
+          Enum.reduce(calls_of(resolve_block(its(f, "Body"), none_yet)), "", fn e, wrong ->
+            if wrong != "" do wrong else
+              name = resolved_name(e, module, types)
+              if name in locals or not String.contains?(name, ".") do "" else
+                parts = String.split(name, ".")
+                namespace = Enum.join(Enum.take(parts, length(parts) - 1), ".")
+                visible = Enum.any?(allowed, fn a -> String.starts_with?(name, a <> ".") end)
+                if not reserved?(namespace) and not visible and not (namespace in protocols) do at_text(u.path, e, "module " <> namespace <> " is not imported") else
+                  if name in private do at_text(u.path, e, name <> " is private to its module") else "" end
+                end
+              end
+            end
+          end)
+        end
+      end
+    end)
+  end
+
+  # ResolveArities: a call of another module's function that has more than
+  # one arity is given the one its arguments fit, and may not reach a
+  # private one.
+  def arities_problem(renamed: list[tuple[Unit, list[AlchemJson.J]]], entry: string): string do
+    named = Enum.flat_map(renamed, fn {u, functions} ->
+      Enum.map(functions, fn f -> {u, f, if u.path == entry and tx(f, "Name") == "main" do "main" else tx(u.tree, "Module") <> "." <> tx(f, "Name") end} end)
+    end)
+    nothing: list[tuple[string, list[AlchemLower.Span]]] = []
+    spans = Enum.reduce(named, nothing, fn {u, f, name}, sofar ->
+      plain = AlchemLower.plain_name(name)
+      if not AlchemLower.overloadable?(f) or plain == name or AlchemLower.first_form(name) != name do sofar else
+        known = AlchemLower.spans_for(sofar, plain)
+        Enum.filter(sofar, fn {key, _} -> key != plain end) ++ [{plain, known ++ [AlchemLower.span_of(name, f)]}]
+      end
+    end)
+    if spans == [] do "" else
+      private = Enum.flat_map(named, fn {u, f, name} -> if AlchemJson.truth_of(AlchemJson.get(f, "Private")) do [{name, tx(u.tree, "Module")}] else [] end end)
+      Enum.reduce(named, "", fn {u, f, _}, sofar ->
+        if sofar != "" do sofar else
+          module = tx(u.tree, "Module")
+          types = Enum.map(its(u.tree, "Types"), fn d -> tx(d, "Local") end)
+          none_yet: list[AlchemJson.J] = []
+          locals = Enum.map(elem(AlchemLower.separate_arities(u.tree), 0), fn g -> tx(g, "Name") end)
+          Enum.reduce(calls_of(AlchemLower.walk_function(f, none_yet)), "", fn e, wrong ->
+            name = resolved_name(e, module, types)
+            candidates = if name in locals do [] else AlchemLower.spans_for(spans, name) end
+            if wrong != "" or candidates == [] do wrong else
+              count = if tx(e, "Kind") == "funcref" do (case Integer.parse(tx(e, "Op")) do
+                ok(n) -> n
+                error(_) -> -1
+              end) else length(its(e, "Args")) end
+              if count < 0 do at_text(u.path, e, name <> " has more than one arity; write " <> AlchemLower.reference_list(candidates)) else
+                chosen = AlchemLower.pick(candidates, count)
+                if chosen == "" do at_text(u.path, e, name <> " takes " <> AlchemLower.arity_list(candidates) <> "; no " <> name <> "/" <> Integer.to_string(count) <> " is defined") else
+                  owner = Enum.flat_map(private, fn {p, m} -> if p == chosen do [m] else [] end end)
+                  if owner != [] and hd(owner) != module do at_text(u.path, e, name <> " is private to its module") else "" end
+                end
+              end
+            end
+          end)
+        end
+      end)
+    end
+  end
+end

@@ -176,6 +176,28 @@ FORMATTING={'p/a.alc':PROJECT['lib/version.alc'],'p/b.alc':UNFORMATTED,'p/sub/c.
     'ugly.alc':UNFORMATTED,'library.alc':'def twice(n: integer): integer do n * 2 end\n'}
 FORMAT=[['fmt'],['fmt','-h'],['fmt','-zz','p'],['fmt','--check'],['fmt','missing.alc'],['fmt','empty'],['fmt','library.alc'],['fmt','--check','p'],['fmt','-check','p/a.alc'],
     ['fmt','-check','broken.alc','p'],['fmt','p/sub'],['fmt','--check','p'],['fmt','./p/'],['fmt','--check','p'],['fmt','p','p/b.alc'],['fmt','-check=false','ugly.alc'],['fmt','--check','.'],['fmt','.'],['fmt','--','ugly.alc']]
+# Refusals the pinned compiler's loader gives, across files: an import
+# missing, a private function, the arity of another module's function, main
+# in an imported module, a protocol declared twice (AlchemCheck.merged).
+LIBRARY='defmodule Lib do\n  def twice(n: integer): integer do n * 2 end\n  defp hidden(n: integer): integer do n end\n  def two(a: integer): integer do a end\n  def two(a: integer, b: integer): integer do a + b end\nend\n'
+def entry(body, imports=('lib.alc',)):
+    return 'defmodule Main do\n' + ''.join(f'  import "{i}"\n' for i in imports) + '  def main() do\n' + body + '  end\nend\n'
+REFUSING={'lib.alc':LIBRARY,
+    'missing.alc':entry('    IO.puts(Integer.to_string(Lib.twice(2)))\n', ()),
+    'private.alc':entry('    IO.puts(Integer.to_string(Lib.hidden(2)))\n'),
+    'arity.alc':entry('    IO.puts(Integer.to_string(Lib.two(1, 2, 3)))\n'),
+    'reference.alc':entry('    f = &Lib.two\n    IO.puts("x")\n'),
+    'fits.alc':entry('    IO.puts(Integer.to_string(Lib.two(1, 2)))\n'),
+    'inner/main.alc':'defmodule Inner do\n  def main() do\n    IO.puts("x")\n  end\nend\n',
+    'twomains.alc':entry('    IO.puts("y")\n', ('inner/main.alc',)),
+    'a.alc':'defmodule A do\n  defprotocol Show do\n    def show(x)\n  end\nend\n',
+    'b.alc':'defmodule B do\n  defprotocol Show do\n    def show(x)\n  end\nend\n',
+    'protocols.alc':entry('    IO.puts("y")\n', ('a.alc', 'b.alc')),
+    'deep/lib.alc':'defmodule Deep do\n  def f(n: integer): integer do Other.g(n) end\nend\n',
+    'deep.alc':entry('    IO.puts(Integer.to_string(Deep.f(1)))\n', ('deep/lib.alc',)),
+    'syntax.alc':entry('    x = [1, 2\n'),
+    'gone.alc':entry('    IO.puts("x")\n', ('nothere.alc',))}
+REFUSALS=[line for name in ('missing', 'private', 'arity', 'reference', 'fits', 'twomains', 'protocols', 'deep', 'syntax', 'gone') for line in (['check', name + '.alc'], ['check', '--json', name + '.alc'])]
 SCENES=[
     ('alx',{'lib.alc':'defmodule Lib do\n  @doc "Twice a number."\n  def twice(n: integer): integer do n * 2 end\nend\n'},ALX),
     ('reads',{},READS),
@@ -190,6 +212,7 @@ SCENES=[
     ('blocks',{'AGENTS.md':'before\n'+BLOCK+'\nafter\n','.github/copilot-instructions.md':BLOCK,'one/AGENTS.md':'\n\n','two/AGENTS.md':'x\n<!-- END alchem agent guide -->\n<!-- BEGIN alchem agent guide -->\n','three/AGENTS.md':'no newline at the end'},
      [['agent-install','agents'],['agent-install','copilot'],['agent-install','--dir','one','agents'],['agent-install','--dir','two','agents'],['agent-install','--dir','three','agents'],['agent-install','--dir','three','--json','agents']]),
     ('fmt',FORMATTING,FORMAT),
+    ('refusals',REFUSING,REFUSALS),
     ('docs',{'held/cli-reference.md':'old\n'},
      [['docs','--check'],['docs'],['docs'],['docs','--check'],['docs','--dir','out/ref'],['docs','--dir','./dot/'],['docs','--check','--dir','held'],['docs','--dir','held'],['docs','-check=false','-dir=held'],['docs','x']]),
 ]
@@ -249,7 +272,7 @@ def against(pinned,alchem):
         assert kept==left,(name,{path:(kept.get(path),left.get(path)) for path in set(kept)|set(left) if kept.get(path)!=left.get(path)})
     runs,_=scene(alchem,{},[['version'],['version','--json']])
     assert runs[0][0]==0 and runs[0][1].startswith('alchem ') and runs[0][2]=='' and set(json.loads(runs[1][1]))=={'version','platform'},runs
-    print(f'PASS commands: {count} command lines of help, syntax, doc (the library, files, a project and its packages), docs, agent-guide, agent-install, alx, fmt and the flags of build, run, check and new in {len(cases())} scenes as {pinned.name} prints them, with the files they write; {runs[0][1].strip()}')
+    print(f'PASS commands: {count} command lines of help, syntax, doc (the library, files, a project and its packages), docs, agent-guide, agent-install, alx, fmt, the refusals of check and the flags of build, run, check and new in {len(cases())} scenes as {pinned.name} prints them, with the files they write; {runs[0][1].strip()}')
 
 
 def platform(compiler):
@@ -285,7 +308,7 @@ def verify(compiler):
         runs,_=scene(alchem,{},[['version'],['--version'],['version','--json'],['version','-json']])
         text=f'alchem v9.8.7-test {target}\n';data=json.dumps({'version':'v9.8.7-test','platform':target},indent=2)+'\n'
         assert runs==[[0,text,''],[0,text,''],[0,data,''],[0,data,'']],runs
-    print(f'PASS commands: {count} command lines of help, syntax, doc (the library, files, a project and its packages), docs, agent-guide, agent-install, alx, fmt and the flags of build, run, check and new in {len(known)} scenes as the pinned command line prints them, with the files they write; version for {target}; a refusal named by its function and place')
+    print(f'PASS commands: {count} command lines of help, syntax, doc (the library, files, a project and its packages), docs, agent-guide, agent-install, alx, fmt, the refusals of check and the flags of build, run, check and new in {len(known)} scenes as the pinned command line prints them, with the files they write; version for {target}; a refusal named by its function and place')
 
 
 if __name__=='__main__':
