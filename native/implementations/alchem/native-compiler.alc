@@ -1791,9 +1791,11 @@ defmodule NativeSourceCompiler do
   # functions it only seems to mention: it is compiled without them.
   # tail: what a rewritten program ends in.
   def nc_compile_with(given: bytes, library: bytes, tail: bytes, explain: integer): bytes do
+    # A refusal is explained by the program with its library: compiled
+    # again without it, the program would be refused for lack of the
+    # library's functions, which says nothing of why it was refused.
     if explain == 1 do
-      why = nc_explain_all(nc_join(given,library,tail))
-      if Enum.count(why) > 0 do why else if Enum.count(library) == 0 do why else nc_explain_all(Enum.concat(given,tail)) end end
+      nc_explain_all(nc_join(given,library,tail))
     else
       image = nc_compile_all(nc_join(given,library,tail))
       if Enum.count(image) > 0 do image else if Enum.count(library) == 0 do image else nc_compile_all(Enum.concat(given,tail)) end end
