@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 
+	// The compiler's formatter writes the patterns a lowered receive shows.
+	_ "github.com/SmithOperatingSolutions/alchem/compiler"
 	"github.com/SmithOperatingSolutions/alchem/compiler/syntax"
 )
 
@@ -25,6 +27,12 @@ func main() {
 		if err != nil {
 			line, _ = json.Marshal([]any{path, "error", err.Error()})
 		} else {
+			// Statements shares its array with main's body, which lowering
+			// rewrites in part in place and in part anew: what it holds is
+			// how Go laid the two out, and the checker reads Functions. It
+			// and the fields kept for the literal-only parser API are left
+			// out.
+			program.Statements, program.Output, program.Comparison, program.Assertion = nil, "", nil, nil
 			line, _ = json.Marshal([]any{path, program})
 		}
 		fmt.Fprintln(out, string(line))

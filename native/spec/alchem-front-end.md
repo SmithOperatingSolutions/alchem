@@ -67,6 +67,22 @@ function, and the arity of a call of another module's function
 (`ExpandMacros`, `documented`) are not here. Paths are kept with `/` and
 shown with the system's separators, as Go's `filepath` shows them.
 
+## The module as the checker reads it: `tools/alchem-lower.alc`
+
+`AlchemLower.lower_module(text)` gives the tree the pinned compiler's
+`syntax.ParseModule` gives, or its message: the module parse (no comments,
+no heredoc text, no sigil delimiter, as the pinned parser keeps those only
+for the formatter), each constant replaced by its value, and `lower`:
+`separateArities` naming each arity of an overloaded name and its calls,
+`mergeClauses` making the clauses of a function one function of a `case`
+on `arg$1`, `arg$2` … form by form, the rewrites of `unless`, receives,
+`fn` clauses, `cond`, `with`, `check all` and bitwise operators, and
+`Qualify` naming a module's own types and variants under it. A lowered
+receive shows its pattern as the formatter writes it. `Statements`, which
+shares its array with `main`'s body in Go and so holds what Go's memory
+layout leaves there, and the fields kept for the literal-only parser API
+are left out; the checker reads `Functions`.
+
 ## The checker: `tools/alchem-analyze.alc`
 
 `AlchemAnalyze.problem` follows the pinned compiler's checker
@@ -92,10 +108,11 @@ or added with spaces at the ends of lines and none after commas, or blank
 lines moved and operators spaced); and up to four copies with a comment
 put before one line, of those the pinned formatter takes, where comments
 are kept in lists and between clauses (#40, #42). For each it keeps the
-SHA-256 of what the pinned lexer, parser and formatter give as JSON
-(`scripts/pinned-lexer`, `scripts/pinned-parser`, `scripts/pinned-format`).
-`scripts/lexer-dump.alc`, `scripts/parser-dump.alc` and
-`scripts/format-dump.alc`, built by `alchem`, must give the same bytes for
+SHA-256 of what the pinned lexer, parser, formatter and module parse give
+as JSON (`scripts/pinned-lexer`, `scripts/pinned-parser`,
+`scripts/pinned-format`, `scripts/pinned-module`). `scripts/lexer-dump.alc`,
+`scripts/parser-dump.alc`, `scripts/format-dump.alc` and
+`scripts/module-dump.alc`, built by `alchem`, must give the same bytes for
 every text: 1,541 of the texts are refused, each with the pinned message at
 the pinned place. The cases also hold what the pinned command's `check`
 says of each text as a file of its own; `alchem check` must say the same,

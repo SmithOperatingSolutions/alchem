@@ -9,7 +9,10 @@ defmodule ModuleNative do
         ok(text) ->
           case AlchemLower.lower_module(text) do
             error(why) -> IO.puts("[" <> AlchemJson.quoted(path) <> ",\"error\"," <> AlchemJson.quoted(why) <> "]")
-            ok(tree) -> IO.puts("[" <> AlchemJson.quoted(path) <> "," <> AlchemJson.encode(tree) <> "]")
+            ok(tree) ->
+              # As scripts/pinned-module leaves them out.
+              shown = AlchemJson.put_all(tree, [{"Statements", AlchemJson.J.null}, {"Output", AlchemJson.J.text("")}, {"Comparison", AlchemJson.J.null}, {"Assertion", AlchemJson.J.null}])
+              IO.puts("[" <> AlchemJson.quoted(path) <> "," <> AlchemJson.encode(shown) <> "]")
           end
       end
     end)
