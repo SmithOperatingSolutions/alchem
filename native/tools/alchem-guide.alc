@@ -610,6 +610,24 @@ defmodule AlchemGuide do
     if length(pieces) < 2 do "." else Enum.join(Enum.take(pieces, length(pieces) - 1), "/") end
   end
 
+  # A directory and the ones it is in, made a level at a time with the
+  # system's separators: File.mkdir_p of a path written with / leaves the
+  # levels unmade on Windows.
+  def make_dirs(path: string): result[tuple[], string] do
+    pieces = String.split(path, "/")
+    levels = Enum.map(Enum.to_list(1..length(pieces)), fn k -> Enum.join(Enum.take(pieces, k), "/") end)
+    Enum.reduce(Enum.filter(levels, fn level -> level != "" and level != "." and level != ".." end), ok({}), fn level, sofar ->
+      case sofar do
+        error(why) -> error(why)
+        ok(_) ->
+          case File.mkdir(shown(level)) do
+            ok(_) -> ok({})
+            error(why) -> if File.dir?(shown(level)) do ok({}) else error(why) end
+          end
+      end
+    end)
+  end
+
   # A path as it is printed: with the separators of the system.
   def shown(path: string): string do
     if Sys.windows() == 1 do String.replace(path, "/", "\\") else path end
@@ -626,11 +644,11 @@ defmodule AlchemGuide do
       end
     end)
     if check or stale == [] do ok(Enum.map(stale, fn {path, _} -> shown(path) end)) else
-      case File.mkdir_p(dir) do
+      case make_dirs(dir) do
         error(reason) -> error(reason)
         ok(_) ->
           failed = Enum.flat_map(stale, fn {path, text} ->
-            case File.write(path, text) do
+            case File.write(shown(path), text) do
               ok(_) -> []
               error(reason) -> [reason]
             end
@@ -723,10 +741,10 @@ defmodule AlchemGuide do
                     error(problem) -> error(problem)
                     ok(text) ->
                       if exists and current == text do ok({shown(path), "unchanged"}) else
-                        case File.mkdir_p(parent(path)) do
+                        case make_dirs(parent(path)) do
                           error(reason) -> error(reason)
                           ok(_) ->
-                            case File.write(path, text) do
+                            case File.write(shown(path), text) do
                               error(reason) -> error(reason)
                               ok(_) -> ok({shown(path), if exists do "updated" else "created" end})
                             end
