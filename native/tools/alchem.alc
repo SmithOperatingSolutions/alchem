@@ -633,8 +633,11 @@ defmodule AlchemCommand do
     case File.read(entry) do
       ok(_) -> ""
       error(reason) ->
-        if not String.ends_with?(reason, ": no such file or directory") do "" else
-          message = Path.expand(entry) <> ": read source: open " <> Path.expand(entry) <> ": no such file or directory"
+        # What the system says of a file that is not there, as File.read gives it.
+        said = Enum.filter(["no such file or directory", "The system cannot find the file specified.", "The system cannot find the path specified."], fn text -> String.ends_with?(reason, ": " <> text) end)
+        if said == [] do "" else
+          path = AlchemGuide.shown(Path.expand(entry))
+          message = path <> ": read source: open " <> path <> ": " <> hd(said)
           if as_json do "{\"file\":\"\",\"line\":0,\"column\":0,\"message\":" <> AlchemGuide.json_text(message) <> "}" else message end
         end
     end
@@ -650,7 +653,7 @@ defmodule AlchemCommand do
       if not String.ends_with?(entry, ".alc") do complain("source must have .alc extension", 1) else
         work = fresh("alchem-run-")
         binary = work <> "/" <> Path.basename(entry, ".alc") <> exe()
-        problem = if unread(entry, false) != "" do unread(entry, false) else if mainless?(entry) do Path.expand(entry) <> ":1:1: missing main/0" else build(entry, binary, locked) end end
+        problem = if unread(entry, false) != "" do unread(entry, false) else if mainless?(entry) do AlchemGuide.shown(Path.expand(entry)) <> ":1:1: missing main/0" else build(entry, binary, locked) end end
         status = if problem != "" do complain(problem, 1) else if Sys.windows() == 1 do
           # On Windows the program has this program's input, output and
           # errors as they are (spec/windows.md).
@@ -736,7 +739,7 @@ defmodule AlchemCommand do
         if target != "" and target != own_target() do complain("the self-hosted compiler builds " <> own_target() <> " alone, not " <> target, 2) else
           entry = hd(paths)
           if not String.ends_with?(entry, ".alc") do complain("source must have .alc extension", 1) else
-            problem = if unread(entry, as_json) != "" do unread(entry, as_json) else if mainless?(entry) do Path.expand(entry) <> ":1:1: missing main/0" else build(entry, if out == "" do Path.basename(entry, ".alc") <> exe() else out end, locked) end end
+            problem = if unread(entry, as_json) != "" do unread(entry, as_json) else if mainless?(entry) do AlchemGuide.shown(Path.expand(entry)) <> ":1:1: missing main/0" else build(entry, if out == "" do Path.basename(entry, ".alc") <> exe() else out end, locked) end end
             if problem == "" do 0 else complain(problem, 1) end
           end
         end
