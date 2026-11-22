@@ -101,6 +101,13 @@ defmodule AlchemCheck do
   # not fetched here. directory is the working directory an entry that is
   # not absolute is read from.
   def load(entry: string, directory: string): option[Problem] do
+    elem(program(entry, directory, true), 0)
+  end
+
+  # The problem, and the program as the loader gives it to the checker
+  # where there is none and the loader is followed to its end here; with
+  # analyzing, the checker's problem too (AlchemAnalyze).
+  def program(entry: string, directory: string, analyzing: boolean): tuple[option[Problem], option[AlchemJson.J]] do
     absolute = clean(if rooted?(kept(entry)) do kept(entry) else kept(directory) <> "/" <> kept(entry) end)
     path = case File.stat(absolute) do
       ok(info) -> if info.type == :directory do clean(absolute <> "/main.alc") else absolute end
@@ -109,9 +116,112 @@ defmodule AlchemCheck do
     names: map[string, string] = %{}
     nothing: list[string] = []
     none_read: list[Unit] = []
+    nothing_made: option[AlchemJson.J] = none
     case visit(path, %Loaded{names: names, active: nothing, done: nothing, remote: false, order: none_read}) do
-      error(problem) -> some(problem)
-      ok(loaded) -> if loaded.remote do none else merged(loaded, path) end
+      ok(loaded) ->
+        if loaded.remote do {none, nothing_made} else
+          case merged(loaded, path) do
+            some(problem) -> {some(problem), nothing_made}
+            none ->
+              if skipped?(loaded) do {none, nothing_made} else
+                made = assembled(loaded, path)
+                found = if analyzing do
+                  renamed = Enum.map(loaded.order, fn u -> {u, elem(AlchemLower.separate_arities(u.tree), 0)} end)
+                  analyzed = AlchemAnalyze.problem(Enum.map(renamed, fn {u, functions} -> {shown(u.path), u.tree, functions} end), shown(path))
+                  if analyzed != "" do some(plain(analyzed)) else none end
+                else none end
+                {found, some(made)}
+              end
+          end
+        end
+      error(problem) -> {some(problem), nothing_made}
+    end
+  end
+
+  def skipped?(loaded: Loaded): boolean do
+    Enum.any?(loaded.order, fn u -> its(u.tree, "Macros") != [] or its(u.tree, "Uses") != [] or its(u.tree, "Requires") != [] or its(u.tree, "Doctests") != [] end)
+  end
+
+  # --- the program as loadProjectAs gives it to the checker ---------------------------------
+
+  def text_j(v: string): AlchemJson.J do AlchemJson.J.text(v) end
+  def slice_j(items: list[AlchemJson.J]): AlchemJson.J do if items == [] do AlchemJson.J.null else AlchemJson.J.list(items) end end
+
+  # The calls of a body, each named as the loader names it: Kernel.name is
+  # the builtin, and a function of the module its name in the program.
+  def resolve_names(e: AlchemJson.J, locals: list[tuple[string, string]]): AlchemJson.J do
+    if AlchemJson.null?(e) do e else
+      kind = tx(e, "Kind")
+      named = if kind == "call" or kind == "funcref" do
+        name = tx(e, "Name")
+        if String.starts_with?(name, "Kernel.") and not String.contains?(binary_part(name, 7, byte_size(name) - 7), ".") do AlchemJson.put(e, "Name", text_j(binary_part(name, 7, byte_size(name) - 7))) else
+          case Enum.filter(locals, fn {local, _} -> local == name end) do
+            [{_, key} | _] -> AlchemJson.put(e, "Name", text_j(key))
+            [] -> e
+          end
+        end
+      else e end
+      AlchemJson.put_all(named, [{"Left", resolve_names(AlchemJson.get(named, "Left"), locals)}, {"Right", resolve_names(AlchemJson.get(named, "Right"), locals)},
+        {"Args", AlchemLower.q_map(AlchemJson.get(named, "Args"), fn a -> resolve_names(a, locals) end)}, {"Keys", AlchemLower.q_map(AlchemJson.get(named, "Keys"), fn k -> resolve_names(k, locals) end)},
+        {"Body", resolve_body(AlchemJson.get(named, "Body"), locals)}])
+    end
+  end
+  def resolve_body(body: AlchemJson.J, locals: list[tuple[string, string]]): AlchemJson.J do
+    AlchemLower.q_map(body, fn s ->
+      arms = AlchemLower.q_map(AlchemJson.get(s, "Arms"), fn arm -> AlchemJson.put_all(arm, [{"Guard", resolve_names(AlchemJson.get(arm, "Guard"), locals)}, {"Body", resolve_body(AlchemJson.get(arm, "Body"), locals)}]) end)
+      AlchemJson.put_all(s, [{"Expr", resolve_names(AlchemJson.get(s, "Expr"), locals)}, {"Then", resolve_body(AlchemJson.get(s, "Then"), locals)}, {"Else", resolve_body(AlchemJson.get(s, "Else"), locals)}, {"Arms", arms}])
+    end)
+  end
+
+  def assembled(loaded: Loaded, entry: string): AlchemJson.J do
+    lowered = Enum.map(loaded.order, fn u -> {u, AlchemLower.lowered(u.tree)} end)
+    functions = Enum.flat_map(lowered, fn {u, tree} ->
+      module = tx(tree, "Module")
+      locals = Enum.map(its(tree, "Functions"), fn f -> {tx(f, "Name"), if u.path == entry and tx(f, "Name") == "main" do "main" else module <> "." <> tx(f, "Name") end} end)
+      Enum.map(its(tree, "Functions"), fn f ->
+        key = elem(hd(Enum.filter(locals, fn {local, _} -> local == tx(f, "Name") end)), 1)
+        source = if tx(f, "Source") == "" do text_j(shown(u.path)) else AlchemJson.get(f, "Source") end
+        AlchemJson.put_all(f, [{"LocalName", text_j(tx(f, "Name"))}, {"Name", text_j(key)}, {"Module", text_j(module)}, {"Source", source}, {"Body", resolve_body(AlchemJson.get(f, "Body"), locals)}])
+      end)
+    end)
+    types = Enum.flat_map(lowered, fn {u, tree} -> Enum.map(its(tree, "Types"), fn d -> AlchemJson.put(d, "Source", text_j(shown(u.path))) end) end)
+    protocols = Enum.flat_map(lowered, fn {_, tree} -> its(tree, "Protocols") end)
+    entry_tree = elem(hd(Enum.filter(lowered, fn {u, _} -> u.path == entry end)), 1)
+    replaced = Enum.sort(Enum.filter(Enum.map(lowered, fn {_, tree} -> tx(tree, "Module") end), fn m -> retiring?(m) end))
+    AlchemJson.J.object([{"Leading", AlchemJson.J.null}, {"Trailing", AlchemJson.J.null}, {"Doctests", AlchemJson.J.null}, {"ModuleDoc", text_j("")},
+      {"Library", AlchemJson.J.truth(true)}, {"Protocols", slice_j(protocols)}, {"Macros", AlchemJson.J.null}, {"Uses", AlchemJson.J.null},
+      {"GroupTags", AlchemJson.get(entry_tree, "GroupTags")}, {"Constants", AlchemJson.J.null}, {"Remotes", AlchemJson.J.null}, {"Fetched", AlchemJson.J.truth(false)},
+      {"Replaced", if replaced == [] do AlchemJson.J.null else AlchemJson.strings(replaced) end}, {"Types", slice_j(types)}, {"Requires", AlchemJson.J.null},
+      {"Imports", AlchemJson.J.null}, {"ImportPositions", AlchemJson.J.null}, {"ModuleLine", AlchemJson.int(0)}, {"ModuleColumn", AlchemJson.int(0)},
+      {"Source", text_j(shown(entry))}, {"Functions", slice_j(resolve_arities(functions))}, {"Statements", AlchemJson.J.null}, {"Module", text_j(tx(entry_tree, "Module"))},
+      {"Output", text_j("")}, {"Comparison", AlchemJson.J.null}, {"Assertion", AlchemJson.J.null}, {"Notes", AlchemJson.J.null}])
+  end
+
+  # ResolveArities: a call of another module's function of more than one
+  # arity named by the one its arguments fit.
+  def resolve_arities(functions: list[AlchemJson.J]): list[AlchemJson.J] do
+    nothing: list[tuple[string, list[AlchemLower.Span]]] = []
+    spans = Enum.reduce(functions, nothing, fn f, sofar ->
+      name = tx(f, "Name")
+      plain = AlchemLower.plain_name(name)
+      if not AlchemLower.overloadable?(f) or plain == name or AlchemLower.first_form(name) != name do sofar else
+        Enum.filter(sofar, fn {key, _} -> key != plain end) ++ [{plain, AlchemLower.spans_for(sofar, plain) ++ [AlchemLower.span_of(name, f)]}]
+      end
+    end)
+    if spans == [] do functions else
+      rename = fn(e: AlchemJson.J): AlchemJson.J do
+        kind = tx(e, "Kind")
+        candidates = if kind == "call" or kind == "funcref" do AlchemLower.spans_for(spans, tx(e, "Name")) else [] end
+        if candidates == [] do e else
+          count = if kind == "funcref" do (case Integer.parse(tx(e, "Op")) do
+            ok(k) -> k
+            error(_) -> -1
+          end) else length(its(e, "Args")) end
+          chosen = AlchemLower.pick(candidates, count)
+          if chosen == "" do e else AlchemJson.put(e, "Name", text_j(chosen)) end
+        end
+      end
+      Enum.map(functions, fn f -> AlchemLower.each_function(f, rename) end)
     end
   end
 
@@ -229,26 +339,49 @@ defmodule AlchemCheck do
   # or a doctest, whose steps are not followed here.
   def merged(loaded: Loaded, entry: string): option[Problem] do
     trees = Enum.map(loaded.order, fn u -> u.tree end)
-    skipped = Enum.any?(trees, fn t -> its(t, "Macros") != [] or its(t, "Uses") != [] or its(t, "Requires") != [] or its(t, "Doctests") != [] end)
-    if skipped do none else
-      case protocols_problem(loaded.order) do
+    if skipped?(loaded) do none else
+      case expand_problem(loaded.order) do
         some(problem) -> some(problem)
-        none ->
-          protocols = Enum.flat_map(trees, fn t -> Enum.map(its(t, "Protocols"), fn p -> tx(p, "Name") end) end)
-          renamed = Enum.map(loaded.order, fn u -> {u, elem(AlchemLower.separate_arities(u.tree), 0)} end)
-          private = Enum.flat_map(renamed, fn {u, functions} -> Enum.flat_map(functions, fn f -> if AlchemJson.truth_of(AlchemJson.get(f, "Private")) do [tx(u.tree, "Module") <> "." <> tx(f, "Name")] else [] end end) end)
-          module_of = Enum.map(loaded.order, fn u -> {u.path, tx(u.tree, "Module")} end)
-          found = Enum.reduce(renamed, "", fn {u, functions}, sofar ->
-            if sofar != "" do sofar else unit_problem(u, functions, entry, protocols, private, module_of) end
-          end)
-          if found != "" do some(plain(found)) else
-            arity = arities_problem(renamed, entry)
-            if arity != "" do some(plain(arity)) else
-              analyzed = AlchemAnalyze.problem(Enum.map(renamed, fn {u, functions} -> {shown(u.path), u.tree, functions} end), shown(entry))
-              if analyzed != "" do some(plain(analyzed)) else none end
-            end
-          end
+        none -> merged_after(loaded, entry, trees)
       end
+    end
+  end
+
+  # ExpandMacros, for a program without macros: a call written with a do
+  # ... end block, which only a macro takes.
+  def expand_problem(order: list[Unit]): option[Problem] do
+    found = Enum.reduce(order, "", fn u, sofar ->
+      if sofar != "" do sofar else
+        tree = AlchemLower.lowered(u.tree)
+        none_yet: list[AlchemJson.J] = []
+        calls = Enum.flat_map(its(tree, "Functions"), fn f -> calls_of(resolve_block(its(f, "Body"), none_yet)) end)
+        case Enum.filter(calls, fn e -> tx(e, "Kind") == "call" and tx(e, "Op") == "do" end) do
+          [e | _] -> shown(u.path) <> "\u{1F}" <> Integer.to_string(number(e, "Line")) <> ":" <> Integer.to_string(number(e, "Column")) <> ": only a macro takes a do ... end block, and " <> tx(e, "Name") <> " is not one"
+          [] -> ""
+        end
+      end
+    end)
+    case String.split(found, "\u{1F}") do
+      [path, why] -> some(syntax_problem(kept(path), why))
+      _ -> none
+    end
+  end
+
+  def merged_after(loaded: Loaded, entry: string, trees: list[AlchemJson.J]): option[Problem] do
+    case protocols_problem(loaded.order) do
+      some(problem) -> some(problem)
+      none ->
+        protocols = Enum.flat_map(trees, fn t -> Enum.map(its(t, "Protocols"), fn p -> tx(p, "Name") end) end)
+        renamed = Enum.map(loaded.order, fn u -> {u, elem(AlchemLower.separate_arities(u.tree), 0)} end)
+        private = Enum.flat_map(renamed, fn {u, functions} -> Enum.flat_map(functions, fn f -> if AlchemJson.truth_of(AlchemJson.get(f, "Private")) do [tx(u.tree, "Module") <> "." <> tx(f, "Name")] else [] end end) end)
+        module_of = Enum.map(loaded.order, fn u -> {u.path, tx(u.tree, "Module")} end)
+        found = Enum.reduce(renamed, "", fn {u, functions}, sofar ->
+          if sofar != "" do sofar else unit_problem(u, functions, entry, protocols, private, module_of) end
+        end)
+        if found != "" do some(plain(found)) else
+          arity = arities_problem(renamed, entry)
+          if arity != "" do some(plain(arity)) else none end
+        end
     end
   end
 

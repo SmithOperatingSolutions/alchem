@@ -1,0 +1,17 @@
+defmodule LoadedNative do
+  import "../tools/alchem-check.alc"
+  import "../tools/alchem-json.alc"
+  # For each file named, one line: the program the loader gives the checker
+  # (AlchemCheck.program), as JSON, or the loader's message; as
+  # scripts/pinned-loaded.py's program writes it. A program the loader is not
+  # followed to its end for here is "skipped".
+  def main() do
+    Enum.each(System.argv(), fn path ->
+      case AlchemCheck.program(path, File.cwd!(), false) do
+        {some(problem), _} -> IO.puts("[" <> AlchemJson.quoted(path) <> ",\"error\"," <> AlchemJson.quoted(problem.text) <> "]")
+        {none, some(made)} -> IO.puts("[" <> AlchemJson.quoted(path) <> "," <> AlchemJson.encode(made) <> "]")
+        {none, none} -> IO.puts("[" <> AlchemJson.quoted(path) <> ",\"skipped\"]")
+      end
+    end)
+  end
+end
