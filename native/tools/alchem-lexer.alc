@@ -347,6 +347,11 @@ defmodule AlchemLexer do
       end
     end
   end
+  # The text without the spaces, tabs and carriage returns it ends in.
+  def trim_blank_end(text: string): string do
+    last = byte(text, byte_size(text) - 1)
+    if last == 32 or last == 9 or last == 13 do trim_blank_end(binary_part(text, 0, byte_size(text) - 1)) else text end
+  end
   def trim_blanks(text: string): string do
     if String.starts_with?(text, " ") or String.starts_with?(text, "\t") do trim_blanks(binary_part(text, 1, byte_size(text) - 1)) else text end
   end
@@ -447,7 +452,7 @@ defmodule AlchemLexer do
         -1 -> at.n
         k -> k
       end
-      text = String.trim_trailing(part(s, i + 1, stop), " \t\r")
+      text = trim_blank_end(part(s, i + 1, stop))
       shown = if String.starts_with?(text, " ") do binary_part(text, 1, byte_size(text) - 1) else text end
       ok(%At{at | comments: [%Comment{text: shown, line: line, column: col} | at.comments], i: stop})
     else

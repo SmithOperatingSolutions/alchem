@@ -1,0 +1,147 @@
+defmodule AlchemJson do
+  # JSON values, and their text as Go's encoding/json Marshal writes it: no
+  # spaces, the fields of an object in the order given, <, > and & as
+  # <, > and &. A number is its text, as Go writes it.
+
+  type J do
+    text(value: string)
+    number(value: string)
+    truth(value: boolean)
+    null
+    list(items: list[J])
+    object(fields: list[tuple[string, J]])
+  end
+
+  def int(n: integer): J do J.number(Integer.to_string(n)) end
+  def str(s: string): J do J.text(s) end
+  def bool(b: boolean): J do J.truth(b) end
+  def strings(items: list[string]): J do J.list(Enum.map(items, fn s -> J.text(s) end)) end
+
+  # A Go slice: null when it was never made, as Go writes a nil slice.
+  def slice(items: list[J], made: boolean): J do
+    if made do J.list(items) else J.null end
+  end
+
+  # The field of an object, or null.
+  def get(value: J, name: string): J do
+    case value do
+      J.object(fields) ->
+        case Enum.filter(fields, fn {key, _} -> key == name end) do
+          [{_, found} | _] -> found
+          [] -> J.null
+        end
+      _ -> J.null
+    end
+  end
+
+  # The object with one field given another value; fields keep their order.
+  def put(value: J, name: string, given: J): J do
+    case value do
+      J.object(fields) -> J.object(Enum.map(fields, fn {key, old} -> if key == name do {key, given} else {key, old} end end))
+      other -> other
+    end
+  end
+
+  # The object with several fields given other values.
+  def put_all(value: J, changes: list[tuple[string, J]]): J do
+    Enum.reduce(changes, value, fn {name, given}, sofar -> put(sofar, name, given) end)
+  end
+
+  def text_of(value: J): string do
+    case value do
+      J.text(s) -> s
+      _ -> ""
+    end
+  end
+  def items_of(value: J): list[J] do
+    case value do
+      J.list(items) -> items
+      _ -> []
+    end
+  end
+  def null?(value: J): boolean do
+    case value do
+      J.null -> true
+      _ -> false
+    end
+  end
+  def int_of(value: J): integer do
+    case value do
+      J.number(text) ->
+        case Integer.parse(text) do
+          ok(n) -> n
+          error(_) -> 0
+        end
+      _ -> 0
+    end
+  end
+  def truth_of(value: J): boolean do
+    case value do
+      J.truth(b) -> b
+      _ -> false
+    end
+  end
+
+  # A list's items with one more at its end; a null list is made.
+  def append(value: J, item: J): J do
+    J.list(items_of(value) ++ [item])
+  end
+
+  def escapes(): list[tuple[string, string]] do
+    [
+     {"\u{0}", "\\u0000"}, {"\u{1}", "\\u0001"}, {"\u{2}", "\\u0002"}, {"\u{3}", "\\u0003"}, {"\u{4}", "\\u0004"}, {"\u{5}", "\\u0005"},
+     {"\u{6}", "\\u0006"}, {"\u{7}", "\\u0007"}, {"\u{8}", "\\b"}, {"\u{B}", "\\u000b"}, {"\u{E}", "\\u000e"}, {"\u{F}", "\\u000f"},
+     {"\u{10}", "\\u0010"}, {"\u{11}", "\\u0011"}, {"\u{12}", "\\u0012"}, {"\u{13}", "\\u0013"}, {"\u{14}", "\\u0014"}, {"\u{15}", "\\u0015"},
+     {"\u{16}", "\\u0016"}, {"\u{17}", "\\u0017"}, {"\u{18}", "\\u0018"}, {"\u{19}", "\\u0019"}, {"\u{1A}", "\\u001a"}, {"\u{1B}", "\\u001b"},
+     {"\u{1C}", "\\u001c"}, {"\u{1D}", "\\u001d"}, {"\u{1E}", "\\u001e"}, {"\u{1F}", "\\u001f"}, {"\u{C}", "\\f"}, {"\u{2028}", "\\u2028"},
+     {"\u{2029}", "\\u2029"}
+    ]
+  end
+
+  # The size of the rune at i, or 0 for a byte that starts none.
+  def rune_size(s: string, i: integer): integer do
+    b = Sys.byte(Sys.addr(s) + i)
+    size = if b < 128 do 1 else if b < 194 do 0 else if b < 224 do 2 else if b < 240 do 3 else if b < 245 do 4 else 0 end end end end end
+    if size <= 1 or i + size > byte_size(s) do (if i + size > byte_size(s) do 0 else size end) else
+      tail = Enum.all?(Enum.to_list(1..(size - 1)), fn k -> Sys.byte(Sys.addr(s) + i + k) >= 128 and Sys.byte(Sys.addr(s) + i + k) < 192 end)
+      second = Sys.byte(Sys.addr(s) + i + 1)
+      # Overlong forms, surrogates and code points past U+10FFFF start none.
+      bad = (b == 224 and second < 160) or (b == 237 and second >= 160) or (b == 240 and second < 144) or (b == 244 and second >= 144)
+      if tail and not bad do size else 0 end
+    end
+  end
+  # The text with each byte that starts no rune written as Go writes it:
+  # as U+FFFD.
+  def valid_text(s: string, i: integer, start: integer, done: list[string]): list[string] do
+    if i >= byte_size(s) do [binary_part(s, start, i - start) | done] else
+      size = rune_size(s, i)
+      if size > 0 do valid_text(s, i + size, start, done) else valid_text(s, i + 1, i + 1, ["\u{FFFD}", binary_part(s, start, i - start) | done]) end
+    end
+  end
+
+  def quoted(text: string): string do
+    plain = String.replace(String.replace(String.replace(String.replace(String.replace(String.replace(String.replace(String.replace(text, "\\", "\\\\"), "\"", "\\\""), "\n", "\\n"), "\r", "\\r"), "\t", "\\t"), "<", "\\u003c"), ">", "\\u003e"), "&", "\\u0026")
+    safe = if plain =~ ~r/[\x00-\x1f\x{2028}\x{2029}]/ do
+      Enum.reduce(escapes(), plain, fn {from, to}, sofar -> String.replace(sofar, from, to) end)
+    else plain end
+    "\"" <> Enum.join(Enum.reverse(valid_text(safe, 0, 0, [])), "") <> "\""
+  end
+
+  def encode(value: J): string do
+    Enum.join(Enum.reverse(pieces(value, [])), "")
+  end
+  def pieces(value: J, done: list[string]): list[string] do
+    case value do
+      J.text(s) -> [quoted(s) | done]
+      J.number(n) -> [n | done]
+      J.truth(b) -> [if b do "true" else "false" end | done]
+      J.null -> ["null" | done]
+      J.list(items) ->
+        if items == [] do ["[]" | done] else
+          ["]" | Enum.reduce(Enum.with_index(items), ["[" | done], fn {item, k}, sofar -> pieces(item, if k == 0 do sofar else ["," | sofar] end) end)]
+        end
+      J.object(fields) ->
+        ["}" | Enum.reduce(Enum.with_index(fields), ["{" | done], fn {{key, item}, k}, sofar -> pieces(item, [quoted(key) <> ":" | if k == 0 do sofar else ["," | sofar] end]) end)]
+    end
+  end
+end

@@ -1,0 +1,131 @@
+defmodule AlchemTypeNames do
+  # Type names as the pinned compiler reads them (compiler/ast/types.go of
+  # the pinned tree): their shape, the parts of a parameterized type, and
+  # what a type may be used for. A type is its text: list[integer],
+  # map[string,list[atom]], fn[integer,string].
+
+  # The parts of name[...] at the top level, or none when the type is not
+  # that.
+  def parts(t: string, name: string): option[list[string]] do
+    if not String.starts_with?(t, name <> "[") or not String.ends_with?(t, "]") do none else
+      inner = binary_part(t, byte_size(name) + 1, byte_size(t) - byte_size(name) - 2)
+      nothing: list[string] = []
+      if inner == "" do some(nothing) else some(cut_parts(inner, 0, 0, 0, nothing)) end
+    end
+  end
+  def cut_parts(inner: string, i: integer, start: integer, depth: integer, done: list[string]): list[string] do
+    if i >= byte_size(inner) do Enum.reverse([binary_part(inner, start, i - start) | done]) else
+      c = Sys.byte(Sys.addr(inner) + i)
+      if c == 91 do cut_parts(inner, i + 1, start, depth + 1, done) else
+        if c == 93 do cut_parts(inner, i + 1, start, depth - 1, done) else
+          if c == 44 and depth == 0 do cut_parts(inner, i + 1, i + 1, depth, [binary_part(inner, start, i - start) | done]) else cut_parts(inner, i + 1, start, depth, done) end
+        end
+      end
+    end
+  end
+
+  def none_found(): list[string] do
+    nothing: list[string] = []
+    nothing
+  end
+
+  # The head of a type and its parts: list[integer] is list and [integer].
+  def split_type(t: string): tuple[string, list[string]] do
+    case String.split(t, "[", [parts: 2]) do
+      [head, _] ->
+        if String.ends_with?(t, "]") do
+          case parts(t, head) do
+            some(found) -> {head, found}
+            none -> {head, none_found()}
+          end
+        else {t, none_found()} end
+      _ -> {t, none_found()}
+    end
+  end
+
+  def builtin_heads(): list[string] do
+    ["integer", "float", "string", "boolean", "atom", "port", "void", "list", "tuple", "map", "fn", "pid", "supervisor", "server", "option", "result", "stream", "set", "regex", "task", "agent", "step", "registry", "dynamic_supervisor", "socket", "http_server", "websocket", "generator", "file", "disk_store"]
+  end
+
+  # A type variable: a lower case name that is no builtin type.
+  def variable?(t: string): boolean do
+    if t == "" or t in builtin_heads() or String.contains?(t, "[") or String.contains?(t, "]") or String.contains?(t, ".") or String.contains?(t, ",") do false else
+      first = String.slice(t, 0, 1)
+      first == "_" or first != String.upcase(first)
+    end
+  end
+
+  def key?(t: string): boolean do
+    if t in ["integer", "float", "string", "boolean", "atom"] do true else
+      case parts(t, "tuple") do
+        some(found) -> found != [] and Enum.all?(found, fn part -> key?(part) end)
+        none -> false
+      end
+    end
+  end
+
+  def function_parts?(t: string): boolean do
+    case parts(t, "fn") do
+      some(found) -> found != []
+      none -> false
+    end
+  end
+
+  # A type a value of which may be sent to another process.
+  def sendable?(t: string): boolean do
+    {head, args} = split_type(t)
+    if function_parts?(t) or variable?(t) or head == "stream" do false else
+      named = head == "option" or head == "result" or head == "step" or not (head == "" or head in builtin_heads() or variable?(head))
+      if named and (head == "option" or head == "result") and not Enum.all?(args, fn arg -> sendable?(arg) end) do false else
+        if String.starts_with?(t, "list[") and String.ends_with?(t, "]") do sendable?(binary_part(t, 5, byte_size(t) - 6)) else
+          case parts(t, "map") do
+            some([_, value]) -> sendable?(value)
+            _ ->
+              case parts(t, "tuple") do
+                some(found) -> Enum.all?(found, fn part -> sendable?(part) end)
+                none -> true
+              end
+          end
+        end
+      end
+    end
+  end
+
+  # The shape of a type: whether its parts are the ones its head takes.
+  def valid?(t: string): boolean do
+    {head, args} = split_type(t)
+    if not Enum.all?(args, fn arg -> valid?(arg) end) do false else
+      count = length(args)
+      first = Enum.at(args, 0, "")
+      case head do
+        "integer" -> count == 0
+        "string" -> count == 0
+        "boolean" -> count == 0
+        "float" -> count == 0
+        "atom" -> count == 0
+        "list" -> count == 1
+        "option" -> count == 1
+        "stream" -> count == 1
+        "agent" -> count == 1
+        "step" -> count == 1
+        "generator" -> count == 1
+        "set" -> count == 1 and key?(first)
+        "task" -> count == 1 and sendable?(first)
+        "registry" -> count == 2 and key?(first)
+        "result" -> count == 2
+        "pid" -> count == 1 and sendable?(first)
+        "supervisor" -> count == 1 and sendable?(first)
+        "server" -> count == 2 and sendable?(first) and sendable?(Enum.at(args, 1, ""))
+        "map" -> count == 2 and key?(first)
+        "fn" -> count >= 1
+        "tuple" -> String.starts_with?(t, "tuple[")
+        "" -> false
+        "void" -> false
+        _ ->
+          if head in ["regex", "port", "dynamic_supervisor", "socket", "http_server", "websocket", "file", "disk_store"] do count == 0 else
+            (variable?(head) and count == 0) or (not variable?(head) and not (String.contains?(head, "[") or String.contains?(head, "]") or String.contains?(head, ",") or String.contains?(head, " ")))
+          end
+      end
+    end
+  end
+end
