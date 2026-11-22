@@ -4,7 +4,7 @@ help, syntax, doc, docs, agent-guide and agent-install as the pinned command
 line prints them, and version; the flags of build, run, check and new as
 the pinned command line reads them; and doc of a source file, of a module
 of the project in the current directory and of a package it imports
-(tools/alchem-sources.alc).
+(tools/alchem-sources.alc); and alx, the shell, in sessions.
 
 harness/commands-cases.json.xz holds scenes (scripts/generate-command-cases.py
 makes it from the pinned command): the files a directory starts with, the
@@ -156,8 +156,17 @@ def tree():
     return {path.relative_to(top).as_posix():path.read_text() for path in paths if path.exists()}
 
 
+# alx: sessions, each the input of one run (an argument that begins with <
+# is the input of its command line). No input here is refused by the
+# compiler, whose message is not the pinned compiler's.
+ALX=[['alx','<1 + 1\nx = 5\nx * 2\n{a, b} = {1, "two"}\nb\nIO.puts("hello")\ndef triple(n: integer): integer do\n  n * 3\nend\ntriple(x)\nimport "lib.alc"\nLib.twice(21)\n'
+              'names: list[string] = ["a", "b"]\nEnum.map(names, fn n ->\n  String.upcase(n)\nend)\nh Enum.at\nh(Lib.twice)\nh Nope.nope\ndiv(1, 0)\nx\n\n:reset\n1.5 * 2.0\n:quit\nnot read\n'],
+     ['alx','<struct Point do\n  x: integer\n  y: integer\nend\np = %Point{x: 1, y: 2}\np.x + p.y\ncase p do\n  %Point{x: 1} -> "one"\n  _ -> "other"\nend\n[1, 2, 3] |> Enum.map(fn n -> n * n end) |> Enum.sum()\n"a" <> "b"\nexit\n'],
+     ['alx','<text = "a = b"\nString.length(text)\nlist = [1, 2]\n[first | rest] = list\nfirst\nrest\nraise("stopped here")\nfirst + 1\n'],
+     ['alx','-h'],['alx','-zz']]
 TREE=tree()
 SCENES=[
+    ('alx',{'lib.alc':'defmodule Lib do\n  @doc "Twice a number."\n  def twice(n: integer): integer do n * 2 end\nend\n'},ALX),
     ('reads',{},READS),
     ('project',PROJECT,PROJECT_LINES),
     ('files',TREE,[line for path in TREE for line in (['doc',path],['doc','--json',path])]+[['doc','Protocol'],['doc','--search','subscribe'],['doc','--search','--json','reply']]),
@@ -200,15 +209,19 @@ def scene(command,files,lines,pinned=False):
         root=Path(d).resolve();lay(files,root);(root/'home').mkdir(exist_ok=True)
         runs=[]
         for arguments in lines:
-            run=subprocess.run([str(command)]+arguments,stdin=subprocess.DEVNULL,capture_output=True,cwd=root,env=surroundings(root/'home',pinned),timeout=300)
+            given=''.join(a[1:] for a in arguments if a.startswith('<')).encode()
+            run=subprocess.run([str(command)]+[a for a in arguments if not a.startswith('<')],input=given,capture_output=True,cwd=root,env=surroundings(root/'home',pinned,arguments[:1]==['alx']),timeout=900)
             runs.append([run.returncode]+[text.decode('utf8','replace').replace(str(root)+os.sep,'.'+os.sep) for text in (run.stdout,run.stderr)])
         return runs,held(root)
 
 
-def surroundings(home,pinned=False):
+def surroundings(home,pinned=False,building=False):
     """The environment of a command line: the home directory, on Windows
     what a program needs to start, and for the pinned command the Go
-    toolchain, kept from the network."""
+    toolchain, kept from the network. Where the pinned command builds (alx)
+    it has the surroundings of this program, with the packages its
+    programs are made of."""
+    if pinned and building:return dict(os.environ,HOME=str(home),USERPROFILE=str(home),GOTELEMETRY='off',GOCACHE=os.environ.get('GOCACHE',str(Path.home()/'.cache/go-build')),GOMODCACHE=os.environ.get('GOMODCACHE',str(ROOT/'.cache/gomod')),GOFLAGS='-mod=mod',GOTOOLCHAIN='local')
     go={'GOPROXY':'off','GOFLAGS':'-mod=mod','GOTOOLCHAIN':'local','GOTELEMETRY':'off'} if pinned else {}
     if os.name!='nt':return {'PATH':os.environ.get('PATH','/usr/bin:/bin') if pinned else '/usr/bin:/bin','HOME':str(home),**go}
     return {**{name:os.environ[name] for name in ('SystemRoot','SystemDrive','TEMP','TMP','PATH') if name in os.environ},'USERPROFILE':str(home),**go}
@@ -224,7 +237,7 @@ def against(pinned,alchem):
         assert kept==left,(name,{path:(kept.get(path),left.get(path)) for path in set(kept)|set(left) if kept.get(path)!=left.get(path)})
     runs,_=scene(alchem,{},[['version'],['version','--json']])
     assert runs[0][0]==0 and runs[0][1].startswith('alchem ') and runs[0][2]=='' and set(json.loads(runs[1][1]))=={'version','platform'},runs
-    print(f'PASS commands: {count} command lines of help, syntax, doc (the library, files, a project and its packages), docs, agent-guide, agent-install and the flags of build, run, check and new in {len(cases())} scenes as {pinned.name} prints them, with the files they write; {runs[0][1].strip()}')
+    print(f'PASS commands: {count} command lines of help, syntax, doc (the library, files, a project and its packages), docs, agent-guide, agent-install, alx and the flags of build, run, check and new in {len(cases())} scenes as {pinned.name} prints them, with the files they write; {runs[0][1].strip()}')
 
 
 def platform(compiler):
@@ -248,7 +261,7 @@ def verify(compiler):
         runs,_=scene(alchem,{},[['version'],['--version'],['version','--json'],['version','-json']])
         text=f'alchem v9.8.7-test {target}\n';data=json.dumps({'version':'v9.8.7-test','platform':target},indent=2)+'\n'
         assert runs==[[0,text,''],[0,text,''],[0,data,''],[0,data,'']],runs
-    print(f'PASS commands: {count} command lines of help, syntax, doc (the library, files, a project and its packages), docs, agent-guide, agent-install and the flags of build, run, check and new in {len(known)} scenes as the pinned command line prints them, with the files they write; version for {target}')
+    print(f'PASS commands: {count} command lines of help, syntax, doc (the library, files, a project and its packages), docs, agent-guide, agent-install, alx and the flags of build, run, check and new in {len(known)} scenes as the pinned command line prints them, with the files they write; version for {target}')
 
 
 if __name__=='__main__':

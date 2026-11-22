@@ -11,6 +11,7 @@ command itself. They are the module `AlchemGuide`, `tools/alchem-guide.alc`:
     alchem agent-guide [--json]
     alchem agent-install [--scope project|user] [--dir path] [--force] [--json] <agent> | --list
     alchem docs [--check] [--dir path]
+    alchem alx
 
 Each prints what the pinned command prints, with its status: the text, the
 JSON (two spaces a level, a list nothing was put in as `null`, `<`, `>` and
@@ -38,14 +39,14 @@ and machine of the programs the compiler makes.
 
 ## The check
 
-`harness/commands.py` (the gate `commands`) holds seven scenes: 88 command
+`harness/commands.py` (the gate `commands`) holds eight scenes: 88 command
 lines that only print, the six agents installed into a project that has
 files of theirs already (one of alchem's own that differs, a shared file
 with text, one with half a block), the marked block replaced, appended and
 refused, and `docs` written, checked and written again. Each scene is a
 directory, its command lines run one after another: `alchem`, built by the
 compiler under test, gives the status, standard output and standard error
-the pinned command gave for each of the 201, and leaves the same files.
+the pinned command gave for each of the 206, and leaves the same files.
 `scripts/generate-command-cases.py PINNED` writes what the pinned command
 gave (`harness/commands-cases.json.xz`). On Windows the job runs the scenes
 of that file with both, `commands.py --against alchem-upstream.exe
@@ -82,6 +83,35 @@ a sum type, a struct with a default, clauses that begin other forms, a
 default value, a private function, a test file, a module named `Version`,
 directories that are left out, and a package of three files in the cache.
 
+## alx
+
+`alchem alx` is the shell: it reads inputs, a line or a block at a time,
+and runs each with the imports, the definitions and the statements before
+it, as the pinned command does. The text of an input decides what it is
+(`tools/alchem-alx.alc`):
+
+- it goes on while a block or a bracket is open or a string is not closed
+  (`do` that is no key, `fn` not followed by a parenthesis, `end`);
+- an `import` and a definition (`def`, `struct`, `type`, ...) are checked
+  by building a program with them and kept, and print `:ok`;
+- a statement is run in a program of the statements so far, after a line
+  that marks where its own output starts. A name bound is shown; a pattern
+  is matched from a value kept under a name of the shell's, which is
+  shown; any other statement is bound to such a name and shown when the
+  program builds that way, and run as it is when it gives no value.
+
+A program is written to a file of the current directory, so that its
+imports are found from there, built by the compiler inside `alchem` and run
+with no input. What a failing program says is shown without the frames of
+the shell's module and with the lines of the input for those of the file.
+`h Module.function` prints documentation as `doc` does, `:reset` forgets
+what was entered, `:quit`, `exit` and the end of the input leave.
+
+The gate's scene `alx` holds three sessions of 43 inputs: values, bindings
+of names and of patterns, a definition and a struct over several lines, an
+import, `h`, a division by zero and a `raise`, `:reset` and the three ways
+out.
+
 ## The flags of build, run, check and new
 
 `build`, `run`, `check` and `new` read their flags as the pinned command
@@ -112,5 +142,10 @@ program the compiler does not take is reported with its one message.
   A file that declares no module is refused in this command's own words.
 - `doc host/owner/repo@v1.2.3/lib/name.alc`, a package's file named as an
   import names it, is not fetched.
-- `alx`, `lsp` and `fmt` are in the list of commands and not in `alchem`
-  yet: each says so and ends with status 2.
+- `alx` shows an input the compiler does not take with the compiler's one
+  message, where the pinned shell gives the line and what is wrong
+  (`** line 1: undefined function nope`). It decides what a statement
+  binds from its text: a statement that binds after other statements in
+  one input is run and not shown, and a comment alone runs nothing.
+- `lsp` and `fmt` are in the list of commands and not in `alchem` yet: each
+  says so and ends with status 2.

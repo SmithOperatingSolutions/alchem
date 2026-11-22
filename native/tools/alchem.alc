@@ -2,11 +2,14 @@ defmodule AlchemCommand do
   import "alchem-bundle.alc"
   import "alchem-compiler.alc"
   import "alchem-guide.alc"
+  import "alchem-sources.alc"
+  import "alchem-alx.alc"
   # alchem COMMAND ...: the pinned command line's test, run, build, check
   # and new, with the bundler and the compiler in the same program
   # (scripts/build-alchem.py puts them together), and the commands that
   # print documentation (AlchemGuide, tools/alchem-guide.alc): version,
-  # help, syntax, doc, docs, agent-guide and agent-install.
+  # help, syntax, doc, docs, agent-guide and agent-install; and alx, the
+  # shell (spec/alchem-commands.md).
   #
   #     alchem test [flags] PATH...
   #     alchem run [flags] FILE [ARGUMENT...]
@@ -829,6 +832,150 @@ defmodule AlchemCommand do
     end
   end
 
+  # --- alx ------------------------------------------------------------------
+
+  # The program written to a file of the current directory, so that its
+  # imports are found from there, and built: {the file, the directory the
+  # program is in, the problem or ""}.
+  def shell_built(source: string): tuple[string, string, string] do
+    file = ".alchem-shell-#{rem(System.os_time(:nanosecond), 1000000000)}.alc"
+    work = fresh("alchem-shell-")
+    problem = case File.write(file, source) do
+      error(message) -> message
+      ok(_) -> build(file, work <> "/shell" <> exe(), false)
+    end
+    File.rm(file)
+    {file, work, problem}
+  end
+
+  def shell_check(source: string): string do
+    {_, work, problem} = shell_built(source)
+    File.rm_rf(work)
+    problem
+  end
+
+  # One input: the shell after it, "ok" with what it printed, "more" when
+  # the input goes on, or "error" with what was wrong.
+  def shell_eval(s: AlchemAlx.Shell, input: string): tuple[AlchemAlx.Shell, string, string] do
+    if String.trim(input) == "" do {s, "ok", ""} else
+      if AlchemAlx.unfinished?(input) do {s, "more", ""} else
+        if input =~ ~r/^\s*import\s+"/ do
+          imports = s.imports ++ [String.trim(input)]
+          problem = shell_check(AlchemAlx.shell_program(imports, s.defs, ["    assert(true)"]))
+          if problem != "" do {s, "error", AlchemAlx.relocated(problem, length(imports) + 1)} else {%AlchemAlx.Shell{s | imports: imports}, "ok", ":ok\n"} end
+        else
+          if input =~ ~r/^\s*(def|defp|defmacro|defprotocol|defimpl|struct|type|defexception|extern|@doc|@typedoc)\b/ do
+            defs = s.defs ++ [input]
+            problem = shell_check(AlchemAlx.shell_program(s.imports, defs, ["    assert(true)"]))
+            if problem != "" do {s, "error", AlchemAlx.relocated(problem, 2 + length(s.imports) + AlchemAlx.lines_of(s.defs))} else {%AlchemAlx.Shell{s | defs: defs}, "ok", ":ok\n"} end
+          else shell_statement(s, input) end
+        end
+      end
+    end
+  end
+
+  def shell_statement(s: AlchemAlx.Shell, input: string): tuple[AlchemAlx.Shell, string, string] do
+    # A comment alone is no statement: nothing is run.
+    if String.trim(AlchemSources.marked(input)) == "" do {s, "ok", ""} else
+      start = 3 + length(s.imports) + AlchemAlx.lines_of(s.defs) + AlchemAlx.lines_of(s.statements)
+      counted = %AlchemAlx.Shell{s | count: s.count + 1}
+      value = "iex_value_#{counted.count}"
+      marker = "IO.puts(\"--alchem-shell-output--\")"
+      {kept, shown} = case AlchemAlx.binding(input) do
+        some({bound, declared, right}) ->
+          if declared != "!" do {[input], [input, "IO.inspect(" <> bound <> ")"]} else
+            # A pattern: the value is kept under a name of the shell's, and
+            # matched from it.
+            first = value <> " =" <> right
+            {[first, bound <> " = " <> value], [first, bound <> " = " <> value, "IO.inspect(" <> value <> ")"]}
+          end
+        none ->
+          # A value is shown; what gives none is run as it is.
+          bound = value <> " = " <> input
+          if shell_check(AlchemAlx.shell_program(s.imports, s.defs, s.statements ++ [bound, "IO.inspect(" <> value <> ")"])) == "" do
+            {[bound], [bound, "IO.inspect(" <> value <> ")"]}
+          else {[input], [input]} end
+      end
+      case shell_run(AlchemAlx.shell_program(s.imports, s.defs, s.statements ++ [marker] ++ shown)) do
+        error(problem) -> {counted, "error", AlchemAlx.relocated(problem, start + 1)}
+        ok(output) -> {%AlchemAlx.Shell{counted | statements: s.statements ++ kept}, "ok", output}
+      end
+    end
+  end
+
+  # The program built and run in the current directory, with no input:
+  # what it wrote after the shell's mark, or that with what it said on
+  # standard error when it failed.
+  def shell_run(source: string): result[string, string] do
+    {_, work, problem} = shell_built(source)
+    outcome = if problem != "" do error(problem) else
+      binary = work <> "/shell" <> exe()
+      errors = work <> "/errors"
+      {said, code} = if Sys.windows() == 1 do
+        {status, written, _} = wexec(binary, [], "", errors, 0, false)
+        {written, status}
+      else System.cmd("/bin/sh", ["-c", "\"$0\" < /dev/null 2> \"$1\"", binary, errors]) end
+      output = case String.split(said, "--alchem-shell-output--\n", [parts: 2]) do
+        [_, after_mark] -> after_mark
+        _ -> ""
+      end
+      if code == 0 do ok(output) else
+        complaint = case File.read(errors) do
+          ok(text) -> String.trim(text)
+          error(_) -> ""
+        end
+        error(output <> if complaint == "" do "exit status #{if code < 0 do 255 else code end}" else complaint end)
+      end
+    end
+    File.rm_rf(work)
+    outcome
+  end
+
+  # alchem alx: inputs read a line or a block at a time; what each printed
+  # and its value are printed.
+  def alx(s: AlchemAlx.Shell, pending: list[string], number: integer): integer do
+    case IO.gets(if pending == [] do "alx(#{number})> " else "...(#{number})> " end) do
+      none ->
+        IO.puts("")
+        0
+      some(read) ->
+        line = String.trim_trailing(read, "\r")
+        trimmed = String.trim(line)
+        if pending == [] and (trimmed == ":quit" or trimmed == "exit") do 0 else
+          if pending == [] and trimmed == ":reset" do
+            IO.puts(":ok")
+            alx(%AlchemAlx.Shell{imports: [], defs: [], statements: [], count: s.count}, [], number)
+          else
+            case if pending == [] do Regex.run(~r/^h(?:\s+|\()\s*([A-Za-z_][\w.?!]*)\s*\)?\s*$/, trimmed) else none end do
+              some([_, name]) ->
+                case AlchemGuide.doc(name, false, false) do
+                  ok(text) -> IO.write(text)
+                  error(problem) -> IO.puts(problem)
+                end
+                alx(s, [], number)
+              _ ->
+                lines = pending ++ [line]
+                {next, kind, text} = shell_eval(s, Enum.join(lines, "\n"))
+                if kind == "more" do alx(next, lines, number) else
+                  if kind == "error" do IO.puts("** " <> String.replace(text, "\n", "\n   ")) else IO.write(text) end
+                  alx(next, [], number + 1)
+                end
+            end
+          end
+        end
+    end
+  end
+
+  def alx_command(args: list[string]): integer do
+    nothing: map[string, string] = %{}
+    {status, _, _} = AlchemGuide.parsed("alx", args, nothing)
+    if status >= 0 do status else
+      IO.puts("alx, the Alchem Language Executor. Each input is compiled and run with the ones before it.")
+      IO.puts("h Module.function shows documentation, :reset forgets everything, :quit or ctrl-D leaves.")
+      alx(%AlchemAlx.Shell{imports: [], defs: [], statements: [], count: 0}, [], 1)
+    end
+  end
+
   # build, run, check and new once their flags are read as the pinned
   # command reads them: a flag it does not take, a value that is not of its
   # kind and -h print what it prints, with its status.
@@ -854,6 +1001,7 @@ defmodule AlchemCommand do
       ["build" | rest] -> flagged("build", rest)
       ["check" | rest] -> flagged("check", rest)
       ["new" | rest] -> flagged("new", rest)
+      ["alx" | rest] -> alx_command(rest)
       [] -> complain(String.trim_trailing(AlchemGuide.usage(), "\n"), 2)
       ["--version" | _] -> AlchemGuide.run("version", [])
       [command | rest] ->
