@@ -15,7 +15,9 @@ defmodule NativeX86Arm do
   end
   def xw_wide(v: integer): bytes do
     if v >= 0 do Enum.concat(nc_u32(v-a_div(v,4294967296)*4294967296),nc_u32(a_div(v,4294967296))) else
-      w = 0-v-1
+      # -(v+1): 0-v overflows for the least integer, where arithmetic is
+      # checked (the compiler as a module of alchem).
+      w = 0-(v+1)
       Enum.concat(nc_u32(4294967295-(w-a_div(w,4294967296)*4294967296)),nc_u32(4294967295-a_div(w,4294967296)))
     end
   end
