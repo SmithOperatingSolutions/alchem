@@ -4,7 +4,7 @@
     windows-examples.py prepare DIR [--compiler build/dev/A2]
     windows-examples.py check DIR COMPILER.exe [--jobs N] [--wine] [--only PREFIX --repeat N]
     windows-examples.py pinned OUT.exe
-    windows-examples.py reference DIR PINNED.exe COMPILER.exe [--wine]
+    windows-examples.py reference DIR PINNED.exe COMPILER.exe [--wine] [--only PREFIX --repeat N]
 
 prepare (on Linux) writes each example of scripts/upstream-examples.py that
 the native Linux compiler builds and runs to exit 0 into DIR as NNNN.alc,
@@ -46,7 +46,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # memory (PeakPagefileUsage) of each compile and each run, and the least
 # commit the system had free while they ran, so that a run that fails for
 # want of memory or of time shows why (issue #104).
-MEASURED = {'compile': [], 'run': []}
+MEASURED = {'compile': [], 'run': [], 'pinned': [], 'native': []}
 MEASURED_LOCK = threading.Lock()
 
 
@@ -457,14 +457,19 @@ def named(text, source):
     return text
 
 
-def reference(directory, pinned_compiler, compiler, runner):
+def reference(directory, pinned_compiler, compiler, runner, only='', repeat=1):
+    """With --only PREFIX --repeat N, the programs whose name starts with
+    PREFIX, each built once and its two programs run N times, with what
+    they cost: a difference that comes and goes shows its rate, and on which
+    side it falls."""
     import hashlib
     directory = Path(directory) / 'reference'
     names = (directory / 'names.txt').read_text().split('\n')[:-1]
     failed = []
     held = []
     timed = 0
-    for i, name in enumerate(names):
+    chosen = [(i, name) for i, name in enumerate(names) if name.startswith(only)] if only else list(enumerate(names))
+    for i, name in chosen:
         case = read_case(directory, f'{i:04}')
         if hashlib.sha1(case['source']).hexdigest()[:16] in REFERENCE_TIMING:
             timed += 1
@@ -481,43 +486,49 @@ def reference(directory, pinned_compiler, compiler, runner):
                 failed.append((name, f'did not build: {made.stderr[:200]!r} {ours.stderr[:200]!r}'))
                 continue
             (d / 'native.exe').write_bytes(ours.stdout)
-            got = []
-            for program in ('pinned.exe', 'native.exe'):
-                # A directory of its own for each: a process a program
-                # leaves behind can hold its directory on Windows.
-                run = d / ('run-' + program[:-4])
-                run.mkdir()
-                (run / 'tmp').mkdir()
-                place(directory, case, run)
-                env = dict(os.environ, TMP=str(run / 'tmp'), TEMP=str(run / 'tmp'), **case['env'])
-                try:
-                    r = subprocess.run([*runner, str(d / program)], capture_output=True, timeout=120, cwd=run, env=env, **given(case))
-                    got.append((r.returncode, *(named(normal(text, run), d / 'p.alc') for text in (r.stdout, r.stderr))))
-                except subprocess.TimeoutExpired:
-                    # Never equal to the other's, which may have timed out too.
-                    got.append((f'{program} timed out', b'', b''))
-            for program in ('pinned', 'native'):
-                try:
-                    shutil.rmtree(d / ('run-' + program))
-                except OSError:
-                    held.append(f'{name} ({program})')
-            if got[0] != got[1]:
-                import difflib
-                diff = ''
-                for part, said in ((1, 'output'), (2, 'errors')):
-                    lines = difflib.unified_diff(got[0][part].decode(errors='replace').split('\n'),
-                                                 got[1][part].decode(errors='replace').split('\n'),
-                                                 'pinned ' + said, 'native ' + said, lineterm='', n=0)
-                    diff += ''.join('\n    ' + line[:240] for line in list(lines)[:40])
-                failed.append((name, f'status pinned {got[0][0]}, native {got[1][0]}{diff}'))
-            elif name.startswith('windows/'):
-                # What both print is not frozen anywhere: it is shown.
-                print(f'same {name}: {got[0][0]} {got[0][1][:300]!r} {got[0][2][:200]!r}')
+            for k in range(repeat):
+                got = []
+                for program in ('pinned.exe', 'native.exe'):
+                    # A directory of its own for each: a process a program
+                    # leaves behind can hold its directory on Windows.
+                    run = d / (f'run-{k}-' + program[:-4])
+                    run.mkdir()
+                    (run / 'tmp').mkdir()
+                    place(directory, case, run)
+                    env = dict(os.environ, TMP=str(run / 'tmp'), TEMP=str(run / 'tmp'), **case['env'])
+                    try:
+                        r = measured(program[:-4], [*runner, str(d / program)], 120, cwd=run, env=env, **given(case))
+                        got.append((r.returncode, *(named(normal(text, run), d / 'p.alc') for text in (r.stdout, r.stderr))))
+                    except subprocess.TimeoutExpired:
+                        # Never equal to the other's, which may have timed out too.
+                        got.append((f'{program} timed out', b'', b''))
+                for program in ('pinned', 'native'):
+                    try:
+                        shutil.rmtree(d / (f'run-{k}-' + program))
+                    except OSError:
+                        held.append(f'{name} ({program})')
+                if got[0] != got[1]:
+                    import difflib
+                    diff = ''
+                    for part, said in ((1, 'output'), (2, 'errors')):
+                        lines = difflib.unified_diff(got[0][part].decode(errors='replace').split('\n'),
+                                                     got[1][part].decode(errors='replace').split('\n'),
+                                                     'pinned ' + said, 'native ' + said, lineterm='', n=0)
+                        diff += ''.join('\n    ' + line[:240] for line in list(lines)[:40])
+                    failed.append((name, f'status pinned {got[0][0]}, native {got[1][0]}{diff}'))
+                elif name.startswith('windows/') and k == 0:
+                    # What both print is not frozen anywhere: it is shown.
+                    print(f'same {name}: {got[0][0]} {got[0][1][:300]!r} {got[0][2][:200]!r}')
     for name, why in failed:
         print(f'FAIL {name}: {why}')
     for name in held:
         print(f'note: a process of {name} outlived it, holding its directory')
-    print(f'{len(names) - timed - len(failed)} of {len(names) - timed} print what the pinned compiler\'s Windows programs print'
+    if repeat > 1:
+        print(f'{len(chosen) * repeat - len(failed)} of {len(chosen) * repeat} runs of {len(chosen)} programs ({only}, {repeat} times each) print what the pinned compiler\'s Windows programs print')
+        for line in cost_summary(None):
+            print(line)
+        return 1 if failed else 0
+    print(f'{len(chosen) - timed - len(failed)} of {len(chosen) - timed} print what the pinned compiler\'s Windows programs print'
           f' ({timed} a matter of timing, REFERENCE_TIMING)')
     return 1 if failed else 0
 
@@ -648,7 +659,9 @@ def main():
         return 0
     if len(args) >= 4 and args[0] == 'reference':
         runner = [str(ROOT / 'scripts/run-windows')] if '--wine' in args else []
-        return reference(args[1], Path(args[2]).resolve(), Path(args[3]).resolve(), runner)
+        only = args[args.index('--only') + 1] if '--only' in args else ''
+        repeat = int(args[args.index('--repeat') + 1]) if '--repeat' in args else 1
+        return reference(args[1], Path(args[2]).resolve(), Path(args[3]).resolve(), runner, only, repeat)
     if len(args) >= 3 and args[0] == 'check':
         jobs = int(args[args.index('--jobs') + 1]) if '--jobs' in args else 4
         runner = [str(ROOT / 'scripts/run-windows')] if '--wine' in args else []
