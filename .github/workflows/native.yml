@@ -129,7 +129,7 @@ jobs:
           mkdir -p build/windows
           python3 scripts/build-windows.py --source build/windows/compiler-source.alc --output build/windows/alchem-compiler-windows.exe
           cp examples/hello-native.alc build/windows/hello.alc
-          cp scripts/windows-examples.py build/windows/
+          cp scripts/windows-examples.py scripts/windows-commit-map.py build/windows/
           cp harness/commands.py harness/commands-cases.json.xz build/windows/
           python3 scripts/windows-examples.py prepare build/windows/examples
           # One file of them: the Windows runner does not unpack an artifact
@@ -233,6 +233,15 @@ jobs:
           ./alchem-compiler-windows.exe < hello.alc > hello.exe
           out="$(./hello.exe)"
           test "$out" = 'Hello from native Alchem!'
+      - name: What a program and the compiler commit
+        # A process commits about what it uses: reserved memory it has not
+        # touched (the arena, the collector's tables) is not committed
+        # (spec/windows.md, Memory; #104, where each committed 2.3 GiB).
+        run: |
+          printf 'defmodule T do\n  def main() do\n    Process.sleep(5000)\n    IO.puts("done")\n  end\nend\n' > sleeper.alc
+          ./alchem-compiler-windows.exe < sleeper.alc > sleeper.exe
+          python windows-commit-map.py --most 256 2 ./sleeper.exe < /dev/null
+          python windows-commit-map.py --most 256 2 ./alchem-compiler-windows.exe < /dev/null
       - name: The upstream examples and the gates' programs
         # Each prints on Windows what it prints on Linux (spec/windows.md).
         run: python windows-examples.py check examples ./alchem-compiler-windows.exe --jobs 4

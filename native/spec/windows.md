@@ -81,8 +81,12 @@ those not in KERNEL32).
   `E_RUNTIME_WINDOWS: unsupported system call 0x...` to standard error and
   returns -ENOSYS.
 - **Memory.** `mmap` of up to 4 GiB is reserved and committed; a larger
-  one (the 16 GiB arena, `MAP_NORESERVE`) is only reserved, and the handler
-  commits 64 KiB around an address when touching it faults. A buffer the
+  one (the 16 GiB arena), and one asked for with `MAP_NORESERVE` (the arena,
+  and the collector's tables beside it, about a seventh of its size), is
+  only reserved, and the handler commits 64 KiB around an address when
+  touching it faults. A process so commits about what Linux would give it
+  memory for; with the tables committed whole, every process committed
+  2.3 GiB, and eight at once used up a runner's commit (#104). A buffer the
   kernel reads or writes for a call is committed first, since Windows does
   not fault it in for the kernel as Linux does.
 - **Stacks** grow as Windows grows a thread's. A Windows program maps its

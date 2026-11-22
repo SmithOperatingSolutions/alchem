@@ -35,8 +35,113 @@ import subprocess
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+import statistics
+import threading
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+# What the runs of check cost, on Windows: the time and the peak committed
+# memory (PeakPagefileUsage) of each compile and each run, and the least
+# commit the system had free while they ran, so that a run that fails for
+# want of memory or of time shows why (issue #104).
+MEASURED = {'compile': [], 'run': []}
+MEASURED_LOCK = threading.Lock()
+
+
+def peak_commit(handle):
+    """The peak committed memory of an ended process, in bytes, or -1."""
+    if os.name != 'nt':
+        return -1
+    import ctypes
+    from ctypes import wintypes
+
+    class Counters(ctypes.Structure):
+        _fields_ = [('cb', wintypes.DWORD), ('PageFaultCount', wintypes.DWORD), ('PeakWorkingSetSize', ctypes.c_size_t),
+                    ('WorkingSetSize', ctypes.c_size_t), ('QuotaPeakPagedPoolUsage', ctypes.c_size_t), ('QuotaPagedPoolUsage', ctypes.c_size_t),
+                    ('QuotaPeakNonPagedPoolUsage', ctypes.c_size_t), ('QuotaNonPagedPoolUsage', ctypes.c_size_t),
+                    ('PagefileUsage', ctypes.c_size_t), ('PeakPagefileUsage', ctypes.c_size_t)]
+    counters = Counters()
+    counters.cb = ctypes.sizeof(counters)
+    if not ctypes.windll.kernel32.K32GetProcessMemoryInfo(wintypes.HANDLE(int(handle)), ctypes.byref(counters), counters.cb):
+        return -1
+    return counters.PeakPagefileUsage
+
+
+def commit_free():
+    """The commit the system has free and its limit, in bytes, or None."""
+    if os.name != 'nt':
+        return None
+    import ctypes
+
+    class Status(ctypes.Structure):
+        _fields_ = [('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong)] + [(name, ctypes.c_ulonglong) for name in (
+            'ullTotalPhys', 'ullAvailPhys', 'ullTotalPageFile', 'ullAvailPageFile', 'ullTotalVirtual', 'ullAvailVirtual', 'ullAvailExtendedVirtual')]
+    status = Status()
+    status.dwLength = ctypes.sizeof(status)
+    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+        return None
+    return status.ullAvailPageFile, status.ullTotalPageFile
+
+
+def measured(kind, command, timeout, **options):
+    """subprocess.run with the time and the peak commit of the process kept
+    in MEASURED[kind]; a process that outlasts timeout is killed."""
+    started = time.monotonic()
+    with subprocess.Popen(command, stdin=subprocess.PIPE if 'input' in options else options.pop('stdin', None),
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, **{k: v for k, v in options.items() if k != 'input'}) as process:
+        try:
+            out, err = process.communicate(options.get('input'), timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            with MEASURED_LOCK:
+                MEASURED[kind].append((time.monotonic() - started, peak_commit(process._handle) if os.name == 'nt' else -1))
+            raise
+        peak = peak_commit(process._handle) if os.name == 'nt' else -1
+    with MEASURED_LOCK:
+        MEASURED[kind].append((time.monotonic() - started, peak))
+    return subprocess.CompletedProcess(command, process.returncode, out, err)
+
+
+class CommitSampler:
+    """The least commit free, sampled every quarter second while it runs."""
+
+    def __init__(self):
+        self.least, self.limit, self.stop = None, None, threading.Event()
+
+    def __enter__(self):
+        def sample():
+            while not self.stop.wait(0.25):
+                found = commit_free()
+                if found:
+                    self.limit = found[1]
+                    self.least = found[0] if self.least is None else min(self.least, found[0])
+        self.thread = threading.Thread(target=sample, daemon=True)
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_):
+        self.stop.set()
+        self.thread.join()
+
+
+def cost_summary(sampler):
+    """A line for each kind of process measured, and one for the system."""
+    lines = []
+    mib = 1 << 20
+    for kind, seen in MEASURED.items():
+        if not seen:
+            continue
+        times = sorted(s for s, _ in seen)
+        peaks = [p for _, p in seen if p >= 0]
+        p99 = times[min(len(times) - 1, int(len(times) * 0.99))]
+        lines.append(f'{kind}: {len(seen)} processes, seconds median {statistics.median(times):.2f}, 99th percentile {p99:.2f}, most {times[-1]:.2f}'
+                     + (f'; peak commit median {statistics.median(peaks) / mib:.0f} MiB, most {max(peaks) / mib:.0f} MiB' if peaks else ''))
+    if sampler and sampler.least is not None:
+        lines.append(f'system commit: least free {sampler.least / mib:.0f} MiB of a limit of {sampler.limit / mib:.0f} MiB')
+    return lines
 
 # Examples whose output on Windows is not Linux's.
 SKIPPED = {
@@ -481,7 +586,7 @@ def check_in(d, compiler, directory, case, runner):
     # Under Wine as a path of its drive Z:, which it takes there.
     tmp = ('Z:' + str(d / 'tmp').replace('/', '\\')) if runner else str(d / 'tmp')
     env = dict(os.environ, TMP=tmp, TEMP=tmp, **case['env'])
-    built = subprocess.run([*runner, compiler], input=case['source'], capture_output=True, timeout=300)
+    built = measured('compile', [*runner, compiler], 300, input=case['source'])
     if built.returncode:
         return f'did not build: {built.stderr.decode(errors="replace")[:300]}'
     program = d / 'p.exe'
@@ -490,7 +595,7 @@ def check_in(d, compiler, directory, case, runner):
     run.mkdir()
     place(directory, case, run)
     try:
-        got = subprocess.run([*runner, str(program)], capture_output=True, timeout=120, cwd=run, env=env, **given(case))
+        got = measured('run', [*runner, str(program)], 120, cwd=run, env=env, **given(case))
     except subprocess.TimeoutExpired:
         return 'timed out'
     # An upstream example's errors are not frozen (it ends 0); a gate's are.
@@ -508,12 +613,14 @@ def check(directory, compiler, jobs, runner, only='', repeat=1):
         # Some of them, each several times: a program whose result depends
         # on how its processes fall in time fails one run in a few.
         chosen = [i for i in range(len(names)) if names[i].startswith(only)] * repeat
-        with ThreadPoolExecutor(jobs) as pool:
+        with CommitSampler() as sampler, ThreadPoolExecutor(jobs) as pool:
             results = list(pool.map(lambda i: check_one(directory, compiler, f'{i:04}', names[i], runner), chosen))
         failed = [(n, why) for n, why in results if why]
         for name, why in failed:
             print(f'FAIL {name}: {why}')
         print(f'{len(chosen) - len(failed)} of {len(chosen)} runs of {len(chosen) // repeat} programs ({only}, {repeat} times each) print what they print on Linux')
+        for line in cost_summary(sampler):
+            print(line)
         return 1 if failed or not chosen else 0
     # Wine takes no TMP of a program's own: there the programs that name
     # files in the temporary directory (DiskStore's) run one at a time.
