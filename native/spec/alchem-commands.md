@@ -12,6 +12,7 @@ command itself. They are the module `AlchemGuide`, `tools/alchem-guide.alc`:
     alchem agent-install [--scope project|user] [--dir path] [--force] [--json] <agent> | --list
     alchem docs [--check] [--dir path]
     alchem alx
+    alchem fmt [--check] path...
 
 Each prints what the pinned command prints, with its status: the text, the
 JSON (two spaces a level, a list nothing was put in as `null`, `<`, `>` and
@@ -150,6 +151,21 @@ says where to look, not what is wrong: what is wrong is the front end's
 part (issue #100). The bootstrap keeps the name `nc_explain` when it
 renames the compiler's functions, as it keeps `nc_compile`.
 
+## fmt
+
+`alchem fmt PATH...` formats the `.alc` files named and those under the
+directories named, leaving out `.git` and `artifacts` and following no
+link, as the pinned command's `formatPaths` does: the files sorted, every
+one formatted before any is written, so that one the parser refuses leaves
+all of them as they were (`file:line:column: message`), and each file that
+changes named and written in place, by way of a file beside it with its
+mode. With `--check` nothing is written and a change is a failure,
+`formatting changes required`. The text is `AlchemFormat.format`
+(`tools/alchem-format.alc`), the pinned formatter function for function on
+the tree of the front end (`spec/alchem-front-end.md`). The scene `fmt` of
+the gate runs it over files formatted and not, a broken one, a file that
+declares no module and directories with `.git` and `artifacts`.
+
 ## Not as the pinned command
 
 - `version` is `alchem VERSION SYSTEM/MACHINE`, and the two as JSON. The
@@ -167,5 +183,5 @@ renames the compiler's functions, as it keeps `nc_compile`.
   the line and the reason (`** line 1: undefined function nope`). It decides what a statement
   binds from its text: a statement that binds after other statements in
   one input is run and not shown, and a comment alone runs nothing.
-- `lsp` and `fmt` are in the list of commands and not in `alchem` yet: each
-  says so and ends with status 2.
+- `lsp` is in the list of commands and not in `alchem` yet: it says so and
+  ends with status 2.

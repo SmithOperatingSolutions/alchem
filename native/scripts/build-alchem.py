@@ -35,6 +35,8 @@ import tempfile
 from importlib.util import module_from_spec, spec_from_file_location
 
 ROOT = Path(__file__).resolve().parents[1]
+# The formatter and the front end it reads with (fmt).
+FRONT_END = ('alchem-format.alc', 'alchem-parse.alc', 'alchem-lexer.alc', 'alchem-print-data.alc', 'alchem-json.alc', 'alchem-types.alc')
 BUNDLER_MAIN = '  def main() do\n    System.halt(emit(run(System.argv())))\n  end\nend\n'
 
 
@@ -124,6 +126,8 @@ def program(darwin=False, windows=False, version='devel', platform='linux/amd64'
         (work / 'alchem-guide-data.alc').write_text((ROOT / 'tools/alchem-guide-data.alc').read_text())
         (work / 'alchem-sources.alc').write_text((ROOT / 'tools/alchem-sources.alc').read_text())
         (work / 'alchem-alx.alc').write_text((ROOT / 'tools/alchem-alx.alc').read_text())
+        for name in FRONT_END:
+            (work / name).write_text((ROOT / 'tools' / name).read_text())
         before = os.getcwd()
         os.chdir(work)
         try:
@@ -135,7 +139,8 @@ def program(darwin=False, windows=False, version='devel', platform='linux/amd64'
         names = {here + '/alchem.alc': 'tools/alchem.alc', here + '/alchem-bundle.alc': 'tools/alchem-bundle.alc',
                  here + '/alchem-compiler.alc': 'implementations/alchem/native-*.alc',
                  here + '/alchem-guide.alc': 'tools/alchem-guide.alc', here + '/alchem-guide-data.alc': 'tools/alchem-guide-data.alc',
-                 here + '/alchem-sources.alc': 'tools/alchem-sources.alc', here + '/alchem-alx.alc': 'tools/alchem-alx.alc'}
+                 here + '/alchem-sources.alc': 'tools/alchem-sources.alc', here + '/alchem-alx.alc': 'tools/alchem-alx.alc',
+                 **{here + '/' + name: 'tools/' + name for name in FRONT_END}}
     head, _, body = text.partition(b'\n')
     count = int(head.split()[1])
     lines = body.split(b'\n', count)

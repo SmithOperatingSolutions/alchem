@@ -1,4 +1,5 @@
 defmodule AlchemLexer do
+  import "alchem-print-data.alc"
   # The tokens and comments of a source text, as the pinned compiler's
   # lexer gives them (compiler/lexer of the pinned tree): each token its
   # kind, its text, and the line and column it starts at; each comment its
@@ -510,26 +511,54 @@ defmodule AlchemLexer do
     if i < 0 do -1 else if byte(s, i) == 10 do i else last_newline(s, i - 1) end end
   end
 
-  # A text as Go's strconv.Quote writes it.
+  # A text as Go's strconv.Quote writes it: a rune strconv.IsPrint says is
+  # not printable as an escape, and a byte that starts no rune as \x.
   def go_quote(text: string): string do
-    "\"" <> Enum.join(Enum.map(String.codepoints(text), fn c -> quote_char(c) end), "") <> "\""
+    "\"" <> Enum.join(Enum.reverse(quoted_from(text, 0, 0, [])), "") <> "\""
   end
-  def quote_char(c: string): string do
-    case c do
-      "\"" -> "\\\""
-      "\\" -> "\\\\"
-      "\n" -> "\\n"
-      "\t" -> "\\t"
-      "\r" -> "\\r"
-      "\u{7}" -> "\\a"
-      "\u{8}" -> "\\b"
-      "\u{C}" -> "\\f"
-      "\u{B}" -> "\\v"
+  def quoted_from(s: string, i: integer, start: integer, done: list[string]): list[string] do
+    if i >= byte_size(s) do [part(s, start, i) | done] else
+      c = byte(s, i)
+      if c >= 32 and c < 127 and c != 34 and c != 92 do quoted_from(s, i + 1, start, done) else
+        {code, size} = rune(s, i)
+        shown = if code < 0 do "\\x" <> String.downcase(hex_text(c, 2)) else quote_rune(code, part(s, i, i + size)) end
+        quoted_from(s, i + size, i + size, [shown, part(s, start, i) | done])
+      end
+    end
+  end
+  def quote_rune(code: integer, text: string): string do
+    case code do
+      34 -> "\\\""
+      92 -> "\\\\"
+      7 -> "\\a"
+      8 -> "\\b"
+      12 -> "\\f"
+      10 -> "\\n"
+      13 -> "\\r"
+      9 -> "\\t"
+      11 -> "\\v"
       _ ->
-        code = elem(rune(c, 0), 0)
         if code < 32 or code == 127 do "\\x" <> String.downcase(hex_text(code, 2)) else
-          if code == -1 do "\\x" <> String.downcase(hex_text(byte(c, 0), 2)) else c end
+          if printable?(code) do text else
+            if code < 65536 do "\\u" <> String.downcase(hex_text(code, 4)) else "\\U" <> String.downcase(hex_text(code, 8)) end
+          end
         end
+    end
+  end
+
+  # Whether strconv.IsPrint holds for a rune: whether it is in none of the
+  # ranges of tools/alchem-print-data.alc, found by halving.
+  def printable?(code: integer): boolean do
+    if code < 127 do code >= 32 else not in_ranges?(AlchemPrintData.ranges(), code, 0, AlchemPrintData.count() - 1) end
+  end
+  def in_ranges?(table: string, code: integer, low: integer, high: integer): boolean do
+    if low > high do false else
+      mid = div(low + high, 2)
+      first = hex_value(binary_part(table, mid * 12, 6))
+      last = hex_value(binary_part(table, mid * 12 + 6, 6))
+      if code < first do in_ranges?(table, code, low, mid - 1) else
+        if code > last do in_ranges?(table, code, mid + 1, high) else true end
+      end
     end
   end
 
