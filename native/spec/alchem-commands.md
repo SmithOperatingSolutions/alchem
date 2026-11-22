@@ -130,6 +130,26 @@ program, and the project `new` writes.
 `-shutdown-timeout` and `-max-call-depth` are read and change nothing: a
 program the compiler does not take is reported with its one message.
 
+## A program the compiler refuses
+
+The compiler refuses a program by making no image, with one message for
+every reason. `alchem` then asks it which function it could not make
+(`nc_explain`, in `implementations/alchem/native-compiler.alc`): the program
+is compiled as before up to its functions, and those are compiled again one
+by one, halves first, as `nc_build` compiles them, until one makes no code.
+Its name, `Module.name/arity`, is found among the files of the bundle, and
+`build`, `run`, `check` and `alx` say where it is:
+
+    lib/lib.alc:4:3: E_COMPILE: the native compiler does not take something in Lib.twice/1
+
+In `alx` a statement is the input itself (`something in this input`), and a
+definition is named without the shell's module. A function of the library
+is named as one; a refusal in no one function (the table of the program,
+the code shared by its functions, its entry) keeps the one message. This
+says where to look, not what is wrong: what is wrong is the front end's
+part (issue #100). The bootstrap keeps the name `nc_explain` when it
+renames the compiler's functions, as it keeps `nc_compile`.
+
 ## Not as the pinned command
 
 - `version` is `alchem VERSION SYSTEM/MACHINE`, and the two as JSON. The
@@ -142,9 +162,9 @@ program the compiler does not take is reported with its one message.
   A file that declares no module is refused in this command's own words.
 - `doc host/owner/repo@v1.2.3/lib/name.alc`, a package's file named as an
   import names it, is not fetched.
-- `alx` shows an input the compiler does not take with the compiler's one
-  message, where the pinned shell gives the line and what is wrong
-  (`** line 1: undefined function nope`). It decides what a statement
+- `build`, `run`, `check` and `alx` say where a refused program's
+  function is, not what is wrong in it, where the pinned compiler gives
+  the line and the reason (`** line 1: undefined function nope`). It decides what a statement
   binds from its text: a statement that binds after other statements in
   one input is run and not shown, and a comment alone runs nothing.
 - `lsp` and `fmt` are in the list of commands and not in `alchem` yet: each

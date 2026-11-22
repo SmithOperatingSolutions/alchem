@@ -1,0 +1,2747 @@
+defmodule AlchemParse do
+  import "alchem-lexer.alc"
+  import "alchem-json.alc"
+  import "alchem-types.alc"
+  # A source file read as the pinned compiler reads it for its formatter
+  # (syntax.ParseSyntax of the pinned tree): the tree of the module, as the
+  # JSON Go's encoding/json writes of it, or the pinned parser's message
+  # for a file it refuses, "line:column: message".
+  #
+  # The tree is AlchemJson values with the fields of the pinned compiler's
+  # ast types in their order, so that the tree written as JSON is the pinned
+  # one byte for byte; the formatter (#91) reads it. The parser is the
+  # pinned parser function for function: its state, which the pinned one
+  # changes in place, is passed along and given back by each function
+  # (P), and a probe ahead is the state thrown away.
+
+  # --- the tree -----------------------------------------------------------------
+
+  def n(v: integer): AlchemJson.J do AlchemJson.int(v) end
+  def s(v: string): AlchemJson.J do AlchemJson.str(v) end
+  def b(v: boolean): AlchemJson.J do AlchemJson.bool(v) end
+  def nul(): AlchemJson.J do AlchemJson.J.null end
+  def strs(v: list[string]): AlchemJson.J do AlchemJson.strings(v) end
+  # A slice: null when nothing was put in it, as Go writes a nil slice.
+  def made(v: list[AlchemJson.J]): AlchemJson.J do
+    if v == [] do AlchemJson.J.null else AlchemJson.J.list(v) end
+  end
+  def made_strs(v: list[string]): AlchemJson.J do
+    if v == [] do AlchemJson.J.null else AlchemJson.strings(v) end
+  end
+  def obj(fields: list[tuple[string, AlchemJson.J]]): AlchemJson.J do AlchemJson.J.object(fields) end
+  def set(o: AlchemJson.J, changes: list[tuple[string, AlchemJson.J]]): AlchemJson.J do AlchemJson.put_all(o, changes) end
+  def get(o: AlchemJson.J, name: string): AlchemJson.J do AlchemJson.get(o, name) end
+  def text(o: AlchemJson.J, name: string): string do AlchemJson.text_of(AlchemJson.get(o, name)) end
+  def items(o: AlchemJson.J, name: string): list[AlchemJson.J] do AlchemJson.items_of(AlchemJson.get(o, name)) end
+  def null?(v: AlchemJson.J): boolean do AlchemJson.null?(v) end
+
+  def literal(kind: string): AlchemJson.J do
+    obj([{"Kind", s(kind)}, {"Integer", n(0)}, {"Float", AlchemJson.J.number("0")}, {"Text", s("")}, {"Boolean", b(false)}])
+  end
+
+  def expr(line: integer, col: integer): AlchemJson.J do
+    obj([{"Chosen", b(false)}, {"Pipe", b(false)}, {"Kind", s("")}, {"Type", s("")}, {"Name", s("")}, {"Op", s("")},
+      {"Value", literal("")}, {"Left", nul()}, {"Right", nul()}, {"Args", nul()}, {"Keys", nul()}, {"Params", nul()},
+      {"Body", nul()}, {"ReturnType", s("")}, {"Labels", nul()}, {"TypeArgs", nul()}, {"Line", n(line)}, {"Column", n(col)},
+      {"Heredoc", s("")}, {"Delimiter", s("")}, {"Comments", nul()}, {"Closing", nul()}])
+  end
+  def expr_of(kind: string, line: integer, col: integer, changes: list[tuple[string, AlchemJson.J]]): AlchemJson.J do
+    set(expr(line, col), [{"Kind", s(kind)} | changes])
+  end
+
+  def statement(line: integer, col: integer): AlchemJson.J do
+    obj([{"Pattern", nul()}, {"Declared", s("")}, {"Arms", nul()}, {"Kind", s("")}, {"Name", s("")}, {"Expr", nul()},
+      {"Then", nul()}, {"Else", nul()}, {"Line", n(line)}, {"Column", n(col)}, {"Output", nul()}, {"Comparison", nul()}, {"Assertion", nul()}])
+  end
+
+  def parameter(line: integer, col: integer): AlchemJson.J do
+    obj([{"Default", nul()}, {"Name", s("")}, {"Type", s("")}, {"Pattern", nul()}, {"Line", n(line)}, {"Column", n(col)}])
+  end
+
+  def pattern(line: integer, col: integer): AlchemJson.J do
+    obj([{"Kind", s("")}, {"Name", s("")}, {"Type", s("")}, {"Value", literal("")}, {"Children", nul()}, {"Labels", nul()},
+      {"Fields", nul()}, {"Index", n(0)}, {"Keys", nul()}, {"Tail", nul()}, {"Line", n(line)}, {"Column", n(col)}])
+  end
+
+  def arm(): AlchemJson.J do
+    obj([{"Pattern", nul()}, {"Guard", nul()}, {"Body", nul()}, {"Kind", s("")}, {"Type", s("")}, {"Comments", nul()}, {"Closing", nul()}])
+  end
+
+  def function(line: integer, col: integer): AlchemJson.J do
+    obj([{"Protocol", s("")}, {"ProtocolFunction", s("")}, {"For", s("")}, {"Test", s("")}, {"Group", s("")}, {"Setup", b(false)},
+      {"Doc", s("")}, {"Comments", nul()}, {"Tags", nul()}, {"All", b(false)}, {"Private", b(false)}, {"Extern", s("")},
+      {"ExternDir", s("")}, {"Source", s("")}, {"Module", s("")}, {"LocalName", s("")}, {"Name", s("")}, {"Type", s("")},
+      {"Params", nul()}, {"Guard", nul()}, {"Body", nul()}, {"Line", n(line)}, {"Column", n(col)}, {"Reads", nul()}])
+  end
+
+  def type_decl(line: integer, col: integer): AlchemJson.J do
+    obj([{"Doc", s("")}, {"Comments", nul()}, {"Kind", s("")}, {"Name", s("")}, {"Local", s("")}, {"Source", s("")},
+      {"Extern", s("")}, {"ExternDir", s("")}, {"Shared", b(false)}, {"Params", nul()}, {"Exception", b(false)},
+      {"Fields", nul()}, {"Variants", nul()}, {"Line", n(line)}, {"Column", n(col)}])
+  end
+
+  def variant(name: string, line: integer, col: integer): AlchemJson.J do
+    obj([{"Name", s(name)}, {"Fields", nul()}, {"Line", n(line)}, {"Column", n(col)}])
+  end
+
+  # --- the state ------------------------------------------------------------------
+
+  struct P do
+    rest: list[AlchemLexer.Token]
+    last: AlchemLexer.Token
+    depth: integer
+    in_arm: boolean
+    probing: boolean
+    noted: list[tuple[string, list[string]]]
+    carry: list[string]
+    arm_column: integer
+    cond_arms: boolean
+    capture: integer
+    comments: list[AlchemLexer.Comment]
+    keep: boolean
+    tags: list[string]
+    trying: integer
+    source: string
+    starts: map[integer, integer]
+  end
+
+  def eof(): AlchemLexer.Token do %AlchemLexer.Token{kind: "EOF", text: "", line: 0, column: 0} end
+
+  def peek(p: P): AlchemLexer.Token do
+    case p.rest do
+      [t | _] -> t
+      [] -> eof()
+    end
+  end
+  # The token k after the next one.
+  def ahead(p: P, k: integer): AlchemLexer.Token do
+    Enum.at(p.rest, k, eof())
+  end
+  def adv(p: P): P do
+    case p.rest do
+      [t | more] -> if more == [] do p else %P{p | rest: more, last: t} end
+      [] -> p
+    end
+  end
+  def adv_n(p: P, k: integer): P do
+    if k <= 0 do p else adv_n(adv(p), k - 1) end
+  end
+
+  def problem(line: integer, col: integer, message: string): string do
+    "#{line}:#{col}: " <> message
+  end
+  def quoted(text: string): string do AlchemLexer.go_quote(text) end
+
+  def expect(p: P, kind: string, word: string): result[tuple[AlchemLexer.Token, P], string] do
+    t = peek(p)
+    if t.kind != kind or (word != "" and t.text != word) do
+      error(problem(t.line, t.column, "expected " <> kind <> " " <> quoted(word) <> ", found " <> t.kind <> " " <> quoted(t.text)))
+    else ok({t, adv(p)}) end
+  end
+
+  def new_line?(p: P): boolean do
+    p.last.line > 0 and peek(p).line > p.last.line
+  end
+
+  def ends?(p: P): boolean do
+    t = peek(p)
+    if t.kind == "EOF" or t.text == "end" or t.text == "else" do true else
+      p.trying > 0 and t.kind == "identifier" and t.text in ["rescue", "catch", "after"] and ahead(p, 1).kind != "=" and ahead(p, 1).kind != ":"
+    end
+  end
+
+  # The comments written before a token.
+  def before(p: P, t: AlchemLexer.Token): tuple[list[string], P] do
+    taken = Enum.take_while(p.comments, fn c -> not (c.line > t.line or (c.line == t.line and c.column > t.column)) end)
+    {Enum.map(taken, fn c -> c.text end), %P{p | comments: Enum.drop(p.comments, length(taken))}}
+  end
+
+  # The comments before a token as comment statements, which only the
+  # formatter sees.
+  def remarks(p: P, t: AlchemLexer.Token): tuple[list[AlchemJson.J], P] do
+    if p.probing do {[], p} else
+      {texts, after_it} = before(p, t)
+      {if p.keep do Enum.map(texts, fn c -> set(statement(t.line, t.column), [{"Kind", s("comment")}, {"Name", s(c)}]) end) else [] end, after_it}
+    end
+  end
+
+  def notes(p: P, t: AlchemLexer.Token): tuple[list[string], P] do
+    if p.probing do {[], p} else
+      {texts, after_it} = before(p, t)
+      {if p.keep do texts else [] end, after_it}
+    end
+  end
+
+  def note_as(p: P, key: string, lines: list[string]): P do
+    if not p.keep or lines == [] do p else
+      found = Enum.any?(p.noted, fn {k, _} -> k == key end)
+      %P{p | noted: if found do Enum.map(p.noted, fn {k, v} -> if k == key do {k, v ++ lines} else {k, v} end end) else p.noted ++ [{key, lines}] end}
+    end
+  end
+
+  # The comments before a token indented further than a column.
+  def remarks_indented(p: P, t: AlchemLexer.Token, column: integer): tuple[list[AlchemJson.J], P] do
+    if p.probing do {[], p} else
+      taken = Enum.take_while(p.comments, fn c -> not (c.line > t.line or (c.line == t.line and c.column > t.column) or c.column <= column) end)
+      made_statements = if p.keep do Enum.map(taken, fn c -> set(statement(c.line, c.column), [{"Kind", s("comment")}, {"Name", s(c.text)}]) end) else [] end
+      {made_statements, %P{p | comments: Enum.drop(p.comments, length(taken))}}
+    end
+  end
+
+  # The last arm given the comments after it, before what ends the arms.
+  def closing(p: P, arms: list[AlchemJson.J]): tuple[list[AlchemJson.J], P] do
+    if arms == [] do {arms, p} else
+      {lines, after_it} = notes(p, peek(p))
+      last = Enum.at(arms, length(arms) - 1, arm())
+      {Enum.take(arms, length(arms) - 1) ++ [set(last, [{"Closing", made_strs(lines)}])], after_it}
+    end
+  end
+
+  def descend(p: P): result[P, string] do
+    if p.depth + 1 > 256 do
+      t = peek(p)
+      error(problem(t.line, t.column, "nesting exceeds 256 levels"))
+    else ok(%P{p | depth: p.depth + 1}) end
+  end
+  def ascend(p: P, depth: integer): P do %P{p | depth: depth} end
+
+  def chain_limit(t: AlchemLexer.Token): string do
+    problem(t.line, t.column, "expression chains more than 1024 operations")
+  end
+
+  # --- numbers --------------------------------------------------------------------
+
+  def digit_value(c: integer): integer do
+    if c >= 48 and c <= 57 do c - 48 else if c >= 97 and c <= 102 do c - 87 else if c >= 65 and c <= 70 do c - 55 else 99 end end end
+  end
+
+  # An integer literal's value: decimal digits, perhaps with underscores, or
+  # 0x, 0o or 0b and digits in that base; none outside 64 signed bits.
+  def parse_integer(given: string): option[integer] do
+    negative = String.starts_with?(given, "-")
+    body = if negative do binary_part(given, 1, byte_size(given) - 1) else given end
+    prefix = if byte_size(body) > 2 and String.starts_with?(body, "0") do binary_part(body, 1, 1) else "" end
+    base = case prefix do
+      "x" -> 16
+      "o" -> 8
+      "b" -> 2
+      _ -> 10
+    end
+    digits = String.replace(if base == 10 do body else binary_part(body, 2, byte_size(body) - 2) end, "_", "")
+    if digits == "" do none else accumulate(digits, 0, base, 0, negative) end
+  end
+  # The value so far is negative for a negative literal, so that the least
+  # integer is reached without passing the greatest.
+  def accumulate(digits: string, i: integer, base: integer, value: integer, negative: boolean): option[integer] do
+    if i >= byte_size(digits) do some(value) else
+      d = digit_value(Sys.byte(Sys.addr(digits) + i))
+      if d >= base do none else
+        if negative do
+          least = 0 - 9223372036854775807 - 1
+          if value < div(least + d, base) do none else accumulate(digits, i + 1, base, value * base - d, negative) end
+        else
+          if value > div(9223372036854775807 - d, base) do none else accumulate(digits, i + 1, base, value * base + d, negative) end
+        end
+      end
+    end
+  end
+
+  # A float literal's text as Go's encoding/json writes the float it
+  # stands for: the shortest digits, as a plain decimal from 1e-6 to 1e21
+  # and with an exponent beyond.
+  def float_json(given: string, negative: boolean): string do
+    lower = String.downcase(String.replace(given, "_", ""))
+    {mantissa, exponent} = case String.split(lower, "e", [parts: 2]) do
+      [m, e] -> {m, String.to_integer(String.trim_leading(e, "+"))}
+      _ -> {lower, 0}
+    end
+    {whole, fraction} = case String.split(mantissa, ".", [parts: 2]) do
+      [w, f] -> {w, f}
+      _ -> {mantissa, ""}
+    end
+    digits_all = whole <> fraction
+    point = byte_size(whole) + exponent
+    # Leading zeros off, moving nothing; trailing zeros off.
+    lead = byte_size(digits_all) - byte_size(String.trim_leading(digits_all, "0"))
+    written = String.trim_trailing(String.trim_leading(digits_all, "0"), "0")
+    # Up to 15 digits name a float that gives them back; more are cut to
+    # the fewest that still read as the same float, as Go writes it.
+    digits = if byte_size(written) <= 15 do written else shortest(written, 15, lower) end
+    sign = if negative do "-" else "" end
+    if digits == "" do sign <> "0" else
+      at = point - lead
+      # The value is 0.digits * 10^at.
+      e10 = at - 1
+      if e10 < -6 or e10 >= 21 do
+        first = binary_part(digits, 0, 1)
+        rest_digits = binary_part(digits, 1, byte_size(digits) - 1)
+        sign <> first <> (if rest_digits == "" do "" else "." <> rest_digits end) <> "e" <> (if e10 < 0 do "-" else "+" end) <> exponent_text(abs(e10))
+      else
+        if at <= 0 do sign <> "0." <> String.duplicate("0", 0 - at) <> digits else
+          if at >= byte_size(digits) do sign <> digits <> String.duplicate("0", at - byte_size(digits)) else
+            sign <> binary_part(digits, 0, at) <> "." <> binary_part(digits, at, byte_size(digits) - at)
+          end
+        end
+      end
+    end
+  end
+  def exponent_text(e: integer): string do Integer.to_string(e) end
+
+  # The fewest of the digits, rounded, that read as the float the text
+  # reads as; the digits stand where the text's do.
+  def shortest(digits: string, k: integer, given: string): string do
+    if k >= byte_size(digits) do digits else
+      # The k digits nearest the text, then the k digits below and above
+      # it: the float may lie on either side of the digits written.
+      head = binary_part(digits, 0, k)
+      zeros = String.duplicate("0", byte_size(digits) - k)
+      candidates = Enum.uniq([rounded(digits, k), head <> zeros, bump(head) <> zeros])
+      found = Enum.filter(candidates, fn candidate ->
+        case {Float.parse(given), Float.parse(respelled(given, digits, candidate))} do
+          {ok(x), ok(y)} -> x == y
+          _ -> false
+        end
+      end)
+      case found do
+        [best | _] -> String.trim_trailing(best, "0")
+        [] -> if k >= 17 do String.trim_trailing(rounded(digits, k), "0") else shortest(digits, k + 1, given) end
+      end
+    end
+  end
+  # The first k digits, rounded half up on the next; as many digits as
+  # before, the rest zeros, so that the point stays where it was.
+  def rounded(digits: string, k: integer): string do
+    head = binary_part(digits, 0, k)
+    next = AlchemLexer.byte(digits, k)
+    up = next >= 53
+    bumped = if up do bump(head) else head end
+    bumped <> String.duplicate("0", byte_size(digits) - k)
+  end
+  def bump(head: string): string do
+    case Integer.parse(head) do
+      ok(v) ->
+        text_value = Integer.to_string(v + 1)
+        if byte_size(text_value) > byte_size(head) do binary_part(text_value, 0, byte_size(head)) else String.duplicate("0", byte_size(head) - byte_size(text_value)) <> text_value end
+      error(_) -> head
+    end
+  end
+  # The float text given with its significant digits for others of the
+  # same length: 0.digits e exponent.
+  def respelled(given: string, digits: string, candidate: string): string do
+    lower = String.downcase(String.replace(given, "_", ""))
+    {mantissa, exponent} = case String.split(lower, "e", [parts: 2]) do
+      [m, e] -> {m, String.to_integer(String.trim_leading(e, "+"))}
+      _ -> {lower, 0}
+    end
+    {whole, fraction} = case String.split(mantissa, ".", [parts: 2]) do
+      [w, f] -> {w, f}
+      _ -> {mantissa, ""}
+    end
+    all = whole <> fraction
+    lead = byte_size(all) - byte_size(String.trim_leading(all, "0"))
+    at = byte_size(whole) + exponent - lead
+    "0." <> candidate <> "e" <> Integer.to_string(at)
+  end
+
+  # --- types ------------------------------------------------------------------------
+
+  def parameterized(name: string): boolean do
+    name in ["list", "tuple", "map", "fn", "pid", "supervisor", "server", "option", "result", "stream", "set", "task", "agent", "step", "registry", "generator"]
+  end
+
+  def upper_first?(text: string): boolean do
+    first = String.slice(text, 0, 1)
+    first != "" and first == String.upcase(first) and first != String.downcase(first)
+  end
+  def lower_first?(text: string): boolean do
+    first = String.slice(text, 0, 1)
+    first != "" and first == String.downcase(first) and first != String.upcase(first)
+  end
+
+  def type_name(given: P): result[tuple[string, P], string] do
+    with ok(p0) <- descend(given),
+         ok({t, p1}) <- expect(p0, "identifier", "") do
+      named = upper_first?(t.text)
+      if not parameterized(t.text) and not (named and peek(p1).kind == "[") do
+        if not AlchemTypeNames.valid?(t.text) do error(problem(t.line, t.column, "unknown type " <> quoted(t.text))) else ok({t.text, ascend(p1, given.depth)}) end
+      else
+        with ok({_, p2}) <- expect(p1, "[", ""),
+             ok({found, p3}) <- (if peek(p2).kind != "]" do type_list(p2, []) else ok({[], p2}) end),
+             ok({_, p4}) <- expect(p3, "]", "") do
+          if t.text == "list" and length(found) != 1 do error(problem(t.line, t.column, "list type requires one element type")) else
+            whole = t.text <> "[" <> Enum.join(found, ",") <> "]"
+            if not AlchemTypeNames.valid?(whole) do error(problem(t.line, t.column, "invalid type " <> quoted(whole))) else ok({whole, ascend(p4, given.depth)}) end
+          end
+        else
+          error(why) -> error(why)
+        end
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+  def type_list(p: P, done: list[string]): result[tuple[list[string], P], string] do
+    with ok({one, p1}) <- type_name(p) do
+      if peek(p1).kind != "," do ok({Enum.reverse([one | done]), p1}) else type_list(adv(p1), [one | done]) end
+    else
+      error(why) -> error(why)
+    end
+  end
+
+  # --- patterns ---------------------------------------------------------------------
+
+  def pattern_of(given: P): result[tuple[AlchemJson.J, P], string] do
+    with ok(p) <- descend(given) do
+      t = peek(p)
+      pat = pattern(t.line, t.column)
+      outcome = case t.kind do
+        "%Name" ->
+          with ok({_, p1}) <- expect(adv(p), "{", ""),
+               ok({{labels, children}, p2}) <- struct_patterns(p1, [], []),
+               ok({_, p3}) <- expect(p2, "}", "") do
+            ok({set(pat, [{"Kind", s("struct")}, {"Name", s(t.text)}, {"Children", made(children)}, {"Labels", made_strs(labels)}]), p3})
+          else
+            error(why) -> error(why)
+          end
+        "^" ->
+          with ok({name, p1}) <- expect(adv(p), "identifier", "") do
+            ok({set(pat, [{"Kind", s("pin")}, {"Name", s(name.text)}]), p1})
+          else
+            error(why) -> error(why)
+          end
+        "%{" ->
+          p1 = adv(p)
+          with ok({{keys, children}, p2}) <- (if peek(p1).kind != "}" do map_patterns(p1, [], []) else ok({{[], []}, p1}) end),
+               ok({_, p3}) <- expect(p2, "}", "") do
+            ok({set(pat, [{"Kind", s("map")}, {"Children", made(children)}, {"Keys", made(keys)}]), p3})
+          else
+            error(why) -> error(why)
+          end
+        "{" -> sequence_pattern(adv(p), pat, "tuple", "}")
+        "[" -> sequence_pattern(adv(p), pat, "list", "]")
+        "identifier" -> name_pattern(adv(p), t, pat)
+        _ ->
+          if t.kind in ["integer", "float", "string", "atom", "operator"] do
+            with ok({e, p1}) <- atom(p) do
+              if text(e, "Kind") != "literal" do error(problem(t.line, t.column, "expected literal pattern")) else
+                ok({set(pat, [{"Kind", s("literal")}, {"Value", get(e, "Value")}]), p1})
+              end
+            else
+              error(why) -> error(why)
+            end
+          else error(problem(t.line, t.column, "expected pattern")) end
+      end
+      case outcome do
+        ok({made_pattern, after_it}) -> ok({made_pattern, ascend(after_it, given.depth)})
+        error(why) -> error(why)
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+
+  def struct_patterns(p: P, labels: list[string], children: list[AlchemJson.J]): result[tuple[tuple[list[string], list[AlchemJson.J]], P], string] do
+    if peek(p).kind == "}" do ok({{Enum.reverse(labels), Enum.reverse(children)}, p}) else
+      with ok({label, p1}) <- expect(p, "identifier", ""),
+           ok({_, p2}) <- expect(p1, ":", ""),
+           ok({child, p3}) <- pattern_of(p2) do
+        if peek(p3).kind != "," do ok({{Enum.reverse([label.text | labels]), Enum.reverse([child | children])}, p3}) else struct_patterns(adv(p3), [label.text | labels], [child | children]) end
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+
+  def map_patterns(p: P, keys: list[AlchemJson.J], children: list[AlchemJson.J]): result[tuple[tuple[list[AlchemJson.J], list[AlchemJson.J]], P], string] do
+    with ok({key, p1}) <- pattern_of(p) do
+      if text(key, "Kind") != "literal" do error(problem(AlchemJson.int_of(get(key, "Line")), AlchemJson.int_of(get(key, "Column")), "map pattern keys must be literals")) else
+        with ok({_, p2}) <- expect(p1, "=>", ""),
+             ok({value, p3}) <- pattern_of(p2) do
+          if peek(p3).kind != "," do ok({{Enum.reverse([get(key, "Value") | keys]), Enum.reverse([value | children])}, p3}) else map_patterns(adv(p3), [get(key, "Value") | keys], [value | children]) end
+        else
+          error(why) -> error(why)
+        end
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+
+  def sequence_pattern(p: P, pat: AlchemJson.J, kind: string, close: string): result[tuple[AlchemJson.J, P], string] do
+    with ok({{children, tail}, p1}) <- (if peek(p).kind != close do pattern_items(p, kind, []) else ok({{[], nul()}, p}) end),
+         ok({_, p2}) <- expect(p1, close, "") do
+      ok({set(pat, [{"Kind", s(kind)}, {"Children", made(children)}, {"Tail", tail}]), p2})
+    else
+      error(why) -> error(why)
+    end
+  end
+  def pattern_items(p: P, kind: string, done: list[AlchemJson.J]): result[tuple[tuple[list[AlchemJson.J], AlchemJson.J], P], string] do
+    with ok({child, p1}) <- pattern_of(p) do
+      if kind == "list" and peek(p1).kind == "|" do
+        with ok({tail, p2}) <- pattern_of(adv(p1)) do ok({{Enum.reverse([child | done]), tail}, p2}) else
+  error(why) -> error(why)
+end
+      else
+        if peek(p1).kind != "," do ok({{Enum.reverse([child | done]), nul()}, p1}) else pattern_items(adv(p1), kind, [child | done]) end
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+
+  def name_pattern(p: P, t: AlchemLexer.Token, pat: AlchemJson.J): result[tuple[AlchemJson.J, P], string] do
+    if t.text == "true" or t.text == "false" do
+      ok({set(pat, [{"Kind", s("literal")}, {"Value", set(literal("boolean"), [{"Boolean", b(t.text == "true")}])}]), p})
+    else
+      base = set(pat, [{"Kind", s(if t.text == "_" do "wildcard" else "name" end)}, {"Name", s(t.text)}])
+      qualified = upper_first?(t.text)
+      applied = peek(p).kind == "(" and not new_line?(p)
+      if qualified or (applied and t.text in ["ok", "error", "some", "cont", "halt"]) do
+        as_variant = set(base, [{"Kind", s("variant")}])
+        if not applied do ok({as_variant, p}) else
+          with ok({children, p1}) <- argument_patterns(adv(p), []),
+               ok({_, p2}) <- expect(p1, ")", "") do
+            ok({set(as_variant, [{"Children", made(children)}]), p2})
+          else
+            error(why) -> error(why)
+          end
+        end
+      else ok({base, p}) end
+    end
+  end
+  def argument_patterns(p: P, done: list[AlchemJson.J]): result[tuple[list[AlchemJson.J], P], string] do
+    with ok({child, p1}) <- pattern_of(p) do
+      if peek(p1).kind != "," do ok({Enum.reverse([child | done]), p1}) else argument_patterns(adv(p1), [child | done]) end
+    else
+      error(why) -> error(why)
+    end
+  end
+
+  # Whether a binding starts here: a pattern, perhaps a type, then =.
+  def assignment_start?(given: P): boolean do
+    p = %P{given | probing: true}
+    case pattern_of(p) do
+      error(_) -> false
+      ok({_, p1}) ->
+        if peek(p1).kind == ":" do
+          case type_name(adv(p1)) do
+            error(_) -> false
+            ok({_, p2}) -> peek(p2).kind == "="
+          end
+        else peek(p1).kind == "=" end
+    end
+  end
+
+  # Whether an arm starts here: a pattern and -> or when; in a cond, a
+  # condition and ->.
+  def arm_start?(given: P): boolean do
+    p = %P{given | probing: true}
+    if p.cond_arms do
+      case expr_at(p, 0) do
+        error(_) -> false
+        ok({_, p1}) -> peek(p1).kind == "->"
+      end
+    else
+      case pattern_of(p) do
+        error(_) -> false
+        ok({_, p1}) -> peek(p1).kind == "->" or peek(p1).text == "when"
+      end
+    end
+  end
+
+  # --- names ------------------------------------------------------------------------
+
+  def binding_name?(name: string): boolean do
+    reserved = ["true", "false", "def", "defmodule", "do", "end", "else", "if", "return", "and", "or", "not", "assert", "main", "case", "length", "when", "prepend", "concat", "map", "filter", "reduce", "put", "get", "has_key", "fn", "import", "extern", "require", "defp", "in", "cond", "raise", "with", "for", "unless", "defprotocol", "defimpl", "defmacro"]
+    if name == "" or name in reserved do false else
+      first = String.slice(name, 0, 1)
+      (first == "_" or lower_first?(first)) and Enum.all?(String.codepoints(String.slice(name, 1, String.length(name))), fn c -> c == "_" or AlchemLexer.letter?(elem(AlchemLexer.rune(c, 0), 0)) or AlchemLexer.digit?(elem(AlchemLexer.rune(c, 0), 0)) end)
+    end
+  end
+  def member_name?(name: string): boolean do
+    name in ["length", "prepend", "concat", "map", "filter", "reduce", "put", "get", "has_key", "main"] or binding_name?(name)
+  end
+
+  def field_chain(e: AlchemJson.J, at: AlchemLexer.Token, names: list[string]): result[AlchemJson.J, string] do
+    case names do
+      [] -> ok(e)
+      [name | rest] ->
+        if not member_name?(name) do error(problem(at.line, at.column, "invalid field name " <> quoted(name))) else
+          field_chain(expr_of("field", at.line, at.column, [{"Left", e}, {"Name", s(name)}]), at, rest)
+        end
+    end
+  end
+
+  # --- expressions ------------------------------------------------------------------
+
+  def precedence(t: AlchemLexer.Token): integer do
+    case t.text do
+      "or" -> 1
+      "|||" -> 1
+      "^^^" -> 1
+      "and" -> 2
+      "&&&" -> 2
+      "|>" -> 4
+      "<<<" -> 4
+      ">>>" -> 4
+      "+" -> 6
+      "-" -> 6
+      "*" -> 7
+      "/" -> 7
+      "%" -> 7
+      "**" -> 8
+      other ->
+        if other in ["==", "!=", "<", "<=", ">", ">=", "in", "=~"] do 3 else
+          if other in ["<>", "++", "--", ".."] do 5 else -1 end
+        end
+    end
+  end
+
+  def expr_at(given: P, min: integer): result[tuple[AlchemJson.J, P], string] do
+    with ok(p) <- descend(given),
+         ok({left, p1}) <- primary(p),
+         ok({e, p2}) <- links(p1, min, left, false, 0) do
+      ok({e, ascend(p2, given.depth)})
+    else
+      error(why) -> error(why)
+    end
+  end
+
+  def links(p: P, min: integer, left: AlchemJson.J, compared: boolean, count: integer): result[tuple[AlchemJson.J, P], string] do
+    t = peek(p)
+    prec = precedence(t)
+    if prec < min or (t.text == "-" and new_line?(p)) do ok({left, p}) else
+      if count >= 1024 do error(chain_limit(t)) else
+        if prec == 3 and compared do error(problem(t.line, t.column, "chained comparisons are unsupported")) else
+          {stage_notes, p0} = if t.text == "|>" do notes(p, t) else {[], p} end
+          p1 = adv(p0)
+          next = if t.text == "**" do prec else prec + 1 end
+          with ok({right, p2}) <- expr_at(p1, next) do
+            line = t.line
+            col = t.column
+            if t.text == ".." do
+              ranged = expr_of("range", line, col, [{"Left", left}, {"Right", right}])
+              step = peek(p2)
+              if step.kind == "operator" and step.text == "//" do
+                with ok({by, p3}) <- expr_at(adv(p2), 6) do links(p3, min, set(ranged, [{"Args", AlchemJson.J.list([by])}]), compared, count + 1) else
+  error(why) -> error(why)
+end
+              else links(p2, min, ranged, compared, count + 1) end
+            else
+              if t.text == "=~" do links(p2, min, expr_of("call", line, col, [{"Name", s("String.match?")}, {"Args", AlchemJson.J.list([left, right])}]), true, count + 1) else
+                if t.text == "in" do links(p2, min, expr_of("in", line, col, [{"Left", left}, {"Right", right}]), true, count + 1) else
+                  if t.text == "|>" do
+                    if text(right, "Kind") != "call" do error(problem(line, col, "pipe target must be a function call")) else
+                      piped = set(right, [{"Pipe", b(true)}, {"Args", AlchemJson.J.list([left | items(right, "Args")])}] ++ if stage_notes == [] do [] else [{"Comments", strs(stage_notes)}] end)
+                      links(p2, min, piped, compared, count + 1)
+                    end
+                  else
+                    links(p2, min, expr_of("binary", line, col, [{"Op", s(t.text)}, {"Left", left}, {"Right", right}]), compared or prec == 3, count + 1)
+                  end
+                end
+              end
+            end
+          else
+            error(why) -> error(why)
+          end
+        end
+      end
+    end
+  end
+
+  def primary(given: P): result[tuple[AlchemJson.J, P], string] do
+    with ok(p) <- descend(given),
+         ok({e, p1}) <- atom(p),
+         ok({chained, p2}) <- suffixes(p1, e, 0) do
+      ok({chained, ascend(p2, given.depth)})
+    else
+      error(why) -> error(why)
+    end
+  end
+
+  def suffixes(p: P, e: AlchemJson.J, count: integer): result[tuple[AlchemJson.J, P], string] do
+    k = peek(p).kind
+    if not (k == "." or ((k == "[" or k == "(") and not new_line?(p))) do ok({e, p}) else
+      if count >= 1024 do error(chain_limit(peek(p))) else
+        if k == "." do
+          p1 = adv(p)
+          if peek(p1).kind == "(" do suffixes(p1, e, count + 1) else
+            with ok({name, p2}) <- expect(p1, "identifier", ""),
+                 ok(chained) <- field_chain(e, name, String.split(name.text, ".")) do
+              suffixes(p2, chained, count + 1)
+            else
+              error(why) -> error(why)
+            end
+          end
+        else
+          if k == "(" do
+            t = peek(p)
+            with ok({args, p1}) <- call_arguments(adv(p)) do
+              if text(e, "Kind") == "name" and not String.contains?(text(e, "Name"), ".") do
+                suffixes(p1, expr_of("call", AlchemJson.int_of(get(e, "Line")), AlchemJson.int_of(get(e, "Column")), [{"Name", get(e, "Name")}, {"Args", AlchemJson.J.list(args)}]), count + 1)
+              else
+                suffixes(p1, expr_of("invoke", t.line, t.column, [{"Left", e}, {"Args", AlchemJson.J.list(args)}]), count + 1)
+              end
+            else
+              error(why) -> error(why)
+            end
+          else
+            if not p.probing and ((p.in_arm and arm_start?(p)) or assignment_start?(p)) do ok({e, p}) else
+              t = peek(p)
+              with ok({index, p1}) <- expr_at(adv(p), 0),
+                   ok({_, p2}) <- expect(p1, "]", "") do
+                suffixes(p2, expr_of("index", t.line, t.column, [{"Left", e}, {"Right", index}]), count + 1)
+              else
+                error(why) -> error(why)
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  # The arguments of a call up to its ), and the state after it.
+  def call_arguments(p: P): result[tuple[list[AlchemJson.J], P], string] do
+    with ok({args, p1}) <- (if peek(p).kind != ")" do expression_list(p, []) else ok({[], p}) end),
+         ok({_, p2}) <- expect(p1, ")", "") do
+      ok({args, p2})
+    else
+      error(why) -> error(why)
+    end
+  end
+  def expression_list(p: P, done: list[AlchemJson.J]): result[tuple[list[AlchemJson.J], P], string] do
+    with ok({arg, p1}) <- expr_at(p, 0) do
+      if peek(p1).kind != "," do ok({Enum.reverse([arg | done]), p1}) else expression_list(adv(p1), [arg | done]) end
+    else
+      error(why) -> error(why)
+    end
+  end
+
+  # A state with the arm, cond and try settings given, and put back after.
+  def plain(p: P): P do %P{p | in_arm: false, cond_arms: false} end
+  def restore(after_it: P, before_it: P): P do %P{after_it | in_arm: before_it.in_arm, cond_arms: before_it.cond_arms} end
+
+  def atom(p: P): result[tuple[AlchemJson.J, P], string] do
+    t = peek(p)
+    e = expr(t.line, t.column)
+    if t.text == "fn" and t.kind == "identifier" do
+      if ahead(p, 1).kind == "(" do closure(p) else lambda(p) end
+    else
+      if t.kind == "identifier" and ((t.text == "try" and ahead(p, 1).text == "do") or t.text == "for") do
+        inner = %P{p | in_arm: false, cond_arms: false, trying: 0}
+        made_it = if t.text == "for" do comprehension(inner) else try_expr(inner) end
+        case made_it do
+          error(why) -> error(why)
+          ok({v, after_it}) -> ok({v, %P{after_it | in_arm: p.in_arm, cond_arms: p.cond_arms, trying: p.trying}})
+        end
+      else
+        if t.kind == "sigil" do sigil(p, t, e) else
+          if t.kind == "identifier" and t.text in ["if", "unless", "case", "cond", "with"] do
+            with ok({st, p1}) <- compound(plain(p), statement(t.line, t.column)) do
+              ok({set(e, [{"Kind", s("value")}, {"Body", AlchemJson.J.list([st])}]), restore(p1, p)})
+            else
+              error(why) -> error(why)
+            end
+          else
+            if t.kind == "(" do
+              with ok({v, p1}) <- expr_at(adv(p), 0),
+                   ok({_, p2}) <- expect(p1, ")", "") do
+                ok({v, p2})
+              else
+                error(why) -> error(why)
+              end
+            else
+              next = ahead(p, 1)
+              if t.kind == "@" and next.kind == "identifier" and next.line == t.line and next.column == t.column + 1 do
+                ok({set(e, [{"Kind", s("constant")}, {"Name", s(next.text)}]), adv_n(p, 2)})
+              else
+                if t.text in ["-", "not", "~~~"] do unary(adv(p), t, e) else atom_kind(p, t, e) end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  def sigil(p: P, t: AlchemLexer.Token, e: AlchemJson.J): result[tuple[AlchemJson.J, P], string] do
+    pieces = String.split(t.text, "\u{0}", [parts: 3])
+    name = Enum.at(pieces, 0, "")
+    body = Enum.at(pieces, 1, "")
+    written = heredoc_of(p, t)
+    base = set(e, [{"Kind", s("sigil")}, {"Name", s(name)}, {"Value", set(literal("string"), [{"Text", s(body)}])}, {"Op", s(Enum.at(pieces, 2, ""))},
+      {"Heredoc", s(written)}, {"Delimiter", s(if written == "" do sigil_delimiter(p, t) else "" end)}])
+    p1 = adv(p)
+    if lower_first?(name) and String.contains?(body, "\#{") do
+      with ok({template, p2}) <- sigil_template(p1, t, body) do ok({set(base, [{"Left", template}]), p2}) else
+  error(why) -> error(why)
+end
+    else ok({base, p1}) end
+  end
+
+  def unary(p: P, t: AlchemLexer.Token, e: AlchemJson.J): result[tuple[AlchemJson.J, P], string] do
+    next = peek(p)
+    if t.text == "-" and next.kind == "integer" do
+      case parse_integer("-" <> next.text) do
+        none -> error(problem(t.line, t.column, "integer outside signed 64-bit range"))
+        some(v) -> ok({set(e, [{"Kind", s("literal")}, {"Value", set(literal("integer"), [{"Integer", n(v)}])}]), adv(p)})
+      end
+    else
+      if t.text == "-" and next.kind == "float" do
+        with ok({v, p1}) <- atom(p) do
+          ok({set(v, [{"Value", set(get(v, "Value"), [{"Float", AlchemJson.J.number(float_json(next.text, true))}])}, {"Line", n(t.line)}, {"Column", n(t.column)}]), p1})
+        else
+          error(why) -> error(why)
+        end
+      else
+        with ok({v, p1}) <- primary(p) do
+          ok({set(e, [{"Kind", s("unary")}, {"Op", s(t.text)}, {"Left", v}]), p1})
+        else
+          error(why) -> error(why)
+        end
+      end
+    end
+  end
+
+  def atom_kind(p: P, t: AlchemLexer.Token, e: AlchemJson.J): result[tuple[AlchemJson.J, P], string] do
+    case t.kind do
+      "%Name" -> struct_literal(adv(p), t, set(e, [{"Kind", s("struct")}, {"Name", s(t.text)}]))
+      "&" -> capture(adv(p), t, e)
+      "%{" ->
+        p1 = adv(p)
+        with ok({{keys, values}, p2}) <- (if peek(p1).kind != "}" do map_entries(p1, [], []) else ok({{[], []}, p1}) end),
+             ok({_, p3}) <- expect(p2, "}", "") do
+          ok({set(e, [{"Kind", s("map")}, {"Keys", made(keys)}, {"Args", made(values)}]), p3})
+        else
+          error(why) -> error(why)
+        end
+      "[" -> sequence(adv(p), t, set(e, [{"Kind", s("list")}]), "]")
+      "{" -> sequence(adv(p), t, set(e, [{"Kind", s("tuple")}]), "}")
+      "integer" ->
+        case parse_integer(t.text) do
+          none -> error(problem(t.line, t.column, "integer outside signed 64-bit range"))
+          some(v) ->
+            spelled = String.contains?(t.text, "_") or String.contains?(t.text, "x") or String.contains?(t.text, "o") or String.contains?(t.text, "b")
+            ok({set(e, [{"Kind", s("literal")}, {"Value", set(literal("integer"), [{"Integer", n(v)}, {"Text", s(if spelled do t.text else "" end)}])}]), adv(p)})
+        end
+      "float" -> ok({set(e, [{"Kind", s("literal")}, {"Value", set(literal("float"), [{"Float", AlchemJson.J.number(float_json(t.text, false))}])}]), adv(p)})
+      "template" ->
+        with ok({template, p1}) <- template(adv(p), t) do ok({set(template, [{"Heredoc", s(heredoc_of(p, t))}]), p1}) else
+  error(why) -> error(why)
+end
+      "atom" -> ok({set(e, [{"Kind", s("literal")}, {"Value", set(literal("atom"), [{"Text", s(t.text)}])}]), adv(p)})
+      "string" -> ok({set(e, [{"Kind", s("literal")}, {"Value", set(literal("string"), [{"Text", s(unquote(t.text))}])}, {"Heredoc", s(heredoc_of(p, t))}]), adv(p)})
+      "identifier" -> name(adv(p), t, e)
+      _ -> error(problem(t.line, t.column, "expected expression, found " <> quoted(t.text)))
+    end
+  end
+
+  def struct_literal(p: P, t: AlchemLexer.Token, e: AlchemJson.J): result[tuple[AlchemJson.J, P], string] do
+    with ok({_, p1}) <- expect(p, "{", "") do
+      if peek(p1).kind == "}" do ok({e, adv(p1)}) else
+        based = if not (peek(p1).kind == "identifier" and ahead(p1, 1).kind == ":") do
+          with ok({base, p2}) <- expr_at(p1, 0),
+               ok({_, p3}) <- expect(p2, "|", "") do
+            ok({set(e, [{"Left", base}]), p3})
+          else
+            error(why) -> error(why)
+          end
+        else ok({e, p1}) end
+        with ok({e2, p4}) <- based,
+             ok({{labels, values}, p5}) <- struct_fields(p4, [], []),
+             ok({_, p6}) <- expect(p5, "}", "") do
+          ok({set(e2, [{"Labels", strs(labels)}, {"Args", AlchemJson.J.list(values)}]), p6})
+        else
+          error(why) -> error(why)
+        end
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+  def struct_fields(p: P, labels: list[string], values: list[AlchemJson.J]): result[tuple[tuple[list[string], list[AlchemJson.J]], P], string] do
+    with ok({label, p1}) <- expect(p, "identifier", ""),
+         ok({_, p2}) <- expect(p1, ":", ""),
+         ok({value, p3}) <- expr_at(p2, 0) do
+      if peek(p3).kind != "," do ok({{Enum.reverse([label.text | labels]), Enum.reverse([value | values])}, p3}) else struct_fields(adv(p3), [label.text | labels], [value | values]) end
+    else
+      error(why) -> error(why)
+    end
+  end
+
+  def capture(p: P, t: AlchemLexer.Token, e: AlchemJson.J): result[tuple[AlchemJson.J, P], string] do
+    next = peek(p)
+    if next.kind == "integer" and p.capture >= 0 do
+      index = case Integer.parse(next.text) do
+        ok(v) -> v
+        error(_) -> 0
+      end
+      if index < 1 or index > 16 do error(problem(next.line, next.column, "capture placeholders are &1 to &16")) else
+        ok({set(e, [{"Kind", s("name")}, {"Name", s("&" <> next.text)}]), %P{adv(p) | capture: max(p.capture, index)}})
+      end
+    else
+      parenthesized = next.kind == "("
+      call = next.kind == "identifier" and ahead(p, 1).kind == "(" and ahead(p, 1).line == next.line
+      if parenthesized or call or next.kind == "&" do
+        if p.capture >= 0 do error(problem(t.line, t.column, "captures cannot be nested")) else
+          p1 = %P{(if parenthesized do adv(p) else p end) | capture: 0}
+          case expr_at(p1, 0) do
+            error(why) -> error(why)
+            ok({body, p2}) ->
+              count = p2.capture
+              p3 = %P{p2 | capture: -1}
+              closed = if parenthesized do
+                case expect(p3, ")", "") do
+                  ok({_, p4}) -> ok(p4)
+                  error(why) -> error(why)
+                end
+              else ok(p3) end
+              case closed do
+                error(why) -> error(why)
+                ok(p5) ->
+                  if count == 0 do error(problem(t.line, t.column, "a capture needs at least &1")) else
+                    ok({set(e, [{"Kind", s("capture")}, {"Left", body}, {"Value", set(literal("integer"), [{"Integer", n(count)}])}]), p5})
+                  end
+              end
+          end
+        end
+      else
+        with ok({name, p1}) <- expect(p, "identifier", "") do
+          ref = set(e, [{"Kind", s("funcref")}, {"Name", s(name.text)}])
+          slash = peek(p1)
+          if slash.kind == "operator" and slash.text == "/" and ahead(p1, 1).kind == "integer" do
+            ok({set(ref, [{"Op", s(ahead(p1, 1).text)}]), adv_n(p1, 2)})
+          else ok({ref, p1}) end
+        else
+          error(why) -> error(why)
+        end
+      end
+    end
+  end
+
+  def map_entries(p: P, keys: list[AlchemJson.J], values: list[AlchemJson.J]): result[tuple[tuple[list[AlchemJson.J], list[AlchemJson.J]], P], string] do
+    with ok({key, p1}) <- expr_at(p, 0),
+         ok({_, p2}) <- expect(p1, "=>", ""),
+         ok({value, p3}) <- expr_at(p2, 0) do
+      if peek(p3).kind != "," do ok({{Enum.reverse([key | keys]), Enum.reverse([value | values])}, p3}) else map_entries(adv(p3), [key | keys], [value | values]) end
+    else
+      error(why) -> error(why)
+    end
+  end
+
+  # A list or tuple from after its opening bracket.
+  def sequence(p: P, t: AlchemLexer.Token, e: AlchemJson.J, close: string): result[tuple[AlchemJson.J, P], string] do
+    listed = t.kind == "["
+    with ok({{elements, tail}, p1}) <- (if peek(p).kind != close do elements(p, listed, []) else ok({{[], nul()}, p}) end) do
+      {closing_notes, p2} = if listed do notes(p1, peek(p1)) else {[], p1} end
+      with ok({_, p3}) <- expect(p2, close, "") do
+        ok({set(e, [{"Args", made(elements)}, {"Right", tail}, {"Closing", made_strs(closing_notes)}]), p3})
+      else
+        error(why) -> error(why)
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+  def elements(p: P, listed: boolean, done: list[AlchemJson.J]): result[tuple[tuple[list[AlchemJson.J], AlchemJson.J], P], string] do
+    {above, p0} = if listed do notes(p, peek(p)) else {[], p} end
+    key = peek(p0)
+    if listed and key.kind == "identifier" and ahead(p0, 1).kind == ":" do
+      with ok({value, p1}) <- expr_at(adv_n(p0, 2), 0) do
+        name = expr_of("literal", key.line, key.column, [{"Value", set(literal("atom"), [{"Text", s(key.text)}])}])
+        pair = expr_of("tuple", key.line, key.column, [{"Op", s("keyword")}, {"Args", AlchemJson.J.list([name, value])}, {"Comments", made_strs(above)}])
+        if peek(p1).kind != "," do ok({{Enum.reverse([pair | done]), nul()}, p1}) else elements(adv(p1), listed, [pair | done]) end
+      else
+        error(why) -> error(why)
+      end
+    else
+      with ok({arg, p1}) <- expr_at(p0, 0) do
+        noted = if above == [] do arg else set(arg, [{"Comments", strs(above)}]) end
+        if listed and peek(p1).kind == "|" do
+          with ok({tail, p2}) <- expr_at(adv(p1), 0) do ok({{Enum.reverse([noted | done]), tail}, p2}) else
+  error(why) -> error(why)
+end
+        else
+          if peek(p1).kind != "," do ok({{Enum.reverse([noted | done]), nul()}, p1}) else elements(adv(p1), listed, [noted | done]) end
+        end
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+
+  def name(p: P, t: AlchemLexer.Token, e: AlchemJson.J): result[tuple[AlchemJson.J, P], string] do
+    if t.text == "true" or t.text == "false" do
+      ok({set(e, [{"Kind", s("literal")}, {"Value", set(literal("boolean"), [{"Boolean", b(t.text == "true")}])}]), p})
+    else
+      named = set(e, [{"Kind", s("name")}, {"Name", s(t.text)}])
+      if String.ends_with?(t.text, ".") and peek(p).kind == "(" and not new_line?(p) and not upper_first?(t.text) do
+        segments = String.split(String.trim_trailing(t.text, "."), ".")
+        case field_chain(set(named, [{"Name", s(hd(segments))}]), t, tl(segments)) do
+          ok(v) -> ok({v, p})
+          error(why) -> error(why)
+        end
+      else
+        segments = String.split(t.text, ".")
+        if length(segments) > 1 and not upper_first?(t.text) do
+          case field_chain(set(named, [{"Name", s(hd(segments))}]), t, tl(segments)) do
+            ok(v) -> ok({v, p})
+            error(why) -> error(why)
+          end
+        else
+          if peek(p).kind == "(" and not new_line?(p) do
+            with ok({args, p1}) <- call_arguments(adv(p)) do ok({set(named, [{"Kind", s("call")}, {"Args", made(args)}]), p1}) else
+  error(why) -> error(why)
+end
+          else ok({named, p}) end
+        end
+      end
+    end
+  end
+
+  def closure(p: P): result[tuple[AlchemJson.J, P], string] do
+    t = peek(p)
+    e = expr_of("closure", t.line, t.column, [])
+    with ok({_, p1}) <- expect(adv(p), "(", ""),
+         ok({params, p2}) <- (if peek(p1).kind != ")" do typed_params(p1, []) else ok({[], p1}) end),
+         ok({_, p3}) <- expect(p2, ")", ""),
+         ok({_, p4}) <- expect(p3, ":", ""),
+         ok({result_type, p5}) <- type_name(p4),
+         ok({_, p6}) <- expect(p5, "identifier", "do"),
+         ok({body, p7}) <- block(%P{p6 | in_arm: false, cond_arms: false, capture: -1}, false),
+         ok({_, p8}) <- expect(p7, "identifier", "end") do
+      ok({set(e, [{"Params", made(params)}, {"ReturnType", s(result_type)}, {"Body", made(body)}]), %P{p8 | in_arm: p.in_arm, cond_arms: p.cond_arms, capture: p.capture}})
+    else
+      error(why) -> error(why)
+    end
+  end
+  def typed_params(p: P, done: list[AlchemJson.J]): result[tuple[list[AlchemJson.J], P], string] do
+    with ok({name, p1}) <- expect(p, "identifier", ""),
+         ok({_, p2}) <- expect(p1, ":", ""),
+         ok({type, p3}) <- type_name(p2) do
+      param = set(parameter(name.line, name.column), [{"Name", s(name.text)}, {"Type", s(type)}])
+      if peek(p3).kind != "," do ok({Enum.reverse([param | done]), p3}) else typed_params(adv(p3), [param | done]) end
+    else
+      error(why) -> error(why)
+    end
+  end
+
+  # A parameter of a pattern: its name when it is one, else the pattern.
+  def pattern_parameter(pat: AlchemJson.J): AlchemJson.J do
+    base = parameter(AlchemJson.int_of(get(pat, "Line")), AlchemJson.int_of(get(pat, "Column")))
+    if text(pat, "Kind") == "name" do set(base, [{"Name", get(pat, "Name")}]) else set(base, [{"Pattern", pat}]) end
+  end
+
+  def lambda(p: P): result[tuple[AlchemJson.J, P], string] do
+    t = peek(p)
+    p1 = adv(p)
+    e = expr_of("lambda", t.line, t.column, [])
+    first = peek(p1)
+    inner = fn(q: P): P do %P{q | in_arm: false, cond_arms: false, capture: -1} end
+    back = fn(q: P): P do %P{q | in_arm: p.in_arm, cond_arms: p.cond_arms, capture: p.capture} end
+    if first.line > t.line and first.kind != "->" do
+      with ok({arms, p2}) <- arms_of(inner.(p1)),
+           ok({_, p3}) <- expect(p2, "identifier", "end") do
+        name = "fn$#{t.line}_#{t.column}"
+        clauses = set(statement(t.line, t.column), [{"Kind", s("clauses")}, {"Name", s(name)}, {"Arms", made(arms)}])
+        ok({set(e, [{"Params", AlchemJson.J.list([set(parameter(t.line, t.column), [{"Name", s(name)}])])}, {"Body", AlchemJson.J.list([clauses])}]), back.(p3)})
+      else
+        error(why) -> error(why)
+      end
+    else
+      with ok({params, p2}) <- lambda_params(p1, []),
+           ok({_, p3}) <- expect(p2, "->", ""),
+           ok({body, p4}) <- block(inner.(p3), false),
+           ok({_, p5}) <- expect(p4, "identifier", "end") do
+        ok({set(e, [{"Params", made(params)}, {"Body", made(body)}]), back.(p5)})
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+  def lambda_params(p: P, done: list[AlchemJson.J]): result[tuple[list[AlchemJson.J], P], string] do
+    if peek(p).kind == "->" do ok({Enum.reverse(done), p}) else
+      with ok({pat, p1}) <- pattern_of(p) do
+        if peek(p1).kind != "," do ok({Enum.reverse([pattern_parameter(pat) | done]), p1}) else lambda_params(adv(p1), [pattern_parameter(pat) | done]) end
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+
+  # A string's value from its text as the lexer gives it, which Go's
+  # strconv.Unquote takes.
+  def unquote(raw: string): string do
+    inner = if byte_size(raw) >= 2 do binary_part(raw, 1, byte_size(raw) - 2) else "" end
+    if not String.contains?(inner, "\\") do inner else Enum.join(Enum.reverse(unquoted(inner, 0, [])), "") end
+  end
+  def unquoted(t: string, i: integer, done: list[string]): list[string] do
+    if i >= byte_size(t) do done else
+      c = AlchemLexer.byte(t, i)
+      if c != 92 do
+        stop = case AlchemLexer.index_of(t, i, 92) do
+          -1 -> byte_size(t)
+          k -> k
+        end
+        unquoted(t, stop, [binary_part(t, i, stop - i) | done])
+      else
+        e = AlchemLexer.byte(t, i + 1)
+        simple = case e do
+          97 -> "\u{7}"
+          98 -> "\u{8}"
+          102 -> "\u{C}"
+          110 -> "\n"
+          114 -> "\r"
+          116 -> "\t"
+          118 -> "\u{B}"
+          92 -> "\\"
+          34 -> "\""
+          39 -> "'"
+          _ -> ""
+        end
+        if simple != "" do unquoted(t, i + 2, [simple | done]) else
+          if e == 120 do unquoted(t, i + 4, [byte_text(AlchemLexer.hex_value(binary_part(t, i + 2, 2))) | done]) else
+            if e == 117 do unquoted(t, i + 6, [code_text(AlchemLexer.hex_value(binary_part(t, i + 2, 4))) | done]) else
+              if e == 85 do unquoted(t, i + 10, [code_text(AlchemLexer.hex_value(binary_part(t, i + 2, 8))) | done]) else
+                value = (e - 48) * 64 + (AlchemLexer.byte(t, i + 2) - 48) * 8 + (AlchemLexer.byte(t, i + 3) - 48)
+                unquoted(t, i + 4, [byte_text(value) | done])
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  # The string of one byte.
+  def byte_text(v: integer): string do Enum.at(byte_table(), v, "") end
+  def byte_table(): list[string] do
+    ["\x00", "\x01", "\x02", "\x03", "\x04", "\x05", "\x06", "\x07", "\x08", "\x09", "\x0A", "\x0B", "\x0C", "\x0D", "\x0E", "\x0F", "\x10", "\x11", "\x12", "\x13", "\x14", "\x15", "\x16", "\x17", "\x18", "\x19", "\x1A", "\x1B", "\x1C", "\x1D", "\x1E", "\x1F", "\x20", "\x21", "\x22", "\x23", "\x24", "\x25", "\x26", "\x27", "\x28", "\x29", "\x2A", "\x2B", "\x2C", "\x2D", "\x2E", "\x2F", "\x30", "\x31", "\x32", "\x33", "\x34", "\x35", "\x36", "\x37", "\x38", "\x39", "\x3A", "\x3B", "\x3C", "\x3D", "\x3E", "\x3F", "\x40", "\x41", "\x42", "\x43", "\x44", "\x45", "\x46", "\x47", "\x48", "\x49", "\x4A", "\x4B", "\x4C", "\x4D", "\x4E", "\x4F", "\x50", "\x51", "\x52", "\x53", "\x54", "\x55", "\x56", "\x57", "\x58", "\x59", "\x5A", "\x5B", "\x5C", "\x5D", "\x5E", "\x5F", "\x60", "\x61", "\x62", "\x63", "\x64", "\x65", "\x66", "\x67", "\x68", "\x69", "\x6A", "\x6B", "\x6C", "\x6D", "\x6E", "\x6F", "\x70", "\x71", "\x72", "\x73", "\x74", "\x75", "\x76", "\x77", "\x78", "\x79", "\x7A", "\x7B", "\x7C", "\x7D", "\x7E", "\x7F", "\x80", "\x81", "\x82", "\x83", "\x84", "\x85", "\x86", "\x87", "\x88", "\x89", "\x8A", "\x8B", "\x8C", "\x8D", "\x8E", "\x8F", "\x90", "\x91", "\x92", "\x93", "\x94", "\x95", "\x96", "\x97", "\x98", "\x99", "\x9A", "\x9B", "\x9C", "\x9D", "\x9E", "\x9F", "\xA0", "\xA1", "\xA2", "\xA3", "\xA4", "\xA5", "\xA6", "\xA7", "\xA8", "\xA9", "\xAA", "\xAB", "\xAC", "\xAD", "\xAE", "\xAF", "\xB0", "\xB1", "\xB2", "\xB3", "\xB4", "\xB5", "\xB6", "\xB7", "\xB8", "\xB9", "\xBA", "\xBB", "\xBC", "\xBD", "\xBE", "\xBF", "\xC0", "\xC1", "\xC2", "\xC3", "\xC4", "\xC5", "\xC6", "\xC7", "\xC8", "\xC9", "\xCA", "\xCB", "\xCC", "\xCD", "\xCE", "\xCF", "\xD0", "\xD1", "\xD2", "\xD3", "\xD4", "\xD5", "\xD6", "\xD7", "\xD8", "\xD9", "\xDA", "\xDB", "\xDC", "\xDD", "\xDE", "\xDF", "\xE0", "\xE1", "\xE2", "\xE3", "\xE4", "\xE5", "\xE6", "\xE7", "\xE8", "\xE9", "\xEA", "\xEB", "\xEC", "\xED", "\xEE", "\xEF", "\xF0", "\xF1", "\xF2", "\xF3", "\xF4", "\xF5", "\xF6", "\xF7", "\xF8", "\xF9", "\xFA", "\xFB", "\xFC", "\xFD", "\xFE", "\xFF"]
+  end
+  def code_text(v: integer): string do
+    if v < 128 do byte_text(v) else
+      if v < 2048 do byte_text(192 + div(v, 64)) <> byte_text(128 + rem(v, 64)) else
+        if v < 65536 do byte_text(224 + div(v, 4096)) <> byte_text(128 + rem(div(v, 64), 64)) <> byte_text(128 + rem(v, 64)) else
+          byte_text(240 + div(v, 262144)) <> byte_text(128 + rem(div(v, 4096), 64)) <> byte_text(128 + rem(div(v, 64), 64)) <> byte_text(128 + rem(v, 64))
+        end
+      end
+    end
+  end
+
+  # --- templates --------------------------------------------------------------------
+
+  # An interpolated string as literal text and expressions.
+  def template(p: P, t: AlchemLexer.Token): result[tuple[AlchemJson.J, P], string] do
+    raw = t.text
+    case template_parts(p, t, raw, 1, 1, []) do
+      error(why) -> error(why)
+      ok(args) -> ok({expr_of("template", t.line, t.column, [{"Args", made(args)}]), p})
+    end
+  end
+  def template_text(t: AlchemLexer.Token, raw: string, from: integer, to: integer, done: list[AlchemJson.J]): result[list[AlchemJson.J], string] do
+    if from == to do ok(done) else
+      written = "\"" <> binary_part(raw, from, to - from) <> "\""
+      plain = AlchemLexer.unescape(written)
+      if AlchemLexer.quoted?(plain) do
+        ok([expr_of("literal", t.line, t.column, [{"Op", s("text")}, {"Value", set(literal("string"), [{"Text", s(unquote(plain))}])}]) | done])
+      else
+        case AlchemLexer.string_problem(written) do
+          "" -> error(problem(t.line, t.column, "invalid string: invalid syntax"))
+          why -> error(problem(t.line, t.column, why))
+        end
+      end
+    end
+  end
+  def template_parts(p: P, t: AlchemLexer.Token, raw: string, i: integer, start: integer, done: list[AlchemJson.J]): result[list[AlchemJson.J], string] do
+    if i >= byte_size(raw) - 1 do
+      case template_text(t, raw, start, byte_size(raw) - 1, done) do
+        ok(all) -> ok(Enum.reverse(all))
+        error(why) -> error(why)
+      end
+    else
+      c = AlchemLexer.byte(raw, i)
+      if c == 92 do template_parts(p, t, raw, i + 2, start, done) else
+        if c != 35 or AlchemLexer.byte(raw, i + 1) != 123 do template_parts(p, t, raw, i + 1, start, done) else
+          with ok(with_text) <- template_text(t, raw, start, i, done) do
+            {stop, _} = AlchemLexer.interpolation_end(raw, i)
+            case AlchemLexer.scan(binary_part(raw, i + 2, stop - i - 2)) do
+              error(why) -> error(problem(t.line, t.column, "interpolation: " <> why))
+              ok({tokens, _}) ->
+                offset = t.column + AlchemLexer.runes(raw, 0, i + 2) - 1
+                moved = Enum.map(tokens, fn k -> %AlchemLexer.Token{k | line: t.line, column: k.column + offset} end)
+                inner = %P{p | rest: moved, last: %AlchemLexer.Token{kind: "", text: "", line: 0, column: 0}, comments: [], in_arm: false, cond_arms: false, trying: 0, probing: false, keep: false, tags: [], noted: [], carry: [], source: ""}
+                with ok({value, p1}) <- expr_at(inner, 0),
+                     ok({_, _}) <- expect(p1, "EOF", "") do
+                  template_parts(p, t, raw, stop + 1, stop + 1, [value | with_text])
+                else
+                  error(why) -> error(why)
+                end
+            end
+          else
+            error(why) -> error(why)
+          end
+        end
+      end
+    end
+  end
+
+  # A lower-case sigil's text with #{...} made into a template, as a
+  # string would be.
+  def sigil_template(p: P, t: AlchemLexer.Token, body: string): result[tuple[AlchemJson.J, P], string] do
+    case sigil_raw(t, body, 0, 0, []) do
+      error(why) -> error(why)
+      ok(pieces) -> template(p, %AlchemLexer.Token{kind: "template", text: "\"" <> Enum.join(Enum.reverse(pieces), "") <> "\"", line: t.line, column: t.column})
+    end
+  end
+  def literal_part(text: string): string do
+    String.replace(String.replace(String.replace(String.replace(String.replace(text, "\\", "\\\\"), "\"", "\\\""), "\n", "\\n"), "\r", "\\r"), "\t", "\\t")
+  end
+  def sigil_raw(t: AlchemLexer.Token, body: string, i: integer, start: integer, done: list[string]): result[list[string], string] do
+    if i + 1 >= byte_size(body) do ok([literal_part(binary_part(body, start, byte_size(body) - start)) | done]) else
+      if AlchemLexer.byte(body, i) != 35 or AlchemLexer.byte(body, i + 1) != 123 do sigil_raw(t, body, i + 1, start, done) else
+        {stop, wrong} = AlchemLexer.interpolation_end(body, i)
+        if wrong != "" do error(problem(t.line, t.column, "sigil interpolation: " <> wrong)) else
+          sigil_raw(t, body, stop + 1, stop + 1, [binary_part(body, i, stop + 1 - i), literal_part(binary_part(body, start, i - start)) | done])
+        end
+      end
+    end
+  end
+
+  # --- where a token is in the source ---------------------------------------------
+
+  # The byte offset of a token, from the offsets at which its lines start.
+  def offset(p: P, t: AlchemLexer.Token): option[integer] do
+    if p.source == "" do none else
+      case Map.get(p.starts, t.line) do
+        none -> none
+        some(start) -> some(columns(p.source, start, 1, t.column))
+      end
+    end
+  end
+  def columns(text: string, at: integer, column: integer, wanted: integer): integer do
+    if column >= wanted or at >= byte_size(text) do at else columns(text, at + elem(AlchemLexer.rune(text, at), 1), column + 1, wanted) end
+  end
+
+  def line_starts(text: string): map[integer, integer] do
+    nothing: map[integer, integer] = %{}
+    {starts, _, _} = Enum.reduce(String.split(text, "\n"), {nothing, 1, 0}, fn line, {sofar, number, at} ->
+      {Map.put(sofar, number, at), number + 1, at + byte_size(line) + 1}
+    end)
+    starts
+  end
+
+  # How a string or sigil at a token was written when it is a heredoc.
+  def heredoc_of(p: P, t: AlchemLexer.Token): string do
+    case offset(p, t) do
+      none -> ""
+      some(at) -> heredoc_written(p.source, at)
+    end
+  end
+  def heredoc_written(source: string, at: integer): string do
+    sigiled = AlchemLexer.starts?(source, at, "~") and at + 2 < byte_size(source)
+    open = if sigiled do binary_part(source, at, 2) <> "\"\"\"" else "\"\"\"" end
+    quotes = if sigiled do at + 2 else at end
+    if not AlchemLexer.starts?(source, at, open) do "" else
+      case AlchemLexer.heredoc(source, quotes, 0, 0) do
+        error(_) -> ""
+        ok({body, next, _}) ->
+          mods = if open != "\"\"\"" do AlchemLexer.modifiers_end(source, next) else next end
+          open <> "\n" <> body <> "\"\"\"" <> AlchemLexer.part(source, next, mods)
+      end
+    end
+  end
+
+  def sigil_delimiter(p: P, t: AlchemLexer.Token): string do
+    case offset(p, t) do
+      none -> ""
+      some(at) -> if at + 2 >= byte_size(p.source) or AlchemLexer.byte(p.source, at) != 126 do "" else binary_part(p.source, at + 2, 1) end
+    end
+  end
+
+  def keyword_ahead?(p: P, word: string): boolean do
+    peek(p).kind == "," and ahead(p, 1).kind == "identifier" and ahead(p, 1).text == word and ahead(p, 2).kind == ":"
+  end
+
+  # --- blocks -----------------------------------------------------------------------
+
+  def receive_form?(name: string): boolean do
+    name in ["assert_receive", "refute_receive", "assert_received", "refute_received"]
+  end
+  def receive_arguments(name: string): integer do
+    if String.ends_with?(name, "received") do 1 else 2 end
+  end
+
+  def line_of(v: AlchemJson.J): integer do AlchemJson.int_of(get(v, "Line")) end
+  def column_of(v: AlchemJson.J): integer do AlchemJson.int_of(get(v, "Column")) end
+
+  # A statement made of an expression: a call, or the output or assertion
+  # of its one argument.
+  def call_statement(st: AlchemJson.J, e: AlchemJson.J): result[AlchemJson.J, string] do
+    base = set(st, [{"Expr", e}, {"Kind", s("call")}])
+    if text(e, "Kind") != "call" do ok(base) else
+      kind = if text(e, "Name") == "assert" do "assert" else if text(e, "Name") == "IO.puts" and length(items(e, "Args")) != 2 do "output" else "call" end end
+      if kind == "call" do ok(base) else
+        if length(items(e, "Args")) != 1 do error(problem(line_of(e), column_of(e), text(e, "Name") <> " requires one argument")) else
+          ok(set(base, [{"Kind", s(kind)}, {"Expr", hd(items(e, "Args"))}]))
+        end
+      end
+    end
+  end
+
+  # A call followed by do ... end on its line: the block is its body.
+  def do_block(p: P, e: AlchemJson.J): result[tuple[AlchemJson.J, P], string] do
+    if text(e, "Kind") != "call" or peek(p).text != "do" or peek(p).kind != "identifier" or new_line?(p) do ok({e, p}) else
+      with ok({body, p1}) <- block(plain(adv(p)), false),
+           ok({_, p2}) <- expect(restore(p1, p), "identifier", "end") do
+        ok({set(e, [{"Body", made(body)}, {"Op", s("do")}]), p2})
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+
+  def block(given: P, arm: boolean): result[tuple[list[AlchemJson.J], P], string] do
+    with ok(p) <- descend(given) do
+      arm_column = p.arm_column
+      start = if arm do %P{p | in_arm: true} else p end
+      case statements(start, arm, []) do
+        error(why) -> error(why)
+        ok({body, p1}) ->
+          {last, p2} = if arm do remarks_indented(p1, peek(p1), arm_column) else remarks(p1, peek(p1)) end
+          all = body ++ last
+          if all == [] do
+            t = peek(p2)
+            error(problem(t.line, t.column, "block requires a statement"))
+          else ok({all, %P{ascend(p2, given.depth) | in_arm: given.in_arm}}) end
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+
+  def statements(p: P, arm: boolean, done: list[AlchemJson.J]): result[tuple[list[AlchemJson.J], P], string] do
+    if ends?(p) or (arm and arm_start?(p)) do ok({done, p}) else
+      t = peek(p)
+      {above, p1} = remarks(p, t)
+      with ok({st, p2}) <- one_statement(p1, t) do
+        statements(p2, arm, done ++ above ++ [st])
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+
+  def one_statement(p: P, t: AlchemLexer.Token): result[tuple[AlchemJson.J, P], string] do
+    st = statement(t.line, t.column)
+    next = ahead(p, 1)
+    if t.kind == "identifier" and t.text in ["if", "unless", "case", "cond", "with"] do compound(p, st) else
+      if t.kind == "identifier" and t.text == "check" and next.text == "all" and next.kind == "identifier" do check_all(p, st) else
+        if t.text == "return" do
+          with ok({e, p1}) <- expr_at(adv(p), 0) do ok({set(st, [{"Kind", s("return")}, {"Expr", e}]), p1}) else
+  error(why) -> error(why)
+end
+        else
+          if t.kind == "identifier" and receive_form?(t.text) and next.kind == "(" do receive(adv_n(p, 2), t, st) else
+            if assignment_start?(p) do
+              with ok({pat, p1}) <- pattern_of(p) do
+                typed: result[tuple[string, P], string] = if peek(p1).kind == ":" do type_name(adv(p1)) else ok({"", p1}) end
+                with ok({declared, p2}) <- typed,
+                     ok({_, p3}) <- expect(p2, "=", ""),
+                     ok({e, p4}) <- expr_at(p3, 0),
+                     ok({done_e, p5}) <- do_block(p4, e) do
+                  ok({set(st, [{"Pattern", pat}, {"Kind", s("bind")}, {"Name", get(pat, "Name")}, {"Declared", s(declared)}, {"Expr", done_e}]), p5})
+                else
+                  error(why) -> error(why)
+                end
+              else
+                error(why) -> error(why)
+              end
+            else
+              with ok({e, p1}) <- expr_at(p, 0),
+                   ok({done_e, p2}) <- do_block(p1, e) do
+                if text(done_e, "Op") == "do" and (text(done_e, "Name") == "IO.puts" or text(done_e, "Name") == "assert") do
+                  error(problem(t.line, t.column, "only a macro takes a do ... end block, and " <> text(done_e, "Name") <> " is not one"))
+                else
+                  case call_statement(st, done_e) do
+                    ok(made_st) -> ok({made_st, p2})
+                    error(why) -> error(why)
+                  end
+                end
+              else
+                error(why) -> error(why)
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  # assert_receive(pid, pattern when guard, timeout, message): the second
+  # argument is a pattern.
+  def receive(p: P, t: AlchemLexer.Token, st: AlchemJson.J): result[tuple[AlchemJson.J, P], string] do
+    with ok({pid, p1}) <- expr_at(p, 0) do
+      case expect(p1, ",", "") do
+        error(_) -> error(problem(t.line, t.column, t.text <> " takes a process and a pattern: " <> t.text <> "(self, pattern)"))
+        ok({_, p2}) ->
+          with ok({pat, p3}) <- pattern_of(p2) do
+            guarded: result[tuple[list[AlchemJson.J], P], string] = if peek(p3).text == "when" do
+              case expr_at(adv(p3), 0) do
+                ok({guard, p4}) -> ok({[set(arm(), [{"Guard", guard}])], p4})
+                error(why) -> error(why)
+              end
+            else ok({[], p3}) end
+            with ok({guard_arms, p4}) <- guarded,
+                 ok({extras, p5}) <- receive_extras(p4, receive_arguments(t.text), [pid]),
+                 ok({_, p6}) <- expect(p5, ")", "") do
+              call = expr_of("call", t.line, t.column, [{"Name", s(t.text)}, {"Args", AlchemJson.J.list(extras)}])
+              ok({set(st, [{"Pattern", pat}, {"Kind", s("receive")}, {"Name", s(t.text)}, {"Expr", call}, {"Arms", made(guard_arms)}]), p6})
+            else
+              error(why) -> error(why)
+            end
+          else
+            error(why) -> error(why)
+          end
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+  def receive_extras(p: P, limit: integer, args: list[AlchemJson.J]): result[tuple[list[AlchemJson.J], P], string] do
+    if peek(p).kind == "," and length(args) <= limit do
+      with ok({extra, p1}) <- expr_at(adv(p), 0) do receive_extras(p1, limit, args ++ [extra]) else
+  error(why) -> error(why)
+end
+    else ok({args, p}) end
+  end
+
+  # --- compound statements ------------------------------------------------------------
+
+  def compound(p: P, st: AlchemJson.J): result[tuple[AlchemJson.J, P], string] do
+    t = peek(p)
+    case t.text do
+      "cond" ->
+        with ok({_, p1}) <- expect(adv(p), "identifier", "do"),
+             ok({arms, p2}) <- cond_arms(p1, []) do
+          {closed, p3} = closing(p2, arms)
+          if closed == [] do error(problem(t.line, t.column, "cond requires branches")) else
+            with ok({_, p4}) <- expect(%P{p3 | cond_arms: p.cond_arms, in_arm: p.in_arm}, "identifier", "end") do
+              ok({set(st, [{"Kind", s("cond")}, {"Arms", made(closed)}]), p4})
+            else
+              error(why) -> error(why)
+            end
+          end
+        else
+          error(why) -> error(why)
+        end
+      "with" -> with_statement(adv(p), t, set(st, [{"Kind", s("with")}]))
+      "case" ->
+        case case_statement(%P{p | cond_arms: false}, t, st) do
+          ok({made_st, p1}) -> ok({made_st, %P{p1 | cond_arms: p.cond_arms}})
+          error(why) -> error(why)
+        end
+      _ -> if_statement(p, t, st)
+    end
+  end
+
+  def cond_arms(p: P, done: list[AlchemJson.J]): result[tuple[list[AlchemJson.J], P], string] do
+    if peek(p).text == "end" or peek(p).kind == "EOF" do ok({done, p}) else
+      {above, p0} = notes(%P{p | cond_arms: false}, peek(p))
+      column = peek(p0).column
+      with ok({condition, p1}) <- expr_at(p0, 0),
+           ok({_, p2}) <- expect(p1, "->", ""),
+           ok({body, p3}) <- block(%P{p2 | cond_arms: true, arm_column: column}, true) do
+        cond_arms(p3, done ++ [set(arm(), [{"Guard", condition}, {"Body", made(body)}, {"Comments", made_strs(above)}])])
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+
+  def with_statement(p: P, t: AlchemLexer.Token, st: AlchemJson.J): result[tuple[AlchemJson.J, P], string] do
+    with ok({clauses, p1}) <- with_clauses(p, []),
+         ok({_, p2}) <- expect(p1, "identifier", "do"),
+         ok({body, p3}) <- block(p2, false) do
+      elsed = if peek(p3).text == "else" do
+        case arms_of(adv(p3)) do
+          ok({arms, p4}) -> ok({[set(statement(t.line, t.column), [{"Kind", s("case")}, {"Arms", made(arms)}])], p4})
+          error(why) -> error(why)
+        end
+      else ok({[], p3}) end
+      with ok({otherwise, p5}) <- elsed,
+           ok({_, p6}) <- expect(p5, "identifier", "end") do
+        ok({set(st, [{"Arms", made(clauses)}, {"Then", made(body)}, {"Else", made(otherwise)}]), p6})
+      else
+        error(why) -> error(why)
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+  def with_clauses(p: P, done: list[AlchemJson.J]): result[tuple[list[AlchemJson.J], P], string] do
+    {above, p0} = if done != [] do notes(p, peek(p)) else {[], p} end
+    with ok({pat, p1}) <- pattern_of(p0),
+         ok({_, p2}) <- expect(p1, "operator", "<-"),
+         ok({value, p3}) <- expr_at(p2, 0) do
+      clause = set(arm(), [{"Pattern", pat}, {"Guard", value}, {"Comments", made_strs(above)}])
+      if peek(p3).kind != "," do ok({done ++ [clause], p3}) else with_clauses(adv(p3), done ++ [clause]) end
+    else
+      error(why) -> error(why)
+    end
+  end
+
+  def if_statement(p: P, t: AlchemLexer.Token, st: AlchemJson.J): result[tuple[AlchemJson.J, P], string] do
+    base = set(st, [{"Kind", s("if")}, {"Name", s(if t.text == "unless" do "unless" else "" end)}])
+    with ok({e, p1}) <- expr_at(adv(p), 0) do
+      with_condition = set(base, [{"Expr", e}])
+      if keyword_ahead?(p1, "do") do
+        with ok({then_e, p2}) <- expr_at(adv_n(p1, 3), 0),
+             ok(then_st) <- call_statement(statement(line_of(then_e), column_of(then_e)), then_e) do
+          elsed = if keyword_ahead?(p2, "else") do
+            case expr_at(adv_n(p2, 3), 0) do
+              ok({other, p3}) ->
+                case call_statement(statement(line_of(other), column_of(other)), other) do
+                  ok(other_st) -> ok({[other_st], p3})
+                  error(why) -> error(why)
+                end
+              error(why) -> error(why)
+            end
+          else ok({[], p2}) end
+          with ok({otherwise, p4}) <- elsed do
+            ok({set(with_condition, [{"Then", AlchemJson.J.list([then_st])}, {"Else", made(otherwise)}, {"Declared", s(if p.keep do "do:" else "" end)}]), p4})
+          else
+            error(why) -> error(why)
+          end
+        else
+          error(why) -> error(why)
+        end
+      else
+        with ok({_, p2}) <- expect(p1, "identifier", "do"),
+             ok({then_body, p3}) <- block(p2, false) do
+          elsed = if peek(p3).text == "else" do block(adv(p3), false) else ok({[], p3}) end
+          with ok({else_body, p4}) <- elsed,
+               ok({_, p5}) <- expect(p4, "identifier", "end") do
+            ok({set(with_condition, [{"Then", made(then_body)}, {"Else", made(else_body)}]), p5})
+          else
+            error(why) -> error(why)
+          end
+        else
+          error(why) -> error(why)
+        end
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+
+  def case_statement(p: P, t: AlchemLexer.Token, st: AlchemJson.J): result[tuple[AlchemJson.J, P], string] do
+    with ok({e, p1}) <- expr_at(adv(p), 0),
+         ok({_, p2}) <- expect(p1, "identifier", "do"),
+         ok({arms, p3}) <- case_arms(p2, []) do
+      {closed, p4} = closing(p3, arms)
+      if closed == [] do error(problem(t.line, t.column, "case requires branches")) else
+        with ok({_, p5}) <- expect(p4, "identifier", "end") do
+          ok({set(st, [{"Kind", s("case")}, {"Expr", e}, {"Arms", made(closed)}]), p5})
+        else
+          error(why) -> error(why)
+        end
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+  def case_arms(p: P, done: list[AlchemJson.J]): result[tuple[list[AlchemJson.J], P], string] do
+    if peek(p).text == "end" or peek(p).kind == "EOF" do ok({done, p}) else
+      with ok({one, p1}) <- one_arm(p) do case_arms(p1, done ++ [one]) else
+  error(why) -> error(why)
+end
+    end
+  end
+  # pattern when guard -> body
+  def one_arm(p: P): result[tuple[AlchemJson.J, P], string] do
+    {above, p0} = notes(p, peek(p))
+    column = peek(p0).column
+    with ok({pat, p1}) <- pattern_of(p0),
+         ok({guard, p2}) <- guard_of(p1),
+         ok({_, p3}) <- expect(p2, "->", ""),
+         ok({body, p4}) <- block(%P{p3 | arm_column: column}, true) do
+      ok({set(arm(), [{"Pattern", pat}, {"Guard", guard}, {"Body", made(body)}, {"Comments", made_strs(above)}]), p4})
+    else
+      error(why) -> error(why)
+    end
+  end
+  def guard_of(p: P): result[tuple[AlchemJson.J, P], string] do
+    if peek(p).text == "when" do expr_at(adv(p), 0) else ok({nul(), p}) end
+  end
+
+  # Arms up to what ends the block they are in.
+  def arms_of(p: P): result[tuple[list[AlchemJson.J], P], string] do
+    with ok({arms, p1}) <- arm_list(%P{p | cond_arms: false}, []) do
+      {closed, p2} = closing(p1, arms)
+      if closed == [] do
+        t = peek(p2)
+        error(problem(t.line, t.column, "expected at least one pattern -> body arm"))
+      else ok({closed, %P{p2 | cond_arms: p.cond_arms}}) end
+    else
+      error(why) -> error(why)
+    end
+  end
+  def arm_list(p: P, done: list[AlchemJson.J]): result[tuple[list[AlchemJson.J], P], string] do
+    if ends?(p) do ok({done, p}) else
+      with ok({one, p1}) <- one_arm(p) do arm_list(p1, done ++ [one]) else
+  error(why) -> error(why)
+end
+    end
+  end
+
+  # The arms of rescue and catch: name in Kind, name: type, or a pattern.
+  def handler_arms(p: P, rescuing: boolean): result[tuple[list[AlchemJson.J], P], string] do
+    with ok({arms, p1}) <- handler_list(%P{p | cond_arms: false}, rescuing, []) do
+      {closed, p2} = closing(p1, arms)
+      if closed == [] do
+        t = peek(p2)
+        error(problem(t.line, t.column, "expected at least one pattern -> body arm"))
+      else ok({closed, %P{p2 | cond_arms: p.cond_arms}}) end
+    else
+      error(why) -> error(why)
+    end
+  end
+  def handler_list(p: P, rescuing: boolean, done: list[AlchemJson.J]): result[tuple[list[AlchemJson.J], P], string] do
+    if ends?(p) do ok({done, p}) else
+      {above, p0} = notes(p, peek(p))
+      t = peek(p0)
+      next = ahead(p0, 1)
+      handled = if rescuing and t.kind == "identifier" and next.kind == "identifier" and next.text == "in" do
+        case expect(adv_n(p0, 2), "identifier", "") do
+          error(why) -> error(why)
+          ok({kind, p1}) ->
+            if not binding_name?(t.text) and t.text != "_" do error(problem(t.line, t.column, "invalid binding name " <> quoted(t.text))) else
+              ok({set(pattern(t.line, t.column), [{"Kind", s("in")}, {"Name", s(t.text)}, {"Type", s(kind.text)}]), p1})
+            end
+        end
+      else
+        if t.kind == "identifier" and next.kind == ":" and binding_name?(t.text) do
+          case type_name(adv_n(p0, 2)) do
+            error(why) -> error(why)
+            ok({type, p1}) -> ok({set(pattern(t.line, t.column), [{"Kind", s("typed")}, {"Name", s(t.text)}, {"Type", s(type)}]), p1})
+          end
+        else pattern_of(p0) end
+      end
+      with ok({pat, p1}) <- handled,
+           ok({guard, p2}) <- guard_of(p1),
+           ok({_, p3}) <- expect(p2, "->", ""),
+           ok({body, p4}) <- block(%P{p3 | arm_column: t.column}, true) do
+        handler_list(p4, rescuing, done ++ [set(arm(), [{"Pattern", pat}, {"Guard", guard}, {"Body", made(body)}, {"Comments", made_strs(above)}])])
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+
+  def try_expr(p: P): result[tuple[AlchemJson.J, P], string] do
+    t = peek(p)
+    st = set(statement(t.line, t.column), [{"Kind", s("try")}])
+    p0 = %P{adv_n(p, 2) | trying: p.trying + 1}
+    with ok({body, p1}) <- block(p0, false) do
+      rescued = if peek(p1).text == "rescue" do handler_arms(adv(p1), true) else ok({[], p1}) end
+      with ok({rescue_arms, p2}) <- rescued,
+           ok({caught, p3}) <- handlers_of(p2, "catch", rescue_arms),
+           ok({all_arms, p4}) <- handlers_of(p3, "else", caught) do
+        p5 = %P{p4 | trying: p4.trying - 1}
+        aftered = if peek(p5).text == "after" do block(adv(p5), false) else ok({[], p5}) end
+        with ok({after_body, p6}) <- aftered do
+          handles = Enum.any?(all_arms, fn a -> text(a, "Kind") != "else" end)
+          if not handles and after_body == [] do error(problem(t.line, t.column, "try needs a rescue, a catch or an after")) else
+            with ok({_, p7}) <- expect(p6, "identifier", "end") do
+              whole = set(st, [{"Then", made(body)}, {"Arms", made(all_arms)}, {"Else", made(after_body)}])
+              ok({expr_of("try", t.line, t.column, [{"Body", AlchemJson.J.list([whole])}]), p7})
+            else
+              error(why) -> error(why)
+            end
+          end
+        else
+          error(why) -> error(why)
+        end
+      else
+        error(why) -> error(why)
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+  def handlers_of(p: P, kind: string, done: list[AlchemJson.J]): result[tuple[list[AlchemJson.J], P], string] do
+    if peek(p).text != kind do ok({done, p}) else
+      found = if kind == "catch" do handler_arms(adv(p), false) else arms_of(adv(p)) end
+      with ok({arms, p1}) <- found do
+        ok({done ++ Enum.map(arms, fn a -> set(a, [{"Kind", s(kind)}]) end), p1})
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+
+  # --- comprehensions and properties -----------------------------------------------
+
+  def generators(p: P, arms: list[AlchemJson.J], noted: boolean): result[tuple[AlchemJson.J, P], string] do
+    {above, p0} = if noted and arms != [] do notes(p, peek(p)) else {[], p} end
+    probe = pattern_of(%P{p0 | probing: true})
+    {pat, p1} = case probe do
+      ok({found, after_it}) -> if peek(after_it).kind == "operator" and peek(after_it).text == "<-" do {found, %P{adv(after_it) | probing: p0.probing}} else {nul(), p0} end
+      error(_) -> {nul(), p0}
+    end
+    with ok({value, p2}) <- expr_at(p1, 0) do
+      ok({set(arm(), [{"Pattern", pat}, {"Guard", value}] ++ if noted do [{"Comments", made_strs(above)}] else [] end), p2})
+    else
+      error(why) -> error(why)
+    end
+  end
+
+  def comprehension(p: P): result[tuple[AlchemJson.J, P], string] do
+    t = peek(p)
+    p0 = adv(p)
+    parenthesized = peek(p0).kind == "("
+    p1 = if parenthesized do adv(p0) else p0 end
+    with ok({{labels, args, arms}, p2}) <- for_clauses(p1, [], [], []) do
+      if arms == [] or null?(get(hd(arms), "Pattern")) do error(problem(t.line, t.column, "for starts with a generator: pattern <- enumerable")) else
+        st = set(statement(t.line, t.column), [{"Kind", s("for")}, {"Arms", AlchemJson.J.list(arms)}])
+        e = expr_of("for", t.line, t.column, [{"Labels", made_strs(labels)}, {"Args", made(args)}])
+        keyword = peek(p2).text == "do" and ahead(p2, 1).kind == ":"
+        if labels == ["reduce"] do
+          if keyword or parenthesized do error(problem(t.line, t.column, "for with reduce: needs a do ... end block of accumulator -> body arms")) else
+            with ok({_, p3}) <- expect(p2, "identifier", "do"),
+                 ok({reduce_arms, p4}) <- arms_of(p3),
+                 ok({_, p5}) <- expect(p4, "identifier", "end") do
+              name = "acc$#{t.line}_#{t.column}"
+              clauses = set(statement(t.line, t.column), [{"Kind", s("clauses")}, {"Name", s(name)}, {"Arms", made(reduce_arms)}])
+              ok({set(e, [{"Name", s(name)}, {"Body", AlchemJson.J.list([set(st, [{"Then", AlchemJson.J.list([clauses])}])])}]), p5})
+            else
+              error(why) -> error(why)
+            end
+          end
+        else
+          if keyword do
+            with ok({value, p3}) <- expr_at(adv_n(p2, 2), 0) do
+              closed = if parenthesized do
+                case expect(p3, ")", "") do
+                  ok({_, p4}) -> ok(p4)
+                  error(why) -> error(why)
+                end
+              else ok(p3) end
+              with ok(p5) <- closed do
+                body = set(statement(line_of(value), column_of(value)), [{"Kind", s("call")}, {"Expr", value}])
+                ok({set(e, [{"Body", AlchemJson.J.list([set(st, [{"Then", AlchemJson.J.list([body])}, {"Name", s("do:")}])])}]), p5})
+              else
+                error(why) -> error(why)
+              end
+            else
+              error(why) -> error(why)
+            end
+          else
+            if parenthesized do error(problem(t.line, t.column, "for(...) needs the one-line form ending in \", do: expression\"")) else
+              with ok({_, p3}) <- expect(p2, "identifier", "do"),
+                   ok({body, p4}) <- block(p3, false),
+                   ok({_, p5}) <- expect(p4, "identifier", "end") do
+                ok({set(e, [{"Body", AlchemJson.J.list([set(st, [{"Then", made(body)}])])}]), p5})
+              else
+                error(why) -> error(why)
+              end
+            end
+          end
+        end
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+  def for_clauses(p: P, labels: list[string], args: list[AlchemJson.J], arms: list[AlchemJson.J]): result[tuple[tuple[list[string], list[AlchemJson.J], list[AlchemJson.J]], P], string] do
+    keyword = peek(p).text == "do" and ahead(p, 1).kind == ":"
+    if keyword or (peek(p).text == "do" and arms != []) do ok({{labels, args, arms}, p}) else
+      option = peek(p)
+      if option.kind == "identifier" and ahead(p, 1).kind == ":" do
+        if not (option.text in ["into", "uniq", "reduce"]) do error(problem(option.line, option.column, "for accepts the options into:, uniq: and reduce:, not " <> option.text <> ":")) else
+          if labels != [] do error(problem(option.line, option.column, "for takes one option")) else
+            with ok({value, p1}) <- expr_at(adv_n(p, 2), 0) do
+              for_clauses(if peek(p1).kind == "," do adv(p1) else p1 end, [option.text], [value], arms)
+            else
+              error(why) -> error(why)
+            end
+          end
+        end
+      else
+        with ok({one, p1}) <- generators(p, arms, false) do
+          if peek(p1).kind != "," do ok({{labels, args, arms ++ [one]}, p1}) else for_clauses(adv(p1), labels, args, arms ++ [one]) end
+        else
+          error(why) -> error(why)
+        end
+      end
+    end
+  end
+
+  def check_all(p: P, st: AlchemJson.J): result[tuple[AlchemJson.J, P], string] do
+    t = peek(p)
+    with ok({{runs, arms}, p1}) <- check_clauses(adv_n(p, 2), nul(), []) do
+      if arms == [] or null?(get(hd(arms), "Pattern")) do error(problem(t.line, t.column, "check all starts with a generator: pattern <- generator")) else
+        with ok({_, p2}) <- expect(p1, "identifier", "do"),
+             ok({body, p3}) <- block(p2, false),
+             ok({_, p4}) <- expect(p3, "identifier", "end") do
+          ok({set(st, [{"Kind", s("check")}, {"Expr", runs}, {"Arms", AlchemJson.J.list(arms)}, {"Then", made(body)}]), p4})
+        else
+          error(why) -> error(why)
+        end
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+  def check_clauses(p: P, runs: AlchemJson.J, arms: list[AlchemJson.J]): result[tuple[tuple[AlchemJson.J, list[AlchemJson.J]], P], string] do
+    if peek(p).text == "do" do ok({{runs, arms}, p}) else
+      option = peek(p)
+      step = if option.kind == "identifier" and ahead(p, 1).kind == ":" do
+        if option.text != "max_runs" or not null?(runs) do error(problem(option.line, option.column, "check all takes one option, max_runs:")) else
+          case expr_at(adv_n(p, 2), 0) do
+            ok({value, p1}) -> ok({{value, arms}, p1})
+            error(why) -> error(why)
+          end
+        end
+      else
+        case generators(p, arms, true) do
+          ok({one, p1}) -> ok({{runs, arms ++ [one]}, p1})
+          error(why) -> error(why)
+        end
+      end
+      with ok({{runs2, arms2}, p2}) <- step do
+        if peek(p2).kind != "," do ok({{runs2, arms2}, p2}) else check_clauses(adv(p2), runs2, arms2) end
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+
+  # --- declarations -----------------------------------------------------------------
+
+  def constant_default?(e: AlchemJson.J): boolean do
+    if null?(e) do true else
+      kind = text(e, "Kind")
+      ruled_out = case kind do
+        "name" -> if text(e, "Name") == "none" do "yes" else "no" end
+        "call" -> if text(e, "Name") in ["some", "ok", "error"] do "" else "no" end
+        _ -> if kind in ["fn", "lambda", "capture", "case", "if", "cond", "try", "for", "with"] do "no" else "" end
+      end
+      if ruled_out == "yes" do true else
+        if ruled_out == "no" do false else
+          items(e, "Body") == [] and constant_default?(get(e, "Left")) and constant_default?(get(e, "Right")) and Enum.all?(items(e, "Args") ++ items(e, "Keys"), fn a -> constant_default?(a) end)
+        end
+      end
+    end
+  end
+
+  def extern_target?(target: string): boolean do
+    target =~ ~r/^((\.\.?\/)+)?[A-Za-z0-9_~-]+([.\/][A-Za-z0-9_~-]+)*\.[A-Z][A-Za-z0-9_]*$/
+  end
+
+  # def name(parameters): type when guard do body end, and extern.
+  def function_decl(p: P): result[tuple[AlchemJson.J, P], string] do
+    is_extern = peek(p).text == "extern"
+    private = peek(p).text == "defp"
+    with ok({name, p1}) <- expect(adv(p), "identifier", ""),
+         ok({_, p2}) <- expect(p1, "(", ""),
+         ok({params, p3}) <- (if peek(p2).kind != ")" do function_params(p2, is_extern, []) else ok({[], p2}) end),
+         ok({_, p4}) <- expect(p3, ")", "") do
+      typed = if peek(p4).kind == ":" do type_name(adv(p4)) else ok({"void", p4}) end
+      with ok({type, p5}) <- typed do
+        f = set(function(name.line, name.column), [{"Name", s(name.text)}, {"Type", s(type)}, {"Private", b(private)}, {"Params", made(params)}])
+        if is_extern do
+          with ok({_, p6}) <- expect(p5, "=", ""),
+               ok({target, p7}) <- expect(p6, "string", "") do
+            value = unquote(target.text)
+            if not extern_target?(value) do error(problem(target.line, target.column, "extern target must be \"import/path.Function\", \"import/path.Type.Method\" or \"./directory.Function\"")) else
+              ok({set(f, [{"Extern", s(value)}]), p7})
+            end
+          else
+            error(why) -> error(why)
+          end
+        else
+          guarded = if peek(p5).text == "when" do expr_at(adv(p5), 0) else ok({nul(), p5}) end
+          with ok({guard, p6}) <- guarded,
+               ok({_, p7}) <- expect(p6, "identifier", "do"),
+               ok({body, p8}) <- block(p7, false),
+               ok({_, p9}) <- expect(p8, "identifier", "end") do
+            ok({set(f, [{"Guard", guard}, {"Body", made(body)}]), p9})
+          else
+            error(why) -> error(why)
+          end
+        end
+      else
+        error(why) -> error(why)
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+  def function_params(p: P, is_extern: boolean, done: list[AlchemJson.J]): result[tuple[list[AlchemJson.J], P], string] do
+    with ok({pat, p1}) <- pattern_of(p) do
+      base = pattern_parameter(pat)
+      typed = if peek(p1).kind == ":" do
+        case type_name(adv(p1)) do
+          ok({type, p2}) -> ok({set(base, [{"Type", s(type)}]), p2})
+          error(why) -> error(why)
+        end
+      else ok({base, p1}) end
+      with ok({param, p2}) <- typed do
+        if is_extern and (not null?(get(param, "Pattern")) or text(param, "Type") == "") do error(problem(line_of(param), column_of(param), "extern parameters are typed names")) else
+          defaulted = if peek(p2).kind == "\\\\" do
+            mark = peek(p2)
+            if is_extern or not null?(get(param, "Pattern")) do error(problem(mark.line, mark.column, "only a named parameter of a function can have a default value")) else
+              case expr_at(adv(p2), 0) do
+                error(why) -> error(why)
+                ok({value, p3}) ->
+                  if not constant_default?(value) do error(problem(mark.line, mark.column, "a default value is a constant: literals, lists, tuples and maps of them, none, some(...), ok(...) or error(...)")) else
+                    ok({set(param, [{"Default", value}]), p3})
+                  end
+              end
+            end
+          else
+            if done != [] and not null?(get(Enum.at(done, 0, nul()), "Default")) do error(problem(line_of(param), column_of(param), "a parameter without a default value cannot follow one that has it")) else ok({param, p2}) end
+          end
+          with ok({made_param, p3}) <- defaulted do
+            if peek(p3).kind != "," do ok({Enum.reverse([made_param | done]), p3}) else function_params(adv(p3), is_extern, [made_param | done]) end
+          else
+            error(why) -> error(why)
+          end
+        end
+      else
+        error(why) -> error(why)
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+
+  def type_declaration(p: P): result[tuple[AlchemJson.J, P], string] do
+    keyword = peek(p)
+    name = peek(adv(p))
+    p1 = case expect(adv(p), "identifier", "") do
+      ok({_, after_it}) -> after_it
+      error(_) -> adv(p)
+    end
+    kind = if keyword.text == "type" do "sum" else "struct" end
+    decl = set(type_decl(name.line, name.column), [{"Kind", s(kind)}, {"Name", s(name.text)}, {"Local", s(name.text)}, {"Exception", b(keyword.text == "defexception")}])
+    if not upper_first?(name.text) or String.contains?(name.text, ".") do error(problem(name.line, name.column, "type name must be one capitalized word")) else
+      paramed = if peek(p1).kind == "[" do
+        case type_params(adv(p1), []) do
+          error(why) -> error(why)
+          ok({params, p2}) ->
+            case expect(p2, "]", "") do
+              ok({_, p3}) -> ok({params, p3})
+              error(why) -> error(why)
+            end
+        end
+      else ok({[], p1}) end
+      with ok({params, p2}) <- paramed,
+           ok({_, p3}) <- expect(p2, "identifier", "do"),
+           ok({{fields, variants}, p4}) <- type_members(p3, name.text, kind, [], [], []) do
+        if fields == [] and variants == [] do error(problem(name.line, name.column, name.text <> " requires at least one " <> if kind == "sum" do "variant" else "field" end)) else
+          exception = keyword.text == "defexception"
+          if exception and (not Enum.any?(fields, fn f -> text(f, "Name") == "message" and text(f, "Type") == "string" end) or params != []) do
+            error(problem(name.line, name.column, "an exception has a message: string field and no type parameters"))
+          else
+            {ending, p5} = notes(p4, peek(p4))
+            with ok({_, p6}) <- expect(note_as(p5, "ends:type:" <> name.text, ending), "identifier", "end") do
+              ok({set(decl, [{"Params", made_strs(params)}, {"Fields", made(fields)}, {"Variants", made(variants)}]), p6})
+            else
+              error(why) -> error(why)
+            end
+          end
+        end
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+  def type_params(p: P, done: list[string]): result[tuple[list[string], P], string] do
+    with ok({param, p1}) <- expect(p, "identifier", "") do
+      if not AlchemTypeNames.variable?(param.text) do error(problem(param.line, param.column, "type parameters are lowercase names")) else
+        if param.text in done do error(problem(param.line, param.column, "duplicate type parameter " <> param.text)) else
+          if peek(p1).kind != "," do ok({done ++ [param.text], p1}) else type_params(adv(p1), done ++ [param.text]) end
+        end
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+  def field_decl(p: P, kind: string, seen: list[string]): result[tuple[AlchemJson.J, P], string] do
+    with ok({label, p1}) <- expect(p, "identifier", "") do
+      if not member_name?(label.text) do error(problem(label.line, label.column, "invalid field name " <> quoted(label.text))) else
+        if label.text in seen do error(problem(label.line, label.column, "duplicate field " <> label.text)) else
+          with ok({_, p2}) <- expect(p1, ":", ""),
+               ok({type, p3}) <- type_name(p2) do
+            f = set(parameter(label.line, label.column), [{"Name", s(label.text)}, {"Type", s(type)}])
+            if kind == "struct" and peek(p3).kind == "=" do
+              with ok({value, p4}) <- expr_at(adv(p3), 0) do ok({set(f, [{"Default", value}]), p4}) else
+  error(why) -> error(why)
+end
+            else ok({f, p3}) end
+          else
+            error(why) -> error(why)
+          end
+        end
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+  def type_members(p: P, type: string, kind: string, fields: list[AlchemJson.J], variants: list[AlchemJson.J], seen: list[string]): result[tuple[tuple[list[AlchemJson.J], list[AlchemJson.J]], P], string] do
+    if peek(p).text == "end" or peek(p).kind == "EOF" do ok({{fields, variants}, p}) else
+      {above, p0} = notes(p, peek(p))
+      p1 = note_as(p0, "field:" <> type <> "." <> peek(p).text, above)
+      if kind == "struct" do
+        with ok({f, p2}) <- field_decl(p1, kind, seen) do type_members(p2, type, kind, fields ++ [f], variants, seen ++ [text(f, "Name")]) else
+  error(why) -> error(why)
+end
+      else
+        with ok({label, p2}) <- expect(p1, "identifier", "") do
+          if not member_name?(label.text) do error(problem(label.line, label.column, "invalid variant name " <> quoted(label.text))) else
+            if label.text in seen do error(problem(label.line, label.column, "duplicate variant " <> label.text)) else
+              v = variant(label.text, label.line, label.column)
+              if peek(p2).kind == "(" and not new_line?(p2) do
+                with ok({vfields, p3}) <- variant_fields(adv(p2), []),
+                     ok({_, p4}) <- expect(p3, ")", "") do
+                  type_members(p4, type, kind, fields, variants ++ [set(v, [{"Fields", made(vfields)}])], seen ++ [label.text])
+                else
+                  error(why) -> error(why)
+                end
+              else type_members(p2, type, kind, fields, variants ++ [v], seen ++ [label.text]) end
+            end
+          end
+        else
+          error(why) -> error(why)
+        end
+      end
+    end
+  end
+  def variant_fields(p: P, done: list[AlchemJson.J]): result[tuple[list[AlchemJson.J], P], string] do
+    with ok({f, p1}) <- field_decl(p, "sum", Enum.map(done, fn d -> text(d, "Name") end)) do
+      if peek(p1).kind != "," do ok({done ++ [f], p1}) else variant_fields(adv(p1), done ++ [f]) end
+    else
+      error(why) -> error(why)
+    end
+  end
+
+  # --- the module's other declarations ----------------------------------------------
+
+  # The module as it is read: its fields, and the documentation waiting.
+  struct M do
+    name: string
+    line: integer
+    column: integer
+    leading: list[string]
+    trailing: list[string]
+    doctests: list[string]
+    module_doc: string
+    protocols: list[AlchemJson.J]
+    macros: list[AlchemJson.J]
+    uses: list[AlchemJson.J]
+    group_tags: list[tuple[string, list[string]]]
+    constants: list[AlchemJson.J]
+    types: list[AlchemJson.J]
+    requires: list[AlchemJson.J]
+    imports: list[string]
+    import_positions: list[AlchemJson.J]
+    functions: list[AlchemJson.J]
+    docs: list[tuple[integer, integer, list[string]]]
+    docstrings: list[tuple[integer, integer, list[string]]]
+  end
+
+  def put_group_tags(m: M, key: string, tags: list[string], adding: boolean): M do
+    found = Enum.any?(m.group_tags, fn {k, _} -> k == key end)
+    %M{m | group_tags: if found do Enum.map(m.group_tags, fn {k, v} -> if k == key do {k, if adding do v ++ tags else tags end} else {k, v} end end) else m.group_tags ++ [{key, tags}] end}
+  end
+
+  def tests_decl(p: P, m: M, group: string): result[tuple[M, P], string] do
+    keyword = peek(p)
+    {above, p0} = notes(p, keyword)
+    comments = p.carry ++ above
+    p1 = %P{adv(p0) | carry: []}
+    tags = p1.tags
+    p2 = %P{p1 | tags: []}
+    setup = keyword.text == "setup" or keyword.text == "setup_all"
+    f0 = set(function(keyword.line, keyword.column), [{"Type", s("void")}, {"Group", s(group)}, {"Comments", made_strs(comments)}])
+    named = if setup do ok({f0, p2}) else
+      case expect(p2, "string", "") do
+        error(why) -> error(why)
+        ok({name, p3}) ->
+          value = unquote(name.text)
+          if value == "" do error(problem(name.line, name.column, "a " <> keyword.text <> " needs a name")) else ok({set(f0, [{"Test", s(value)}]), p3}) end
+      end
+    end
+    with ok({f1, p3}) <- named do
+      takes = (keyword.text == "test" and peek(p3).kind == ",") or (keyword.text == "setup" and peek(p3).text != "do")
+      param = if takes do
+        case pattern_of(if keyword.text == "test" do adv(p3) else p3 end) do
+          ok({pat, p4}) -> ok({set(f1, [{"Params", AlchemJson.J.list([pattern_parameter(pat)])}]), p4})
+          error(why) -> error(why)
+        end
+      else ok({f1, p3}) end
+      with ok({f2, p4}) <- param,
+           ok({_, p5}) <- expect(p4, "identifier", "do") do
+        if keyword.text == "setup_all" and group != "" do error(problem(keyword.line, keyword.column, "setup_all belongs at the top of the module, outside describe")) else
+          if keyword.text == "describe" do
+            test_name = text(f2, "Test")
+            if String.contains?(test_name, "\u{1F}") do error(problem(keyword.line, keyword.column, "invalid describe name")) else
+              inside = if group != "" do group <> "\u{1F}" <> test_name else test_name end
+              if length(String.split(inside, "\u{1F}")) > 16 do error(problem(keyword.line, keyword.column, "describe blocks nest at most 16 deep")) else
+                p6 = note_as(p5, "describe:" <> inside, comments)
+                m1 = if tags != [] do put_group_tags(m, inside, tags, false) else m end
+                with ok({m2, p7}) <- describe_members(p6, m1, inside) do
+                  {ending, p8} = notes(p7, peek(p7))
+                  with ok({_, p9}) <- expect(note_as(p8, "ends:describe:" <> inside, ending), "identifier", "end") do ok({m2, p9}) else
+  error(why) -> error(why)
+end
+                else
+                  error(why) -> error(why)
+                end
+              end
+            end
+          else
+            f3 = set(f2, [{"Setup", b(setup)}, {"All", b(keyword.text == "setup_all")}, {"Tags", made_strs(tags)}, {"Name", s(keyword.text <> "$#{length(m.functions) + 1}")}])
+            with ok({body, p6}) <- block(p5, false),
+                 ok({_, p7}) <- expect(p6, "identifier", "end") do
+              ok({%M{m | functions: m.functions ++ [set(f3, [{"Body", made(body)}])]}, p7})
+            else
+              error(why) -> error(why)
+            end
+          end
+        end
+      else
+        error(why) -> error(why)
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+  def describe_members(p: P, m: M, inside: string): result[tuple[M, P], string] do
+    if peek(p).text == "end" or peek(p).kind == "EOF" do ok({m, p}) else
+      if peek(p).kind == "@" do
+        with ok({m1, p1}) <- tag_decl(p, m) do describe_members(p1, m1, inside) else
+  error(why) -> error(why)
+end
+      else
+        inner = peek(p)
+        if not (inner.text in ["test", "setup", "describe"]) do error(problem(inner.line, inner.column, "a describe block holds tests, setup blocks and describe blocks")) else
+          with ok({m1, p1}) <- tests_decl(p, m, inside) do describe_members(p1, m1, inside) else
+  error(why) -> error(why)
+end
+        end
+      end
+    end
+  end
+
+  def valid_tag(t: AlchemLexer.Token, value: string): result[integer, string] do
+    if value == "" or String.contains?(value, ",") or String.contains?(value, " ") do error(problem(t.line, t.column, "a tag is a name without spaces or commas")) else ok(0) end
+  end
+
+  def tag_decl(p: P, m: M): result[tuple[M, P], string] do
+    at = peek(p)
+    p0 = adv(p)
+    kind = peek(p0)
+    if kind.kind != "identifier" or not (kind.text in ["tag", "moduletag", "describetag"]) do error(problem(at.line, at.column, "expected @tag, @describetag or @moduletag")) else
+      p1 = adv(p0)
+      next = peek(p1)
+      found = case next.kind do
+        "string" ->
+          value = unquote(next.text)
+          with ok(_) <- valid_tag(next, value) do ok({[value], adv(p1)}) else
+  error(why) -> error(why)
+end
+        "atom" -> with ok(_) <- valid_tag(next, next.text) do ok({[next.text], adv(p1)}) else
+  error(why) -> error(why)
+end
+        _ -> tag_pairs(p1, at, [])
+      end
+      with ok({tags, p2}) <- found do
+        if kind.text != "moduletag" do ok({m, %P{p2 | tags: p2.tags ++ tags}}) else ok({put_group_tags(m, "", tags, true), p2}) end
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+  def tag_pairs(p: P, at: AlchemLexer.Token, done: list[string]): result[tuple[list[string], P], string] do
+    case expect(p, "identifier", "") do
+      error(_) -> error(problem(at.line, at.column, "a tag is \"name\", :name or name: value"))
+      ok({name, p1}) ->
+        with ok({_, p2}) <- expect(p1, ":", "") do
+          value = peek(p2)
+          read = case value.kind do
+            "string" -> ok(unquote(value.text))
+            "atom" -> ok(value.text)
+            "integer" -> ok(value.text)
+            "identifier" -> if value.text == "true" or value.text == "false" do ok(value.text) else error(problem(value.line, value.column, "a tag's value is a string, atom, integer or boolean")) end
+            _ -> error(problem(value.line, value.column, "a tag's value is a string, atom, integer or boolean"))
+          end
+          with ok(v) <- read do
+            if v == "" or String.contains?(v, ",") do error(problem(value.line, value.column, "a tag's value is not empty and has no commas")) else
+              with ok(_) <- valid_tag(name, name.text) do
+                p3 = adv(p2)
+                tags = done ++ [name.text <> ":" <> v]
+                if peek(p3).kind != "," do ok({tags, p3}) else tag_pairs(adv(p3), at, tags) end
+              else
+                error(why) -> error(why)
+              end
+            end
+          else
+            error(why) -> error(why)
+          end
+        else
+          error(why) -> error(why)
+        end
+    end
+  end
+
+  def protocol_decl(p: P): result[tuple[AlchemJson.J, P], string] do
+    with ok({name, p1}) <- expect(adv(p), "identifier", "") do
+      base = obj([{"Name", s(name.text)}, {"Doc", s("")}, {"Functions", nul()}, {"Line", n(name.line)}, {"Column", n(name.column)}])
+      if not upper_first?(name.text) or String.contains?(name.text, ".") do error(problem(name.line, name.column, "a protocol name is one capitalized word")) else
+        with ok({_, p2}) <- expect(p1, "identifier", "do"),
+             ok({functions, p3}) <- protocol_functions(p2, name.text, []) do
+          if functions == [] do error(problem(name.line, name.column, "protocol " <> name.text <> " declares no functions")) else
+            {ending, p4} = notes(p3, peek(p3))
+            with ok({_, p5}) <- expect(note_as(p4, "ends:protocol:" <> name.text, ending), "identifier", "end") do
+              ok({set(base, [{"Functions", made(functions)}]), p5})
+            else
+              error(why) -> error(why)
+            end
+          end
+        else
+          error(why) -> error(why)
+        end
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+  def protocol_functions(p: P, protocol: string, done: list[AlchemJson.J]): result[tuple[list[AlchemJson.J], P], string] do
+    if peek(p).text != "def" do ok({done, p}) else
+      {above, p0} = notes(p, peek(p))
+      with ok({function, p1}) <- expect(adv(p0), "identifier", "") do
+        p2 = note_as(p1, "declares:" <> protocol <> "." <> function.text, above)
+        with ok({_, p3}) <- expect(p2, "(", ""),
+             ok({params, p4}) <- protocol_params(p3, []),
+             ok({_, p5}) <- expect(p4, ")", "") do
+          if params == [] do error(problem(function.line, function.column, "a protocol function takes at least the value it is called on")) else
+            typed = if peek(p5).kind == ":" do type_name(adv(p5)) else ok({"void", p5}) end
+            with ok({type, p6}) <- typed do
+              protocol_functions(p6, protocol, done ++ [obj([{"Name", s(function.text)}, {"Type", s(type)}, {"Params", strs(params)}])])
+            else
+              error(why) -> error(why)
+            end
+          end
+        else
+          error(why) -> error(why)
+        end
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+  def protocol_params(p: P, done: list[string]): result[tuple[list[string], P], string] do
+    if peek(p).kind == ")" do ok({done, p}) else
+      with ok({param, p1}) <- expect(p, "identifier", "") do
+        typed = if peek(p1).kind == ":" do
+          case type_name(adv(p1)) do
+            ok({_, p2}) -> ok(p2)
+            error(why) -> error(why)
+          end
+        else ok(p1) end
+        with ok(p2) <- typed do
+          if peek(p2).kind != "," do ok({done ++ [param.text], p2}) else protocol_params(adv(p2), done ++ [param.text]) end
+        else
+          error(why) -> error(why)
+        end
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+
+  def implementation_decl(p: P, index: integer): result[tuple[list[AlchemJson.J], P], string] do
+    start = peek(p)
+    with ok({protocol, p1}) <- expect(adv(p), "identifier", "") do
+      wrong = problem(start.line, start.column, "defimpl names a protocol and a type: defimpl " <> protocol.text <> ", for: Type do")
+      case expect(p1, ",", "") do
+        error(_) -> error(wrong)
+        ok({_, p2}) ->
+          word = peek(p2)
+          if word.text != "for" or ahead(p2, 1).kind != ":" do error(problem(word.line, word.column, "defimpl names a protocol and a type: defimpl " <> protocol.text <> ", for: Type do")) else
+            with ok({target, p3}) <- type_name(adv_n(p2, 2)),
+                 ok({_, p4}) <- expect(p3, "identifier", "do"),
+                 ok({functions, p5}) <- implemented(p4, protocol.text, target, index, []) do
+              if functions == [] do error(problem(start.line, start.column, "defimpl " <> protocol.text <> ", for: " <> target <> " defines no functions")) else
+                {ending, p6} = notes(p5, peek(p5))
+                with ok({_, p7}) <- expect(note_as(p6, "ends:impl:$" <> protocol.text <> "$#{index}", ending), "identifier", "end") do
+                  ok({functions, p7})
+                else
+                  error(why) -> error(why)
+                end
+              end
+            else
+              error(why) -> error(why)
+            end
+          end
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+  def implemented(p: P, protocol: string, target: string, index: integer, done: list[AlchemJson.J]): result[tuple[list[AlchemJson.J], P], string] do
+    if not (peek(p).text in ["def", "defp"]) do ok({done, p}) else
+      {above, p0} = notes(p, peek(p))
+      with ok({f, p1}) <- function_decl(p0) do
+        params = items(f, "Params")
+        name = text(f, "Name")
+        if params == [] do error(problem(line_of(f), column_of(f), protocol <> "." <> name <> " takes at least the " <> target <> " it is called on")) else
+          first = hd(params)
+          if text(first, "Type") != "" and text(first, "Type") != target do
+            error(problem(line_of(first), column_of(first), "the first parameter of " <> protocol <> "." <> name <> " is the " <> target <> " it is implemented for, not " <> text(first, "Type")))
+          else
+            typed_first = if text(first, "Type") == "" do set(first, [{"Type", s(target)}]) else first end
+            made_f = set(f, [{"Comments", made_strs(above)}, {"Params", AlchemJson.J.list([typed_first | tl(params)])}, {"Protocol", s(protocol)}, {"ProtocolFunction", s(name)}, {"For", s(target)}, {"Name", s(name <> "$" <> protocol <> "$#{index}")}])
+            implemented(p1, protocol, target, index, done ++ [made_f])
+          end
+        end
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+
+  def macro_decl(p: P): result[tuple[AlchemJson.J, P], string] do
+    with ok({name, p1}) <- expect(adv(p), "identifier", ""),
+         ok({_, p2}) <- expect(p1, "(", ""),
+         ok({{params, block_name}, p3}) <- macro_params(p2, []) do
+      shape = problem(name.line, name.column, "the body of a macro is one quote do ... end")
+      case expect(p3, ")", "") do
+        error(_) -> error(problem(name.line, name.column, "the parameters of a macro are names, the last of which may be do: name for a block"))
+        ok({_, p4}) ->
+          with ok({_, p5}) <- expect_or(p4, "do", shape) do
+            {quote_notes, p6} = notes(p5, peek(p5))
+            p7 = note_as(p6, "quote:" <> name.text, quote_notes)
+            with ok({_, p8}) <- expect_or(p7, "quote", shape),
+                 ok({_, p9}) <- expect_or(p8, "do", shape) do
+              base = obj([{"Name", s(name.text)}, {"Block", s(block_name)}, {"Params", made_strs(params)}, {"Body", nul()}, {"Definitions", nul()}, {"Line", n(name.line)}, {"Column", n(name.column)}])
+              filled = if name.text == "__using__" do
+                case using_definitions(p9, []) do
+                  error(why) -> error(why)
+                  ok({definitions, p10}) ->
+                    if definitions == [] do error(problem(name.line, name.column, "__using__ holds the function definitions that use adds to a module")) else ok({set(base, [{"Definitions", AlchemJson.J.list(definitions)}]), p10}) end
+                end
+              else
+                case block(p9, false) do
+                  error(why) -> error(why)
+                  ok({body, p10}) -> ok({set(base, [{"Body", made(body)}]), p10})
+                end
+              end
+              with ok({macro, p10}) <- filled do
+                {first_notes, p11} = notes(p10, peek(p10))
+                with ok({_, p12}) <- expect(note_as(p11, "ends:macro:" <> name.text, first_notes), "identifier", "end") do
+                  {second_notes, p13} = notes(p12, peek(p12))
+                  with ok({_, p14}) <- expect(note_as(p13, "ends:defmacro:" <> name.text, second_notes), "identifier", "end") do ok({macro, p14}) else
+  error(why) -> error(why)
+end
+                else
+                  error(why) -> error(why)
+                end
+              else
+                error(why) -> error(why)
+              end
+            else
+              error(why) -> error(why)
+            end
+          else
+            error(why) -> error(why)
+          end
+      end
+    else
+      error(why) -> error(why)
+    end
+  end
+  # The word expected, or the message given.
+  def expect_or(p: P, word: string, message: string): result[tuple[AlchemLexer.Token, P], string] do
+    case expect(p, "identifier", word) do
+      ok(v) -> ok(v)
+      error(_) -> error(message)
+    end
+  end
+  def macro_params(p: P, done: list[string]): result[tuple[tuple[list[string], string], P], string] do
+    if peek(p).kind == ")" do ok({{done, ""}, p}) else
+      with ok({param, p1}) <- expect(p, "identifier", "") do
+        if param.text == "do" and peek(p1).kind == ":" do
+          with ok({block_name, p2}) <- expect(adv(p1), "identifier", "") do ok({{done, block_name.text}, p2}) else
+  error(why) -> error(why)
+end
+        else
+          if peek(p1).kind != "," do ok({{done ++ [param.text], ""}, p1}) else macro_params(adv(p1), done ++ [param.text]) end
+        end
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+  def using_definitions(p: P, done: list[AlchemJson.J]): result[tuple[list[AlchemJson.J], P], string] do
+    if not (peek(p).text in ["def", "defp"]) do ok({done, p}) else
+      {above, p0} = notes(p, peek(p))
+      with ok({f, p1}) <- function_decl(p0) do using_definitions(p1, done ++ [set(f, [{"Comments", made_strs(above)}])]) else
+  error(why) -> error(why)
+end
+    end
+  end
+
+  def use_decl(p: P): result[tuple[AlchemJson.J, P], string] do
+    keyword = peek(p)
+    module = peek(adv(p))
+    p1 = adv_n(p, 2)
+    with ok({{names, values}, p2}) <- use_options(p1, [], []) do
+      ok({obj([{"Module", s(module.text)}, {"Names", made_strs(names)}, {"Values", made(values)}, {"Line", n(keyword.line)}, {"Column", n(keyword.column)}]), p2})
+    else
+      error(why) -> error(why)
+    end
+  end
+  def use_options(p: P, names: list[string], values: list[AlchemJson.J]): result[tuple[tuple[list[string], list[AlchemJson.J]], P], string] do
+    if peek(p).kind != "," do ok({{names, values}, p}) else
+      with ok({name, p1}) <- expect(adv(p), "identifier", "") do
+        case expect(p1, ":", "") do
+          error(_) -> error(problem(name.line, name.column, "use takes options written name: value"))
+          ok({_, p2}) -> with ok({value, p3}) <- expr_at(p2, 0) do use_options(p3, names ++ [name.text], values ++ [value]) else
+  error(why) -> error(why)
+end
+        end
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+
+  # What in a constant's value is not made of literals and constants.
+  def non_constant(e: AlchemJson.J): option[AlchemJson.J] do
+    if null?(e) do none else
+      kind = text(e, "Kind")
+      here = if kind in ["literal", "constant", "list", "tuple", "map", "unary", "binary"] do false else
+        if kind == "name" do text(e, "Name") != "none" else
+          if kind == "sigil" do not null?(get(e, "Left")) else true end
+        end
+      end
+      if here do some(e) else
+        Enum.reduce([get(e, "Left"), get(e, "Right")] ++ items(e, "Args") ++ items(e, "Keys"), none, fn part, found ->
+          case found do
+            some(_) -> found
+            none -> non_constant(part)
+          end
+        end)
+      end
+    end
+  end
+
+  def constant_decl(p: P, earlier: list[AlchemJson.J]): result[tuple[AlchemJson.J, P], string] do
+    at = peek(p)
+    name = ahead(p, 1)
+    p1 = adv_n(p, 2)
+    first = String.slice(name.text, 0, 1)
+    if not lower_first?(first) and first != "_" do error(problem(name.line, name.column, "a module constant's name starts with a lower-case letter")) else
+      if Enum.any?(earlier, fn c -> text(c, "Name") == name.text end) do error(problem(at.line, at.column, "module constant @" <> name.text <> " is defined twice")) else
+        if peek(p1).line != name.line or peek(p1).kind == "EOF" do error(problem(at.line, at.column, "@" <> name.text <> " needs a value on the same line: @" <> name.text <> " value")) else
+          with ok({value, p2}) <- expr_at(p1, 0) do
+            case non_constant(value) do
+              some(wrong) -> error(problem(line_of(wrong), column_of(wrong), "the value of @" <> name.text <> " must be built from literals and earlier constants"))
+              none -> ok({obj([{"Name", s(name.text)}, {"Value", value}, {"Line", n(at.line)}, {"Column", n(at.column)}, {"Comments", nul()}]), p2})
+            end
+          else
+            error(why) -> error(why)
+          end
+        end
+      end
+    end
+  end
+
+  def require_decl(p: P, keyword: AlchemLexer.Token): result[tuple[AlchemJson.J, P], string] do
+    invalid = problem(keyword.line, keyword.column, "require needs a module path and a version such as \"v1.2.3\"")
+    case expect(p, "string", "") do
+      error(_) -> error(invalid)
+      ok({path, p1}) ->
+        case expect(p1, "string", "") do
+          error(_) -> error(invalid)
+          ok({version, p2}) ->
+            path_text = unquote(path.text)
+            version_text = unquote(version.text)
+            if not (path_text =~ ~r/^[A-Za-z0-9_~-]+([.\/][A-Za-z0-9_~-]+)*$/) or not (version_text =~ ~r/^v[0-9][0-9A-Za-z.+-]*$/) do error(invalid) else
+              ok({obj([{"Path", s(path_text)}, {"Version", s(version_text)}, {"Source", s("")}, {"Line", n(keyword.line)}, {"Column", n(keyword.column)}]), p2})
+            end
+        end
+    end
+  end
+
+  # --- the module ---------------------------------------------------------------------
+
+  # The comments above a declaration document the first thing it adds:
+  # attach gives them instead to a part that is neither a type nor a
+  # function, to stay above it.
+  def attach(p: P, m: M, doc: list[string], key: string): tuple[P, M] do
+    if doc == [] do {p, m} else {note_as(p, key, doc), %M{m | docs: Enum.take(m.docs, length(m.docs) - 1)}} end
+  end
+
+  def declarations(p: P, m: M, after_doc: boolean): result[tuple[M, P], string] do
+    keyword = peek(p)
+    {found_doc, p0} = before(p, keyword)
+    {doc, p1} = if after_doc do {[], note_as(p0, "documented:#{keyword.line}", found_doc)} else {found_doc, p0} end
+    m0 = if doc != [] do %M{m | docs: m.docs ++ [{length(m.types), length(m.functions), doc}]} else m end
+    next = ahead(p1, 1)
+    if keyword.text == "import" and next.kind == "string" do
+      value = unquote(next.text)
+      {p2, m1} = attach(adv_n(p1, 2), m0, doc, "import:" <> value)
+      declarations(p2, %M{m1 | imports: m1.imports ++ [value], import_positions: m1.import_positions ++ [obj([{"Line", n(keyword.line)}, {"Column", n(keyword.column)}])]}, false)
+    else
+      if keyword.text == "require" do
+        with ok({req, p2}) <- require_decl(adv(p1), keyword) do
+          {p3, m1} = attach(p2, m0, doc, "require:" <> text(req, "Path"))
+          declarations(p3, %M{m1 | requires: m1.requires ++ [req]}, false)
+        else
+          error(why) -> error(why)
+        end
+      else
+        shared = keyword.text == "extern" and next.text == "shared" and ahead(p1, 2).text == "type" and ahead(p1, 3).kind == "identifier"
+        if shared or (keyword.text == "extern" and next.text == "type" and ahead(p1, 2).kind == "identifier") do extern_type(adv_n(p1, if shared do 3 else 2 end), m0, shared) else
+          if keyword.text in ["struct", "type", "defexception"] and next.kind == "identifier" do
+            with ok({decl, p2}) <- type_declaration(p1) do declarations(p2, %M{m0 | types: m0.types ++ [decl]}, false) else
+  error(why) -> error(why)
+end
+          else
+            if keyword.kind == "@" do attribute(p1, m0, doc, keyword, next) else
+              if keyword.kind == "identifier" and keyword.text == "doctest" and next.kind == "identifier" do
+                {p2, m1} = attach(adv_n(p1, 2), m0, doc, "doctest:" <> next.text)
+                declarations(p2, %M{m1 | doctests: m1.doctests ++ [next.text]}, false)
+              else
+                if keyword.kind == "identifier" and keyword.text in ["test", "describe", "setup", "setup_all"] and (next.kind == "string" or keyword.text == "setup" or keyword.text == "setup_all") do
+                  {p2, m1} = if keyword.text == "describe" and doc != [] do {%P{p1 | carry: doc}, %M{m0 | docs: Enum.take(m0.docs, length(m0.docs) - 1)}} else {p1, m0} end
+                  with ok({m2, p3}) <- tests_decl(p2, m1, "") do declarations(p3, m2, false) else
+  error(why) -> error(why)
+end
+                else
+                  rest_of(p1, m0, doc, keyword, next)
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  def rest_of(p: P, m: M, doc: list[string], keyword: AlchemLexer.Token, next: AlchemLexer.Token): result[tuple[M, P], string] do
+    if keyword.text == "use" and next.kind == "identifier" and upper_first?(next.text) do
+      with ok({used, p1}) <- use_decl(p) do
+        {p2, m1} = attach(p1, m, doc, "use:" <> text(used, "Module"))
+        declarations(p2, %M{m1 | uses: m1.uses ++ [used]}, false)
+      else
+        error(why) -> error(why)
+      end
+    else
+      if keyword.text == "defmacro" do
+        with ok({macro, p1}) <- macro_decl(p) do
+          if Enum.any?(m.macros, fn other -> text(other, "Name") == text(macro, "Name") end) do error(problem(line_of(macro), column_of(macro), "macro " <> text(macro, "Name") <> " is defined twice")) else
+            {p2, m1} = attach(p1, m, doc, "macro:" <> text(macro, "Name"))
+            declarations(p2, %M{m1 | macros: m1.macros ++ [macro]}, false)
+          end
+        else
+          error(why) -> error(why)
+        end
+      else
+        if keyword.text == "defprotocol" do
+          with ok({protocol, p1}) <- protocol_decl(p) do
+            if Enum.any?(m.protocols, fn other -> text(other, "Name") == text(protocol, "Name") end) do error(problem(line_of(protocol), column_of(protocol), "protocol " <> text(protocol, "Name") <> " is declared twice")) else
+              {p2, m1} = attach(p1, m, doc, "protocol:" <> text(protocol, "Name"))
+              declarations(p2, %M{m1 | protocols: m1.protocols ++ [protocol]}, false)
+            end
+          else
+            error(why) -> error(why)
+          end
+        else
+          if keyword.text == "defimpl" do
+            with ok({functions, p1}) <- implementation_decl(p, length(m.functions)) do
+              first_name = text(hd(functions), "Name")
+              suffix = case String.split(first_name, "$", [parts: 2]) do
+                [_, after_dollar] -> "$" <> after_dollar
+                _ -> ""
+              end
+              {p2, m1} = attach(p1, m, doc, "impl:" <> suffix)
+              declarations(p2, %M{m1 | functions: m1.functions ++ functions}, false)
+            else
+              error(why) -> error(why)
+            end
+          else
+            if keyword.text in ["def", "defp", "extern"] do
+              with ok({f, p1}) <- function_decl(p) do declarations(p1, %M{m | functions: m.functions ++ [f]}, false) else
+  error(why) -> error(why)
+end
+            else ok({m, p}) end
+          end
+        end
+      end
+    end
+  end
+
+  def extern_type(p: P, m: M, shared: boolean): result[tuple[M, P], string] do
+    name = peek(p)
+    p1 = adv(p)
+    decl = set(type_decl(name.line, name.column), [{"Kind", s("extern")}, {"Shared", b(shared)}, {"Name", s(name.text)}, {"Local", s(name.text)}])
+    if not upper_first?(name.text) or String.contains?(name.text, ".") do error(problem(name.line, name.column, "type name must be one capitalized word")) else
+      with ok({_, p2}) <- expect(p1, "=", ""),
+           ok({target, p3}) <- expect(p2, "string", "") do
+        value = unquote(target.text)
+        if not (value =~ ~r/^\*?((\.\.?\/)+)?[A-Za-z0-9_~-]+([.\/][A-Za-z0-9_~-]+)*\.[A-Z][A-Za-z0-9_]*$/) do error(problem(target.line, target.column, "extern type target must be \"import/path.Type\" or \"*import/path.Type\"")) else
+          declarations(p3, %M{m | types: m.types ++ [set(decl, [{"Extern", s(value)}])]}, false)
+        end
+      else
+        error(why) -> error(why)
+      end
+    end
+  end
+
+  def attribute(p: P, m: M, doc: list[string], keyword: AlchemLexer.Token, kind: AlchemLexer.Token): result[tuple[M, P], string] do
+    if kind.text in ["moduledoc", "doc", "typedoc"] do
+      p1 = adv_n(p, 2)
+      read = if peek(p1).text != "false" do
+        case expect(p1, "string", "") do
+          error(_) -> error(problem(kind.line, kind.column, "@" <> kind.text <> " takes a string, usually a heredoc"))
+          ok({value, p2}) -> ok({unquote(value.text), p2})
+        end
+      else ok({"", adv(p1)}) end
+      with ok({value, p2}) <- read do
+        if kind.text == "moduledoc" do
+          {p3, m1} = attach(p2, m, doc, "moduledoc")
+          declarations(p3, %M{m1 | module_doc: value}, false)
+        else
+          declarations(p2, %M{m | docstrings: m.docstrings ++ [{length(m.types), length(m.functions), [value, kind.text, Integer.to_string(kind.line), Integer.to_string(kind.column)]}]}, true)
+        end
+      else
+        error(why) -> error(why)
+      end
+    else
+      if kind.kind == "identifier" and not (kind.text in ["moduledoc", "doc", "typedoc", "tag", "moduletag", "describetag"]) do
+        with ok({constant, p1}) <- constant_decl(p, m.constants) do
+          {with_doc, m1} = if doc != [] do {set(constant, [{"Comments", strs(doc)}]), %M{m | docs: Enum.take(m.docs, length(m.docs) - 1)}} else {constant, m} end
+          declarations(p1, %M{m1 | constants: m1.constants ++ [with_doc]}, false)
+        else
+          error(why) -> error(why)
+        end
+      else
+        {p1, m1} = if kind.text == "moduletag" do attach(p, m, doc, "moduletag") else {p, m} end
+        with ok({m2, p2}) <- tag_decl(p1, m1) do declarations(p2, m2, false) else
+  error(why) -> error(why)
+end
+      end
+    end
+  end
+
+  # The documentation waiting given to what it documents.
+  def documented(m: M): result[M, string] do
+    count = length(m.docs)
+    with_comments = Enum.reduce(Enum.with_index(m.docs), m, fn {{types, functions, doc}, k}, sofar ->
+      {limit_types, limit_functions} = if k + 1 < count do
+        {t2, f2, _} = Enum.at(m.docs, k + 1, {0, 0, []})
+        {t2, f2}
+      else {length(m.types), length(m.functions)} end
+      if types < limit_types do %M{sofar | types: replace_at(sofar.types, types, fn t -> set(t, [{"Comments", strs(doc)}]) end)} else
+        if functions < limit_functions do %M{sofar | functions: replace_at(sofar.functions, functions, fn f -> set(f, [{"Comments", strs(doc)}]) end)} else
+          %M{sofar | trailing: sofar.trailing ++ doc}
+        end
+      end
+    end)
+    Enum.reduce(with_comments.docstrings, ok(with_comments), fn {types, functions, entry}, sofar ->
+      case sofar do
+        error(why) -> error(why)
+        ok(done) ->
+          text_value = Enum.at(entry, 0, "")
+          type_first = types < length(done.types) and (functions >= length(done.functions) or line_of(Enum.at(done.types, types, nul())) < line_of(Enum.at(done.functions, functions, nul())))
+          if type_first do ok(%M{done | types: replace_at(done.types, types, fn t -> set(t, [{"Doc", s(text_value)}]) end)}) else
+            if functions < length(done.functions) do ok(%M{done | functions: replace_at(done.functions, functions, fn f -> set(f, [{"Doc", s(text_value)}]) end)}) else
+              if text_value != "" do error(problem(String.to_integer(Enum.at(entry, 2, "0")), String.to_integer(Enum.at(entry, 3, "0")), "@" <> Enum.at(entry, 1, "") <> " is not followed by anything to document")) else ok(done) end
+            end
+          end
+      end
+    end)
+  end
+  def replace_at(list: list[AlchemJson.J], index: integer, change: fn[AlchemJson.J, AlchemJson.J]): list[AlchemJson.J] do
+    Enum.map(Enum.with_index(list), fn {v, k} -> if k == index do change.(v) else v end end)
+  end
+
+  def map_of(entries: list[tuple[string, list[string]]]): AlchemJson.J do
+    if entries == [] do nul() else obj(Enum.map(Enum.sort(entries), fn {k, v} -> {k, strs(v)} end)) end
+  end
+
+  # The tree of a source file, as ParseSyntax gives it, or its message.
+  def parse(source: string): result[AlchemJson.J, string] do
+    if byte_size(source) > 1048576 do error(problem(1, 1, "source exceeds 1048576 bytes")) else
+      case AlchemLexer.scan(source) do
+        error(why) -> error(why)
+        ok({tokens, comments}) ->
+          p = %P{rest: tokens, last: %AlchemLexer.Token{kind: "", text: "", line: 0, column: 0}, depth: 0, in_arm: false, probing: false, noted: [], carry: [], arm_column: 0, cond_arms: false, capture: -1, comments: comments, keep: true, tags: [], trying: 0, source: source, starts: line_starts(source)}
+          {leading, p0} = before(p, peek(p))
+          with ok({_, p1}) <- expect(p0, "identifier", "defmodule"),
+               ok({module, p2}) <- expect(p1, "identifier", "") do
+            if module.text == "" or not upper_first?(module.text) do error(problem(module.line, module.column, "module must begin with uppercase letter")) else
+              with ok({_, p3}) <- expect(p2, "identifier", "do") do
+                m = %M{name: module.text, line: module.line, column: module.column, leading: leading, trailing: [], doctests: [], module_doc: "", protocols: [], macros: [], uses: [], group_tags: [], constants: [], types: [], requires: [], imports: [], import_positions: [], functions: [], docs: [], docstrings: []}
+                with ok({m1, p4}) <- declarations(p3, m, false),
+                     ok(m2) <- documented(m1) do
+                  {trail, p5} = before(p4, peek(p4))
+                  with ok({_, p6}) <- expect(p5, "identifier", "end") do
+                    {trail2, p7} = before(p6, peek(p6))
+                    with ok({_, _}) <- expect(p7, "EOF", "") do ok(program(%M{m2 | trailing: m2.trailing ++ trail ++ trail2}, p7)) else
+  error(why) -> error(why)
+end
+                  else
+                    error(why) -> error(why)
+                  end
+                else
+                  error(why) -> error(why)
+                end
+              else
+                error(why) -> error(why)
+              end
+            end
+          else
+            error(why) -> error(why)
+          end
+      end
+    end
+  end
+
+  def program(m: M, p: P): AlchemJson.J do
+    mains = Enum.filter(m.functions, fn f -> text(f, "Name") == "main" end)
+    statements = if mains == [] do nul() else get(Enum.at(mains, length(mains) - 1, nul()), "Body") end
+    body = AlchemJson.items_of(statements)
+    one = if length(body) == 1 do hd(body) else nul() end
+    e = get(one, "Expr")
+    output = if text(one, "Kind") == "output" and text(e, "Kind") == "literal" do text(get(e, "Value"), "Text") else "" end
+    shown_output = if text(one, "Kind") == "output" and text(e, "Kind") == "literal" do [set(one, [{"Output", s(output)}])] else body end
+    assertion = if text(one, "Kind") == "assert" and text(e, "Kind") == "literal" do get(get(e, "Value"), "Boolean") else nul() end
+    comparison = if text(one, "Kind") == "assert" and text(e, "Kind") == "binary" and text(get(e, "Left"), "Kind") == "literal" and text(get(e, "Right"), "Kind") == "literal" do
+      obj([{"Left", get(get(e, "Left"), "Value")}, {"Right", get(get(e, "Right"), "Value")}, {"Operator", get(e, "Op")}])
+    else nul() end
+    # The statements are main's body itself: the output is noted on main's
+    # first statement too, as the pinned parser notes it through the
+    # slice the two share.
+    last_main = case Enum.find_index(Enum.reverse(m.functions), fn f -> text(f, "Name") == "main" end) do
+      some(k) -> length(m.functions) - 1 - k
+      none -> -1
+    end
+    functions = if text(one, "Kind") == "output" and text(e, "Kind") == "literal" do
+      replace_at(m.functions, last_main, fn f -> set(f, [{"Body", AlchemJson.J.list(shown_output)}]) end)
+    else m.functions end
+    obj([{"Leading", made_strs(m.leading)}, {"Trailing", made_strs(m.trailing)}, {"Doctests", made_strs(m.doctests)}, {"ModuleDoc", s(m.module_doc)},
+      {"Library", b(false)}, {"Protocols", made(m.protocols)}, {"Macros", made(m.macros)}, {"Uses", made(m.uses)}, {"GroupTags", map_of(m.group_tags)},
+      {"Constants", made(m.constants)}, {"Remotes", nul()}, {"Fetched", b(false)}, {"Replaced", nul()}, {"Types", made(m.types)},
+      {"Requires", made(m.requires)}, {"Imports", made_strs(m.imports)}, {"ImportPositions", made(m.import_positions)},
+      {"ModuleLine", n(m.line)}, {"ModuleColumn", n(m.column)}, {"Source", s("")}, {"Functions", made(functions)},
+      {"Statements", if null?(statements) do nul() else AlchemJson.J.list(shown_output) end}, {"Module", s(m.name)}, {"Output", s(output)},
+      {"Comparison", comparison}, {"Assertion", assertion}, {"Notes", map_of(p.noted)}])
+  end
+end

@@ -1,0 +1,746 @@
+defmodule AlchemLexer do
+  # The tokens and comments of a source text, as the pinned compiler's
+  # lexer gives them (compiler/lexer of the pinned tree): each token its
+  # kind, its text, and the line and column it starts at; each comment its
+  # text without the # and one space after it. A text the lexer refuses is
+  # "line:column: message", the pinned lexer's message.
+  #
+  # The text is read a byte at a time by its index; columns count runes.
+  #
+  # Not as the pinned lexer: a letter, a digit, an upper case letter and a
+  # space beyond ASCII are told apart by ranges, not by Unicode's tables
+  # (letter?, space?).
+
+  struct Token do
+    kind: string
+    text: string
+    line: integer
+    column: integer
+  end
+
+  struct Comment do
+    text: string
+    line: integer
+    column: integer
+  end
+
+  # Where the lexer is: the text and its length, the index, the line and
+  # column there, and what has been read, last first.
+  struct At do
+    s: string
+    n: integer
+    i: integer
+    line: integer
+    col: integer
+    tokens: list[Token]
+    comments: list[Comment]
+  end
+
+  def byte(s: string, i: integer): integer do
+    if i < 0 or i >= byte_size(s) do -1 else Sys.byte(Sys.addr(s) + i) end
+  end
+
+  def part(s: string, from: integer, to: integer): string do
+    if to <= from do "" else binary_part(s, from, to - from) end
+  end
+
+  def starts?(s: string, i: integer, prefix: string): boolean do
+    i + byte_size(prefix) <= byte_size(s) and part(s, i, i + byte_size(prefix)) == prefix
+  end
+
+  # The index of the first byte c at or after i, or -1.
+  def index_of(s: string, i: integer, c: integer): integer do
+    if i >= byte_size(s) do -1 else if byte(s, i) == c do i else index_of(s, i + 1, c) end end
+  end
+
+  # The index of text at or after i, or -1.
+  def find(s: string, i: integer, text: string): integer do
+    case String.split(part(s, i, byte_size(s)), text, [parts: 2]) do
+      [before, _] -> i + byte_size(before)
+      _ -> -1
+    end
+  end
+
+  # The runes from from to to: the bytes that start one.
+  def runes(s: string, from: integer, to: integer): integer do
+    count_runes(s, from, to, 0)
+  end
+  def count_runes(s: string, i: integer, to: integer, done: integer): integer do
+    if i >= to do done else
+      b = byte(s, i)
+      count_runes(s, i + 1, to, if b >= 128 and b < 192 do done else done + 1 end)
+    end
+  end
+
+  # The rune at i and its size; -1 and 1 for bytes that are no rune.
+  def rune(s: string, i: integer): tuple[integer, integer] do
+    b = byte(s, i)
+    if b < 128 do {b, 1} else
+      if b < 194 do {-1, 1} else
+        size = if b < 224 do 2 else if b < 240 do 3 else if b < 245 do 4 else 0 end end end
+        if size == 0 or i + size > byte_size(s) do {-1, 1} else
+          rest = Enum.map(Enum.to_list(1..(size - 1)), fn k -> byte(s, i + k) end)
+          if Enum.any?(rest, fn c -> c < 128 or c >= 192 end) do {-1, 1} else
+            first = if size == 2 do b - 192 else if size == 3 do b - 224 else b - 240 end end
+            code = Enum.reduce(rest, first, fn c, sofar -> sofar * 64 + (c - 128) end)
+            low = if size == 2 do 128 else if size == 3 do 2048 else 65536 end end
+            if code < low or code > 1114111 or (code >= 55296 and code <= 57343) do {-1, 1} else {code, size} end
+          end
+        end
+      end
+    end
+  end
+
+  def ascii_letter?(c: integer): boolean do
+    (c >= 65 and c <= 90) or (c >= 97 and c <= 122)
+  end
+  def digit?(c: integer): boolean do c >= 48 and c <= 57 end
+  def letter?(c: integer): boolean do
+    ascii_letter?(c) or c == 170 or c == 181 or c == 186 or (c >= 192 and c != 215 and c != 247)
+  end
+  def upper?(c: integer): boolean do c >= 65 and c <= 90 end
+  def space?(c: integer): boolean do
+    (c >= 9 and c <= 13) or c == 32 or c == 133 or c == 160 or c == 5760 or (c >= 8192 and c <= 8202) or c == 8232 or c == 8233 or c == 8239 or c == 8287 or c == 12288
+  end
+  def atom_start?(c: integer): boolean do c == 95 or ascii_letter?(c) end
+  # A character after which a colon does not begin an atom.
+  def atom_before?(c: integer): boolean do
+    atom_start?(c) or digit?(c) or c in [41, 93, 125, 63, 33, 34] or c >= 128
+  end
+  def octal?(c: integer): boolean do c >= 48 and c <= 55 end
+  def hex?(c: integer): boolean do digit?(c) or (c >= 97 and c <= 102) or (c >= 65 and c <= 70) end
+  def modifier?(c: integer): boolean do (c >= 97 and c <= 122) or c == 85 end
+
+  def closer(c: integer): integer do
+    case c do
+      47 -> 47
+      124 -> 124
+      34 -> 34
+      39 -> 39
+      40 -> 41
+      91 -> 93
+      123 -> 125
+      60 -> 62
+      _ -> 0
+    end
+  end
+
+  def problem(line: integer, col: integer, message: string): string do
+    "#{line}:#{col}: " <> message
+  end
+
+  def add(at: At, kind: string, text: string, line: integer, col: integer, next: integer, next_col: integer): At do
+    %At{at | tokens: [%Token{kind: kind, text: text, line: line, column: col} | at.tokens], i: next, col: next_col}
+  end
+
+  # --- strings ----------------------------------------------------------------
+
+  # The end of the string opening at start, whether it interpolates, and
+  # "" or what is wrong.
+  def string_end(s: string, start: integer): tuple[integer, boolean, string] do
+    string_from(s, start + 1, false)
+  end
+  def string_from(s: string, i: integer, interpolated: boolean): tuple[integer, boolean, string] do
+    if i >= byte_size(s) do {0, false, "unterminated string"} else
+      {r, size} = rune(s, i)
+      if r == -1 do {0, false, "invalid UTF-8"} else
+        if r == 10 do {0, false, "newline in string"} else
+          if r == 92 do
+            after_escape = i + size
+            skip = if after_escape < byte_size(s) do elem(rune(s, after_escape), 1) else 0 end
+            string_from(s, after_escape + skip, interpolated)
+          else
+            if r == 34 do {i + 1, interpolated, ""} else
+              if r == 35 and byte(s, i + 1) == 123 do
+                {closing, wrong} = interpolation_end(s, i)
+                if wrong != "" do {0, false, wrong} else string_from(s, closing + 1, true) end
+              else string_from(s, i + size, interpolated) end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  # The index of the } that closes the #{ at start, and "" or what is wrong.
+  def interpolation_end(s: string, start: integer): tuple[integer, string] do
+    interpolation_from(s, start + 2, 1)
+  end
+  def interpolation_from(s: string, i: integer, depth: integer): tuple[integer, string] do
+    if i >= byte_size(s) do {0, "unterminated string"} else
+      c = byte(s, i)
+      if c == 34 do
+        {inner, _, wrong} = string_end(s, i)
+        if wrong != "" do {0, wrong} else interpolation_from(s, inner, depth) end
+      else
+        if c == 10 do {0, "newline in string"} else
+          if c == 123 do interpolation_from(s, i + 1, depth + 1) else
+            if c == 125 do (if depth == 1 do {i, ""} else interpolation_from(s, i + 1, depth - 1) end) else interpolation_from(s, i + 1, depth) end
+          end
+        end
+      end
+    end
+  end
+
+  def hex_digit(c: integer): integer do
+    if digit?(c) do c - 48 else if c >= 97 do c - 87 else c - 55 end end
+  end
+  def hex_value(text: string): integer do
+    Enum.reduce(bytes_of(text), 0, fn c, sofar -> sofar * 16 + hex_digit(c) end)
+  end
+  def bytes_of(text: string): list[integer] do
+    if text == "" do [] else Enum.map(Enum.to_list(0..(byte_size(text) - 1)), fn k -> byte(text, k) end) end
+  end
+
+  # \u{...} at i of a text: its code point and the escape's size, or none.
+  def braced(text: string, i: integer): option[tuple[integer, integer]] do
+    if not starts?(text, i, "\\u{") do none else
+      close = index_of(text, i, 125)
+      size = close - i
+      if close < 0 or size < 4 or size > 9 do none else
+        digits = part(text, i + 3, close)
+        if not Enum.all?(bytes_of(digits), fn c -> hex?(c) end) do none else
+          code = hex_value(digits)
+          if code > 1114111 or (code >= 55296 and code <= 57343) do none else some({code, size + 1}) end
+        end
+      end
+    end
+  end
+
+  def hex_text(code: integer, width: integer): string do
+    digits = String.upcase(Integer.to_string(code, 16))
+    String.duplicate("0", max(0, width - byte_size(digits))) <> digits
+  end
+
+  # The backslash off \#, Elixir's \u{...}, \e and \s spelled as Go spells
+  # them.
+  def unescape(raw: string): string do
+    Enum.join(Enum.reverse(unescaped(raw, 0, [])), "")
+  end
+  def unescaped(raw: string, i: integer, done: list[string]): list[string] do
+    if i >= byte_size(raw) do done else
+      c = byte(raw, i)
+      if c == 92 and i + 1 < byte_size(raw) do
+        case braced(raw, i) do
+          some({code, size}) -> unescaped(raw, i + size, ["\\U" <> hex_text(code, 8) | done])
+          none ->
+            next = byte(raw, i + 1)
+            if next == 101 do unescaped(raw, i + 2, ["\\x1b" | done]) else
+              if next == 115 do unescaped(raw, i + 2, [" " | done]) else
+                if next == 35 do unescaped(raw, i + 2, ["#" | done]) else unescaped(raw, i + 2, [part(raw, i, i + 2) | done]) end
+              end
+            end
+        end
+      else
+        stop = next_special(raw, i + 1)
+        unescaped(raw, stop, [part(raw, i, stop) | done])
+      end
+    end
+  end
+  def next_special(raw: string, i: integer): integer do
+    case index_of(raw, i, 92) do
+      -1 -> byte_size(raw)
+      found -> found
+    end
+  end
+
+  # Whether a quoted text is a string Go's strconv.Unquote takes.
+  def quoted?(raw: string): boolean do
+    byte_size(raw) >= 2 and byte(raw, 0) == 34 and byte(raw, byte_size(raw) - 1) == 34 and valid_from(raw, 1, byte_size(raw) - 1)
+  end
+  def valid_from(raw: string, i: integer, stop: integer): boolean do
+    if i >= stop do true else
+      c = byte(raw, i)
+      if c == 34 or c == 10 do false else
+        if c != 92 do valid_from(raw, i + 1, stop) else
+          e = byte(raw, i + 1)
+          if i + 1 >= stop do false else
+            if e in [97, 98, 102, 110, 114, 116, 118, 92, 34] do valid_from(raw, i + 2, stop) else
+              if octal?(e) do
+                ok_octal = i + 3 < stop and octal?(byte(raw, i + 2)) and octal?(byte(raw, i + 3)) and (e - 48) * 64 + (byte(raw, i + 2) - 48) * 8 + (byte(raw, i + 3) - 48) < 256
+                ok_octal and valid_from(raw, i + 4, stop)
+              else
+                width = if e == 120 do 2 else if e == 117 do 4 else if e == 85 do 8 else 0 end end end
+                if width == 0 or i + 2 + width > stop do false else
+                  digits = part(raw, i + 2, i + 2 + width)
+                  ok_hex = Enum.all?(bytes_of(digits), fn d -> hex?(d) end)
+                  code = if ok_hex do hex_value(digits) else 0 end
+                  ok_hex and (e == 120 or (code <= 1114111 and (code < 55296 or code > 57343))) and valid_from(raw, i + 2 + width, stop)
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  # Why the quoted text written is no string: the first escape it does not
+  # take; "" when the fault is not an escape.
+  def string_problem(raw: string): string do
+    case first_bad(raw, 0) do
+      "" -> ""
+      escape -> "invalid escape " <> escape <> "; a string takes \\n, \\t, \\r, \\e, \\s, \\\\, \\\", \\#, \\xHH (a byte), \\uHHHH, \\UHHHHHHHH and \\u{H...} (a Unicode code point)"
+    end
+  end
+  def first_bad(raw: string, i: integer): string do
+    n = byte_size(raw)
+    if i + 1 >= n do "" else
+      if byte(raw, i) != 92 do first_bad(raw, i + 1) else
+        c = byte(raw, i + 1)
+        if c in [97, 98, 102, 110, 114, 116, 118, 92, 34, 39, 101, 115, 35] do first_bad(raw, i + 2) else
+          if octal?(c) do
+            if i + 3 < n and octal?(byte(raw, i + 2)) and octal?(byte(raw, i + 3)) do first_bad(raw, i + 2) else part(raw, i, min(n - 1, i + 4)) end
+          else
+            if c == 120 do
+              if i + 3 < n and hex?(byte(raw, i + 2)) and hex?(byte(raw, i + 3)) do first_bad(raw, i + 2) else part(raw, i, min(n - 1, i + 4)) end
+            else
+              if c == 117 or c == 85 do
+                case braced(raw, i) do
+                  some({_, size}) -> first_bad(raw, i + size)
+                  none ->
+                    digits = if c == 85 do 8 else 4 end
+                    plain_end = min(n - 1, i + 2 + digits)
+                    end_at = if c == 117 and starts?(raw, i, "\\u{") do
+                      close = index_of(raw, i, 125)
+                      if close > i do close + 1 else plain_end end
+                    else plain_end end
+                    valid = if not starts?(raw, i, "\\u{") and end_at - i == 2 + digits do
+                      text = part(raw, i + 2, end_at)
+                      if Enum.all?(bytes_of(text), fn d -> hex?(d) end) do
+                        v = hex_value(text)
+                        v <= 1114111 and (v < 55296 or v > 57343)
+                      else false end
+                    else false end
+                    if valid do first_bad(raw, i + 2) else part(raw, i, end_at) end
+                end
+              else part(raw, i, i + 2) end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  # A heredoc whose quotes are at start: its text with the closing quotes'
+  # indentation off each line, where the source goes on after it, and the
+  # lines it spans; or what is wrong.
+  def heredoc(s: string, start: integer, line: integer, col: integer): result[tuple[string, integer, integer], string] do
+    body = index_of(s, start, 10) - start
+    found = if index_of(s, start, 10) >= 0 and String.trim(part(s, start + 3, start + body)) == "" do closing_line(s, start + body + 1) else -1 end
+    if found < 0 do error(problem(line, col, "a heredoc starts with \"\"\" at the end of a line and ends with \"\"\" at the start of a later line")) else
+      quotes = find(s, found, "\"\"\"")
+      indent = part(s, found, quotes)
+      lines = String.split(part(s, start + body + 1, found), "\n")
+      kept = Enum.map(lines, fn text -> if String.starts_with?(text, indent) do binary_part(text, byte_size(indent), byte_size(text) - byte_size(indent)) else text end end)
+      ok({Enum.join(kept, "\n"), quotes + 3, length(String.split(part(s, start, found), "\n")) - 1})
+    end
+  end
+  def closing_line(s: string, at: integer): integer do
+    if at > byte_size(s) do -1 else
+      stop = case index_of(s, at, 10) do
+        -1 -> byte_size(s)
+        k -> k
+      end
+      if String.starts_with?(trim_blanks(part(s, at, stop)), "\"\"\"") do at else
+        if stop >= byte_size(s) do -1 else closing_line(s, stop + 1) end
+      end
+    end
+  end
+  # The text without the spaces, tabs and carriage returns it ends in.
+  def trim_blank_end(text: string): string do
+    last = byte(text, byte_size(text) - 1)
+    if last == 32 or last == 9 or last == 13 do trim_blank_end(binary_part(text, 0, byte_size(text) - 1)) else text end
+  end
+  def trim_blanks(text: string): string do
+    if String.starts_with?(text, " ") or String.starts_with?(text, "\t") do trim_blanks(binary_part(text, 1, byte_size(text) - 1)) else text end
+  end
+
+  # The token of a heredoc's text read as a string.
+  def heredoc_string(text: string, line: integer, col: integer): result[Token, string] do
+    case heredoc_raw(text, 0, [], false) do
+      error(wrong) -> error(problem(line, col, wrong))
+      ok({pieces, interpolated}) ->
+        raw = "\"" <> Enum.join(Enum.reverse(pieces), "") <> "\""
+        if interpolated do ok(%Token{kind: "template", text: raw, line: line, column: col}) else
+          plain = unescape(raw)
+          if quoted?(plain) do ok(%Token{kind: "string", text: plain, line: line, column: col}) else
+            case string_problem(raw) do
+              "" -> error(problem(line, col, "invalid string: invalid syntax"))
+              wrong -> error(problem(line, col, wrong))
+            end
+          end
+        end
+    end
+  end
+  def heredoc_raw(text: string, i: integer, done: list[string], interpolated: boolean): result[tuple[list[string], boolean], string] do
+    if i >= byte_size(text) do ok({done, interpolated}) else
+      c = byte(text, i)
+      if c == 92 and i + 1 < byte_size(text) do heredoc_raw(text, i + 2, [part(text, i, i + 2) | done], interpolated) else
+        if c == 35 and byte(text, i + 1) == 123 do
+          {end_at, wrong} = interpolation_end("\"" <> part(text, i, byte_size(text)) <> "\"", 1)
+          if wrong != "" do error(wrong) else heredoc_raw(text, i + end_at, [part(text, i, i + end_at) | done], true) end
+        else
+          piece = case c do
+            34 -> "\\\""
+            10 -> "\\n"
+            13 -> "\\r"
+            9 -> "\\t"
+            _ -> part(text, i, i + 1)
+          end
+          heredoc_raw(text, i + 1, [piece | done], interpolated)
+        end
+      end
+    end
+  end
+
+  # The text of a one-line sigil with the backslash off each escaped
+  # closer, outside the #{...} of a sigil that interpolates.
+  def sigil_unescape(text: string, close: integer, interpolates: boolean): string do
+    Enum.join(Enum.reverse(sigil_from(text, 0, close, interpolates, [])), "")
+  end
+  def sigil_from(text: string, i: integer, close: integer, interpolates: boolean, done: list[string]): list[string] do
+    if i >= byte_size(text) do done else
+      c = byte(text, i)
+      inner = if interpolates and c == 35 and byte(text, i + 1) == 123 do interpolation_end(text, i) else {0, "no"} end
+      if elem(inner, 1) == "" do sigil_from(text, elem(inner, 0) + 1, close, interpolates, [part(text, i, elem(inner, 0) + 1) | done]) else
+        if c == 92 and i + 1 < byte_size(text) and byte(text, i + 1) == close do sigil_from(text, i + 2, close, interpolates, [part(text, i + 1, i + 2) | done]) else
+          sigil_from(text, i + 1, close, interpolates, [part(text, i, i + 1) | done])
+        end
+      end
+    end
+  end
+
+  def modifiers_end(s: string, i: integer): integer do
+    if modifier?(byte(s, i)) do modifiers_end(s, i + 1) else i end
+  end
+
+  # --- the scan ---------------------------------------------------------------
+
+  # The tokens and comments of a text, or "line:column: message".
+  def scan(source: string): result[tuple[list[Token], list[Comment]], string] do
+    case step(%At{s: source, n: byte_size(source), i: 0, line: 1, col: 1, tokens: [], comments: []}) do
+      error(wrong) -> error(wrong)
+      ok(at) -> ok({Enum.reverse([%Token{kind: "EOF", text: "", line: at.line, column: at.col} | at.tokens]), Enum.reverse(at.comments)})
+    end
+  end
+
+  def step(at: At): result[At, string] do
+    if at.i >= at.n do ok(at) else
+      {r, size} = rune(at.s, at.i)
+      if r == -1 do error(problem(at.line, at.col, "invalid UTF-8")) else
+        if r == 10 do step(%At{at | i: at.i + size, line: at.line + 1, col: 1}) else
+          if space?(r) do step(%At{at | i: at.i + size, col: at.col + 1}) else
+            case token(at, r, size) do
+              error(wrong) -> error(wrong)
+              ok(next) -> step(next)
+            end
+          end
+        end
+      end
+    end
+  end
+
+  # One token, or comment, at the index.
+  def token(at: At, r: integer, size: integer): result[At, string] do
+    s = at.s
+    i = at.i
+    line = at.line
+    col = at.col
+    if r == 35 do
+      stop = case index_of(s, i, 10) do
+        -1 -> at.n
+        k -> k
+      end
+      text = trim_blank_end(part(s, i + 1, stop))
+      shown = if String.starts_with?(text, " ") do binary_part(text, 1, byte_size(text) - 1) else text end
+      ok(%At{at | comments: [%Comment{text: shown, line: line, column: col} | at.comments], i: stop})
+    else
+      if r == 126 and i + 4 < at.n and ascii_letter?(byte(s, i + 1)) and starts?(s, i + 2, "\"\"\"") do sigil_heredoc(at) else
+        if r == 126 and i + 2 < at.n and ascii_letter?(byte(s, i + 1)) and closer(byte(s, i + 2)) != 0 do sigil(at) else
+          if r == 64 do ok(add(at, "@", "@", line, col, i + 1, col + 1)) else
+            if digit?(r) do number(at) else
+              if r == 37 and i + 1 < at.n and upper?(elem(rune(s, i + 1), 0)) do
+                stop = name_end(s, i + 1, false)
+                ok(add(at, "%Name", part(s, i + 1, stop), line, col, stop, col + 1 + runes(s, i + 1, stop)))
+              else symbol(at, r, size) end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  # The end of a name: letters, digits, _ and . , but not the . of "..".
+  def name_end(s: string, i: integer, ranged: boolean): integer do
+    if i >= byte_size(s) do i else
+      {c, size} = rune(s, i)
+      if not (letter?(c) or digit?(c) or c == 95 or c == 46) or (ranged and c == 46 and starts?(s, i, "..")) do i else name_end(s, i + size, ranged) end
+    end
+  end
+
+  def sigil_heredoc(at: At): result[At, string] do
+    s = at.s
+    i = at.i
+    case heredoc(s, i + 2, at.line, at.col) do
+      error(wrong) -> error(wrong)
+      ok({text, next, lines}) ->
+        letter = part(s, i + 1, i + 2)
+        made = if letter == "S" do ok({%Token{kind: "string", text: go_quote(text), line: at.line, column: at.col}, next}) else
+          if letter == "s" do
+            case heredoc_string(text, at.line, at.col) do
+              error(wrong) -> error(wrong)
+              ok(t) -> ok({t, next})
+            end
+          else
+            stop = modifiers_end(s, next)
+            ok({%Token{kind: "sigil", text: letter <> "\u{0}" <> text <> "\u{0}" <> part(s, next, stop), line: at.line, column: at.col}, stop})
+          end
+        end
+        case made do
+          error(wrong) -> error(wrong)
+          ok({t, after_it}) ->
+            line_start = last_newline(s, after_it - 1) + 1
+            ok(%At{at | tokens: [t | at.tokens], i: after_it, line: at.line + lines, col: runes(s, line_start, after_it) + 1})
+        end
+    end
+  end
+
+  def last_newline(s: string, i: integer): integer do
+    if i < 0 do -1 else if byte(s, i) == 10 do i else last_newline(s, i - 1) end end
+  end
+
+  # A text as Go's strconv.Quote writes it.
+  def go_quote(text: string): string do
+    "\"" <> Enum.join(Enum.map(String.codepoints(text), fn c -> quote_char(c) end), "") <> "\""
+  end
+  def quote_char(c: string): string do
+    case c do
+      "\"" -> "\\\""
+      "\\" -> "\\\\"
+      "\n" -> "\\n"
+      "\t" -> "\\t"
+      "\r" -> "\\r"
+      "\u{7}" -> "\\a"
+      "\u{8}" -> "\\b"
+      "\u{C}" -> "\\f"
+      "\u{B}" -> "\\v"
+      _ ->
+        code = elem(rune(c, 0), 0)
+        if code < 32 or code == 127 do "\\x" <> String.downcase(hex_text(code, 2)) else
+          if code == -1 do "\\x" <> String.downcase(hex_text(byte(c, 0), 2)) else c end
+        end
+    end
+  end
+
+  def sigil(at: At): result[At, string] do
+    s = at.s
+    i = at.i
+    close = closer(byte(s, i + 2))
+    interpolates = byte(s, i + 1) >= 97 and byte(s, i + 1) <= 122
+    case sigil_close(s, i + 3, close, interpolates, at.line, at.col) do
+      error(wrong) -> error(wrong)
+      ok(stop) ->
+        mods = modifiers_end(s, stop + 1)
+        content = sigil_unescape(part(s, i + 3, stop), close, interpolates)
+        ok(add(at, "sigil", part(s, i + 1, i + 2) <> "\u{0}" <> content <> "\u{0}" <> part(s, stop + 1, mods), at.line, at.col, mods, at.col + runes(s, i, mods)))
+    end
+  end
+  def sigil_close(s: string, k: integer, close: integer, interpolates: boolean, line: integer, col: integer): result[integer, string] do
+    if k >= byte_size(s) do error(problem(line, col, "unterminated sigil")) else
+      c = byte(s, k)
+      if c == close do ok(k) else
+        if c == 10 do error(problem(line, col, "newline in sigil")) else
+          if c == 92 and k + 1 < byte_size(s) do sigil_close(s, k + 2, close, interpolates, line, col) else
+            if interpolates and c == 35 and byte(s, k + 1) == 123 do
+              {inner, wrong} = interpolation_end(s, k)
+              if wrong != "" do error(problem(line, col, "sigil interpolation: " <> wrong)) else sigil_close(s, inner + 1, close, interpolates, line, col) end
+            else sigil_close(s, k + 1, close, interpolates, line, col) end
+          end
+        end
+      end
+    end
+  end
+
+  def digits_end(s: string, i: integer, valid: string): integer do
+    c = byte(s, i)
+    if one_of?(valid, c) or (c == 95 and one_of?(valid, byte(s, i + 1))) do digits_end(s, i + 1, valid) else i end
+  end
+  def one_of?(valid: string, c: integer): boolean do
+    c >= 0 and index_of(valid, 0, c) >= 0
+  end
+
+  def number(at: At): result[At, string] do
+    s = at.s
+    i = at.i
+    based = if byte(s, i) == 48 and i + 2 < at.n and byte(s, i + 1) in [120, 111, 98] do
+      valid = case byte(s, i + 1) do
+        120 -> "0123456789abcdefABCDEF"
+        111 -> "01234567"
+        _ -> "01"
+      end
+      stop = digits_end(s, i + 2, valid)
+      if stop > i + 2 do some(stop) else none end
+    else none end
+    case based do
+      some(stop) -> ok(add(at, "integer", part(s, i, stop), at.line, at.col, stop, at.col + stop - i))
+      none ->
+        whole = digits_end(s, i, "0123456789")
+        if whole == i do error(problem(at.line, at.col, "expected integer digits")) else
+          if byte(s, whole) == 46 and digit?(byte(s, whole + 1)) do
+            fraction = plain_digits(s, whole + 1)
+            stop = if byte(s, fraction) == 101 do
+              sign = if byte(s, fraction + 1) == 43 or byte(s, fraction + 1) == 45 do fraction + 2 else fraction + 1 end
+              if digit?(byte(s, sign)) do plain_digits(s, sign) else fraction end
+            else fraction end
+            ok(add(at, "float", part(s, i, stop), at.line, at.col, stop, at.col + stop - i))
+          else
+            ok(add(at, "integer", part(s, i, whole), at.line, at.col, whole, at.col + whole - i))
+          end
+        end
+    end
+  end
+  def plain_digits(s: string, i: integer): integer do
+    if digit?(byte(s, i)) do plain_digits(s, i + 1) else i end
+  end
+
+  # Operators, brackets, atoms, names and strings.
+  def symbol(at: At, r: integer, size: integer): result[At, string] do
+    s = at.s
+    i = at.i
+    line = at.line
+    col = at.col
+    three = part(s, i, min(at.n, i + 3))
+    two = part(s, i, min(at.n, i + 2))
+    if i + 2 < at.n and three in ["&&&", "|||", "^^^", "<<<", ">>>", "~~~"] do ok(add(at, "operator", three, line, col, i + 3, col + 3)) else
+      paired = case two do
+        ".." -> ".."
+        "++" -> "++"
+        "--" -> "--"
+        "**" -> "**"
+        "//" -> "//"
+        "&&" -> "and"
+        "||" -> "or"
+        "<-" -> "<-"
+        "=~" -> "=~"
+        _ -> ""
+      end
+      if i + 1 < at.n and paired != "" do ok(add(at, "operator", paired, line, col, i + 2, col + 2)) else
+        if r == 33 and byte(s, i + 1) != 61 do ok(add(at, "operator", "not", line, col, i + 1, col + 1)) else
+          if r == 46 do ok(add(at, ".", ".", line, col, i + 1, col + 1)) else
+            if two == "%{" do ok(add(at, "%{", "%{", line, col, i + 2, col + 2)) else
+              if two == "=>" do ok(add(at, "=>", "=>", line, col, i + 2, col + 2)) else
+                if r == 94 do ok(add(at, "^", "^", line, col, i + 1, col + 1)) else
+                  if r == 38 do ok(add(at, "&", "&", line, col, i + 1, col + 1)) else
+                    if two == "\\\\" do ok(add(at, "\\\\", "\\\\", line, col, i + 2, col + 2)) else rest(at, r, size, two) end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  def rest(at: At, r: integer, size: integer, two: string): result[At, string] do
+    s = at.s
+    i = at.i
+    line = at.line
+    col = at.col
+    if r == 58 and i + 1 < at.n and atom_start?(byte(s, i + 1)) and (i == 0 or not atom_before?(byte(s, i - 1))) do
+      stop = atom_end(s, i + 2)
+      stop2 = if byte(s, stop) == 63 or byte(s, stop) == 33 do stop + 1 else stop end
+      ok(add(at, "atom", part(s, i + 1, stop2), line, col, stop2, col + stop2 - i))
+    else
+      if two == "<>" do ok(add(at, "operator", "<>", line, col, i + 2, col + 2)) else
+        if two == "->" do ok(add(at, "->", "->", line, col, i + 2, col + 2)) else
+          if two == "|>" do ok(add(at, "operator", "|>", line, col, i + 2, col + 2)) else
+            bracket = case r do
+              91 -> "["
+              93 -> "]"
+              123 -> "{"
+              125 -> "}"
+              124 -> "|"
+              _ -> ""
+            end
+            if bracket != "" do ok(add(at, bracket, bracket, line, col, i + 1, col + 1)) else
+              if r in [43, 45, 42, 47, 37] do ok(add(at, "operator", part(s, i, i + 1), line, col, i + 1, col + 1)) else
+                if r in [61, 33, 60, 62] do
+                  stop = if byte(s, i + 1) == 61 do i + 2 else i + 1 end
+                  op = part(s, i, stop)
+                  if op == "=" do ok(add(at, "=", "=", line, col, stop, col + stop - i)) else
+                    if op == "!" do error(problem(line, col, "unsupported operator \"!\"")) else ok(add(at, "operator", op, line, col, stop, col + stop - i)) end
+                  end
+                else words(at, r, size) end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  def atom_end(s: string, i: integer): integer do
+    c = byte(s, i)
+    if atom_start?(c) or digit?(c) do atom_end(s, i + 1) else i end
+  end
+
+  def words(at: At, r: integer, size: integer): result[At, string] do
+    s = at.s
+    i = at.i
+    line = at.line
+    col = at.col
+    if letter?(r) or r == 95 do
+      stop = name_end(s, i, true)
+      last = byte(s, stop)
+      full = if stop < at.n and (last == 63 or (last == 33 and byte(s, stop + 1) != 61)) and byte(s, stop - 1) != 46 do stop + 1 else stop end
+      ok(add(at, "identifier", part(s, i, full), line, col, full, col + runes(s, i, full)))
+    else
+      if starts?(s, i, "\"\"\"") do
+        case heredoc(s, i, line, col) do
+          error(wrong) -> error(wrong)
+          ok({text, next, lines}) ->
+            case heredoc_string(text, line, col) do
+              error(wrong) -> error(wrong)
+              ok(t) ->
+                line_start = last_newline(s, next - 1) + 1
+                ok(%At{at | tokens: [t | at.tokens], i: next, line: line + lines, col: runes(s, line_start, next) + 1})
+            end
+        end
+      else
+        if r == 34 do
+          {stop, interpolated, wrong} = string_end(s, i)
+          if wrong != "" do error(problem(line, col, wrong)) else
+            written = part(s, i, stop)
+            after_col = col + runes(s, i, stop)
+            if interpolated do ok(add(at, "template", written, line, col, stop, after_col)) else
+              plain = unescape(written)
+              if quoted?(plain) do ok(add(at, "string", plain, line, col, stop, after_col)) else
+                case string_problem(written) do
+                  "" -> error(problem(line, col, "invalid string: invalid syntax"))
+                  why -> error(problem(line, col, why))
+                end
+              end
+            end
+          end
+        else
+          kind = case r do
+            40 -> "("
+            41 -> ")"
+            44 -> ","
+            58 -> ":"
+            _ -> ""
+          end
+          if kind == "" do error(problem(line, col, "unexpected character " <> go_char(part(s, i, i + size)))) else ok(add(at, kind, kind, line, col, i + size, col + 1)) end
+        end
+      end
+    end
+  end
+
+  # A rune as Go's %q writes one.
+  def go_char(text: string): string do
+    shown = if text == "'" do "\\'" else if text == "\"" do "\"" else String.slice(go_quote(text), 1, String.length(go_quote(text)) - 2) end end
+    "'" <> shown <> "'"
+  end
+end

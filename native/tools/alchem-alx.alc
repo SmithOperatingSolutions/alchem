@@ -53,7 +53,10 @@ defmodule AlchemAlx do
   # What a failing program said, for the shell: without the frames of the
   # shell's own module, and with the lines of the input for those of the
   # file.
-  def relocated(text: string, start: integer): string do
+  def relocated(given: string, start: integer): string do
+    # A function the compiler could not make is the input when it is main,
+    # where the statements are, and is named without the shell's module.
+    text = String.replace(String.replace(given, "something in AlchemShell.main/0", "something in this input"), "something in AlchemShell.", "something in ")
     String.trim(Enum.join(Enum.map(Enum.filter(String.split(text, "\n"), fn line -> not String.starts_with?(String.trim(line), "at AlchemShell.") end), fn line ->
       Regex.replace(~r/[^\s()]*\.alchem-shell-\d+\.alc:(\d+)(:\d+)?:?/, line, fn(found: list[string]): string do
         n = String.to_integer(Enum.at(found, 1, "0"))

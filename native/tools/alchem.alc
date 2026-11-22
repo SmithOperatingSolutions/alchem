@@ -317,13 +317,66 @@ defmodule AlchemCommand do
   # the bundler or the compiler said: the compiler has one message for every
   # program it does not take, and takes a source of at most 16776191 bytes,
   # as alchem-compiler reads one (nc_limit).
+  # What is said of a program the compiler refuses: the one message, and
+  # when the compiler can name the function it could not make, where that
+  # function is (spec/alchem-commands.md). bundle is the program as the
+  # bundler gave it, whose head names its files.
+  def refusal(bundle: string, function: string): string do
+    plain = "E_COMPILE: invalid or unsupported Alchem function program"
+    if function == "" do plain else
+      named = "E_COMPILE: the native compiler does not take something in " <> function
+      halves = String.split(hd(String.split(function, "/")), ".")
+      module = Enum.join(Enum.drop(Enum.reverse(halves), 1) |> Enum.reverse(), ".")
+      name = Enum.at(Enum.reverse(halves), 0, "")
+      found = Enum.flat_map(bundled_files(bundle), fn path ->
+        case File.read(path) do
+          error(_) -> []
+          ok(text) ->
+            declared = case AlchemSources.module(text) do
+              some(m) -> m.name == module
+              none -> false
+            end
+            if not declared do [] else
+              lines = String.split(text, "\n")
+              Enum.flat_map(Enum.zip(lines, Enum.to_list(1..length(lines))), fn {line, number} ->
+                case Regex.run(~r/^(\s*)defp?\s+([a-z_][A-Za-z0-9_]*[?!]?)\s*[(\s]/, line) do
+                  some([_, indent, found_name]) -> if found_name == name do [AlchemGuide.shown(path) <> ":#{number}:#{byte_size(indent) + 1}: "] else [] end
+                  _ -> []
+                end
+              end)
+            end
+        end
+      end)
+      case found do
+        [place | _] -> place <> named
+        [] -> named <> ", a function of the library"
+      end
+    end
+  end
+
+  # The files a bundle holds, from its head: #alchem-bundle N, then one
+  # line # length path for each.
+  def bundled_files(bundle: string): list[string] do
+    lines = String.split(bundle, "\n")
+    count = case Regex.run(~r/^#alchem-bundle (\d+)$/, hd(lines)) do
+      some([_, n]) -> String.to_integer(n)
+      _ -> 0
+    end
+    Enum.flat_map(Enum.take(tl(lines), count), fn line ->
+      case Regex.run(~r/^# \d+ (.*)$/, line) do
+        some([_, path]) -> [path]
+        _ -> []
+      end
+    end)
+  end
+
   def build(file: string, out: string, locked: boolean): string do
     bundled = Bundler.bundle(file, locked)
     if elem(bundled, 0) != 0 do elem(bundled, 1) else
       source = rx_ab(elem(bundled, 1))
       if Enum.count(source) > 16776191 do "E_RUNTIME_INPUT: input exceeds byte limit" else
         image = AlchemCompiler.nc_compile(source)
-        if Enum.count(image) == 0 do "E_COMPILE: invalid or unsupported Alchem function program" else
+        if Enum.count(image) == 0 do refusal(elem(bundled, 1), rx_as(AlchemCompiler.nc_explain(source))) else
           written = case File.write(out, rx_as(image)) do
             ok(_) -> File.chmod(out, 448)
             error(message) -> error(message)

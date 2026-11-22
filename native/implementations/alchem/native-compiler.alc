@@ -1758,7 +1758,15 @@ defmodule NativeSourceCompiler do
   # between the last position and it.
   def nc_limit(): integer do 16776191 end
   def nc_compile(given: bytes): bytes do
-    if Enum.count(given) > nc_limit() do b[] else ac_compiled(given) end
+    if Enum.count(given) > nc_limit() do b[] else ac_compiled(given,0) end
+  end
+  # Why a program the compiler refuses is refused, as far as it can say:
+  # the function whose code it could not make, Module.name/arity; no bytes
+  # when the program compiles, or when the refusal is in no one function
+  # (spec/alchem-commands.md). The program is compiled as nc_compile
+  # compiles it, up to the functions, which are compiled again one by one.
+  def nc_explain(given: bytes): bytes do
+    if Enum.count(given) > nc_limit() do b[] else ac_compiled(given,1) end
   end
   # Macros, protocols and templates are rewritten (native-macros.alc), after
   # the receive assertions (ac_receives), whose rewriting keeps every line:
@@ -1768,23 +1776,58 @@ defmodule NativeSourceCompiler do
   # A test file is rewritten first (native-testing.alc), and what that
   # leaves is rewritten as any program: the places of the second text are
   # turned back through the first.
-  def nc_rewritten(source: bytes): bytes do
+  def nc_rewritten(source: bytes, explain: integer): bytes do
     tested = tm_prepare(source)
-    if Enum.count(tested) == 0 do b[] else if Enum.count(tested) == 1 do nc_rewritten_plain(source) else tm_then(tested) end end
+    if Enum.count(tested) == 0 do b[] else if Enum.count(tested) == 1 do nc_rewritten_plain(source,explain) else tm_then(tested,explain) end end
   end
-  def nc_rewritten_plain(source: bytes): bytes do
+  def nc_rewritten_plain(source: bytes, explain: integer): bytes do
     made = mx_prepare(source)
     code = nc_slice(made,4,4+nc_cursor(made,1))
     if Enum.count(made) == 0 do b[] else
-      if Enum.count(made) == 1 do nc_compile_with(source,ny_prelude(source),b[]) else nc_compile_with(code,ny_prelude(code),nc_slice(made,4+nc_cursor(made,1),Enum.count(made))) end
+      if Enum.count(made) == 1 do nc_compile_with(source,ny_prelude(source),b[],explain) else nc_compile_with(code,ny_prelude(code),nc_slice(made,4+nc_cursor(made,1),Enum.count(made)),explain) end
     end
   end
   # A program at the source or function limit has no room for library
   # functions it only seems to mention: it is compiled without them.
   # tail: what a rewritten program ends in.
-  def nc_compile_with(given: bytes, library: bytes, tail: bytes): bytes do
-    image = nc_compile_all(nc_join(given,library,tail))
-    if Enum.count(image) > 0 do image else if Enum.count(library) == 0 do image else nc_compile_all(Enum.concat(given,tail)) end end
+  def nc_compile_with(given: bytes, library: bytes, tail: bytes, explain: integer): bytes do
+    # A refusal is explained by the program with its library: compiled
+    # again without it, the program would be refused for lack of the
+    # library's functions, which says nothing of why it was refused.
+    if explain == 1 do
+      nc_explain_all(nc_join(given,library,tail))
+    else
+      image = nc_compile_all(nc_join(given,library,tail))
+      if Enum.count(image) > 0 do image else if Enum.count(library) == 0 do image else nc_compile_all(Enum.concat(given,tail)) end end
+    end
+  end
+  # The function of a program whose code nc_build could not make.
+  def nc_explain_all(source: bytes): bytes do
+    if mx_stop(source) > nc_limit() do b[] else
+      listed = nc_module(source)
+      table = if Enum.count(listed) == 0 do b[] else if nc_native_index(source,listed,0,nc_records(Enum.count(listed))) < 0 do zf_covered(source,jd_settle(source,listed)) else nz_off(listed) end end
+      if Enum.count(table) == 0 do b[] else
+        if nc_pos(nc_build(source,table,0,nc_records(Enum.count(table)))) >= 0 do b[] else nc_refused(source,table,0,nc_records(Enum.count(table))) end
+      end
+    end
+  end
+  # The first function from first to stop whose code is not made, by its
+  # name: as nc_build makes it, halves first.
+  def nc_refused(source: bytes, table: bytes, first: integer, stop: integer): bytes do
+    if first >= stop do b[] else
+      if stop-first == 1 do
+        flags = Enum.at(table,first*27+16,0)
+        code = if nj_silent(flags) == 1 do b[0] else if flags >= 64 do nq_function(source,table,first) else nc_function(source,table,first) end end
+        if Enum.count(code) > 0 do b[] else
+          owner = nc_owner(table,first)
+          nc_join(nc_join(nc_slice(source,nc_meta(table,owner,0),nc_meta(table,owner,3)),b[46],mp_shown(nc_slice(source,nc_meta(table,first,0),nc_meta(table,first,3)),0)),b[47],mp_digits(nc_argc(table,first)))
+        end
+      else
+        middle = first+nc_half(stop-first)
+        left = nc_refused(source,table,first,middle)
+        if Enum.count(left) > 0 do left else nc_refused(source,table,middle,stop) end
+      end
+    end
   end
   # source: the program and the library functions written in Alchem it uses.
   def nc_compile_all(source: bytes): bytes do
