@@ -1,0 +1,20 @@
+defmodule LexNative do
+  import "../tools/alchem-lexer.alc"
+  import "../tools/alchem-guide.alc"
+  def j(text: string): string do AlchemGuide.json_text(text) end
+  def main() do
+    Enum.each(System.argv(), fn path ->
+      case File.read(path) do
+        error(_) -> IO.puts(path <> " unreadable")
+        ok(text) ->
+          case AlchemLexer.scan(text) do
+            error(wrong) -> IO.puts("[" <> j(path) <> "," <> j("error") <> "," <> j(wrong) <> "]")
+            ok({tokens, comments}) ->
+              ts = Enum.join(Enum.map(tokens, fn t -> "[" <> j(t.kind) <> "," <> j(t.text) <> ",#{t.line},#{t.column}]" end), ",")
+              cs = Enum.join(Enum.map(comments, fn c -> "[" <> j(c.text) <> ",#{c.line},#{c.column}]" end), ",")
+              IO.puts("[" <> j(path) <> ",[" <> ts <> "]," <> (if comments == [] do "null" else "[" <> cs <> "]" end) <> "]")
+          end
+      end
+    end)
+  end
+end
