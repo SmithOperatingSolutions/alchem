@@ -7,7 +7,7 @@ command itself. They are the module `AlchemGuide`, `tools/alchem-guide.alc`:
     alchem help | -h | --help
     alchem version [--json]
     alchem syntax [--all] [--group name] [--json] [topic]
-    alchem doc [--all] [--group name] [--search text] [--json] [Module | Module.function]
+    alchem doc [--all] [--group name] [--search text] [--json] [Module | Module.function | file.alc]
     alchem agent-guide [--json]
     alchem agent-install [--scope project|user] [--dir path] [--force] [--json] <agent> | --list
     alchem docs [--check] [--dir path]
@@ -38,18 +38,49 @@ and machine of the programs the compiler makes.
 
 ## The check
 
-`harness/commands.py` (the gate `commands`) holds five scenes: 88 command
+`harness/commands.py` (the gate `commands`) holds seven scenes: 88 command
 lines that only print, the six agents installed into a project that has
 files of theirs already (one of alchem's own that differs, a shared file
 with text, one with half a block), the marked block replaced, appended and
 refused, and `docs` written, checked and written again. Each scene is a
 directory, its command lines run one after another: `alchem`, built by the
 compiler under test, gives the status, standard output and standard error
-the pinned command gave for each of the 164, and leaves the same files.
+the pinned command gave for each of the 201, and leaves the same files.
 `scripts/generate-command-cases.py PINNED` writes what the pinned command
 gave (`harness/commands-cases.json.xz`). On Windows the job runs the scenes
-with both, `commands.py --against alchem-upstream.exe alchem.exe`, as the
-pinned command prints a path with Windows' separators there.
+of that file with both, `commands.py --against alchem-upstream.exe
+alchem.exe`, as the pinned command prints a path with Windows' separators
+there. The pinned command finds a package with the Go toolchain, which it is
+given; `alchem` is given none.
+
+## doc of a file, of the project and of its packages
+
+`alchem doc file.alc` shows the documentation written in a file: its
+module and `@moduledoc`, the types with their `@typedoc`, and the public
+functions with their `@doc`, the clauses of one function together as the
+pinned command joins them. A name that is not the library's is looked for
+among the modules of the project in the current directory (its `.alc`
+files, but for directories named with a dot, `node_modules` and `vendor`)
+and of the packages those import, read from the package cache; so is a
+library module a package can take the place of (`DiskStore`, `WebSocket`,
+`Version`, `OptionParser`), and `--search` finds the project's modules and
+functions too.
+
+The file is not parsed as the compiler parses it
+(`tools/alchem-sources.alc`): strings, comments and sigils are taken out,
+the rest is cut into words and signs, and the declarations of the module
+are read from those, each body passed over by counting what opens one
+(`do`, and `fn` before an arrow) and what closes it (`end`). The functions
+of a `defimpl` are named as the pinned command names them, `name$Protocol$N`
+with N the number of functions before the implementation.
+
+Checked against the pinned command: the 204 source files of this
+repository it documents give the same text and the same JSON (not a gate:
+they change); the gate holds 18 of them (`examples/kv`, three fixtures and a
+benchmark) in the scene `files`, and in the scene `project` a project with
+a sum type, a struct with a default, clauses that begin other forms, a
+default value, a private function, a test file, a module named `Version`,
+directories that are left out, and a package of three files in the cache.
 
 ## The flags of build, run, check and new
 
@@ -74,10 +105,12 @@ program the compiler does not take is reported with its one message.
 - `version` is `alchem VERSION SYSTEM/MACHINE`, and the two as JSON. The
   pinned command also names the Go toolchain it builds with; no build of
   this one uses any.
-- `doc` reads the library alone. The documentation written in a file
-  (`alchem doc file.alc`), in a module of the project in the current
-  directory and in a package it imports is not read yet: a name ending in
-  `.alc` is refused with status 2, and `--search` finds nothing of the
-  project's.
+- `doc` reads a file's declarations without checking the rest of it: a
+  file the pinned compiler refuses is documented as far as its declarations
+  go, where the pinned command prints the compiler's message, and a project
+  file the pinned command leaves out because it does not compile is listed.
+  A file that declares no module is refused in this command's own words.
+- `doc host/owner/repo@v1.2.3/lib/name.alc`, a package's file named as an
+  import names it, is not fetched.
 - `alx`, `lsp` and `fmt` are in the list of commands and not in `alchem`
   yet: each says so and ends with status 2.

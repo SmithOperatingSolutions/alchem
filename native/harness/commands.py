@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """alchem's commands that print documentation (tools/alchem-guide.alc):
 help, syntax, doc, docs, agent-guide and agent-install as the pinned command
-line prints them, and version; and the flags of build, run, check and new
-as the pinned command line reads them.
+line prints them, and version; the flags of build, run, check and new as
+the pinned command line reads them; and doc of a source file, of a module
+of the project in the current directory and of a package it imports
+(tools/alchem-sources.alc).
 
 harness/commands-cases.json.xz holds scenes (scripts/generate-command-cases.py
 makes it from the pinned command): the files a directory starts with, the
@@ -18,8 +20,8 @@ makes, and the same two as JSON.
     commands.py COMPILER
     commands.py --against PINNED ALCHEM
 
-With --against nothing is built: the scenes are run by a pinned command line
-and by an alchem, both given, and what the two give compared. That is the
+With --against nothing is built: the scenes of the cases are run by a pinned
+command line and by an alchem, both given, and what the two give compared. That is the
 check on Windows, where the pinned command's paths have its separators."""
 from pathlib import Path
 import json
@@ -52,8 +54,113 @@ FLAGS=[['build','-h'],['run','-h'],['check','-h'],['new','-h'],['run','--help'],
     ['run','-timeout','x','ok.alc'],['run','-shutdown-timeout','1','ok.alc'],['run','-json','ok.alc'],['run','nothere.alc','a'],['run','-locked','-race','lib.alc'],['run','ok.txt'],
     ['check','a.alc','b.alc'],['check','nothere.alc'],['check','-json','nothere.alc'],['check','-json=maybe','lib.alc'],
     ['new','proj'],['new','proj'],['new','sub/my-app_2'],['new','9lives'],['new','--','-odd']]
+PROJECT={
+'lib/shapes.alc':'''defmodule Shapes do
+  @moduledoc """
+  Shapes and their areas.
+
+  More about them.
+  """
+
+  @typedoc "A shape of the plane."
+  type Shape do
+    circle(radius: float)
+    rect(width: float, height: float)
+    empty
+  end
+
+  struct Box[t] do
+    held: t
+    count: integer = 0
+  end
+
+  @doc """
+  The area of a shape.
+
+      alx> Shapes.area(Shape.empty)
+      0.0
+  """
+  def area(shape: Shape): float do
+    case shape do
+      Shape.circle(r) -> 3.14 * r * r
+      Shape.rect(w, h) -> w * h
+      Shape.empty -> 0.0
+    end
+  end
+
+  def scale(0, shape: Shape): Shape do Shape.empty end
+  def scale(n: integer, shape: Shape): Shape do shape end
+  def scale(f: float, shape: Shape): Shape do shape end
+
+  @doc "Says a word some times."
+  def say(word: string, times: integer \\\\ 2): string do
+    String.duplicate(word, times)
+  end
+
+  defp hidden(x: integer): integer do x end
+end
+''',
+'lib/version.alc':'''defmodule Version do
+  @moduledoc "The project's own versions."
+  @doc "Reads a version."
+  def parse(text: string): integer do
+    String.length(text)
+  end
+end
+''',
+'main.alc':'''defmodule Main do
+  import "lib/shapes.alc"
+  import "example.com/Owner/repo@v1.0.0/lib/thing.alc"
+
+  def helper(): integer do 1 end
+
+  def main() do
+    IO.puts("hi")
+  end
+end
+''',
+'test/shapes_test.alc':'''defmodule ShapesTest do
+  import "../lib/shapes.alc"
+
+  test "area" do
+    assert(Shapes.area(Shapes.Shape.empty) == 0.0)
+  end
+end
+''',
+'.hidden/x.alc':'defmodule Hidden do\n  def area(): integer do 1 end\nend\n',
+'node_modules/y.alc':'defmodule Noded do\n  def area(): integer do 1 end\nend\n',
+'vendor/z.alc':'defmodule Vendored do\n  def area(): integer do 1 end\nend\n',
+'notes.alc':'just notes, no module\n',
+'home/go/pkg/mod/example.com/!owner/repo@v1.0.0/lib/thing.alc':'''defmodule Thing do
+  import "util.alc"
+  import "../other/far.alc"
+  @moduledoc "A thing of a package."
+  @doc "Makes an area of things."
+  def make(n: integer): integer do Util.twice(n) end
+end
+''',
+'home/go/pkg/mod/example.com/!owner/repo@v1.0.0/lib/util.alc':'defmodule Util do\n  @doc "Twice a number."\n  def twice(n: integer): integer do n * 2 end\nend\n',
+'home/go/pkg/mod/example.com/!owner/repo@v1.0.0/other/far.alc':'defmodule Far do\n  def away(): integer do 1 end\nend\n',
+}
+PROJECT_LINES=[['doc','Shapes'],['doc','shapes'],['doc','Shapes.area'],['doc','shapes.AREA/1'],['doc','Shapes.scale'],['doc','Shapes.nope'],['doc','Shapes.are'],['doc','--json','Shapes'],['doc','--json','Shapes.area'],['doc','--json','Shapes.nope'],
+['doc','Version'],['doc','Version.parse'],['doc','Version.compare'],['doc','--json','Version'],['doc','Main'],['doc','ShapesTest'],['doc','Hidden'],['doc','Noded'],['doc','Vendored'],['doc','Thing'],['doc','Thing.make'],['doc','Util'],['doc','Far'],['doc','--json','Util.twice'],
+['doc','--search','area'],['doc','--search','version'],['doc','--search','--json','shapes'],['doc','--search','twice'],['doc','Nope'],['doc','lib/shapes.alc'],['doc','--json','lib/shapes.alc'],['doc','--all','Shapes'],['doc','Enum.map'],['doc','--json']]
+
+
+def tree():
+    """Source files of the repository, by path: the files the scene `files`
+    documents one by one. Empty where the repository is not there (the
+    Windows job has the scenes as the cases hold them)."""
+    top=ROOT.parent
+    paths=sorted((top/'examples/kv').rglob('*.alc'))+[top/'tests/fixtures'/name for name in ('protocols.alc','storage_test.alc','closures.alc')]+[top/'benchmarks/alchem/suite/processes.alc']
+    return {path.relative_to(top).as_posix():path.read_text() for path in paths if path.exists()}
+
+
+TREE=tree()
 SCENES=[
     ('reads',{},READS),
+    ('project',PROJECT,PROJECT_LINES),
+    ('files',TREE,[line for path in TREE for line in (['doc',path],['doc','--json',path])]+[['doc','Protocol'],['doc','--search','subscribe'],['doc','--search','--json','reply']]),
     ('flags',{'lib.alc':'defmodule Lib do\n  def twice(n: integer): integer do n * 2 end\nend\n'},FLAGS),
     ('install',{'.clinerules/alchem.md':'mine\n','AGENTS.md':'# Agents\n\nRead the code.\n','.github/copilot-instructions.md':'a\n<!-- BEGIN alchem agent guide -->\nno end\n'},
      [['agent-install','claude'],['agent-install','claude'],['agent-install','--json','cursor'],['agent-install','--json','cursor'],['agent-install','windsurf'],
@@ -76,39 +183,48 @@ def lay(files,root):
         (root/path).parent.mkdir(parents=True,exist_ok=True);(root/path).write_bytes(text.encode())
 
 
+# What the pinned command's Go toolchain leaves in the home directory.
+TOOLCHAIN=('home/.cache/','home/.config/go/','home/go/pkg/mod/cache/','home/AppData/')
+
+
 def held(root):
-    """The files under a directory, by path."""
-    return {p.relative_to(root).as_posix():p.read_bytes().decode('utf8','replace') for p in sorted(root.rglob('*')) if p.is_file()}
+    """The files under a directory, by path, but for the Go toolchain's own."""
+    return {p.relative_to(root).as_posix():p.read_bytes().decode('utf8','replace') for p in sorted(root.rglob('*')) if p.is_file() and not p.relative_to(root).as_posix().startswith(TOOLCHAIN)}
 
 
-def scene(command,files,lines):
-    """A scene run by a command: what each command line gave, and the files left."""
+def scene(command,files,lines,pinned=False):
+    """A scene run by a command: what each command line gave, and the files
+    left. The pinned command finds a package with the Go toolchain, which it
+    is given (pinned); alchem is given none."""
     with tempfile.TemporaryDirectory(prefix='alchem-commands-') as d:
-        root=Path(d).resolve();lay(files,root);(root/'home').mkdir()
+        root=Path(d).resolve();lay(files,root);(root/'home').mkdir(exist_ok=True)
         runs=[]
         for arguments in lines:
-            run=subprocess.run([str(command)]+arguments,stdin=subprocess.DEVNULL,capture_output=True,cwd=root,env=surroundings(root/'home'),timeout=300)
+            run=subprocess.run([str(command)]+arguments,stdin=subprocess.DEVNULL,capture_output=True,cwd=root,env=surroundings(root/'home',pinned),timeout=300)
             runs.append([run.returncode]+[text.decode('utf8','replace').replace(str(root)+os.sep,'.'+os.sep) for text in (run.stdout,run.stderr)])
         return runs,held(root)
 
 
-def surroundings(home):
-    """The environment of a command line: the home directory, and on Windows what a program needs to start."""
-    if os.name!='nt':return {'PATH':'/usr/bin:/bin','HOME':str(home)}
-    return {**{name:os.environ[name] for name in ('SystemRoot','SystemDrive','TEMP','TMP','PATH') if name in os.environ},'USERPROFILE':str(home)}
+def surroundings(home,pinned=False):
+    """The environment of a command line: the home directory, on Windows
+    what a program needs to start, and for the pinned command the Go
+    toolchain, kept from the network."""
+    go={'GOPROXY':'off','GOFLAGS':'-mod=mod','GOTOOLCHAIN':'local','GOTELEMETRY':'off'} if pinned else {}
+    if os.name!='nt':return {'PATH':os.environ.get('PATH','/usr/bin:/bin') if pinned else '/usr/bin:/bin','HOME':str(home),**go}
+    return {**{name:os.environ[name] for name in ('SystemRoot','SystemDrive','TEMP','TMP','PATH') if name in os.environ},'USERPROFILE':str(home),**go}
 
 
 def against(pinned,alchem):
     count=0
-    for name,files,lines in SCENES:
-        theirs,left=scene(pinned,files,lines);ours,kept=scene(alchem,files,lines)
+    for name,files,lines in [(s['name'],s['files'],s['lines']) for s in cases()]:
+        theirs,left=scene(pinned,files,lines,True);ours,kept=scene(alchem,files,lines)
         for arguments,seen,expected in zip(lines,ours,theirs):
             assert seen==expected,(name,arguments,seen,expected)
             count+=1
         assert kept==left,(name,{path:(kept.get(path),left.get(path)) for path in set(kept)|set(left) if kept.get(path)!=left.get(path)})
     runs,_=scene(alchem,{},[['version'],['version','--json']])
     assert runs[0][0]==0 and runs[0][1].startswith('alchem ') and runs[0][2]=='' and set(json.loads(runs[1][1]))=={'version','platform'},runs
-    print(f'PASS commands: {count} command lines of help, syntax, doc, docs, agent-guide, agent-install and the flags of build, run, check and new in {len(SCENES)} scenes as {pinned.name} prints them, with the files they write; {runs[0][1].strip()}')
+    print(f'PASS commands: {count} command lines of help, syntax, doc (the library, files, a project and its packages), docs, agent-guide, agent-install and the flags of build, run, check and new in {len(cases())} scenes as {pinned.name} prints them, with the files they write; {runs[0][1].strip()}')
 
 
 def platform(compiler):
@@ -132,7 +248,7 @@ def verify(compiler):
         runs,_=scene(alchem,{},[['version'],['--version'],['version','--json'],['version','-json']])
         text=f'alchem v9.8.7-test {target}\n';data=json.dumps({'version':'v9.8.7-test','platform':target},indent=2)+'\n'
         assert runs==[[0,text,''],[0,text,''],[0,data,''],[0,data,'']],runs
-    print(f'PASS commands: {count} command lines of help, syntax, doc, docs, agent-guide, agent-install and the flags of build, run, check and new in {len(known)} scenes as the pinned command line prints them, with the files they write; version for {target}')
+    print(f'PASS commands: {count} command lines of help, syntax, doc (the library, files, a project and its packages), docs, agent-guide, agent-install and the flags of build, run, check and new in {len(known)} scenes as the pinned command line prints them, with the files they write; version for {target}')
 
 
 if __name__=='__main__':

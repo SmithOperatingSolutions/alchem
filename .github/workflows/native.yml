@@ -130,7 +130,7 @@ jobs:
           python3 scripts/build-windows.py --source build/windows/compiler-source.alc --output build/windows/alchem-compiler-windows.exe
           cp examples/hello-native.alc build/windows/hello.alc
           cp scripts/windows-examples.py build/windows/
-          cp harness/commands.py build/windows/
+          cp harness/commands.py harness/commands-cases.json.xz build/windows/
           python3 scripts/windows-examples.py prepare build/windows/examples
           # One file of them: the Windows runner does not unpack an artifact
           # of 14,000 files.

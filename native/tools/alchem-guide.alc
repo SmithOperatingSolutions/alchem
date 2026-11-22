@@ -1,5 +1,6 @@
 defmodule AlchemGuide do
   import "alchem-guide-data.alc"
+  import "alchem-sources.alc"
   # The commands of alchem that print documentation: version, help, syntax,
   # doc, docs, agent-guide and agent-install, as the pinned command line
   # prints them, from the tables of AlchemGuideData
@@ -10,8 +11,8 @@ defmodule AlchemGuide do
   # read (commands, topics, modules, functions, targets).
   #
   # Not as the pinned command: version says nothing of a Go toolchain, as
-  # no build uses one; doc reads the library alone, not the documentation
-  # written in a file, in the project's modules or in a package's.
+  # no build uses one; a file of a package named as an import names it is
+  # read from the cache and not fetched.
 
   # A value as JSON is written: the pinned command writes two spaces a
   # level, a missing list as null, and <, > and & as \u00XX.
@@ -310,7 +311,112 @@ defmodule AlchemGuide do
     String.downcase(a) == String.downcase(b)
   end
 
+  # --- doc of a source file ---------------------------------------------------
+
+  def source_function(entry: AlchemSources.Entry, module: string): J do
+    J.object([{"name", J.text(entry.name)}, {"module", J.text(module)}, {"signatures", texts(entry.signatures)}, {"summary", J.text(entry.summary)}])
+  end
+
+  def source_data(m: AlchemSources.Module): J do
+    J.object([{"name", J.text(m.name)}, {"summary", J.text(m.summary)}] ++
+      if m.kinds == [] do [] else
+        [{"types", J.list(Enum.map(m.kinds, fn kind -> J.object([{"name", J.text(kind.name)}, {"definition", J.text(kind.definition)}] ++ if kind.summary == "" do [] else [{"summary", J.text(kind.summary)}] end) end))}]
+      end ++
+      [{"functions", made(Enum.map(m.entries, fn entry -> source_function(entry, m.name) end))}])
+  end
+
+  def source_text(m: AlchemSources.Module): string do
+    m.name <> "\n" <>
+    if m.summary == "" do "" else "\n" <> m.summary <> "\n" end <>
+    Enum.join(Enum.map(m.kinds, fn kind -> "\n" <> kind.definition <> "\n" <> if kind.summary == "" do "" else "\n" <> indented(kind.summary) <> "\n" end end), "") <>
+    Enum.join(Enum.map(m.entries, fn entry ->
+      "\n" <> Enum.join(entry.signatures, "\n") <> "\n" <> if entry.summary == "" do "\n    (undocumented)\n" else "\n" <> indented(entry.summary) <> "\n" end
+    end), "")
+  end
+
+  # The module a file declares.
+  def source(path: string): result[AlchemSources.Module, string] do
+    case File.read(path) do
+      error(reason) -> error(reason)
+      ok(text) ->
+        case AlchemSources.module(text) do
+          some(m) -> ok(m)
+          none -> error(path <> ": no module is declared")
+        end
+    end
+  end
+
+  def file_doc(path: string, as_json: boolean): result[string, string] do
+    case source(path) do
+      error(problem) -> error(problem)
+      ok(m) -> if as_json do ok(encode(source_data(m))) else ok(source_text(m)) end
+    end
+  end
+
+  # The modules of the project in the current directory and of the
+  # packages it imports.
+  def sources(): list[AlchemSources.Source] do
+    AlchemSources.project(".")
+  end
+
+  # The library modules a package can take the place of.
+  def retiring?(module: string): boolean do
+    module in ["DiskStore", "WebSocket", "Version", "OptionParser"]
+  end
+
+  # The documentation of a module among the project's sources, or of one
+  # function of it: none when no source has the module.
+  def source_doc(query: string, as_json: boolean): option[result[string, string]] do
+    pieces = String.split(bare(query), ".", [parts: 2])
+    module = hd(pieces)
+    case Enum.filter(sources(), fn source -> same?(source.module, module) end) do
+      [] -> none
+      [found | _] ->
+        case source(found.file) do
+          error(problem) -> some(error(problem))
+          ok(m) ->
+            if length(pieces) == 1 do
+              some(ok(if as_json do encode(source_data(m)) else source_text(m) <> "\nFrom " <> found.shown <> "\n" end))
+            else
+              function = Enum.at(pieces, 1, "")
+              case Enum.filter(m.entries, fn entry -> same?(entry.name, found.module <> "." <> function) end) do
+                [entry | _] ->
+                  some(ok(if as_json do encode(source_function(entry, m.name)) else
+                    source_text(%AlchemSources.Module{m | summary: "", kinds: [], entries: [entry]}) <> "\nFrom " <> found.shown <> "\n"
+                  end))
+                [] -> some(error(found.module <> " has no public function " <> quoted(function) <> suggest(found.module <> "." <> function, Enum.map(m.entries, fn entry -> entry.name end)) <> " (alchem doc " <> found.module <> " lists them)"))
+              end
+            end
+        end
+    end
+  end
+
   def doc(query: string, all: boolean, as_json: boolean): result[string, string] do
+    if String.ends_with?(query, ".alc") do file_doc(query, as_json) else
+      if query == "" do library_doc(query, all, as_json) else
+        # A module the project has in place of a library module of the
+        # same name is the one its programs use, so it is the one shown.
+        replaced = retiring?(Enum.join(Enum.map(Enum.filter(modules(), fn m -> same?(col(m, 0), hd(String.split(bare(query), "."))) end), fn m -> col(m, 0) end), ""))
+        first = if replaced do source_doc(query, as_json) else none end
+        case first do
+          some(outcome) -> outcome
+          none ->
+            case library_doc(query, all, as_json) do
+              ok(text) -> ok(text)
+              error(problem) ->
+                # Not the library's: a module of this project, or of a
+                # package it imports.
+                case source_doc(query, as_json) do
+                  some(outcome) -> outcome
+                  none -> error(problem)
+                end
+            end
+        end
+      end
+    end
+  end
+
+  def library_doc(query: string, all: boolean, as_json: boolean): result[string, string] do
     known = modules()
     every = functions()
     if query == "" do
@@ -332,6 +438,10 @@ defmodule AlchemGuide do
     end
   end
 
+  def first_line(text: string): string do
+    String.trim(hd(String.split(String.trim(text), "\n")))
+  end
+
   def hit(kind: string, name: string, summary: string, command: string): list[string] do
     [kind, name, summary, command]
   end
@@ -340,11 +450,24 @@ defmodule AlchemGuide do
     needle = String.downcase(String.trim(text))
     if needle == "" do error("search needs some text") else
       every = functions()
+      own = sources()
+      # The library modules the project has a module of its own for are
+      # left out: its programs use the project's.
+      replaced = Enum.filter(Enum.map(own, fn source -> source.module end), fn name -> retiring?(name) end)
       found = Enum.map(Enum.filter(topics(), fn t -> String.contains?(String.downcase(col(t, 0) <> " " <> col(t, 2) <> " " <> Enum.join(items(col(t, 3)), " ")), needle) end), fn t -> hit("topic", col(t, 0), col(t, 2), "alchem syntax " <> col(t, 0)) end) ++
-        Enum.map(Enum.filter(modules(), fn m -> String.contains?(String.downcase(col(m, 0) <> " " <> col(m, 2)), needle) end), fn m -> hit("module", col(m, 0), col(m, 2), "alchem doc " <> col(m, 0)) end) ++
+        Enum.map(Enum.filter(modules(), fn m -> not (col(m, 0) in replaced) and String.contains?(String.downcase(col(m, 0) <> " " <> col(m, 2)), needle) end), fn m -> hit("module", col(m, 0), col(m, 2), "alchem doc " <> col(m, 0)) end) ++
         # Functions matching by name come before those matching by description.
-        Enum.map(Enum.filter(every, fn f -> String.contains?(String.downcase(col(f, 0)), needle) end), fn f -> hit("function", col(f, 0), col(f, 4), "alchem doc " <> col(f, 0)) end) ++
-        Enum.map(Enum.filter(every, fn f -> not String.contains?(String.downcase(col(f, 0)), needle) and String.contains?(String.downcase(col(f, 4)), needle) end), fn f -> hit("function", col(f, 0), col(f, 4), "alchem doc " <> col(f, 0)) end)
+        Enum.map(Enum.filter(every, fn f -> not (col(f, 1) in replaced) and String.contains?(String.downcase(col(f, 0)), needle) end), fn f -> hit("function", col(f, 0), col(f, 4), "alchem doc " <> col(f, 0)) end) ++
+        Enum.map(Enum.filter(every, fn f -> not (col(f, 1) in replaced) and not String.contains?(String.downcase(col(f, 0)), needle) and String.contains?(String.downcase(col(f, 4)), needle) end), fn f -> hit("function", col(f, 0), col(f, 4), "alchem doc " <> col(f, 0)) end) ++
+        # The project's own modules and those of the packages it imports.
+        Enum.flat_map(own, fn found ->
+          case source(found.file) do
+            error(_) -> []
+            ok(m) ->
+              (if String.contains?(String.downcase(m.name <> " " <> m.summary), needle) do [hit("module", m.name, first_line(m.summary), "alchem doc " <> m.name)] else [] end) ++
+              Enum.map(Enum.filter(m.entries, fn entry -> String.contains?(String.downcase(entry.name <> " " <> entry.summary), needle) end), fn entry -> hit("function", entry.name, first_line(entry.summary), "alchem doc " <> entry.name) end)
+          end
+        end)
       if as_json do
         ok(encode(J.list(Enum.map(found, fn h -> J.object([{"kind", J.text(col(h, 0))}, {"name", J.text(col(h, 1))}, {"summary", J.text(col(h, 2))}, {"command", J.text(col(h, 3))}]) end))))
       else
@@ -760,13 +883,7 @@ defmodule AlchemGuide do
             ok(name) ->
               if text != "" do finish(search(text, as_json)) else
                 if group != "" and name != "" do finish(error("alchem doc takes a group or a name, not both")) else
-                  if group != "" do finish(doc_group(group, as_json)) else
-                    # The documentation written in a file is not read yet.
-                    if String.ends_with?(name, ".alc") do
-                      IO.puts(:stderr, "alchem doc of a file is not in this alchem yet")
-                      2
-                    else finish(doc(name, on?(values, "all"), as_json)) end
-                  end
+                  if group != "" do finish(doc_group(group, as_json)) else finish(doc(name, on?(values, "all"), as_json)) end
                 end
               end
           end
