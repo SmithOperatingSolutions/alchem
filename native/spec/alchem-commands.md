@@ -38,18 +38,36 @@ and machine of the programs the compiler makes.
 
 ## The check
 
-`harness/commands.py` (the gate `commands`) holds four scenes: 88 command
+`harness/commands.py` (the gate `commands`) holds five scenes: 88 command
 lines that only print, the six agents installed into a project that has
 files of theirs already (one of alchem's own that differs, a shared file
 with text, one with half a block), the marked block replaced, appended and
 refused, and `docs` written, checked and written again. Each scene is a
 directory, its command lines run one after another: `alchem`, built by the
 compiler under test, gives the status, standard output and standard error
-the pinned command gave for each of the 120, and leaves the same files.
+the pinned command gave for each of the 164, and leaves the same files.
 `scripts/generate-command-cases.py PINNED` writes what the pinned command
 gave (`harness/commands-cases.json.xz`). On Windows the job runs the scenes
 with both, `commands.py --against alchem-upstream.exe alchem.exe`, as the
 pinned command prints a path with Windows' separators there.
+
+## The flags of build, run, check and new
+
+`build`, `run`, `check` and `new` read their flags as the pinned command
+reads them, from the usage it prints for each (`AlchemGuide.parsed`): `-h`
+prints the usage and ends with status 0; a flag the command does not take, a
+flag without its value, a value that is not a whole number or a duration
+where one is due, and `-trace=maybe` print the pinned command's message and
+the usage and end with status 2. `-target` is `GOOS/GOARCH` or refused as
+there, and then must be what the compiler makes. A file that is not there is
+reported as the pinned command reports it, as JSON under `-json`, and a file
+with no `main` at all as `missing main/0`, by `run` as by `build`. The
+gate's scene `flags` holds 44 such command lines, none of which builds a
+program, and the project `new` writes.
+
+`-o` and `-locked` do what they say. `-json`, `-race`, `-trace`, `-timeout`,
+`-shutdown-timeout` and `-max-call-depth` are read and change nothing: a
+program the compiler does not take is reported with its one message.
 
 ## Not as the pinned command
 

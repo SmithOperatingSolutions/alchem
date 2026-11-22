@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """alchem's commands that print documentation (tools/alchem-guide.alc):
 help, syntax, doc, docs, agent-guide and agent-install as the pinned command
-line prints them, and version.
+line prints them, and version; and the flags of build, run, check and new
+as the pinned command line reads them.
 
 harness/commands-cases.json.xz holds scenes (scripts/generate-command-cases.py
 makes it from the pinned command): the files a directory starts with, the
@@ -42,8 +43,18 @@ READS=[[],['help'],['-h'],['--help'],['nope'],['help','syntax'],
     ['agent-install','--list'],['agent-install','--list','--json'],['agent-install'],['agent-install','nope'],['agent-install','a','b'],['agent-install','--scope','zz','claude'],['agent-install','--scope','user','cursor'],['agent-install','-h'],
     ['docs','-h'],['docs','-zz'],['version','x'],['version','-h'],['version','-zz']]
 BLOCK='<!-- BEGIN alchem agent guide -->\nold text\n<!-- END alchem agent guide -->\n'
+# The flags of build, run, check and new, and what each says before it
+# builds anything: no command line here needs a compiler to answer.
+FLAGS=[['build','-h'],['run','-h'],['check','-h'],['new','-h'],['run','--help'],['build'],['run'],['check'],['new'],['new','a','b'],['new','-x','a'],
+    ['build','-zz','ok.alc'],['run','-zz','ok.alc'],['check','-zz','ok.alc'],['build','-o'],['build','-trace=maybe','ok.alc'],['build','-timeout','x','ok.alc'],['build','-timeout','1.5','ok.alc'],
+    ['build','-max-call-depth','x','ok.alc'],['build','-max-call-depth=1.5','ok.alc'],['build','-target','x','ok.alc'],['build','-target','a/b/c','ok.alc'],['build','ok.alc','lib.alc'],['build','ok.txt'],
+    ['build','nothere.alc'],['build','-json','nothere.alc'],['build','-race','-trace=false','-timeout','1m30s','-shutdown-timeout','.5s','-max-call-depth','10','lib.alc'],['build','lib.alc'],['build','--','-lib.alc'],
+    ['run','-timeout','x','ok.alc'],['run','-shutdown-timeout','1','ok.alc'],['run','-json','ok.alc'],['run','nothere.alc','a'],['run','-locked','-race','lib.alc'],['run','ok.txt'],
+    ['check','a.alc','b.alc'],['check','nothere.alc'],['check','-json','nothere.alc'],['check','-json=maybe','lib.alc'],
+    ['new','proj'],['new','proj'],['new','sub/my-app_2'],['new','9lives'],['new','--','-odd']]
 SCENES=[
     ('reads',{},READS),
+    ('flags',{'lib.alc':'defmodule Lib do\n  def twice(n: integer): integer do n * 2 end\nend\n'},FLAGS),
     ('install',{'.clinerules/alchem.md':'mine\n','AGENTS.md':'# Agents\n\nRead the code.\n','.github/copilot-instructions.md':'a\n<!-- BEGIN alchem agent guide -->\nno end\n'},
      [['agent-install','claude'],['agent-install','claude'],['agent-install','--json','cursor'],['agent-install','--json','cursor'],['agent-install','windsurf'],
       ['agent-install','cline'],['agent-install','--force','cline'],['agent-install','--force','cline'],['agent-install','copilot'],['agent-install','agents'],['agent-install','agents'],
@@ -97,7 +108,7 @@ def against(pinned,alchem):
         assert kept==left,(name,{path:(kept.get(path),left.get(path)) for path in set(kept)|set(left) if kept.get(path)!=left.get(path)})
     runs,_=scene(alchem,{},[['version'],['version','--json']])
     assert runs[0][0]==0 and runs[0][1].startswith('alchem ') and runs[0][2]=='' and set(json.loads(runs[1][1]))=={'version','platform'},runs
-    print(f'PASS commands: {count} command lines of help, syntax, doc, docs, agent-guide and agent-install in {len(SCENES)} scenes as {pinned.name} prints them, with the files they write; {runs[0][1].strip()}')
+    print(f'PASS commands: {count} command lines of help, syntax, doc, docs, agent-guide, agent-install and the flags of build, run, check and new in {len(SCENES)} scenes as {pinned.name} prints them, with the files they write; {runs[0][1].strip()}')
 
 
 def platform(compiler):
@@ -121,7 +132,7 @@ def verify(compiler):
         runs,_=scene(alchem,{},[['version'],['--version'],['version','--json'],['version','-json']])
         text=f'alchem v9.8.7-test {target}\n';data=json.dumps({'version':'v9.8.7-test','platform':target},indent=2)+'\n'
         assert runs==[[0,text,''],[0,text,''],[0,data,''],[0,data,'']],runs
-    print(f'PASS commands: {count} command lines of help, syntax, doc, docs, agent-guide and agent-install in {len(known)} scenes as the pinned command line prints them, with the files they write; version for {target}')
+    print(f'PASS commands: {count} command lines of help, syntax, doc, docs, agent-guide, agent-install and the flags of build, run, check and new in {len(known)} scenes as the pinned command line prints them, with the files they write; version for {target}')
 
 
 if __name__=='__main__':

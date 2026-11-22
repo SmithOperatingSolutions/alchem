@@ -9,9 +9,9 @@ defmodule AlchemCommand do
   # help, syntax, doc, docs, agent-guide and agent-install.
   #
   #     alchem test [flags] PATH...
-  #     alchem run FILE [ARGUMENT...]
-  #     alchem build [-o OUT] FILE
-  #     alchem check FILE
+  #     alchem run [flags] FILE [ARGUMENT...]
+  #     alchem build [flags] FILE
+  #     alchem check [flags] FILE
   #     alchem new DIRECTORY
   #
   # A file is bundled with its imports (Bundler, tools/alchem-bundle.alc)
@@ -617,16 +617,40 @@ defmodule AlchemCommand do
     end
   end
 
-  # alchem run FILE ARGUMENT...: built into a directory of its own and run.
-  def run(args: list[string]): integer do
-    paths = if args != [] and hd(args) == "--" do tl(args) else args end
+  # A file that can be read and has no main at all: refused as the pinned
+  # compiler refuses it, where the compiler has one message for every
+  # refusal.
+  def mainless?(entry: string): boolean do
+    case File.read(entry) do
+      ok(text) -> not (text =~ ~r/(^|\n)[ \t]*def[ \t]+main[ \t]*\(/)
+      error(_) -> false
+    end
+  end
+
+  # What the pinned command says of a file that is not there, "" for any
+  # other: as one line, or as the JSON of -json.
+  def unread(entry: string, as_json: boolean): string do
+    case File.read(entry) do
+      ok(_) -> ""
+      error(reason) ->
+        if not String.ends_with?(reason, ": no such file or directory") do "" else
+          message = Path.expand(entry) <> ": read source: open " <> Path.expand(entry) <> ": no such file or directory"
+          if as_json do "{\"file\":\"\",\"line\":0,\"column\":0,\"message\":" <> AlchemGuide.json_text(message) <> "}" else message end
+        end
+    end
+  end
+
+  # alchem run [flags] FILE ARGUMENT...: built into a directory of its own
+  # and run. The flags are read as the pinned command reads them
+  # (flagged); -locked is the bundler's, the others change nothing.
+  def run(paths: list[string], locked: boolean): integer do
     if paths == [] do complain("provide the program to run, then its arguments", 2) else
       entry = hd(paths)
       given = if tl(paths) != [] and hd(tl(paths)) == "--" do tl(tl(paths)) else tl(paths) end
       if not String.ends_with?(entry, ".alc") do complain("source must have .alc extension", 1) else
         work = fresh("alchem-run-")
         binary = work <> "/" <> Path.basename(entry, ".alc") <> exe()
-        problem = build(entry, binary, false)
+        problem = if unread(entry, false) != "" do unread(entry, false) else if mainless?(entry) do Path.expand(entry) <> ":1:1: missing main/0" else build(entry, binary, locked) end end
         status = if problem != "" do complain(problem, 1) else if Sys.windows() == 1 do
           # On Windows the program has this program's input, output and
           # errors as they are (spec/windows.md).
@@ -651,11 +675,11 @@ defmodule AlchemCommand do
     end
   end
 
-  # What this alchem's compiler makes: linux/amd64, or windows/amd64 for the
-  # alchem built for Windows (build-alchem.py --windows), whose programs end
-  # in .exe as the pinned command names them there.
+  # What this alchem's compiler makes, as build-alchem.py found it; the
+  # programs of the alchem built for Windows end in .exe, as the pinned
+  # command names them there.
   def own_target(): string do
-    if Sys.windows() == 1 do "windows/amd64" else "linux/amd64" end
+    AlchemGuide.platform()
   end
   def exe(): string do
     if Sys.windows() == 1 do ".exe" else "" end
@@ -701,98 +725,58 @@ defmodule AlchemCommand do
     end
   end
 
-  def build_usage(): string do
-    "Usage of build:\n" <>
-    "  -json\n    \temit structured compile diagnostics\n" <>
-    "  -locked\n    \tfail instead of updating alchem.lock\n" <>
-    "  -max-call-depth int\n    \tnested Alchem calls allowed per process (default 100000)\n" <>
-    "  -o string\n    \toutput executable\n" <>
-    "  -race\n    \tenable Go race detection in generated executable\n" <>
-    "  -shutdown-timeout duration\n    \truntime shutdown deadline (default 2s)\n" <>
-    "  -target string\n    \ttarget GOOS/GOARCH\n" <>
-    "  -timeout duration\n    \tbuild deadline (default 2m0s)\n" <>
-    "  -trace\n    \tinclude Alchem runtime frames (default true)"
-  end
-
   # alchem build [-o OUT] [-locked] FILE: the executable, named after the
-  # file when no name is given. The pinned command's other flags are read:
-  # -target must be the one the compiler makes (own_target); -json, -race,
-  # -trace, -timeout, -shutdown-timeout and -max-call-depth change nothing.
-  def build_command(args: list[string], out: string, locked: boolean): integer do
-    case args do
-      [] -> complain("provide one entry path (fmt and test accept multiple paths)", 2)
-      [arg | rest] ->
-        if byte_size(arg) < 2 or not String.starts_with?(arg, "-") or arg == "--" do
-          paths = if arg == "--" do rest else args end
-          if length(paths) != 1 do complain("provide one entry path (fmt and test accept multiple paths)", 2) else
-            entry = hd(paths)
-            if not String.ends_with?(entry, ".alc") do complain("source must have .alc extension", 1) else
-              # A file with no main at all is refused as the pinned compiler
-              # refuses it; the compiler has one message for every refusal.
-              text = case File.read(entry) do
-                ok(t) -> t
-                error(_) -> "def main("
-              end
-              problem = if text =~ ~r/(^|\n)[ \t]*def[ \t]+main[ \t]*\(/ do build(entry, if out == "" do Path.basename(entry, ".alc") <> exe() else out end, locked) else entry <> ":1:1: missing main/0" end
-              if problem == "" do 0 else complain(problem, 1) end
-            end
-          end
-        else
-          body = String.trim_leading(if String.starts_with?(arg, "--") do binary_part(arg, 1, byte_size(arg) - 1) else arg end, "-")
-          parts = String.split(body, "=")
-          name = hd(parts)
-          valued = length(parts) > 1
-          value = if valued do Enum.join(tl(parts), "=") else if rest == [] do "" else hd(rest) end end
-          after_value = if valued or rest == [] do rest else tl(rest) end
-          if name in ["json", "race", "trace"] do build_command(rest, out, locked) else
-            if name == "locked" do build_command(rest, out, true) else
-              if not (name in ["o", "target", "timeout", "shutdown-timeout", "max-call-depth"]) do complain("flag provided but not defined: -" <> name <> "\n" <> build_usage(), 2) else
-                if not valued and rest == [] do complain("flag needs an argument: -" <> name <> "\n" <> build_usage(), 2) else
-                  if name == "target" and value != own_target() do complain("the self-hosted compiler builds " <> own_target() <> " alone, not " <> value, 2) else
-                    build_command(after_value, if name == "o" do value else out end, locked)
-                  end
-                end
-              end
-            end
+  # file when no name is given. The flags are read as the pinned command
+  # reads them (flagged): -target must be the one the compiler makes
+  # (own_target); -json, -race, -trace, -timeout, -shutdown-timeout and
+  # -max-call-depth change nothing.
+  def build_command(paths: list[string], out: string, locked: boolean, target: string, as_json: boolean): integer do
+    if length(paths) != 1 do complain("provide one entry path (fmt and test accept multiple paths)", 2) else
+      if target != "" and not (target =~ ~r/^[^\/]+\/[^\/]+$/) do complain("target must be GOOS/GOARCH", 2) else
+        if target != "" and target != own_target() do complain("the self-hosted compiler builds " <> own_target() <> " alone, not " <> target, 2) else
+          entry = hd(paths)
+          if not String.ends_with?(entry, ".alc") do complain("source must have .alc extension", 1) else
+            problem = if unread(entry, as_json) != "" do unread(entry, as_json) else if mainless?(entry) do Path.expand(entry) <> ":1:1: missing main/0" else build(entry, if out == "" do Path.basename(entry, ".alc") <> exe() else out end, locked) end end
+            if problem == "" do 0 else complain(problem, 1) end
           end
         end
+      end
     end
   end
 
   # alchem check [-locked] FILE: built and thrown away; a module without
   # main is built as the import of a program that does nothing. The compiler
   # has one message for a program it does not take; -json changes nothing.
-  def check(args: list[string], locked: boolean): integer do
+  # The flags are read as the pinned command reads them (flagged).
+  def check(args: list[string], locked: boolean, as_json: boolean): integer do
     case args do
-      ["-locked" | rest] -> check(rest, true)
-      ["--locked" | rest] -> check(rest, true)
-      ["-json" | rest] -> check(rest, locked)
-      ["--json" | rest] -> check(rest, locked)
       [entry] ->
-        if String.starts_with?(entry, "-") and byte_size(entry) > 1 do complain("flag provided but not defined: " <> entry, 2) else
-          if not String.ends_with?(entry, ".alc") do complain(entry <> ": source must have .alc extension", 1) else
-            work = fresh("alchem-check-")
-            # A module without main is checked as what a program imports.
-            text = case File.read(entry) do
-              ok(t) -> t
-              error(_) -> "def main("
-            end
-            # A test file is a program of its own, as the test command builds it.
-            whole = text =~ ~r/(^|\n)[ \t]*def[ \t]+main[ \t]*\(/ or text =~ ~r/(^|\n)[ \t]*(test|doctest|describe)[ \t]/
-            used = if whole do entry else
-              # An import is joined to the importing file's directory, so the
-              # module is named from the work directory up to the root.
-              up = String.duplicate("../", length(Enum.filter(String.split(work, "/"), fn part -> part != "" end)))
-              File.write(work <> "/checking.alc", "defmodule AlchemChecking do\n  import " <> inspect(up <> String.trim_leading(Path.expand(entry), "/")) <> "\n  def main() do\n    IO.write(\"\")\n  end\nend\n")
-              work <> "/checking.alc"
-            end
-            problem = build(used, work <> "/checked", locked)
-            File.rm_rf(work)
-            if problem == "" do 0 else complain(problem, 1) end
-          end
+        if not String.ends_with?(entry, ".alc") do complain(entry <> ": source must have .alc extension", 1) else
+          if unread(entry, as_json) != "" do complain(unread(entry, as_json), 1) else check_file(entry, locked) end
         end
       _ -> complain("provide one entry path (fmt and test accept multiple paths)", 2)
     end
+  end
+
+  def check_file(entry: string, locked: boolean): integer do
+    work = fresh("alchem-check-")
+    # A module without main is checked as what a program imports.
+    text = case File.read(entry) do
+      ok(t) -> t
+      error(_) -> "def main("
+    end
+    # A test file is a program of its own, as the test command builds it.
+    whole = text =~ ~r/(^|\n)[ \t]*def[ \t]+main[ \t]*\(/ or text =~ ~r/(^|\n)[ \t]*(test|doctest|describe)[ \t]/
+    used = if whole do entry else
+      # An import is joined to the importing file's directory, so the
+      # module is named from the work directory up to the root.
+      up = String.duplicate("../", length(Enum.filter(String.split(work, "/"), fn part -> part != "" end)))
+      File.write(work <> "/checking.alc", "defmodule AlchemChecking do\n  import " <> inspect(up <> String.trim_leading(Path.expand(entry), "/")) <> "\n  def main() do\n    IO.write(\"\")\n  end\nend\n")
+      work <> "/checking.alc"
+    end
+    problem = build(used, work <> "/checked", locked)
+    File.rm_rf(work)
+    if problem == "" do 0 else complain(problem, 1) end
   end
 
   # my_app is the module MyApp.
@@ -842,14 +826,31 @@ defmodule AlchemCommand do
     end
   end
 
+  # build, run, check and new once their flags are read as the pinned
+  # command reads them: a flag it does not take, a value that is not of its
+  # kind and -h print what it prints, with its status.
+  def flagged(command: string, args: list[string]): integer do
+    nothing: map[string, string] = %{}
+    {status, values, rest} = AlchemGuide.parsed(command, args, nothing)
+    locked = AlchemGuide.on?(values, "locked")
+    if status >= 0 do status else
+      case command do
+        "build" -> build_command(rest, Map.get(values, "o", ""), locked, Map.get(values, "target", ""), AlchemGuide.on?(values, "json"))
+        "check" -> check(rest, locked, AlchemGuide.on?(values, "json"))
+        "new" -> new(rest)
+        _ -> run(rest, locked)
+      end
+    end
+  end
+
   def main() do
     args = System.argv()
     status = case args do
       ["test" | rest] -> test(rest)
-      ["run" | rest] -> run(rest)
-      ["build" | rest] -> build_command(rest, "", false)
-      ["check" | rest] -> check(rest, false)
-      ["new" | rest] -> new(rest)
+      ["run" | rest] -> flagged("run", rest)
+      ["build" | rest] -> flagged("build", rest)
+      ["check" | rest] -> flagged("check", rest)
+      ["new" | rest] -> flagged("new", rest)
       [] -> complain(String.trim_trailing(AlchemGuide.usage(), "\n"), 2)
       ["--version" | _] -> AlchemGuide.run("version", [])
       [command | rest] ->

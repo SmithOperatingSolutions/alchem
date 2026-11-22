@@ -662,20 +662,33 @@ defmodule AlchemGuide do
                       end
                     end
                   else
-                    if valued do parsed(command, rest, Map.put(values, name, Enum.at(pieces, 1, ""))) else
-                      case rest do
-                        [] ->
-                          IO.puts(:stderr, "flag needs an argument: -" <> name)
-                          IO.puts(:stderr, String.trim_trailing(help(command), "\n"))
-                          {2, values, []}
-                        [value | later] -> parsed(command, later, Map.put(values, name, value))
-                      end
+                    if not valued and rest == [] do
+                      IO.puts(:stderr, "flag needs an argument: -" <> name)
+                      IO.puts(:stderr, String.trim_trailing(help(command), "\n"))
+                      {2, values, []}
+                    else
+                      value = if valued do Enum.at(pieces, 1, "") else hd(rest) end
+                      if not of_kind?(kind, value) do
+                        IO.puts(:stderr, "invalid value " <> quoted(value) <> " for flag -" <> name <> ": parse error")
+                        IO.puts(:stderr, String.trim_trailing(help(command), "\n"))
+                        {2, values, []}
+                      else parsed(command, if valued do rest else tl(rest) end, Map.put(values, name, value)) end
                     end
                   end
               end
             end
           end
         end
+    end
+  end
+
+  # A value of the kind a flag's usage names: a whole number, a duration
+  # such as 1m30s or 1.5s, or any text.
+  def of_kind?(kind: string, value: string): boolean do
+    case kind do
+      "int" -> value =~ ~r/^[-+]?[0-9]+$/
+      "duration" -> value =~ ~r/^[-+]?(0|(([0-9]+(\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$/
+      _ -> true
     end
   end
 
