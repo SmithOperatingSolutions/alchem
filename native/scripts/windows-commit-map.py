@@ -2,14 +2,15 @@
 """What a running Windows process has committed, by allocation: a tool for
 finding what a native Windows program commits (issue #104). Windows only.
 
-    windows-commit-map.py SECONDS PROGRAM.exe [ARGS...] [< INPUT]
+    windows-commit-map.py [--most MIB] SECONDS PROGRAM.exe [ARGS...] [< INPUT]
 
 The program is started, left to run SECONDS (its standard input is a pipe
 held open, so a program that reads it waits there), and its address space
 is walked with VirtualQueryEx: each allocation that holds committed
 private memory is listed with its base, the size reserved, the size
 committed and its protection, largest first, then the total. The program
-is then ended."""
+is then ended. With --most, a total of more than MIB MiB is a failure:
+the Windows job checks so that a program commits about what it uses."""
 import ctypes
 from ctypes import wintypes
 import subprocess
@@ -44,6 +45,9 @@ def commit_map(handle):
 
 
 def main(arguments):
+    most = None
+    if arguments[:1] == ['--most']:
+        most, arguments = float(arguments[1]), arguments[2:]
     if len(arguments) < 2:
         raise SystemExit(__doc__)
     seconds, command = float(arguments[0]), arguments[1:]
@@ -65,6 +69,8 @@ def main(arguments):
             total += committed
             print(f'{base:#014x}  reserved {reserved / mib:9.1f} MiB  committed {committed / mib:9.1f} MiB  {",".join(sorted(protections))}')
     print(f'total committed private memory of {command[0]}: {total / mib:.1f} MiB in {sum(1 for v in found.values() if v[1])} allocations')
+    if most is not None and total > most * mib:
+        raise SystemExit(f'{command[0]} commits {total / mib:.1f} MiB, more than {most:.0f} MiB')
 
 
 if __name__ == '__main__':

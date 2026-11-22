@@ -1641,7 +1641,12 @@ void copy_resume_c(void) {
 static i64 sys_mmap_anonymous(i64 size, i64 flags) {
   u64 n = ((u64)size + 4095) & ~4095ull;
   if (!n) return -EINVAL;
-  if (n > 0x100000000ull) {
+  /* More than 4 GiB, or MAP_NORESERVE (the collector's tables, about a
+     seventh of the arena): reserved only, and committed 64 KiB at a time
+     as it is touched, so that it costs commit only as Linux would charge
+     it memory. Committed whole, the tables alone were 2.3 GiB of commit
+     for every process (#104). */
+  if (n > 0x100000000ull || (flags & 0x4000)) {
     void *m = imp_VirtualAlloc(0, n, 0x2000, 4);                 /* MEM_RESERVE */
     if (!m) return -ENOMEM;
     region_add((u64)m, n);
