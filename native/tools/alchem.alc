@@ -346,12 +346,22 @@ defmodule AlchemCommand do
     end
   end
 
+  # What os.Lstat says of a path it cannot read. On Windows it names the
+  # call it makes, and a path whose directory is there names the file.
+  def lstat_problem(path: string, code: string): string do
+    if Sys.windows() == 1 and reason(code) == "no such file or directory" do
+      name = Enum.at(Enum.reverse(String.split(String.replace(path, "\\", "/"), "/")), 0, "")
+      parent = if name == path do "." else binary_part(path, 0, byte_size(path) - byte_size(name) - 1) end
+      "GetFileAttributesEx " <> path <> ": The system cannot find the " <> (if File.dir?(if parent == "" do "/" else parent end) do "file" else "path" end) <> " specified."
+    else "lstat " <> path <> ": " <> reason(code) end
+  end
+
   def fmt_found(paths: list[string], found: list[string]): result[list[string], string] do
     case paths do
       [] -> ok(found)
       [path | rest] ->
         case File.lstat(path) do
-          error(code) -> error("lstat " <> path <> ": " <> reason(code))
+          error(code) -> error(lstat_problem(path, code))
           ok(info) ->
             if info.type != :directory do fmt_found(rest, found ++ [path]) else
               root = cleaned(if Sys.windows() == 1 do String.replace(path, "\\", "/") else path end)
@@ -406,7 +416,7 @@ defmodule AlchemCommand do
       [name | rest] ->
         regular = case File.lstat(name) do
           ok(info) -> if info.type == :regular do "" else name <> ": formatter requires a regular file" end
-          error(code) -> "lstat " <> name <> ": " <> reason(code)
+          error(code) -> lstat_problem(name, code)
         end
         if regular != "" do error(regular) else
           case File.read_binary(name) do
