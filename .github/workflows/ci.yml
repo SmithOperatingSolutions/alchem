@@ -200,13 +200,8 @@ jobs:
             goos: darwin
             goarch: amd64
             exe: ''
-            # The compiler package alone took 8 to 13 minutes here in
-            # November 2026, then 16, 21 and more than 25: the Intel macOS
-            # runner is the slow one, and its limits are its own.
-            tests: 50m
-            minutes: 70
     runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ matrix.minutes || 40 }}
+    timeout-minutes: 40
     defaults:
       run:
         shell: bash
@@ -228,9 +223,9 @@ jobs:
             exit 1
           fi
       - name: Unit and integration tests
-        # The per-package limit matches the Native jobs, but for the Intel
-        # macOS runner, which is given its own (matrix.tests).
-        run: go test -timeout ${{ matrix.tests || '25m' }} ./...
+        # The Intel macOS runner takes about ten minutes for the compiler
+        # package alone, so the per-package limit matches the Native jobs.
+        run: go test -timeout 25m ./...
       - name: Native CLI smoke test
         run: |
           go build -o artifacts/alchem${{ matrix.exe }} ./cmd/alchem
