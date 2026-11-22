@@ -6,14 +6,16 @@ lexer, parser and formatter (spec/alchem-front-end.md).
 harness/front-end-cases.json.xz holds source texts and, for each, the
 SHA-256 of what the pinned lexer, parser and formatter give for it as
 JSON: the tokens and comments, the tree ParseSyntax gives or its message,
-and the text Format gives or its message (scripts/generate-front-end-cases.py
+the text Format gives or its message, and the tree ParseModule lowers for
+the checker or its message (scripts/generate-front-end-cases.py
 makes the file). The texts are the repository's source files as they were
 when the file was made, broken copies of them (a line dropped, the text cut
 short, a sign put in, two lines swapped, a few characters taken out), and
 copies written otherwise than the formatter writes them (indentation taken
 out, or added with spaces at the ends of lines and none after commas, or
 blank lines moved and operators spaced). scripts/lexer-dump.alc,
-scripts/parser-dump.alc and scripts/format-dump.alc, built by an alchem the
+scripts/parser-dump.alc, scripts/format-dump.alc and scripts/module-dump.alc,
+built by an alchem the
 compiler under test builds, must give the same bytes for every text."""
 from pathlib import Path
 import hashlib
@@ -84,7 +86,7 @@ def verify(compiler):
         base = Path(top)
         alchem = base / 'alchem'
         builder.build(compiler, alchem, builder.platform_of(compiler).startswith('darwin/'))
-        for name in ('lexer-dump', 'parser-dump', 'format-dump'):
+        for name in ('lexer-dump', 'parser-dump', 'format-dump', 'module-dump'):
             subprocess.run([str(alchem), 'build', '-o', str(base / name), name + '.alc'], cwd=ROOT / 'scripts', check=True, timeout=1800)
         paths = []
         for k, case in enumerate(held):
@@ -92,12 +94,13 @@ def verify(compiler):
             path.parent.mkdir(exist_ok=True)
             path.write_bytes(case['text'].encode('utf8', 'surrogateescape'))
             paths.append(path)
-        tokens, trees, formats = (lines(base / name, paths) for name in ('lexer-dump', 'parser-dump', 'format-dump'))
+        tokens, trees, formats, modules = (lines(base / name, paths) for name in ('lexer-dump', 'parser-dump', 'format-dump', 'module-dump'))
         refused = 0
         for path, case in zip(paths, held):
             assert digest(tokens.get(str(path), b''), path) == case['tokens'], ('tokens', case['name'])
             assert digest(trees.get(str(path), b''), path) == case['tree'], ('tree', case['name'])
             assert digest(formats.get(str(path), b''), path) == case['format'], ('format', case['name'])
+            assert digest(modules.get(str(path), b''), path) == case['module'], ('module', case['name'])
             refused += case['refused']
         # check: the pinned message for every text the pinned compiler
         # refuses, and with --json its diagnostic, or none where the front
@@ -112,7 +115,7 @@ def verify(compiler):
             else:
                 assert seen[0] == 0 or any(word in seen[1] for word in UNEXPLAINED), ('check', case['name'], seen, case['check'])
         assert explained >= EXPLAINED, f'check explains {explained} of the {len(refusing)} refused texts, fewer than {EXPLAINED}'
-    print(f'PASS front_end: {len(held)} texts lexed, parsed and formatted as the pinned compiler lexes, parses and formats them, byte for byte; {refused} of them refused with its message; check gives the pinned message and --json diagnostic for {explained} of the {len(refusing)} texts the pinned compiler refuses, and no other message')
+    print(f'PASS front_end: {len(held)} texts lexed, parsed, formatted and lowered as the pinned compiler lexes, parses, formats and lowers them, byte for byte; {refused} of them refused with its message; check gives the pinned message and --json diagnostic for {explained} of the {len(refusing)} texts the pinned compiler refuses, and no other message')
 
 
 if __name__ == '__main__':

@@ -1,0 +1,20 @@
+defmodule ModuleNative do
+  import "../tools/alchem-parse.alc"
+  import "../tools/alchem-lower.alc"
+  import "../tools/alchem-json.alc"
+  def main() do
+    Enum.each(System.argv(), fn path ->
+      case File.read_binary(path) do
+        error(_) -> IO.puts(path <> " unreadable")
+        ok(text) ->
+          case AlchemLower.lower_module(text) do
+            error(why) -> IO.puts("[" <> AlchemJson.quoted(path) <> ",\"error\"," <> AlchemJson.quoted(why) <> "]")
+            ok(tree) ->
+              # As scripts/pinned-module leaves them out.
+              shown = AlchemJson.put_all(tree, [{"Statements", AlchemJson.J.null}, {"Output", AlchemJson.J.text("")}, {"Comparison", AlchemJson.J.null}, {"Assertion", AlchemJson.J.null}])
+              IO.puts("[" <> AlchemJson.quoted(path) <> "," <> AlchemJson.encode(shown) <> "]")
+          end
+      end
+    end)
+  end
+end

@@ -1,10 +1,15 @@
 defmodule AlchemLower do
   import "alchem-json.alc"
-  # What the pinned compiler's ParseModule finds wrong in a module once it
-  # is parsed, before anything is imported: its resolveConstants and the
-  # parts of lower that refuse (separateArities, mergeClauses), in their
-  # order, on the tree tools/alchem-parse.alc gives. A problem is
-  # "line:column: message", as the pinned parser gives one.
+  import "alchem-parse.alc"
+  import "alchem-types.alc"
+  import "alchem-format.alc"
+  # The module as the pinned compiler's ParseModule gives it, the tree its
+  # checker reads (lower_module), and what ParseModule finds wrong in it once
+  # it is parsed (problem): resolveConstants and lower (separateArities,
+  # mergeClauses, the rewrites of unless, receives, fn clauses, cond, with,
+  # check all and bitwise operators, and Qualify), on the tree
+  # tools/alchem-parse.alc gives. A problem is "line:column: message", as
+  # the pinned parser gives one.
 
   def g(o: AlchemJson.J, name: string): AlchemJson.J do AlchemJson.get(o, name) end
   def tx(o: AlchemJson.J, name: string): string do AlchemJson.text_of(AlchemJson.get(o, name)) end
@@ -285,5 +290,490 @@ defmodule AlchemLower do
           end
         end
     end
+  end
+
+  # --- the module as ParseModule gives it -------------------------------------------------
+
+  # The tree of a source file as the pinned compiler's ParseModule gives it,
+  # lowered as it lowers a module before it is loaded, or its message.
+  def lower_module(source: string): result[AlchemJson.J, string] do
+    case AlchemParse.parse_module(source) do
+      ok(tree) ->
+        found = problem(tree)
+        if found != "" do error(found) else ok(lowered(tree)) end
+      error(why) -> error(why)
+    end
+  end
+
+  def lowered(tree: AlchemJson.J): AlchemJson.J do
+    merged = merge_clauses(rename_arities(resolve_constants(tree)))
+    statements = [fn(b: list[AlchemJson.J]): list[AlchemJson.J] do desugar_unless(b) end, fn(b: list[AlchemJson.J]): list[AlchemJson.J] do desugar_receives(b) end,
+      fn(b: list[AlchemJson.J]): list[AlchemJson.J] do desugar_clauses(b) end, fn(b: list[AlchemJson.J]): list[AlchemJson.J] do desugar_conds(b) end,
+      fn(b: list[AlchemJson.J]): list[AlchemJson.J] do desugar_withs(b) end, fn(b: list[AlchemJson.J]): list[AlchemJson.J] do desugar_checks(b) end]
+    desugared = Enum.reduce(statements, merged, fn visit, sofar -> rewrite_bodies(sofar, visit) end)
+    qualify(desugar_bitwise(desugared))
+  end
+
+  # --- the pieces of the tree the rewrites make --------------------------------------------
+
+  def st(kind: string, line: integer, column: integer, changes: list[tuple[string, AlchemJson.J]]): AlchemJson.J do
+    AlchemJson.put_all(AlchemParse.statement(line, column), [{"Kind", AlchemJson.J.text(kind)} | changes])
+  end
+  def ex(kind: string, line: integer, column: integer, changes: list[tuple[string, AlchemJson.J]]): AlchemJson.J do
+    AlchemParse.expr_of(kind, line, column, changes)
+  end
+  def literal_of(kind: string, changes: list[tuple[string, AlchemJson.J]]): AlchemJson.J do
+    AlchemJson.put_all(AlchemParse.literal(kind), changes)
+  end
+  def truth_at(value: boolean, line: integer, column: integer): AlchemJson.J do
+    ex("literal", line, column, [{"Value", literal_of("boolean", [{"Boolean", AlchemJson.J.truth(value)}])}])
+  end
+  def text_at(value: string, line: integer, column: integer): AlchemJson.J do
+    ex("literal", line, column, [{"Value", literal_of("string", [{"Text", AlchemJson.J.text(value)}])}])
+  end
+  def integer_at(value: integer, line: integer, column: integer): AlchemJson.J do
+    ex("literal", line, column, [{"Value", literal_of("integer", [{"Integer", AlchemJson.int(value)}])}])
+  end
+  def name_at(name: string, line: integer, column: integer): AlchemJson.J do ex("name", line, column, [{"Name", AlchemJson.J.text(name)}]) end
+  def list_of(items: list[AlchemJson.J]): AlchemJson.J do AlchemJson.J.list(items) end
+  def slice_of(items: list[AlchemJson.J]): AlchemJson.J do if items == [] do AlchemJson.J.null else AlchemJson.J.list(items) end end
+
+  # --- walk: each statement list of the functions, rewritten, then gone into ---------------
+
+  def rewrite_bodies(tree: AlchemJson.J, visit: fn[list[AlchemJson.J], list[AlchemJson.J]]): AlchemJson.J do
+    AlchemJson.put(tree, "Functions", q_map(g(tree, "Functions"), fn f ->
+      AlchemJson.put_all(f, [{"Guard", rewrite_expr(g(f, "Guard"), visit)}, {"Body", rewrite_block(g(f, "Body"), visit)}])
+    end))
+  end
+  def rewrite_expr(e: AlchemJson.J, visit: fn[list[AlchemJson.J], list[AlchemJson.J]]): AlchemJson.J do
+    if AlchemJson.null?(e) do e else
+      AlchemJson.put_all(e, [{"Left", rewrite_expr(g(e, "Left"), visit)}, {"Right", rewrite_expr(g(e, "Right"), visit)},
+        {"Args", q_map(g(e, "Args"), fn a -> rewrite_expr(a, visit) end)}, {"Keys", q_map(g(e, "Keys"), fn k -> rewrite_expr(k, visit) end)},
+        {"Body", rewrite_block(g(e, "Body"), visit)}])
+    end
+  end
+  def rewrite_block(body: AlchemJson.J, visit: fn[list[AlchemJson.J], list[AlchemJson.J]]): AlchemJson.J do
+    case body do
+      AlchemJson.J.list(items) ->
+        AlchemJson.J.list(Enum.map(visit.(items), fn s ->
+          arms = q_map(g(s, "Arms"), fn arm -> AlchemJson.put_all(arm, [{"Guard", rewrite_expr(g(arm, "Guard"), visit)}, {"Body", rewrite_block(g(arm, "Body"), visit)}]) end)
+          AlchemJson.put_all(s, [{"Expr", rewrite_expr(g(s, "Expr"), visit)}, {"Then", rewrite_block(g(s, "Then"), visit)}, {"Else", rewrite_block(g(s, "Else"), visit)}, {"Arms", arms}])
+        end))
+      other -> other
+    end
+  end
+
+  # desugarUnless: unless c is if not c.
+  def desugar_unless(body: list[AlchemJson.J]): list[AlchemJson.J] do
+    Enum.map(body, fn s ->
+      if tx(s, "Kind") == "if" and tx(s, "Name") == "unless" do
+        e = g(s, "Expr")
+        AlchemJson.put_all(s, [{"Name", AlchemJson.J.text("")}, {"Expr", ex("unary", at_line(e), at_column(e), [{"Op", AlchemJson.J.text("not")}, {"Left", e}])}])
+      else s end
+    end)
+  end
+
+  # desugarClauses: the clauses of an anonymous function, a case on its argument.
+  def desugar_clauses(body: list[AlchemJson.J]): list[AlchemJson.J] do
+    Enum.map(body, fn s ->
+      if tx(s, "Kind") == "clauses" do st("case", at_line(s), at_column(s), [{"Arms", g(s, "Arms")}, {"Expr", name_at(tx(s, "Name"), at_line(s), at_column(s))}]) else s end
+    end)
+  end
+
+  # desugarConds: nested ifs; a last true -> arm is the last else, and
+  # without one falling through every condition fails.
+  def desugar_conds(body: list[AlchemJson.J]): list[AlchemJson.J] do
+    Enum.map(body, fn s ->
+      if tx(s, "Kind") != "cond" do s else
+        line = at_line(s)
+        column = at_column(s)
+        raised = [st("call", line, column, [{"Expr", ex("call", line, column, [{"Name", AlchemJson.J.text("raise")}, {"Args", list_of([text_at("no cond clause matched", line, column)])}])}])]
+        arms = its(s, "Arms")
+        last = length(arms) - 1
+        otherwise = Enum.reduce(Enum.reverse(Enum.with_index(arms)), raised, fn {arm, j}, sofar ->
+          guard = g(arm, "Guard")
+          value = g(guard, "Value")
+          if j == last and tx(guard, "Kind") == "literal" and tx(value, "Kind") == "boolean" and AlchemJson.truth_of(g(value, "Boolean")) do its(arm, "Body") else
+            [st("if", at_line(guard), at_column(guard), [{"Expr", guard}, {"Then", g(arm, "Body")}, {"Else", slice_of(sofar)}])]
+          end
+        end)
+        if length(otherwise) == 1 and tx(hd(otherwise), "Kind") == "if" do hd(otherwise) else
+          st("if", line, column, [{"Expr", truth_at(true, line, column)}, {"Then", slice_of(otherwise)}, {"Else", slice_of(otherwise)}])
+        end
+      end
+    end)
+  end
+
+  def irrefutable?(p: AlchemJson.J): boolean do
+    kind = tx(p, "Kind")
+    if kind == "name" or kind == "wildcard" do true else
+      if kind == "map" and its(p, "Keys") == [] do true else
+        if kind == "tuple" or kind == "struct" do Enum.all?(its(p, "Children"), fn c -> irrefutable?(c) end) else false end
+      end
+    end
+  end
+
+  # desugarWiths: a case for each clause, its value going on when it
+  # matches; one that does not is the else arms', or the result.
+  def desugar_withs(body: list[AlchemJson.J]): list[AlchemJson.J] do
+    Enum.map(body, fn s -> if tx(s, "Kind") != "with" do s else hd(with_cases(s, its(s, "Arms"), 0)) end end)
+  end
+  def with_cases(s: AlchemJson.J, clauses: list[AlchemJson.J], k: integer): list[AlchemJson.J] do
+    case clauses do
+      [] -> its(s, "Then")
+      [arm | rest] ->
+        guard = g(arm, "Guard")
+        going = AlchemJson.put_all(AlchemParse.arm(), [{"Pattern", g(arm, "Pattern")}, {"Body", slice_of(with_cases(s, rest, k + 1))}])
+        missed = if irrefutable?(g(arm, "Pattern")) do [] else
+          name = "with$" <> Integer.to_string(at_line(s)) <> "_" <> Integer.to_string(at_column(s)) <> "_" <> Integer.to_string(k)
+          value = name_at(name, at_line(guard), at_column(guard))
+          miss = if its(s, "Else") != [] do
+            [st("case", at_line(s), at_column(s), [{"Name", AlchemJson.J.text("with-else")}, {"Expr", value}, {"Pattern", g(arm, "Pattern")}, {"Arms", g(hd(its(s, "Else")), "Arms")}])]
+          else
+            [st("call", at_line(s), at_column(s), [{"Expr", ex("unmatched", at_line(guard), at_column(guard), [{"Left", value}])}])]
+          end
+          [AlchemJson.put_all(AlchemParse.arm(), [{"Pattern", AlchemJson.put_all(AlchemParse.pattern(at_line(guard), at_column(guard)), [{"Kind", AlchemJson.J.text("name")}, {"Name", AlchemJson.J.text(name)}])}, {"Body", list_of(miss)}])]
+        end
+        [st("case", at_line(s), at_column(s), [{"Expr", guard}, {"Arms", list_of([going | missed])}])]
+    end
+  end
+
+  # --- each expression of a function, changed: walkFunction's reach ------------------------
+
+  def each_expr(e: AlchemJson.J, f: fn[AlchemJson.J, AlchemJson.J]): AlchemJson.J do
+    if AlchemJson.null?(e) do e else
+      d = f.(e)
+      AlchemJson.put_all(d, [{"Left", each_expr(g(d, "Left"), f)}, {"Right", each_expr(g(d, "Right"), f)},
+        {"Args", q_map(g(d, "Args"), fn a -> each_expr(a, f) end)}, {"Keys", q_map(g(d, "Keys"), fn k -> each_expr(k, f) end)},
+        {"Params", q_map(g(d, "Params"), fn p -> AlchemJson.put(p, "Default", each_expr(g(p, "Default"), f)) end)},
+        {"Body", each_block(g(d, "Body"), f)}])
+    end
+  end
+  def each_block(body: AlchemJson.J, f: fn[AlchemJson.J, AlchemJson.J]): AlchemJson.J do
+    q_map(body, fn s ->
+      arms = q_map(g(s, "Arms"), fn arm -> AlchemJson.put_all(arm, [{"Guard", each_expr(g(arm, "Guard"), f)}, {"Body", each_block(g(arm, "Body"), f)}]) end)
+      AlchemJson.put_all(s, [{"Expr", each_expr(g(s, "Expr"), f)}, {"Then", each_block(g(s, "Then"), f)}, {"Else", each_block(g(s, "Else"), f)}, {"Arms", arms}])
+    end)
+  end
+  def each_function(fun: AlchemJson.J, f: fn[AlchemJson.J, AlchemJson.J]): AlchemJson.J do
+    params = q_map(g(fun, "Params"), fn p -> AlchemJson.put(p, "Default", each_expr(g(p, "Default"), f)) end)
+    AlchemJson.put_all(fun, [{"Params", params}, {"Guard", each_expr(g(fun, "Guard"), f)}, {"Body", each_block(g(fun, "Body"), f)}])
+  end
+
+  # --- separateArities: the names, and the module's calls of them ---------------------------
+
+  def spans_of(tree: AlchemJson.J): list[tuple[string, list[Span]]] do
+    functions = its(tree, "Functions")
+    no_counts: map[string, list[integer]] = %{}
+    counts = Enum.reduce(functions, no_counts, fn f, sofar ->
+      if overloadable?(f) do Map.put(sofar, tx(f, "Name"), Enum.uniq([length(its(f, "Params")) | Map.get(sofar, tx(f, "Name"), none_counted())])) else sofar end
+    end)
+    nothing: list[tuple[string, list[Span]]] = []
+    Enum.reduce(functions, nothing, fn f, sofar ->
+      original = tx(f, "Name")
+      if not overloadable?(f) or length(Map.get(counts, original, none_counted())) <= 1 do sofar else
+        s = span_of(original <> "/" <> Integer.to_string(length(its(f, "Params"))), f)
+        known = spans_for(sofar, original)
+        grown = if known == [] or Enum.at(Enum.reverse(known), 0, s).name != s.name do known ++ [s] else known end
+        Enum.filter(sofar, fn {key, _} -> key != original end) ++ [{original, grown}]
+      end
+    end)
+  end
+
+  def rename_arities(tree: AlchemJson.J): AlchemJson.J do
+    spans = spans_of(tree)
+    if spans == [] do tree else
+      renamed = elem(separate_arities(tree), 0)
+      rename = fn(e: AlchemJson.J): AlchemJson.J do
+        kind = tx(e, "Kind")
+        candidates = if kind == "call" or kind == "funcref" do spans_for(spans, tx(e, "Name")) else [] end
+        if candidates == [] do e else
+          count = if kind == "funcref" do (case Integer.parse(tx(e, "Op")) do
+            ok(k) -> k
+            error(_) -> -1
+          end) else length(its(e, "Args")) end
+          chosen = pick(candidates, count)
+          if chosen == "" do e else AlchemJson.put(e, "Name", AlchemJson.J.text(chosen)) end
+        end
+      end
+      functions = AlchemJson.J.list(Enum.map(renamed, fn f -> each_function(f, rename) end))
+      macros = q_map(g(tree, "Macros"), fn m -> AlchemJson.put(m, "Body", each_block(g(m, "Body"), rename)) end)
+      AlchemJson.put_all(tree, [{"Functions", functions}, {"Macros", macros}])
+    end
+  end
+
+  # --- mergeClauses: the clauses of a function as one function of a case --------------------
+
+  def merge_clauses(tree: AlchemJson.J): AlchemJson.J do
+    # A module of no functions has none, nil as Go writes it.
+    AlchemJson.put(tree, "Functions", slice_of(merged_list(its(tree, "Functions"))))
+  end
+  def merged_list(functions: list[AlchemJson.J]): list[AlchemJson.J] do
+    case functions do
+      [] -> []
+      [first | rest] ->
+        count = group_end(functions, first, rest, 0)
+        group = [first | Enum.take(rest, count)]
+        left = Enum.drop(rest, count)
+        made = if tx(first, "Test") != "" or AlchemJson.truth_of(g(first, "Setup")) do [first] else
+          Enum.map(Enum.with_index(forms(group)), fn {form, k} ->
+            clause = hd(form)
+            plain = length(form) == 1 and AlchemJson.null?(g(clause, "Guard")) and Enum.all?(its(clause, "Params"), fn p -> AlchemJson.null?(g(p, "Pattern")) and tx(p, "Type") != "" end)
+            merged = if plain do clause else merged_group(form) end
+            if k > 0 do AlchemJson.put(merged, "Name", AlchemJson.J.text(tx(first, "Name") <> "#" <> Integer.to_string(k + 1))) else merged end
+          end)
+        end
+        made ++ merged_list(left)
+    end
+  end
+
+  def at_line(v: AlchemJson.J): integer do num(v, "Line") end
+  def at_column(v: AlchemJson.J): integer do num(v, "Column") end
+
+  # mergeGroup, given clauses it takes: the function and its case.
+  def merged_group(form: list[AlchemJson.J]): AlchemJson.J do
+    first = hd(form)
+    line = at_line(first)
+    column = at_column(first)
+    docs = Enum.filter(Enum.map(form, fn c -> tx(c, "Doc") end), fn d -> d != "" end)
+    types = Enum.reduce(form, Enum.map(its(first, "Params"), fn _ -> "" end), fn clause, sofar ->
+      Enum.map(Enum.zip(sofar, clause_types(clause)), fn {before, t} -> if before == "" do t else before end end)
+    end)
+    returns = case Enum.filter(Enum.map(form, fn c -> tx(c, "Type") end), fn t -> t != "void" end) do
+      [t | _] -> t
+      [] -> "void"
+    end
+    params = Enum.map(Enum.with_index(Enum.zip(its(first, "Params"), types)), fn {{p, t}, i} ->
+      AlchemJson.put_all(AlchemParse.parameter(at_line(p), at_column(p)), [{"Default", g(p, "Default")}, {"Name", AlchemJson.J.text("arg$" <> Integer.to_string(i + 1))}, {"Type", AlchemJson.J.text(t)}])
+    end)
+    subjects = Enum.map(Enum.with_index(params), fn {_, i} -> AlchemParse.expr_of("name", line, column, [{"Name", AlchemJson.J.text("arg$" <> Integer.to_string(i + 1))}]) end)
+    subject = if length(subjects) > 1 do AlchemParse.expr_of("tuple", line, column, [{"Args", AlchemJson.J.list(subjects)}]) else hd(subjects) end
+    arms = Enum.map(form, fn clause ->
+      patterns = Enum.map(its(clause, "Params"), fn p ->
+        if AlchemJson.null?(g(p, "Pattern")) do AlchemJson.put_all(AlchemParse.pattern(at_line(p), at_column(p)), [{"Kind", AlchemJson.J.text("name")}, {"Name", AlchemJson.J.text(tx(p, "Name"))}]) else g(p, "Pattern") end
+      end)
+      pattern = if length(patterns) > 1 do AlchemJson.put_all(AlchemParse.pattern(at_line(clause), at_column(clause)), [{"Kind", AlchemJson.J.text("tuple")}, {"Children", AlchemJson.J.list(patterns)}]) else hd(patterns) end
+      AlchemJson.put_all(AlchemParse.arm(), [{"Pattern", pattern}, {"Guard", g(clause, "Guard")}, {"Body", g(clause, "Body")}])
+    end)
+    match = AlchemJson.put_all(AlchemParse.statement(line, column), [{"Kind", AlchemJson.J.text("case")}, {"Expr", subject}, {"Arms", AlchemJson.J.list(arms)}])
+    AlchemJson.put_all(AlchemParse.function(line, column), [{"Name", AlchemJson.J.text(tx(first, "Name"))}, {"Type", AlchemJson.J.text(returns)},
+      {"Private", g(first, "Private")}, {"Doc", AlchemJson.J.text(Enum.at(docs, 0, ""))}, {"Comments", g(first, "Comments")},
+      {"Params", if params == [] do AlchemJson.J.null else AlchemJson.J.list(params) end}, {"Body", AlchemJson.J.list([match])}])
+  end
+
+  # desugarReceives: assert_receive(pid, pattern) binds the pattern to the
+  # first message a function of the pattern, and its guard, accepts;
+  # refute_receive calls the same; the failure shows the pattern as written.
+  def desugar_receives(body: list[AlchemJson.J]): list[AlchemJson.J] do
+    Enum.map(body, fn s -> if tx(s, "Kind") != "receive" do s else received(s) end end)
+  end
+  def received(s: AlchemJson.J): AlchemJson.J do
+    line = at_line(s)
+    column = at_column(s)
+    pattern = g(s, "Pattern")
+    answer = fn(value: boolean): AlchemJson.J do list_of([st("call", line, column, [{"Expr", truth_at(value, line, column)}])]) end
+    message = "message$" <> Integer.to_string(line) <> "_" <> Integer.to_string(column)
+    guard = case its(s, "Arms") do
+      [first | _] -> g(first, "Guard")
+      [] -> AlchemJson.J.null
+    end
+    accept = AlchemJson.put_all(AlchemParse.arm(), [{"Pattern", pattern}, {"Guard", guard}, {"Body", answer.(true)}])
+    kind = tx(pattern, "Kind")
+    arms = if not AlchemJson.null?(guard) or (kind != "name" and kind != "wildcard") do
+      [accept, AlchemJson.put_all(AlchemParse.arm(), [{"Pattern", AlchemJson.put(AlchemParse.pattern(line, column), "Kind", AlchemJson.J.text("wildcard"))}, {"Body", answer.(false)}])]
+    else [accept] end
+    parameter = AlchemJson.put(AlchemParse.parameter(line, column), "Name", AlchemJson.J.text(message))
+    matcher = ex("lambda", line, column, [{"Params", list_of([parameter])}, {"Body", list_of([st("case", line, column, [{"Arms", list_of(arms)}, {"Expr", name_at(message, line, column)}])])}])
+    args = its(g(s, "Expr"), "Args")
+    name = tx(s, "Name")
+    refuting = String.starts_with?(name, "refute")
+    {timeout, extras} = if String.ends_with?(name, "received") do {integer_at(0, line, column), tl(args)} else
+      case tl(args) do
+        [given | rest] -> {given, rest}
+        [] -> {integer_at(-1, line, column), []}
+      end
+    end
+    custom = case extras do
+      [given | _] -> given
+      [] -> text_at("", line, column)
+    end
+    shown = AlchemFormat.pattern(pattern) <> (if AlchemJson.null?(guard) do "" else " when " <> AlchemFormat.expr(guard, 0) end)
+    pins = pinned_names(pattern, [])
+    pinned = ex("list", line, column, [{"Args", slice_of(Enum.map(pins, fn n ->
+      ex("binary", line, column, [{"Op", AlchemJson.J.text("<>")}, {"Left", text_at(n <> " = ", line, column)}, {"Right", ex("call", line, column, [{"Name", AlchemJson.J.text("inspect")}, {"Args", list_of([name_at(n, line, column)])}])}])
+    end))}])
+    called = ex("call", line, column, [{"Name", AlchemJson.J.text(if refuting do "refute_receive" else "assert_receive" end)}, {"Args", list_of([hd(args), timeout, matcher, text_at(shown, line, column), pinned, custom])}])
+    if refuting do st("call", line, column, [{"Expr", called}]) else st("bind", line, column, [{"Pattern", pattern}, {"Name", AlchemJson.J.text(tx(pattern, "Name"))}, {"Expr", called}]) end
+  end
+  def pinned_names(p: AlchemJson.J, seen: list[string]): list[string] do
+    if AlchemJson.null?(p) do seen else
+      here = if tx(p, "Kind") == "pin" and not (tx(p, "Name") in seen) do seen ++ [tx(p, "Name")] else seen end
+      pinned_names(g(p, "Tail"), Enum.reduce(its(p, "Children"), here, fn c, sofar -> pinned_names(c, sofar) end))
+    end
+  end
+
+  # desugarChecks: check all, a call of Gen.check with the generators bound
+  # one into the next and the filters as Gen.filter.
+  def desugar_checks(body: list[AlchemJson.J]): list[AlchemJson.J] do
+    Enum.map(body, fn s -> if tx(s, "Kind") != "check" do s else checked(s) end end)
+  end
+  def checked(s: AlchemJson.J): AlchemJson.J do
+    line = at_line(s)
+    column = at_column(s)
+    call = fn(name: string, args: list[AlchemJson.J]): AlchemJson.J do ex("call", line, column, [{"Name", AlchemJson.J.text(name)}, {"Args", list_of(args)}]) end
+    result = fn(e: AlchemJson.J): AlchemJson.J do list_of([st("call", line, column, [{"Expr", e}])]) end
+    lambda = fn(param: AlchemJson.J, body: AlchemJson.J): AlchemJson.J do
+      ex("lambda", line, column, [{"Params", list_of([AlchemJson.put_all(param, [{"Line", AlchemJson.int(line)}, {"Column", AlchemJson.int(column)}])])}, {"Body", body}])
+    end
+    arms = its(s, "Arms")
+    generators = Enum.filter(arms, fn arm -> not AlchemJson.null?(g(arm, "Pattern")) end)
+    filters = Enum.map(Enum.filter(arms, fn arm -> AlchemJson.null?(g(arm, "Pattern")) end), fn arm -> g(arm, "Guard") end)
+    name = fn(j: integer): string do "check$" <> Integer.to_string(line) <> "_" <> Integer.to_string(column) <> "_" <> Integer.to_string(j) end
+    whole = if length(generators) == 1 do
+      only = g(hd(generators), "Pattern")
+      if tx(only, "Kind") == "name" do AlchemJson.put(AlchemParse.parameter(0, 0), "Name", AlchemJson.J.text(tx(only, "Name"))) else AlchemJson.put(AlchemParse.parameter(0, 0), "Pattern", only) end
+    else
+      AlchemJson.put(AlchemParse.parameter(0, 0), "Pattern", AlchemJson.put_all(AlchemParse.pattern(line, column), [{"Kind", AlchemJson.J.text("tuple")}, {"Children", slice_of(Enum.map(generators, fn arm -> g(arm, "Pattern") end))}]))
+    end
+    values = Enum.map(Enum.with_index(generators), fn {_, j} -> name_at(name.(j), line, column) end)
+    made = if length(values) == 1 do hd(values) else ex("tuple", line, column, [{"Args", slice_of(values)}]) end
+    none_yet: AlchemJson.J = AlchemJson.J.null
+    generator = Enum.reduce(Enum.reverse(Enum.with_index(generators)), none_yet, fn {arm, j}, inner ->
+      matched = list_of([st("case", line, column, [{"Expr", name_at(name.(j), line, column)}, {"Arms", list_of([AlchemJson.put_all(AlchemParse.arm(), [{"Pattern", g(arm, "Pattern")}, {"Body", result.(if AlchemJson.null?(inner) do made else inner end)}])])}])])
+      call.(if AlchemJson.null?(inner) do "Gen.map" else "Gen.bind" end, [g(arm, "Guard"), lambda.(AlchemJson.put(AlchemParse.parameter(0, 0), "Name", AlchemJson.J.text(name.(j))), matched)])
+    end)
+    filtered = case filters do
+      [] -> generator
+      [first | rest] ->
+        condition = Enum.reduce(rest, first, fn f, sofar -> ex("binary", line, column, [{"Op", AlchemJson.J.text("and")}, {"Left", sofar}, {"Right", f}]) end)
+        call.("Gen.filter", [generator, lambda.(whole, result.(condition))])
+    end
+    runs = if AlchemJson.null?(g(s, "Expr")) do [] else [g(s, "Expr")] end
+    st("call", line, column, [{"Expr", call.("Gen.check", [filtered, lambda.(whole, g(s, "Then"))] ++ runs)}])
+  end
+
+  # desugarBitwise: &&& and its kin are calls of Bitwise.
+  def desugar_bitwise(tree: AlchemJson.J): AlchemJson.J do
+    calls = [{"&&&", "Bitwise.band"}, {"|||", "Bitwise.bor"}, {"^^^", "Bitwise.bxor"}, {"<<<", "Bitwise.bsl"}, {">>>", "Bitwise.bsr"}, {"~~~", "Bitwise.bnot"}]
+    rewrite = fn(e: AlchemJson.J): AlchemJson.J do
+      kind = tx(e, "Kind")
+      found = Enum.filter(calls, fn {op, _} -> op == tx(e, "Op") end)
+      if found == [] or (kind != "binary" and kind != "unary") do e else
+        args = if kind == "binary" do [g(e, "Left"), g(e, "Right")] else [g(e, "Left")] end
+        ex("call", at_line(e), at_column(e), [{"Name", AlchemJson.J.text(elem(hd(found), 1))}, {"Args", list_of(args)}])
+      end
+    end
+    AlchemJson.put(tree, "Functions", q_map(g(tree, "Functions"), fn f -> each_function(f, rewrite) end))
+  end
+
+  # resolveConstants: each @name replaced by a copy of its value, at the
+  # place it is named.
+  def resolve_constants(tree: AlchemJson.J): AlchemJson.J do
+    none_yet: list[tuple[string, AlchemJson.J]] = []
+    values = Enum.reduce(its(tree, "Constants"), none_yet, fn c, sofar -> sofar ++ [{tx(c, "Name"), substituted(g(c, "Value"), sofar)}] end)
+    if values == [] do tree else
+      swap = fn(e: AlchemJson.J): AlchemJson.J do constant_value(e, values) end
+      functions = q_map(g(tree, "Functions"), fn f -> each_function(f, swap) end)
+      types = q_map(g(tree, "Types"), fn d -> AlchemJson.put(d, "Fields", q_map(g(d, "Fields"), fn field -> AlchemJson.put(field, "Default", each_expr(g(field, "Default"), swap)) end)) end)
+      macros = q_map(g(tree, "Macros"), fn m -> AlchemJson.put_all(m, [{"Body", each_block(g(m, "Body"), swap)}, {"Definitions", q_map(g(m, "Definitions"), fn d -> each_function(d, swap) end)}]) end)
+      constants = AlchemJson.J.list(Enum.map(Enum.zip(its(tree, "Constants"), values), fn {c, {_, v}} -> AlchemJson.put(c, "Value", v) end))
+      AlchemJson.put_all(tree, [{"Constants", constants}, {"Functions", functions}, {"Types", types}, {"Macros", macros}])
+    end
+  end
+  def substituted(e: AlchemJson.J, values: list[tuple[string, AlchemJson.J]]): AlchemJson.J do
+    each_expr(e, fn(x: AlchemJson.J): AlchemJson.J do constant_value(x, values) end)
+  end
+  def constant_value(e: AlchemJson.J, values: list[tuple[string, AlchemJson.J]]): AlchemJson.J do
+    if tx(e, "Kind") != "constant" do e else
+      case Enum.filter(values, fn {name, _} -> name == tx(e, "Name") end) do
+        [{_, value} | _] -> AlchemJson.put_all(value, [{"Line", g(e, "Line")}, {"Column", g(e, "Column")}])
+        [] -> e
+      end
+    end
+  end
+
+  # --- Qualify ------------------------------------------------------------------------------
+  # A module's own types, and their variants, named Module.Name wherever the
+  # module names them; a module that takes over a retiring library module
+  # (Version, say) keeps the library's names.
+
+  struct Names do
+    module: string
+    local: list[string]
+    retiring: boolean
+  end
+
+  def q_name(n: Names, name: string): string do
+    first = hd(String.split(name, "."))
+    if first in n.local do q_qualified(n, name) else name end
+  end
+  def q_qualified(n: Names, name: string): string do
+    first = hd(String.split(name, "."))
+    if n.retiring and first == n.module do name else n.module <> "." <> name end
+  end
+  def q_type(n: Names, t: string): string do
+    if t == "" do t else
+      {head, args} = AlchemTypeNames.split_type(t)
+      named = if head in n.local do q_qualified(n, head) else head end
+      if args == [] and named != "tuple" do named else named <> "[" <> Enum.join(Enum.map(args, fn a -> q_type(n, a) end), ",") <> "]" end
+    end
+  end
+  def q_params(n: Names, list: AlchemJson.J): AlchemJson.J do
+    case list do
+      AlchemJson.J.list(items) -> AlchemJson.J.list(Enum.map(items, fn p -> AlchemJson.put(p, "Type", AlchemJson.J.text(q_type(n, tx(p, "Type")))) end))
+      other -> other
+    end
+  end
+  def q_map(list: AlchemJson.J, f: fn[AlchemJson.J, AlchemJson.J]): AlchemJson.J do
+    case list do
+      AlchemJson.J.list(items) -> AlchemJson.J.list(Enum.map(items, f))
+      other -> other
+    end
+  end
+  def q_pattern(n: Names, p: AlchemJson.J): AlchemJson.J do
+    if AlchemJson.null?(p) do p else
+      kind = tx(p, "Kind")
+      named = if kind == "struct" or kind == "variant" do AlchemJson.put(p, "Name", AlchemJson.J.text(q_name(n, tx(p, "Name")))) else p end
+      typed = if kind == "in" do AlchemJson.put(named, "Type", AlchemJson.J.text(q_name(n, tx(p, "Type")))) else
+        if kind == "typed" do AlchemJson.put(named, "Type", AlchemJson.J.text(q_type(n, tx(p, "Type")))) else named end
+      end
+      AlchemJson.put_all(typed, [{"Children", q_map(g(typed, "Children"), fn c -> q_pattern(n, c) end)}, {"Tail", q_pattern(n, g(typed, "Tail"))}])
+    end
+  end
+  def q_expr(n: Names, e: AlchemJson.J): AlchemJson.J do
+    if AlchemJson.null?(e) do e else
+      kind = tx(e, "Kind")
+      name = tx(e, "Name")
+      renamed = if kind == "struct" or ((kind == "call" or kind == "name" or kind == "funcref") and name != "" and upper_first?(name)) do AlchemJson.put(e, "Name", AlchemJson.J.text(q_name(n, name))) else e end
+      typed = if kind == "closure" do AlchemJson.put_all(renamed, [{"Params", q_params(n, g(renamed, "Params"))}, {"ReturnType", AlchemJson.J.text(q_type(n, tx(renamed, "ReturnType")))}]) else renamed end
+      AlchemJson.put_all(typed, [{"Left", q_expr(n, g(typed, "Left"))}, {"Right", q_expr(n, g(typed, "Right"))},
+        {"Args", q_map(g(typed, "Args"), fn a -> q_expr(n, a) end)}, {"Keys", q_map(g(typed, "Keys"), fn k -> q_expr(n, k) end)},
+        {"Body", q_block(n, g(typed, "Body"))}])
+    end
+  end
+  def q_block(n: Names, body: AlchemJson.J): AlchemJson.J do
+    q_map(body, fn s ->
+      arms = q_map(g(s, "Arms"), fn arm -> AlchemJson.put_all(arm, [{"Pattern", q_pattern(n, g(arm, "Pattern"))}, {"Guard", q_expr(n, g(arm, "Guard"))}, {"Body", q_block(n, g(arm, "Body"))}]) end)
+      AlchemJson.put_all(s, [{"Declared", AlchemJson.J.text(q_type(n, tx(s, "Declared")))}, {"Pattern", q_pattern(n, g(s, "Pattern"))}, {"Expr", q_expr(n, g(s, "Expr"))},
+        {"Then", q_block(n, g(s, "Then"))}, {"Else", q_block(n, g(s, "Else"))}, {"Arms", arms}])
+    end)
+  end
+  def upper_first?(name: string): boolean do
+    c = Sys.byte(Sys.addr(name))
+    c >= 65 and c <= 90
+  end
+
+  def qualify(tree: AlchemJson.J): AlchemJson.J do
+    module = tx(tree, "Module")
+    n = %Names{module: module, local: Enum.map(its(tree, "Types"), fn d -> tx(d, "Local") end), retiring: module in ["DiskStore", "WebSocket", "Version", "OptionParser"]}
+    types = q_map(g(tree, "Types"), fn d ->
+      AlchemJson.put_all(d, [{"Name", AlchemJson.J.text(q_qualified(n, tx(d, "Local")))}, {"Fields", q_params(n, g(d, "Fields"))},
+        {"Variants", q_map(g(d, "Variants"), fn v -> AlchemJson.put(v, "Fields", q_params(n, g(v, "Fields"))) end)}])
+    end)
+    functions = q_map(g(tree, "Functions"), fn f ->
+      params = q_map(q_params(n, g(f, "Params")), fn p -> AlchemJson.put(p, "Pattern", q_pattern(n, g(p, "Pattern"))) end)
+      AlchemJson.put_all(f, [{"Params", params}, {"Type", AlchemJson.J.text(q_type(n, tx(f, "Type")))}, {"Guard", q_expr(n, g(f, "Guard"))}, {"Body", q_block(n, g(f, "Body"))}])
+    end)
+    AlchemJson.put_all(tree, [{"Types", types}, {"Functions", functions}])
   end
 end
