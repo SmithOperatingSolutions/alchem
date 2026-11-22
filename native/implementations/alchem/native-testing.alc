@@ -551,15 +551,15 @@ defmodule NativeTesting do
   end
 
   # The rewritten text is rewritten as any program is, and compiled.
-  def tm_then(tested: bytes): bytes do
+  def tm_then(tested: bytes, explain: integer): bytes do
     size = nc_cursor(tested,1)
     code = nc_slice(tested,4,4+size)
-    tm_after(code,nc_slice(tested,4+size,Enum.count(tested)),mx_prepare(code))
+    tm_after(code,nc_slice(tested,4+size,Enum.count(tested)),mx_prepare(code),explain)
   end
-  def tm_after(code: bytes, tail: bytes, made: bytes): bytes do
+  def tm_after(code: bytes, tail: bytes, made: bytes, explain: integer): bytes do
     after = nc_slice(made,4,4+nc_cursor(made,1))
     if Enum.count(made) == 0 do b[] else
-      if Enum.count(made) == 1 do nc_compile_with(code,ny_prelude(code),tail) else nc_compile_with(after,ny_prelude(after),tm_composed(nc_slice(made,4+nc_cursor(made,1),Enum.count(made)),tail,Enum.count(after))) end
+      if Enum.count(made) == 1 do nc_compile_with(code,ny_prelude(code),tail,explain) else nc_compile_with(after,ny_prelude(after),tm_composed(nc_slice(made,4+nc_cursor(made,1),Enum.count(made)),tail,Enum.count(after)),explain) end
     end
   end
   # The tail of a text rewritten twice: the tables of the program as

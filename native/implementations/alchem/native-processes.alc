@@ -323,11 +323,12 @@ defmodule NativeProcesses do
   end
   # A program is compiled: its receive statements as calls, then with the
   # library functions it mentions.
-  def ac_compiled(given: bytes): bytes do
-    ac_compiled_with(ac_receives(given))
+  # explain: 1 for why a program is refused (nc_explain), 0 for its image.
+  def ac_compiled(given: bytes, explain: integer): bytes do
+    ac_compiled_with(ac_receives(given),explain)
   end
-  def ac_compiled_with(source: bytes): bytes do
-    if Enum.count(source) > nc_limit() do b[] else nc_rewritten(source) end
+  def ac_compiled_with(source: bytes, explain: integer): bytes do
+    if Enum.count(source) > nc_limit() do b[] else nc_rewritten(source,explain) end
   end
   # The call of a generic function once its arguments are typed. order is
   # nw_order's verdict: 1 when only the call's own expected type could
