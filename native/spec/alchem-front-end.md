@@ -57,6 +57,16 @@ the formatter keeps) and checked as `ParseModule` then checks it
 the parts of `lower` that refuse, `separateArities` and `mergeClauses`). A
 package's file (`host/owner/repo@v1.2.3/...`) is not followed.
 
+Once every file is read, `AlchemCheck.merged` checks the program as one, as
+`loadProjectAs` then does: a protocol declared twice, `main` in an imported
+module, a call of a module the file does not import (after `Qualify`
+names a module's own types under it) or of another module's private
+function, and the arity of a call of another module's function
+(`ResolveArities`). A program with macros, a `use`, a `require` or a
+`doctest` is not followed past its files, since the steps those take
+(`ExpandMacros`, `documented`) are not here. Paths are kept with `/` and
+shown with the system's separators, as Go's `filepath` shows them.
+
 ## The check
 
 `harness/front_end.py` (the gate `front_end`) holds 3,004 texts: the
@@ -77,7 +87,7 @@ the pinned place. The cases also hold what the pinned command's `check`
 says of each text as a file of its own; `alchem check` must say the same,
 or, where the front end does not reach the reason, the native compiler's
 or bundler's own message (`E_COMPILE`, `E_BUNDLE`). It says the same for
-1,860 of the 2,005 texts the pinned compiler refuses; the gate holds that
+1,890 of the 2,005 texts the pinned compiler refuses; the gate holds that
 count as the least it may give (`EXPLAINED`). `scripts/generate-front-end-cases.py` makes
 the file; `scripts/compare-lexer.py` compares the lexers on any files.
 
