@@ -23,6 +23,7 @@ import commands
 def main(arguments):
     if len(arguments)!=1:raise SystemExit(__doc__)
     pinned=Path(arguments[0]).resolve();scenes=[]
+    if not commands.TREE:raise SystemExit('the repository is not above this directory: name it with ALCHEM_REPOSITORY')
     for name,files,lines in commands.SCENES:
         runs,left=commands.scene(pinned,files,lines,True)
         scenes.append({'name':name,'files':files,'lines':lines,'runs':runs,'left':left})

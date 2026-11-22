@@ -149,9 +149,10 @@ PROJECT_LINES=[['doc','Shapes'],['doc','shapes'],['doc','Shapes.area'],['doc','s
 
 def tree():
     """Source files of the repository, by path: the files the scene `files`
-    documents one by one. Empty where the repository is not there (the
-    Windows job has the scenes as the cases hold them)."""
-    top=ROOT.parent
+    documents one by one. Empty where the repository is not there: the
+    scene is then as the cases hold it. ALCHEM_REPOSITORY names the
+    repository where it is not the directory above this one's."""
+    top=Path(os.environ.get('ALCHEM_REPOSITORY',ROOT.parent))
     paths=sorted((top/'examples/kv').rglob('*.alc'))+[top/'tests/fixtures'/name for name in ('protocols.alc','storage_test.alc','closures.alc')]+[top/'benchmarks/alchem/suite/processes.alc']
     return {path.relative_to(top).as_posix():path.read_text() for path in paths if path.exists()}
 
@@ -211,7 +212,7 @@ def scene(command,files,lines,pinned=False):
         for arguments in lines:
             given=''.join(a[1:] for a in arguments if a.startswith('<')).encode()
             run=subprocess.run([str(command)]+[a for a in arguments if not a.startswith('<')],input=given,capture_output=True,cwd=root,env=surroundings(root/'home',pinned,arguments[:1]==['alx']),timeout=900)
-            runs.append([run.returncode]+[text.decode('utf8','replace').replace(str(root)+os.sep,'.'+os.sep) for text in (run.stdout,run.stderr)])
+            runs.append([run.returncode]+[text.decode('utf8','replace').replace(str(root)+os.sep,'.'+os.sep).replace(json.dumps(str(root)+os.sep)[1:-1],json.dumps('.'+os.sep)[1:-1]) for text in (run.stdout,run.stderr)])
         return runs,held(root)
 
 
@@ -247,7 +248,9 @@ def platform(compiler):
 
 def verify(compiler):
     known=cases()
-    assert [[name,files,lines] for name,files,lines in SCENES]==[[s['name'],s['files'],s['lines']] for s in known],'harness/commands-cases.json.xz is not of these scenes: run scripts/generate-command-cases.py'
+    # Where the repository is not there the scene of its files is the cases'.
+    mine=[[name,files,lines] for name,files,lines in SCENES if name!='files' or TREE]
+    assert mine==[[s['name'],s['files'],s['lines']] for s in known if s['name']!='files' or TREE],'harness/commands-cases.json.xz is not of these scenes: run scripts/generate-command-cases.py'
     builder,target=platform(compiler)
     with tempfile.TemporaryDirectory(prefix='alchem-commands-') as top:
         alchem=Path(top)/'alchem';builder.build(compiler,alchem,target.startswith('darwin/'),version='v9.8.7-test')

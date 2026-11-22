@@ -46,7 +46,7 @@ with text, one with half a block), the marked block replaced, appended and
 refused, and `docs` written, checked and written again. Each scene is a
 directory, its command lines run one after another: `alchem`, built by the
 compiler under test, gives the status, standard output and standard error
-the pinned command gave for each of the 206, and leaves the same files.
+the pinned command gave for each of the 242, and leaves the same files.
 `scripts/generate-command-cases.py PINNED` writes what the pinned command
 gave (`harness/commands-cases.json.xz`). On Windows the job runs the scenes
 of that file with both, `commands.py --against alchem-upstream.exe
