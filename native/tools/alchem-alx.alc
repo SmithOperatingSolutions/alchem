@@ -1,0 +1,95 @@
+defmodule AlchemAlx do
+  import "alchem-sources.alc"
+  # What alx, the shell of alchem (tools/alchem.alc), works out from the
+  # text of an input without building anything: the program an input is
+  # run in, whether an input goes on, what a statement binds, and a
+  # failing program's message in the lines of the input.
+
+  # alx, the shell: what has been entered so far. Each input is compiled
+  # and run with the imports, the definitions and the statements before it.
+  struct Shell do
+    imports: list[string]
+    defs: list[string]
+    statements: list[string]
+    count: integer
+  end
+
+  def shell_program(imports: list[string], defs: list[string], statements: list[string]): string do
+    "defmodule AlchemShell do\n" <>
+    Enum.join(Enum.map(imports, fn line -> "  " <> line <> "\n" end), "") <>
+    Enum.join(Enum.map(defs, fn text -> text <> "\n" end), "") <>
+    "  def main() do\n" <>
+    Enum.join(Enum.map(statements, fn text -> text <> "\n" end), "") <>
+    "  end\nend\n"
+  end
+
+  def line_count(text: string): integer do
+    length(String.split(String.trim_trailing(text, "\n"), "\n"))
+  end
+  def lines_of(texts: list[string]): integer do
+    Enum.sum(Enum.map(texts, fn text -> line_count(text) end))
+  end
+
+  # Input that goes on: a block or a bracket still open, or a string not
+  # closed.
+  def unfinished?(input: string): boolean do
+    words = AlchemSources.words(input)
+    if words == [] do false else if Enum.any?(words, fn word -> word == "\"" end) do true else
+      {blocks, brackets, _} = Enum.reduce(Enum.zip(words, tl(words) ++ [""]), {0, 0, ""}, fn {word, next}, {blocks, brackets, before} ->
+        if word == "do" and next != ":" do {blocks + 1, brackets, word} else
+          if word == "fn" and next != "(" do {blocks + 1, brackets, word} else
+            if word == "end" do {blocks - 1, brackets, word} else
+              if word in ["(", "[", "{"] do {blocks, brackets + 1, word} else
+                if word in [")", "]", "}"] do {blocks, brackets - 1, word} else {blocks, brackets, word} end
+              end
+            end
+          end
+        end
+      end)
+      blocks > 0 or brackets > 0
+    end end
+  end
+
+  # What a failing program said, for the shell: without the frames of the
+  # shell's own module, and with the lines of the input for those of the
+  # file.
+  def relocated(text: string, start: integer): string do
+    String.trim(Enum.join(Enum.map(Enum.filter(String.split(text, "\n"), fn line -> not String.starts_with?(String.trim(line), "at AlchemShell.") end), fn line ->
+      Regex.replace(~r/[^\s()]*\.alchem-shell-\d+\.alc:(\d+)(:\d+)?:?/, line, fn(found: list[string]): string do
+        n = String.to_integer(Enum.at(found, 1, "0"))
+        if n < start do "" else "line #{n - start + 1}:" end
+      end)
+    end), "\n"))
+  end
+
+  # A text cut at its first = that is a sign of its own: the pieces
+  # between the = signs, and how many of them are before the cut.
+  def sides(pieces: list[string], before: integer): option[tuple[string, string]] do
+    if before >= length(pieces) do none else
+      left = Enum.join(Enum.take(pieces, before), "=")
+      right = Enum.join(Enum.drop(pieces, before), "=")
+      if left =~ ~r/[=!<>]$/ or right =~ ~r/^[=~>]/ do sides(pieces, before + 1) else some({left, right}) end
+    end
+  end
+
+  # A statement that binds: {what is bound, the type declared with ": " before
+  # it or "", the value}; none for any other statement. The first = that is
+  # no part of ==, =~, =>, !=, <= or >= binds, when what is before it is a
+  # pattern and not the start of a call or a block.
+  def binding(input: string): option[tuple[string, string, string]] do
+    case sides(String.split(input, "="), 1) do
+      some({left, right}) ->
+        words = AlchemSources.words(left)
+        opened = length(Enum.filter(words, fn word -> word in ["(", "[", "{"] end))
+        closed = length(Enum.filter(words, fn word -> word in [")", "]", "}"] end))
+        if String.contains?(left, "\"") or opened != closed or String.trim(left) == "" or Enum.any?(words, fn word -> word in ["do", "fn", "->", "if", "case", "cond", "end", "\n"] end) do none else
+          case Regex.run(~r/^\s*([a-z_][A-Za-z0-9_]*[?!]?)\s*(?::\s*([\s\S]*?))?\s*$/, left) do
+            some([_, name, type]) -> some({name, if type == "" do "" else ": " <> type end, right})
+            some([_, name]) -> some({name, "", right})
+            _ -> some({String.trim(left), "!", right})
+          end
+        end
+      _ -> none
+    end
+  end
+end

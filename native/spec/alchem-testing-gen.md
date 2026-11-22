@@ -200,7 +200,8 @@ library's types come with it into a program that mentions no process
 
 `alchem` is the pinned command line's `test`, `run`, `build`, `check` and
 `new`: one program that holds the bundler and the compiler and builds a
-program by calling them, not by running another program.
+program by calling them, not by running another program. (Its commands
+that print documentation are `spec/alchem-commands.md`.)
 `scripts/build-alchem.py` makes it from three modules: `tools/alchem.alc`;
 the bundler `tools/alchem-bundle.alc` without its `main`; and
 `AlchemCompiler`, the compiler's own source as the bootstrap assembles it

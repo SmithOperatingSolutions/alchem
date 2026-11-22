@@ -90,6 +90,7 @@ GATES={
     'described':'verify(compiler)',
     'nil_forms':'verify(compiler)',
     'test_driver':'verify(compiler)',
+    'commands':'verify(compiler)',
     'testing':'verify(compiler)',
     'clauses':'verify(compiler)',
     'comprehensions':'verify(compiler)',

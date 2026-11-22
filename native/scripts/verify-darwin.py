@@ -41,7 +41,8 @@ HERE = ROOT / 'build/darwin'
 # tools), core_tools (it builds Linux tools), test_driver (alchem run reaches
 # its standard input through /proc), and modules and gaps, whose programs of
 # megabytes take the compiler for macOS past their time (spec/darwin-arm64.md).
-GATES = ['atoms', 'boolean_library', 'clauses', 'closures', 'comprehensions', 'core_modules', 'crypto', 'described',
+GATES = ['atoms', 'boolean_library', 'clauses', 'closures', 'commands', 'comprehensions', 'core_modules', 'crypto',
+         'described',
          'diskstore', 'equality', 'exceptions', 'failures', 'floats', 'forms', 'gen', 'generics', 'graphemes',
          'inference', 'inspection', 'json_library', 'library', 'lists', 'literals', 'long_bodies', 'macros', 'maps',
          'nil_forms', 'nodes', 'operators', 'options', 'ordering', 'packages', 'parsing', 'patterns', 'pipes', 'processes',

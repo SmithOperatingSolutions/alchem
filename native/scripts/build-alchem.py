@@ -2,7 +2,9 @@
 """Build `alchem`: the test, run, build, check and new commands
 (tools/alchem.alc) with the bundler (tools/alchem-bundle.alc) and the
 compiler itself in one program, which compiles by calling the compiler
-rather than by running it.
+rather than by running it, and the commands that print documentation
+(tools/alchem-guide.alc, spec/alchem-commands.md). --version is the version
+`alchem version` prints.
 
     build-alchem.py --compiler build/dev/A2 --output build/dev/alchem
 
@@ -26,6 +28,7 @@ ordinary module, so everything it relies on holds in a traced program too.
 import argparse
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -75,7 +78,41 @@ def bundler_module():
     return text[:-len(BUNDLER_MAIN)] + 'end\n'
 
 
-def program(darwin=False, windows=False):
+def guide_module(version, platform):
+    """tools/alchem-guide.alc saying the version it is and the system and
+    machine its programs are for."""
+    text = (ROOT / 'tools/alchem-guide.alc').read_text()
+    for name, value in (('version', version), ('platform', platform)):
+        line = '  def %s(): string do "%s" end\n' % (name, {'version': 'devel', 'platform': 'linux/amd64'}[name])
+        if text.count(line) != 1:
+            raise ValueError(f'tools/alchem-guide.alc has no single {name}()')
+        if not re.fullmatch(r'[A-Za-z0-9._+/-]+', value):
+            raise ValueError(f'{name} {value!r} is not one a string holds as it is')
+        text = text.replace(line, '  def %s(): string do "%s" end\n' % (name, value))
+    return text
+
+
+def platform_of(compiler, darwin=False, windows=False):
+    """The system and machine of the programs a compiler makes, as the
+    pinned command names them."""
+    if windows:
+        return 'windows/amd64'
+    if darwin:
+        return 'darwin/arm64'
+    probe = subprocess.run([str(compiler)], input=b'defmodule M do\n  def main() do\n    System.halt(0)\n  end\nend\n', capture_output=True, env={'PATH': ''}, timeout=120)
+    image = probe.stdout
+    if image[:4] == b'\xcf\xfa\xed\xfe':
+        return 'darwin/arm64'
+    if image[:2] == b'MZ':
+        return 'windows/amd64'
+    if image[:4] == b'\x7fELF' and image[18:20] == b'\xb7\x00':
+        return 'linux/arm64'
+    if image[:4] == b'\x7fELF' and image[18:20] == b'\x3e\x00':
+        return 'linux/amd64'
+    raise RuntimeError(f'{compiler} made no program of a known kind')
+
+
+def program(darwin=False, windows=False, version='devel', platform='linux/amd64'):
     """The bundle of the three modules, with the paths it names those of the repository."""
     bundle = _load('alchem_bundle', ROOT / 'scripts/bundle-alchem.py')
     with tempfile.TemporaryDirectory(prefix='alchem-program-') as directory:
@@ -83,6 +120,10 @@ def program(darwin=False, windows=False):
         (work / 'alchem.alc').write_text((ROOT / 'tools/alchem.alc').read_text())
         (work / 'alchem-bundle.alc').write_text(bundler_module())
         (work / 'alchem-compiler.alc').write_text(compiler_module(darwin, windows))
+        (work / 'alchem-guide.alc').write_text(guide_module(version, platform))
+        (work / 'alchem-guide-data.alc').write_text((ROOT / 'tools/alchem-guide-data.alc').read_text())
+        (work / 'alchem-sources.alc').write_text((ROOT / 'tools/alchem-sources.alc').read_text())
+        (work / 'alchem-alx.alc').write_text((ROOT / 'tools/alchem-alx.alc').read_text())
         before = os.getcwd()
         os.chdir(work)
         try:
@@ -92,7 +133,9 @@ def program(darwin=False, windows=False):
         finally:
             os.chdir(before)
         names = {here + '/alchem.alc': 'tools/alchem.alc', here + '/alchem-bundle.alc': 'tools/alchem-bundle.alc',
-                 here + '/alchem-compiler.alc': 'implementations/alchem/native-*.alc'}
+                 here + '/alchem-compiler.alc': 'implementations/alchem/native-*.alc',
+                 here + '/alchem-guide.alc': 'tools/alchem-guide.alc', here + '/alchem-guide-data.alc': 'tools/alchem-guide-data.alc',
+                 here + '/alchem-sources.alc': 'tools/alchem-sources.alc', here + '/alchem-alx.alc': 'tools/alchem-alx.alc'}
     head, _, body = text.partition(b'\n')
     count = int(head.split()[1])
     lines = body.split(b'\n', count)
@@ -102,8 +145,8 @@ def program(darwin=False, windows=False):
     return head + b'\n' + b'\n'.join(lines)
 
 
-def build(compiler, output, darwin=False, windows=False):
-    source = program(darwin, windows)
+def build(compiler, output, darwin=False, windows=False, version='devel'):
+    source = program(darwin, windows, version, platform_of(compiler, darwin, windows))
     made = subprocess.run([str(compiler)], input=source, capture_output=True, env={'PATH': ''}, timeout=600)
     if made.returncode or made.stderr or made.stdout[:4] not in (b'\x7fELF', b'\xcf\xfa\xed\xfe') and made.stdout[:2] != b'MZ':
         raise RuntimeError(f'the compiler did not build alchem: {made.returncode} {made.stderr.decode(errors="replace").strip()}')
@@ -125,9 +168,10 @@ def main():
     parser.add_argument('--output', type=Path, default=ROOT / 'build/dev/alchem')
     parser.add_argument('--darwin', action='store_true', help='the compiler inside makes macOS programs')
     parser.add_argument('--windows', action='store_true', help='the compiler inside makes Windows programs (build with the Windows cross compiler)')
+    parser.add_argument('--version', default='devel', help='the version `alchem version` prints')
     args = parser.parse_args()
     try:
-        source, image = build(args.compiler.resolve(), args.output, args.darwin, args.windows)
+        source, image = build(args.compiler.resolve(), args.output, args.darwin, args.windows, args.version)
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f'E_BUILD: {error}', file=sys.stderr)
         return 1

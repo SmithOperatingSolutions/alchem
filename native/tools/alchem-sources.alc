@@ -1,0 +1,705 @@
+defmodule AlchemSources do
+  # The documentation written in a source file: its module, @moduledoc,
+  # the types with their @typedoc and the public functions with their
+  # @doc, as the pinned command's doc shows them for a file.
+  #
+  # A file is not parsed as the compiler parses it: its declarations are
+  # read. Strings, comments and sigils are taken out first (marked), the
+  # rest is cut into words and signs (words), and the declarations of the
+  # module are read from those, each body passed over by counting what
+  # opens one (do, fn) and what closes it (end).
+  #
+  # Not as the pinned command: a file the pinned compiler would refuse is
+  # read as far as its declarations go, with no message for what is wrong
+  # in it.
+
+  # One clause of a function as written: the parameter types it declares
+  # ("" where it declares none; the kind of a literal where the parameter
+  # is one), and whether every parameter is a name with a type.
+  struct Clause do
+    name: string
+    signature: string
+    doc: string
+    types: list[string]
+    typed: boolean
+    public: boolean
+  end
+
+  # A function as documented: the clauses of one name and arity.
+  struct Entry do
+    key: string
+    name: string
+    signatures: list[string]
+    summary: string
+    declared: list[string]
+    shown: Clause
+  end
+
+  struct Kind do
+    name: string
+    definition: string
+    summary: string
+  end
+
+  struct Module do
+    name: string
+    summary: string
+    kinds: list[Kind]
+    entries: list[Entry]
+    imports: list[string]
+  end
+
+  # What is read so far: the documentation waiting for what is declared
+  # next, and the name a protocol's implementation gives its functions.
+  struct Read do
+    summary: string
+    waiting: string
+    kinds: list[Kind]
+    clauses: list[Clause]
+    imports: list[string]
+    implemented: integer
+  end
+
+  def string_mark(): string do "\u{1}" end
+  def sigil_mark(): string do "\u{2}" end
+
+  def literals(): regex do
+    ~r/"""[\s\S]*?"""|"(?:\\[\s\S]|#\{(?:[^{}"]|"(?:\\[\s\S]|[^"\\])*")*\}|[^"\\])*"|#[^\n]*|~[a-zA-Z](?:"""[\s\S]*?"""|\/(?:\\[\s\S]|[^\/\\])*\/|"(?:\\[\s\S]|[^"\\])*"|\((?:\\[\s\S]|[^)\\])*\)|\[(?:\\[\s\S]|[^\]\\])*\]|\{(?:\\[\s\S]|[^}\\])*\}|<(?:\\[\s\S]|[^>\\])*>|\|(?:\\[\s\S]|[^|\\])*\||'(?:\\[\s\S]|[^'\\])*')[a-zA-Z]*/
+  end
+
+  # The text with a mark for each string and sigil and nothing for a
+  # comment.
+  def marked(text: string): string do
+    Regex.replace(literals(), text, fn found ->
+      if text?(found) do string_mark() else
+        if String.starts_with?(found, "#") do "" else sigil_mark() end
+      end
+    end)
+  end
+
+  # The strings of a text in the order they are written, each as the text
+  # it stands for.
+  def strings(text: string): list[string] do
+    Enum.flat_map(Regex.scan(literals(), text), fn found ->
+      whole = hd(found)
+      if text?(whole) do [unquoted(whole)] else [] end
+    end)
+  end
+
+  # A string, or the sigil of one: ~s and ~S.
+  def text?(literal: string): boolean do
+    String.starts_with?(literal, "\"") or String.starts_with?(literal, "~s") or String.starts_with?(literal, "~S")
+  end
+
+  # A text with its escapes read: the text is cut at each backslash, and
+  # the piece after one begins with what is escaped. Two backslashes leave
+  # an empty piece, and the piece after it is as written.
+  def escapes(text: string): string do
+    if not String.contains?(text, "\\") do text else
+      pieces = String.split(text, "\\")
+      Enum.join(Enum.reverse(escaped(tl(pieces), [hd(pieces)])), "")
+    end
+  end
+
+  def escaped(pieces: list[string], done: list[string]): list[string] do
+    case pieces do
+      [] -> done
+      ["", plain | rest] -> escaped(rest, [plain, "\\" | done])
+      [""] -> ["\\" | done]
+      [piece | rest] ->
+        escaped(rest, [binary_part(piece, 1, byte_size(piece) - 1), escape(binary_part(piece, 0, 1)) | done])
+    end
+  end
+
+  def escape(letter: string): string do
+    case letter do
+      "n" -> "\n"
+      "t" -> "\t"
+      "r" -> "\r"
+      "0" -> "\u{0}"
+      "e" -> "\u{1B}"
+      "s" -> " "
+      other -> other
+    end
+  end
+
+  # A heredoc is its lines without the indentation of the line that closes
+  # it; a string is what is between its quotes.
+  def unquoted(literal: string): string do
+    # ~S is its text as written; ~s reads escapes as a string does.
+    case Regex.run(~r/^~[sS]([\s\S]*)$/, literal) do
+      some([_, inside]) -> if String.starts_with?(inside, "\"") do unescaped(inside, String.starts_with?(literal, "~s")) else
+        plain = within(~r/^[\s\S]([\s\S]*)[\s\S]$/, inside)
+        if String.starts_with?(literal, "~s") do escapes(plain) else plain end
+      end
+      _ -> unescaped(literal, true)
+    end
+  end
+
+  # What a pattern's group holds of a text. (binary_part takes seconds to
+  # cut a part of tens of kilobytes.)
+  def within(pattern: regex, text: string): string do
+    case Regex.run(pattern, text) do
+      some([_, inside]) -> inside
+      _ -> ""
+    end
+  end
+
+  def unescaped(literal: string, escaped: boolean): string do
+    if String.starts_with?(literal, "\"\"\"") and byte_size(literal) >= 6 do
+      lines = String.split(within(~r/^"""([\s\S]*)"""$/, literal), "\n")
+      indent = Enum.at(Enum.reverse(lines), 0, "")
+      body = Enum.drop(Enum.reverse(Enum.drop(Enum.reverse(lines), 1)), 1)
+      width = if String.trim(indent) == "" do byte_size(indent) else 0 end
+      whole = Enum.join(Enum.map(body, fn line ->
+        if width > 0 and String.starts_with?(line, indent) do binary_part(line, width, byte_size(line) - width) else String.trim_leading(line, " ") end
+      end), "\n") <> if body == [] do "" else "\n" end
+      if escaped do escapes(whole) else whole end
+    else
+      inside = within(~r/^"([\s\S]*)"$/, literal)
+      if escaped do escapes(inside) else inside end
+    end
+  end
+
+  # The words and signs of a marked text, with "\n" for the end of a line
+  # and each string mark followed by its text.
+  def words(text: string): list[string] do
+    cut = Enum.map(Regex.scan(~r/\n|:[A-Za-z_][A-Za-z0-9_]*[?!]?|[A-Za-z_][A-Za-z0-9_]*[?!]?|[0-9][0-9A-Za-z_]*(?:\.[0-9][0-9A-Za-z_]*)?|\\\\|->|\x01|\x02|[^\sA-Za-z0-9_]/, marked(text)), fn found -> hd(found) end)
+    filled(cut, strings(text), [])
+  end
+
+  def filled(cut: list[string], texts: list[string], done: list[string]): list[string] do
+    case cut do
+      [] -> Enum.reverse(done)
+      [word | rest] ->
+        if word == string_mark() do
+          case texts do
+            [text | later] -> filled(rest, later, [word <> text | done])
+            [] -> filled(rest, [], [word | done])
+          end
+        else filled(rest, texts, [word | done]) end
+    end
+  end
+
+  def string?(word: string): boolean do
+    String.starts_with?(word, string_mark())
+  end
+  def text_of(word: string): string do
+    binary_part(word, 1, byte_size(word) - 1)
+  end
+
+  def name?(word: string): boolean do
+    word =~ ~r/^[a-z_][A-Za-z0-9_]*[?!]?$/
+  end
+
+  def opens?(word: string): boolean do word in ["(", "[", "{"] end
+  def closes?(word: string): boolean do word in [")", "]", "}"] end
+
+  # A word that is the keyword it looks like: not a key (do:) or a name
+  # after a dot. An atom is one word with its colon.
+  def keyword?(before: string, rest: list[string]): boolean do
+    before != "." and case rest do
+      [":" | _] -> false
+      _ -> true
+    end
+  end
+
+  # A fn that opens a block of its own: fn x -> ... end. The other form,
+  # fn(x: integer): integer do ... end, is opened by its do.
+  def opener?(word: string, before: string, rest: list[string]): boolean do
+    keyword?(before, rest) and (word == "do" or (word == "fn" and arrow?(rest)))
+  end
+  def arrow?(tokens: list[string]): boolean do
+    case tokens do
+      [] -> true
+      # fn[integer,string] is the type of a function.
+      ["[" | _] -> false
+      ["->" | _] -> true
+      ["do" | _] -> false
+      [_ | rest] -> arrow?(rest)
+    end
+  end
+
+  # What follows the end that closes the block the words are in.
+  def past_block(tokens: list[string], depth: integer, before: string): list[string] do
+    case tokens do
+      [] -> []
+      [word | rest] ->
+        if opener?(word, before, rest) do past_block(rest, depth + 1, word) else
+          if word == "end" and keyword?(before, rest) do
+            if depth == 0 do rest else past_block(rest, depth - 1, word) end
+          else past_block(rest, depth, word) end
+        end
+    end
+  end
+
+  # The words up to the do that opens a block, and what follows the do.
+  def to_do(tokens: list[string], taken: list[string], before: string, depth: integer): tuple[list[string], list[string]] do
+    case tokens do
+      [] -> {Enum.reverse(taken), []}
+      [word | rest] ->
+        if word == "do" and depth == 0 and keyword?(before, rest) do {Enum.reverse(taken), rest} else
+          # A fn in a guard or a default value has its own end.
+          if (word == "fn" or word == "do") and opener?(word, before, rest) do to_do(rest, [word | taken], word, depth + 1) else
+            if word == "end" and depth > 0 and keyword?(before, rest) do to_do(rest, [word | taken], word, depth - 1) else
+              to_do(rest, [word | taken], word, depth)
+            end
+          end
+        end
+    end
+  end
+
+  # What follows the line the words are in, a line ending inside brackets
+  # or after a sign that goes on being part of it.
+  def past_line(tokens: list[string], depth: integer, before: string): list[string] do
+    case tokens do
+      [] -> []
+      [word | rest] ->
+        if word == "\n" do
+          if depth > 0 or before in ["+", "-", "*", "/", "<", ">", "=", "|", "&", ",", "."] do past_line(rest, depth, before) else rest end
+        else
+          if opens?(word) do past_line(rest, depth + 1, word) else
+            if closes?(word) do past_line(rest, depth - 1, word) else
+              if opener?(word, before, rest) do past_line(past_block(rest, 0, word), depth, "end") else past_line(rest, depth, word) end
+            end
+          end
+        end
+    end
+  end
+
+  # The words up to the sign that closes the bracket they are in, and what
+  # follows it.
+  def to_close(tokens: list[string], taken: list[string], depth: integer): tuple[list[string], list[string]] do
+    case tokens do
+      [] -> {Enum.reverse(taken), []}
+      [word | rest] ->
+        if closes?(word) and depth == 0 do {Enum.reverse(taken), rest} else
+          to_close(rest, [word | taken], depth + (if opens?(word) do 1 else if closes?(word) do -1 else 0 end end))
+        end
+    end
+  end
+
+  # Words divided at a sign that is in no bracket.
+  def divided(tokens: list[string], sign: string): list[list[string]] do
+    no_parts: list[list[string]] = []
+    no_words: list[string] = []
+    {parts, last, _} = Enum.reduce(tokens, {no_parts, no_words, 0}, fn word, {parts, part, depth} ->
+      if word == sign and depth == 0 do {[Enum.reverse(part) | parts], no_words, 0} else
+        {parts, [word | part], depth + (if opens?(word) do 1 else if closes?(word) do -1 else 0 end end)}
+      end
+    end)
+    Enum.reverse([Enum.reverse(last) | parts])
+  end
+
+  def unlined(tokens: list[string]): list[string] do
+    Enum.filter(tokens, fn word -> word != "\n" end)
+  end
+
+  # A type as the pinned command writes it: without spaces.
+  def type_text(tokens: list[string]): string do
+    Enum.join(Enum.map(unlined(tokens), fn word -> if string?(word) do inspect(text_of(word)) else word end end), "")
+  end
+
+  # The words of a value's default left off.
+  def undefaulted(tokens: list[string]): list[string] do
+    hd(divided(hd(divided(tokens, "\\\\")), "="))
+  end
+
+  # name: type, or a pattern with or without a type: {shown, type, kind,
+  # named}. kind is the type declared, or the kind of a literal.
+  def parameter(tokens: list[string]): tuple[string, string, boolean] do
+    sides = divided(undefaulted(unlined(tokens)), ":")
+    pattern = hd(sides)
+    type = if length(sides) > 1 and pattern != [] do type_text(Enum.concat(Enum.intersperse(tl(sides), [":"]))) else "" end
+    named = length(pattern) == 1 and name?(hd(pattern)) and not (hd(pattern) in ["_", "true", "false", "none"])
+    shown = if named do hd(pattern) else "_" end
+    kind = if type != "" do type else literal_kind(pattern) end
+    {shown <> if type == "" do "" else ": " <> type end, kind, named and type != ""}
+  end
+
+  def literal_kind(pattern: list[string]): string do
+    case pattern do
+      [word] ->
+        if string?(word) do "string" else
+          if String.starts_with?(word, ":") and byte_size(word) > 1 do "atom" else
+          if word == "true" or word == "false" do "boolean" else
+            if word =~ ~r/^[0-9][0-9_]*$/ do "integer" else
+              if word =~ ~r/^[0-9]/ do "float" else "" end
+            end
+          end
+          end
+        end
+      ["-", word] -> literal_kind([word])
+      _ -> ""
+    end
+  end
+
+  def fields(tokens: list[string]): string do
+    Enum.join(Enum.map(Enum.filter(divided(tokens, ","), fn part -> unlined(part) != [] end), fn part ->
+      {shown, _, _} = parameter(part)
+      shown
+    end), ", ")
+  end
+
+  # The fields of a struct, one a line: name: type, with or without a
+  # default.
+  def struct_fields(tokens: list[string], done: list[string]): string do
+    case unlined_head(tokens) do
+      [] -> Enum.join(Enum.reverse(done), ", ")
+      [name, ":" | rest] ->
+        {type, later} = field_type(rest, [], 0)
+        struct_fields(later, [name <> ": " <> type_text(undefaulted(type)) | done])
+      [_ | rest] -> struct_fields(rest, done)
+    end
+  end
+
+  def unlined_head(tokens: list[string]): list[string] do
+    case tokens do
+      ["\n" | rest] -> unlined_head(rest)
+      ["," | rest] -> unlined_head(rest)
+      _ -> tokens
+    end
+  end
+
+  # The words of a field's type and default: up to the next field, which
+  # is a name and a colon at the start of a line or after a comma.
+  def field_type(tokens: list[string], taken: list[string], depth: integer): tuple[list[string], list[string]] do
+    case tokens do
+      [] -> {Enum.reverse(taken), []}
+      [word | rest] ->
+        if depth == 0 and (word == "\n" or word == ",") and next_field?(unlined_head(rest)) do {Enum.reverse(taken), rest} else
+          field_type(rest, [word | taken], depth + (if opens?(word) do 1 else if closes?(word) do -1 else 0 end end))
+        end
+    end
+  end
+  def next_field?(tokens: list[string]): boolean do
+    case tokens do
+      [] -> true
+      [name, ":" | _] -> name?(name)
+      _ -> false
+    end
+  end
+
+  # The variants of a sum type, one a line: name, or name(fields).
+  def variants(tokens: list[string], done: list[string]): string do
+    case unlined_head(tokens) do
+      [] -> Enum.join(Enum.reverse(done), " | ")
+      [name, "(" | rest] ->
+        {inside, later} = to_close(rest, [], 0)
+        variants(later, [name <> "(" <> fields(inside) <> ")" | done])
+      [name | rest] -> variants(rest, [name | done])
+    end
+  end
+
+  # The words of a block, from after its do to before its end, and what
+  # follows the end.
+  def block(tokens: list[string]): tuple[list[string], list[string]] do
+    rest = past_block(tokens, 0, "do")
+    body = Enum.take(tokens, length(tokens) - length(rest) - 1)
+    {body, rest}
+  end
+
+  # struct Name[params] do ... end, defexception and type: the declaration
+  # and what follows it.
+  def kind(keyword: string, tokens: list[string], doc: string): tuple[Kind, list[string]] do
+    name = hd(tokens)
+    {head, after_do} = to_do(tl(tokens), [], name, 0)
+    params = case unlined(head) do
+      ["[" | inside] -> "[" <> Enum.join(Enum.filter(inside, fn word -> word != "," and word != "]" end), ", ") <> "]"
+      _ -> ""
+    end
+    {body, rest} = block(after_do)
+    definition = if keyword == "type" do "type " <> name <> params <> " = " <> variants(body, []) else
+      "struct " <> name <> params <> " { " <> struct_fields(body, []) <> " }"
+    end
+    {%Kind{name: name, definition: definition, summary: String.trim(doc)}, rest}
+  end
+
+  # def name(parameters): type ... : the clause, and the words after its
+  # parameters and type.
+  def clause(tokens: list[string], public: boolean, doc: string, prefix: string): tuple[Clause, list[string]] do
+    name = hd(tokens)
+    after_name = case tl(tokens) do
+      ["(" | rest] -> rest
+      other -> other
+    end
+    {inside, after_params} = to_close(after_name, [], 0)
+    read = Enum.map(Enum.filter(divided(inside, ","), fn part -> unlined(part) != [] end), fn part -> parameter(part) end)
+    {result, rest} = case after_params do
+      [":" | later] -> result_type(later, [], 0, ":")
+      _ -> {"", after_params}
+    end
+    signature = prefix <> name <> "(" <> Enum.join(Enum.map(read, fn {shown, _, _} -> shown end), ", ") <> ")" <> if result == "" or result == "void" do "" else " -> " <> result end
+    {%Clause{name: prefix <> name, signature: signature, doc: String.trim(doc), types: Enum.map(read, fn {_, declared, _} -> declared end), typed: Enum.all?(read, fn {_, _, typed} -> typed end), public: public}, rest}
+  end
+
+  # The type a function gives: the words up to when, do, = or the end of a
+  # line outside brackets.
+  def result_type(tokens: list[string], taken: list[string], depth: integer, before: string): tuple[string, list[string]] do
+    case tokens do
+      [] -> {type_text(Enum.reverse(taken)), []}
+      [word | rest] ->
+        if depth == 0 and (word == "\n" or word == "=" or ((word == "do" or word == "when") and keyword?(before, rest))) do {type_text(Enum.reverse(taken)), tokens} else
+          result_type(rest, [word | taken], depth + (if opens?(word) do 1 else if closes?(word) do -1 else 0 end end), word)
+        end
+    end
+  end
+
+  # The declarations of a module, from the words after its do.
+  def declarations(tokens: list[string], read: Read): Read do
+    case tokens do
+      [] -> read
+      ["\n" | rest] -> declarations(rest, read)
+      ["@", name | rest] ->
+        if name in ["moduledoc", "doc", "typedoc"] do
+          {text, later} = case rest do
+            ["false" | later] -> {"", later}
+            [word | later] -> if string?(word) do {text_of(word), later} else {"", rest} end
+            [] -> {"", []}
+          end
+          if name == "moduledoc" do declarations(later, %Read{read | summary: text}) else declarations(later, %Read{read | waiting: text}) end
+        else declarations(past_line(rest, 0, name), read) end
+      [keyword | rest] ->
+        if keyword == "end" do read else
+          if keyword in ["struct", "defexception", "type"] and rest != [] and hd(rest) =~ ~r/^[A-Z]/ do
+            {made, later} = kind(keyword, rest, read.waiting)
+            declarations(later, %Read{read | kinds: [made | read.kinds], waiting: ""})
+          else
+            if keyword == "extern" do foreign(rest, read) else
+              if keyword == "def" or keyword == "defp" do
+                {made, later} = clause(rest, keyword == "def", read.waiting, "")
+                {_, body} = to_do(later, [], "", 0)
+                declarations(past_block(body, 0, "do"), %Read{read | clauses: [made | read.clauses], waiting: ""})
+              else
+                if keyword == "defimpl" do
+                  # The functions of an implementation are named after the
+                  # protocol and the number of functions before it.
+                  {head, body} = to_do(rest, [], keyword, 0)
+                  {inside, later} = block(body)
+                  suffix = "$" <> Enum.at(unlined(head), 0, "") <> "$" <> Integer.to_string(length(read.clauses))
+                  declarations(later, implemented(inside, suffix, read))
+                else
+                if keyword in ["test", "describe", "setup", "setup_all", "defmacro", "defprotocol"] do
+                  {_, body} = to_do(rest, [], keyword, 0)
+                  # A test and what sets one up are functions the
+                  # documentation waiting goes to, and which are not shown.
+                  taken = if keyword in ["test", "setup", "setup_all"] do %Read{read | waiting: ""} else read end
+                  declarations(past_block(body, 0, "do"), taken)
+                else
+                  if keyword == "import" do
+                    case rest do
+                      [word | later] -> if string?(word) do declarations(later, %Read{read | imports: [text_of(word) | read.imports]}) else declarations(past_line(rest, 0, keyword), read) end
+                      [] -> read
+                    end
+                  else declarations(past_line(rest, 0, keyword), read) end
+                end
+                end
+              end
+            end
+          end
+        end
+    end
+  end
+
+  # The functions of an implementation, from the words of its block.
+  def implemented(tokens: list[string], suffix: string, read: Read): Read do
+    case tokens do
+      [] -> read
+      [keyword | rest] ->
+        if keyword == "def" or keyword == "defp" do
+          {made, later} = clause(rest, keyword == "def", read.waiting, "")
+          {_, body} = to_do(later, [], "", 0)
+          named = %Clause{made | name: made.name <> suffix, signature: made.name <> suffix <> binary_part(made.signature, byte_size(made.name), byte_size(made.signature) - byte_size(made.name))}
+          implemented(past_block(body, 0, "do"), suffix, %Read{read | clauses: [named | read.clauses], waiting: ""})
+        else implemented(rest, suffix, read) end
+    end
+  end
+
+  # extern type Name = "target", extern shared type, and a function of
+  # another language: extern name(parameters): type = "target".
+  def foreign(tokens: list[string], read: Read): Read do
+    case tokens do
+      ["shared", "type", name, "=", target | rest] -> declarations(rest, %Read{read | kinds: [%Kind{name: name, definition: "extern type " <> name <> " = " <> text_of(target), summary: String.trim(read.waiting)} | read.kinds], waiting: ""})
+      ["type", name, "=", target | rest] -> declarations(rest, %Read{read | kinds: [%Kind{name: name, definition: "extern type " <> name <> " = " <> text_of(target), summary: String.trim(read.waiting)} | read.kinds], waiting: ""})
+      _ ->
+        {made, later} = clause(tokens, true, read.waiting, "")
+        declarations(past_line(later, 0, ""), %Read{read | clauses: [made | read.clauses], waiting: ""})
+    end
+  end
+
+  # Whether a clause begins another form of its function: it declares a
+  # parameter of another type than the clauses so far.
+  def next_form?(declared: list[string], types: list[string]): boolean do
+    length(declared) == length(types) and Enum.any?(Enum.zip(declared, types), fn {before, now} -> now != "" and before != "" and now != before end)
+  end
+
+  def declared(before: list[string], types: list[string]): list[string] do
+    if length(before) != length(types) do types else
+      Enum.map(Enum.zip(before, types), fn {old, now} -> if old != "" do old else now end end)
+    end
+  end
+
+  # The clauses of one function are documented together.
+  def entries(clauses: list[Clause], module: string): list[Entry] do
+    nothing: list[Entry] = []
+    Enum.reverse(Enum.reduce(clauses, nothing, fn c, done ->
+      key = c.name <> "/" <> Integer.to_string(length(c.types))
+      if not c.public or c.name == "main" do done else
+        if not Enum.any?(done, fn entry -> entry.key == key end) do
+          [%Entry{key: key, name: module <> "." <> c.name, signatures: [c.signature], summary: c.doc, declared: declared([], c.types), shown: c} | done]
+        else
+          Enum.map(done, fn entry ->
+            if entry.key != key do entry else
+              summary = if entry.summary == "" do c.doc else entry.summary end
+              if next_form?(entry.declared, c.types) do
+                %Entry{entry | summary: summary, signatures: entry.signatures ++ [c.signature], shown: c, declared: declared([], c.types)}
+              else
+                if c.typed and not entry.shown.typed do
+                  %Entry{entry | summary: summary, signatures: Enum.reverse(tl(Enum.reverse(entry.signatures))) ++ [c.signature], shown: c, declared: declared(entry.declared, c.types)}
+                else
+                  %Entry{entry | summary: summary, declared: declared(entry.declared, entry.shown.types)}
+                end
+              end
+            end
+          end)
+        end
+      end
+    end))
+  end
+
+  # The module a source text declares: none when it declares none.
+  def module(text: string): option[Module] do
+    case Enum.drop_while(words(text), fn word -> word != "defmodule" end) do
+      ["defmodule" | rest] ->
+        {head, body} = to_do(rest, [], "defmodule", 0)
+        name = Enum.join(unlined(head), "")
+        nothing = %Read{summary: "", waiting: "", kinds: [], clauses: [], imports: [], implemented: 0}
+        read = declarations(body, nothing)
+        some(%Module{name: name, summary: String.trim(read.summary), kinds: Enum.reverse(read.kinds), entries: entries(Enum.reverse(read.clauses), name), imports: Enum.reverse(read.imports)})
+      _ -> none
+    end
+  end
+
+  # --- the modules of a project -------------------------------------------------
+
+  # A module outside the library whose documentation can be shown: a file
+  # of the project, or of a package it imports. shown is the path that
+  # names it, which for a package's file is the path an import gives.
+  struct Source do
+    module: string
+    file: string
+    shown: string
+  end
+
+  def under(directory: string, name: string): string do
+    if directory == "." do name else if String.ends_with?(directory, "/") do directory <> name else directory <> "/" <> name end end
+  end
+
+  def directory?(path: string): boolean do
+    case File.lstat(path) do
+      ok(info) -> info.type == :directory
+      error(_) -> false
+    end
+  end
+
+  # The source files under a directory. A directory whose name starts with
+  # a dot, node_modules and vendor are left out, and no more than 2000
+  # files are listed.
+  def walked(directory: string): list[string] do
+    case File.ls(directory) do
+      error(_) -> []
+      ok(names) ->
+        Enum.flat_map(Enum.sort(names), fn name ->
+          path = under(directory, name)
+          if directory?(path) do
+            if String.starts_with?(name, ".") or name == "node_modules" or name == "vendor" do [] else walked(path) end
+          else
+            if String.ends_with?(name, ".alc") do [path] else [] end
+          end
+        end)
+    end
+  end
+
+  # Where packages are kept, as the bundler finds it.
+  def cache(): string do
+    case System.get_env("GOMODCACHE") do
+      some(path) -> path
+      none ->
+        case System.get_env("GOPATH") do
+          some(paths) -> Enum.at(String.split(paths, if Sys.windows() == 1 do ";" else ":" end), 0, "") <> "/pkg/mod"
+          none -> System.get_env(if Sys.windows() == 1 do "USERPROFILE" else "HOME" end, "") <> "/go/pkg/mod"
+        end
+    end
+  end
+
+  # An import of a package's file, host/owner/repo@v1.2.3/lib/name.alc:
+  # {package@version, file}, or none.
+  def remote(target: string): option[tuple[string, string]] do
+    case Regex.run(~r/^([A-Za-z0-9_~-]+(?:[.\/][A-Za-z0-9_~-]+)*)@(v[0-9][0-9A-Za-z.+-]*)\/([A-Za-z0-9_.\/-]+\.alc)$/, target) do
+      some([_, package, version, file]) -> some({package <> "@" <> version, file})
+      _ -> none
+    end
+  end
+
+  # The directory of a package in the cache, where an upper case letter of
+  # its name is written as ! and the lower case one.
+  def package_root(key: string): string do
+    cache() <> "/" <> Regex.replace(~r/[A-Z]/, key, fn letter -> "!" <> String.downcase(letter) end)
+  end
+
+  # A path with its . and .. parts taken out.
+  def tidy(path: string): string do
+    nothing: list[string] = []
+    kept = Enum.reduce(String.split(path, "/"), nothing, fn part, done ->
+      if part == "." or (part == "" and done != []) do done else
+        if part == ".." and done != [] and hd(done) != ".." and hd(done) != "" do tl(done) else [part | done] end
+      end
+    end)
+    Enum.join(Enum.reverse(kept), "/")
+  end
+
+  # One file and, when it is a package's, the files of the package it
+  # imports: {seen, sources}, the sources last first.
+  def visited(given: string, shown: string, root: string, prefix: string, state: tuple[list[string], list[Source]]): tuple[list[string], list[Source]] do
+    {seen, sources} = state
+    # One file is one path whichever separators name it.
+    file = String.replace(given, "\\", "/")
+    if file in seen or length(seen) >= 2000 do state else
+      found = case File.read(file) do
+        ok(text) -> module(text)
+        error(_) -> none
+      end
+      case found do
+        none -> {[file | seen], sources}
+        some(m) ->
+          Enum.reduce(m.imports, {[file | seen], [%Source{module: m.name, file: file, shown: shown} | sources]}, fn target, sofar ->
+            case remote(target) do
+              some({key, inside}) ->
+                base = String.replace(package_root(key), "\\", "/")
+                if directory?(base) do visited(base <> "/" <> inside, target, base, key <> "/", sofar) else sofar end
+              none ->
+                # Only the files of a package are followed here: those of
+                # the project itself are found by walking its directory.
+                if root == "" or String.contains?(target, "@") or String.starts_with?(target, "/") do sofar else
+                  path = tidy(Enum.join(Enum.drop(Enum.reverse(String.split(file, "/")), 1) |> Enum.reverse(), "/") <> "/" <> target)
+                  if not String.starts_with?(path, root <> "/") do sofar else
+                    visited(path, prefix <> binary_part(path, byte_size(root) + 1, byte_size(path) - byte_size(root) - 1), root, prefix, sofar)
+                  end
+                end
+            end
+          end)
+      end
+    end
+  end
+
+  # The modules of the source files under a directory and of every
+  # package file they import. A package that is not in the cache is left
+  # out, and so is a file that declares no module.
+  def project(directory: string): list[Source] do
+    unseen: list[string] = []
+    unfound: list[Source] = []
+    nothing = {unseen, unfound}
+    {_, sources} = Enum.reduce(Enum.take(walked(directory), 2000), nothing, fn path, sofar -> visited(Path.expand(path), path, "", "", sofar) end)
+    Enum.reverse(sources)
+  end
+end

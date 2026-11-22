@@ -1,0 +1,955 @@
+defmodule AlchemGuide do
+  import "alchem-guide-data.alc"
+  import "alchem-sources.alc"
+  # The commands of alchem that print documentation: version, help, syntax,
+  # doc, docs, agent-guide and agent-install, as the pinned command line
+  # prints them, from the tables of AlchemGuideData
+  # (tools/alchem-guide-data.alc, which scripts/generate-guide-data.py makes
+  # from what the pinned command prints).
+  #
+  # A table is rows of fields; the fields of each are named where it is
+  # read (commands, topics, modules, functions, targets).
+  #
+  # Not as the pinned command: version says nothing of a Go toolchain, as
+  # no build uses one; a file of a package named as an import names it is
+  # read from the cache and not fetched.
+
+  # A value as JSON is written: the pinned command writes two spaces a
+  # level, a missing list as null, and <, > and & as \u00XX.
+  type J do
+    text(value: string)
+    number(value: integer)
+    truth(value: boolean)
+    null
+    list(items: list[J])
+    object(fields: list[tuple[string, J]])
+  end
+
+  def version(): string do "devel" end
+  def platform(): string do "linux/amd64" end
+
+  def rows(table: string): list[list[string]] do
+    if table == "" do [] else Enum.map(String.split(table, "\u{1E}"), fn row -> String.split(row, "\u{1F}") end) end
+  end
+  def items(field: string): list[string] do
+    if field == "" do [] else String.split(field, "\u{1D}") end
+  end
+  def parts(item: string): list[string] do
+    String.split(item, "\u{1C}")
+  end
+  def col(row: list[string], index: integer): string do
+    Enum.at(row, index, "")
+  end
+
+  # commands: name, usage, summary, flags (name, default, summary), help.
+  def commands(): list[list[string]] do rows(AlchemGuideData.commands()) end
+  # topics: name, group, summary, notes, see, examples (title, source).
+  def topics(): list[list[string]] do rows(AlchemGuideData.topics()) end
+  # modules: name, group, summary.
+  def modules(): list[list[string]] do rows(AlchemGuideData.modules()) end
+  # functions: name, module, signatures, requires, summary, examples; in
+  # the order of their modules' names, then of their names.
+  def functions(): list[list[string]] do rows(AlchemGuideData.functions()) end
+  # targets: name, summary, path, user path, "shared" or "", header.
+  def targets(): list[list[string]] do rows(AlchemGuideData.targets()) end
+
+  def quoted(text: string): string do
+    "\"" <> String.replace(String.replace(text, "\\", "\\\\"), "\"", "\\\"") <> "\""
+  end
+
+  # The characters written as escapes besides the ones json_text names.
+  def escapes(): list[tuple[string, string]] do
+    [
+     {"\u{0}", "\\u0000"}, {"\u{1}", "\\u0001"}, {"\u{2}", "\\u0002"}, {"\u{3}", "\\u0003"}, {"\u{4}", "\\u0004"}, {"\u{5}", "\\u0005"},
+     {"\u{6}", "\\u0006"}, {"\u{7}", "\\u0007"}, {"\u{8}", "\\b"}, {"\u{B}", "\\u000b"}, {"\u{E}", "\\u000e"}, {"\u{F}", "\\u000f"},
+     {"\u{10}", "\\u0010"}, {"\u{11}", "\\u0011"}, {"\u{12}", "\\u0012"}, {"\u{13}", "\\u0013"}, {"\u{14}", "\\u0014"}, {"\u{15}", "\\u0015"},
+     {"\u{16}", "\\u0016"}, {"\u{17}", "\\u0017"}, {"\u{18}", "\\u0018"}, {"\u{19}", "\\u0019"}, {"\u{1A}", "\\u001a"}, {"\u{1B}", "\\u001b"},
+     {"\u{1C}", "\\u001c"}, {"\u{1D}", "\\u001d"}, {"\u{1E}", "\\u001e"}, {"\u{1F}", "\\u001f"}, {"\u{C}", "\\f"}, {"\u{2028}", "\\u2028"},
+     {"\u{2029}", "\\u2029"}
+    ]
+  end
+
+  def json_text(text: string): string do
+    plain = String.replace(String.replace(String.replace(String.replace(String.replace(String.replace(String.replace(String.replace(text, "\\", "\\\\"), "\"", "\\\""), "\n", "\\n"), "\r", "\\r"), "\t", "\\t"), "<", "\\u003c"), ">", "\\u003e"), "&", "\\u0026")
+    safe = if plain =~ ~r/[\x00-\x1f\x{2028}\x{2029}]/ do
+      Enum.reduce(escapes(), plain, fn {from, to}, sofar -> String.replace(sofar, from, to) end)
+    else plain end
+    "\"" <> safe <> "\""
+  end
+
+  def json(value: J, indent: string): string do
+    case value do
+      J.text(text) -> json_text(text)
+      J.number(n) -> Integer.to_string(n)
+      J.truth(b) -> if b do "true" else "false" end
+      J.null -> "null"
+      J.list(entries) ->
+        if entries == [] do "[]" else
+          "[\n" <> Enum.join(Enum.map(entries, fn entry -> indent <> "  " <> json(entry, indent <> "  ") end), ",\n") <> "\n" <> indent <> "]"
+        end
+      J.object(fields) ->
+        if fields == [] do "{}" else
+          "{\n" <> Enum.join(Enum.map(fields, fn {name, entry} -> indent <> "  " <> json_text(name) <> ": " <> json(entry, indent <> "  ") end), ",\n") <> "\n" <> indent <> "}"
+        end
+    end
+  end
+  def encode(value: J): string do
+    json(value, "") <> "\n"
+  end
+  def texts(values: list[string]): J do
+    J.list(Enum.map(values, fn value -> J.text(value) end))
+  end
+  # A list the pinned command leaves unmade when nothing is put in it.
+  def made(values: list[J]): J do
+    if values == [] do J.null else J.list(values) end
+  end
+
+  def usage(): string do
+    "usage: alchem <command> [options] [arguments]\n\ncommands:\n" <>
+    Enum.join(Enum.map(commands(), fn c -> "  " <> String.pad_trailing(col(c, 0), 14) <> " " <> col(c, 2) <> "\n" end), "") <>
+    "\nRun alchem <command> -h for a command's options, or alchem agent-guide for an overview.\n"
+  end
+
+  def command?(name: string): boolean do
+    Enum.any?(commands(), fn c -> col(c, 0) == name end)
+  end
+
+  # The usage a command prints for -h and after a flag it does not take.
+  def help(name: string): string do
+    Enum.join(Enum.map(Enum.filter(commands(), fn c -> col(c, 0) == name end), fn c -> col(c, 4) end), "")
+  end
+
+  # The groups of a table's rows, in the order they first appear; the group
+  # is the second field.
+  def groups(table: list[list[string]]): list[string] do
+    Enum.uniq(Enum.map(table, fn row -> col(row, 1) end))
+  end
+  def of_group(table: list[list[string]], group: string): list[list[string]] do
+    Enum.filter(table, fn row -> col(row, 1) == group end)
+  end
+
+  # A group as the command line takes it: "Files and system" is
+  # files-and-system.
+  def group_name(group: string): string do
+    String.replace(String.downcase(String.trim(group)), " ", "-")
+  end
+
+  def suggest(name: string, candidates: list[string]): string do
+    lower = String.downcase(name)
+    close = Enum.sort(Enum.filter(candidates, fn candidate ->
+      other = String.downcase(candidate)
+      String.contains?(other, lower) or String.contains?(lower, other)
+    end))
+    if close == [] do "" else "; did you mean " <> Enum.join(Enum.take(close, 8), ", ") <> "?" end
+  end
+
+  def group_named(name: string, order: list[string], kind: string, command: string): result[string, string] do
+    case Enum.filter(order, fn group -> group_name(group) == group_name(name) end) do
+      [group | _] -> ok(group)
+      [] ->
+        names = Enum.map(order, fn group -> group_name(group) end)
+        error("no group of " <> kind <> " " <> quoted(name) <> suggest(group_name(name), names) <> "; the groups are " <> Enum.join(names, ", ") <> " (" <> command <> " lists them)")
+    end
+  end
+
+  # --- syntax ---------------------------------------------------------------
+
+  def syntax_index(): string do
+    all = topics()
+    "Syntax topics. Run alchem syntax <topic> for the rules and an example, alchem syntax --group <group> for one group, or alchem syntax --all for everything.\n" <>
+    Enum.join(Enum.map(groups(all), fn group ->
+      "\n" <> group <> " (" <> group_name(group) <> ")\n" <>
+      Enum.join(Enum.map(of_group(all, group), fn t -> "  " <> String.pad_trailing(col(t, 0), 20) <> " " <> col(t, 2) <> "\n" end), "")
+    end), "")
+  end
+
+  def topic_data(topic: list[string]): J do
+    see = items(col(topic, 4))
+    J.object([{"name", J.text(col(topic, 0))}, {"group", J.text(col(topic, 1))}, {"summary", J.text(col(topic, 2))},
+      {"notes", made(Enum.map(items(col(topic, 3)), fn note -> J.text(note) end))},
+      {"examples", made(Enum.map(items(col(topic, 5)), fn sample -> J.object([{"title", J.text(col(parts(sample), 0))}, {"source", J.text(col(parts(sample), 1))}]) end))}] ++
+      if see == [] do [] else [{"see", texts(see)}] end)
+  end
+
+  def syntax_group(name: string, as_json: boolean): result[string, string] do
+    all = topics()
+    case group_named(name, groups(all), "syntax topics", "alchem syntax") do
+      error(problem) -> error(problem)
+      ok(group) ->
+        if as_json do ok(encode(J.list(Enum.map(of_group(all, group), fn t -> topic_data(t) end)))) else
+          ok(group <> ": syntax topics. Run alchem syntax <topic> for the rules and an example.\n\n" <>
+            Enum.join(Enum.map(of_group(all, group), fn t -> "  " <> String.pad_trailing(col(t, 0), 20) <> " " <> col(t, 2) <> "\n" end), ""))
+        end
+    end
+  end
+
+  def topic_text(topic: list[string], heading: string, names: list[string]): string do
+    see = items(col(topic, 4))
+    related = Enum.map(Enum.filter(see, fn name -> name in names end), fn name -> "alchem syntax " <> name end) ++
+      Enum.map(Enum.filter(see, fn name -> not (name in names) end), fn name -> "alchem doc " <> name end)
+    heading <> col(topic, 0) <> "\n\n" <> col(topic, 2) <> "\n\n" <>
+    Enum.join(Enum.map(items(col(topic, 3)), fn note -> "- " <> note <> "\n" end), "") <>
+    Enum.join(Enum.map(items(col(topic, 5)), fn sample -> "\nExample: " <> col(parts(sample), 0) <> "\n\n```elixir\n" <> col(parts(sample), 1) <> "```\n" end), "") <>
+    if see == [] do "" else "\nSee also: " <> Enum.join(related, ", ") <> "\n" end
+  end
+
+  def topic_names(all: list[list[string]]): list[string] do
+    Enum.map(all, fn t -> col(t, 0) end)
+  end
+
+  def syntax(name: string): result[string, string] do
+    all = topics()
+    case Enum.filter(all, fn t -> col(t, 0) == String.downcase(name) end) do
+      [topic | _] -> ok(topic_text(topic, "# ", topic_names(all)))
+      [] -> error("no syntax topic " <> quoted(name) <> suggest(name, topic_names(all)) <> " (alchem syntax lists them)")
+    end
+  end
+
+  def syntax_all(): string do
+    all = topics()
+    names = topic_names(all)
+    Enum.join(Enum.map(all, fn t -> topic_text(t, "# ", names) end), "\n")
+  end
+
+  def syntax_json(name: string): result[string, string] do
+    all = topics()
+    if name == "" do ok(encode(J.list(Enum.map(all, fn t -> topic_data(t) end)))) else
+      case Enum.filter(all, fn t -> col(t, 0) == String.downcase(name) end) do
+        [topic | _] -> ok(encode(topic_data(topic)))
+        [] -> syntax(name)
+      end
+    end
+  end
+
+  # --- doc ------------------------------------------------------------------
+
+  def indented(text: string): string do
+    Enum.join(Enum.map(String.split(text, "\n"), fn line -> "    " <> line end), "\n")
+  end
+
+  # A function's name within its module: Kernel's and Testing's are called
+  # without one.
+  def local(f: list[string]): string do
+    String.trim_leading(col(f, 0), col(f, 1) <> ".")
+  end
+
+  def functions_of(all: list[list[string]], module: string): list[list[string]] do
+    Enum.filter(all, fn f -> col(f, 1) == module end)
+  end
+
+  def requires(f: list[string]): string do
+    if col(f, 3) == "" do "" else "\nRequires: " <> Enum.join(items(col(f, 3)), "; ") <> ".\n" end
+  end
+
+  def function_text(f: list[string]): string do
+    col(f, 0) <> "\n\n" <>
+    Enum.join(Enum.map(items(col(f, 2)), fn signature -> "    " <> signature <> "\n" end), "") <>
+    "\n" <> col(f, 4) <> "\n" <> requires(f) <>
+    if col(f, 5) == "" do "" else "\nExamples\n\n" <> indented(col(f, 5)) <> "\n" end
+  end
+
+  def module_text(module: list[string], all: boolean, every: list[list[string]]): string do
+    own = functions_of(every, col(module, 0))
+    first = if own == [] do "" else col(hd(own), 0) end
+    head = col(module, 0) <> " (" <> col(module, 1) <> ")\n\n" <> col(module, 2) <> "\n" <>
+      if col(module, 0) == "Kernel" or col(module, 0) == "Testing" do "These are called without a module name: " <> first <> "(...).\n" else "" end
+    if all do head <> Enum.join(Enum.map(own, fn f -> "\n" <> function_text(f) end), "") else
+      width = Enum.reduce(own, 0, fn f, most -> max(most, byte_size(local(f))) end)
+      head <> "\n" <>
+      Enum.join(Enum.map(own, fn f -> "  " <> String.pad_trailing(local(f), width) <> "  " <> col(f, 4) <> "\n" end), "") <>
+      "\nRun alchem doc " <> first <> " for signatures and examples, or alchem doc --all " <> col(module, 0) <> " for every function in full.\n"
+    end
+  end
+
+  def function_data(f: list[string]): J do
+    J.object([{"name", J.text(col(f, 0))}, {"module", J.text(col(f, 1))}, {"signatures", texts(items(col(f, 2)))}, {"summary", J.text(col(f, 4))}] ++
+      if col(f, 3) == "" do [] else [{"requires", texts(items(col(f, 3)))}] end ++
+      if col(f, 5) == "" do [] else [{"examples", J.text(col(f, 5))}] end)
+  end
+
+  def module_data(module: list[string], every: list[list[string]], full: boolean): J do
+    J.object([{"name", J.text(col(module, 0))}] ++
+      if col(module, 1) == "" do [] else [{"group", J.text(col(module, 1))}] end ++
+      [{"summary", J.text(col(module, 2))},
+       {"functions", if full do made(Enum.map(functions_of(every, col(module, 0)), fn f -> function_data(f) end)) else J.null end}])
+  end
+
+  def doc_index(): string do
+    all = modules()
+    "Library modules. Run alchem doc <Module> for its functions, alchem doc <Module.function> for signatures and examples, alchem doc --group <group> for one group, or alchem doc --search <text>.\n" <>
+    Enum.join(Enum.map(groups(all), fn group ->
+      "\n" <> group <> " (" <> group_name(group) <> ")\n" <>
+      Enum.join(Enum.map(of_group(all, group), fn m -> "  " <> String.pad_trailing(col(m, 0), 14) <> " " <> col(m, 2) <> "\n" end), "")
+    end), "")
+  end
+
+  def doc_group(name: string, as_json: boolean): result[string, string] do
+    all = modules()
+    every = functions()
+    case group_named(name, groups(all), "library modules", "alchem doc") do
+      error(problem) -> error(problem)
+      ok(group) ->
+        if as_json do ok(encode(J.list(Enum.map(of_group(all, group), fn m -> module_data(m, every, true) end)))) else
+          examples = Enum.join(Enum.map(Enum.filter(rows(AlchemGuideData.examples()), fn row -> col(row, 0) == group end), fn row -> col(row, 1) end), "")
+          ok(group <> ": library modules. The number is how many functions a module has; run alchem doc <Module> to list them.\n\n" <>
+            Enum.join(Enum.map(of_group(all, group), fn m -> "  " <> col(m, 0) <> " (" <> Integer.to_string(length(functions_of(every, col(m, 0)))) <> ")\n      " <> col(m, 2) <> "\n" end), "") <>
+            if examples == "" do "" else "\nExamples\n\n" <> examples end)
+        end
+    end
+  end
+
+  # A name without the arity it may end in: Enum.map/2 is Enum.map.
+  def bare(query: string): string do
+    case Enum.reverse(String.split(query, "/")) do
+      [_] -> query
+      [_ | before] -> if Enum.join(Enum.reverse(before), "/") == "" do query else Enum.join(Enum.reverse(before), "/") end
+      [] -> query
+    end
+  end
+
+  def same?(a: string, b: string): boolean do
+    String.downcase(a) == String.downcase(b)
+  end
+
+  # --- doc of a source file ---------------------------------------------------
+
+  def source_function(entry: AlchemSources.Entry, module: string): J do
+    J.object([{"name", J.text(entry.name)}, {"module", J.text(module)}, {"signatures", texts(entry.signatures)}, {"summary", J.text(entry.summary)}])
+  end
+
+  def source_data(m: AlchemSources.Module): J do
+    J.object([{"name", J.text(m.name)}, {"summary", J.text(m.summary)}] ++
+      if m.kinds == [] do [] else
+        [{"types", J.list(Enum.map(m.kinds, fn kind -> J.object([{"name", J.text(kind.name)}, {"definition", J.text(kind.definition)}] ++ if kind.summary == "" do [] else [{"summary", J.text(kind.summary)}] end) end))}]
+      end ++
+      [{"functions", made(Enum.map(m.entries, fn entry -> source_function(entry, m.name) end))}])
+  end
+
+  def source_text(m: AlchemSources.Module): string do
+    m.name <> "\n" <>
+    if m.summary == "" do "" else "\n" <> m.summary <> "\n" end <>
+    Enum.join(Enum.map(m.kinds, fn kind -> "\n" <> kind.definition <> "\n" <> if kind.summary == "" do "" else "\n" <> indented(kind.summary) <> "\n" end end), "") <>
+    Enum.join(Enum.map(m.entries, fn entry ->
+      "\n" <> Enum.join(entry.signatures, "\n") <> "\n" <> if entry.summary == "" do "\n    (undocumented)\n" else "\n" <> indented(entry.summary) <> "\n" end
+    end), "")
+  end
+
+  # The module a file declares.
+  def source(path: string): result[AlchemSources.Module, string] do
+    case File.read(path) do
+      error(reason) -> error(reason)
+      ok(text) ->
+        case AlchemSources.module(text) do
+          some(m) -> ok(m)
+          none -> error(path <> ": no module is declared")
+        end
+    end
+  end
+
+  def file_doc(path: string, as_json: boolean): result[string, string] do
+    case source(path) do
+      error(problem) -> error(problem)
+      ok(m) -> if as_json do ok(encode(source_data(m))) else ok(source_text(m)) end
+    end
+  end
+
+  # The modules of the project in the current directory and of the
+  # packages it imports.
+  def sources(): list[AlchemSources.Source] do
+    AlchemSources.project(".")
+  end
+
+  # The library modules a package can take the place of.
+  def retiring?(module: string): boolean do
+    module in ["DiskStore", "WebSocket", "Version", "OptionParser"]
+  end
+
+  # The documentation of a module among the project's sources, or of one
+  # function of it: none when no source has the module.
+  def source_doc(query: string, as_json: boolean): option[result[string, string]] do
+    pieces = String.split(bare(query), ".", [parts: 2])
+    module = hd(pieces)
+    case Enum.filter(sources(), fn source -> same?(source.module, module) end) do
+      [] -> none
+      [found | _] ->
+        case source(found.file) do
+          error(problem) -> some(error(problem))
+          ok(m) ->
+            if length(pieces) == 1 do
+              some(ok(if as_json do encode(source_data(m)) else source_text(m) <> "\nFrom " <> found.shown <> "\n" end))
+            else
+              function = Enum.at(pieces, 1, "")
+              case Enum.filter(m.entries, fn entry -> same?(entry.name, found.module <> "." <> function) end) do
+                [entry | _] ->
+                  some(ok(if as_json do encode(source_function(entry, m.name)) else
+                    source_text(%AlchemSources.Module{m | summary: "", kinds: [], entries: [entry]}) <> "\nFrom " <> found.shown <> "\n"
+                  end))
+                [] -> some(error(found.module <> " has no public function " <> quoted(function) <> suggest(found.module <> "." <> function, Enum.map(m.entries, fn entry -> entry.name end)) <> " (alchem doc " <> found.module <> " lists them)"))
+              end
+            end
+        end
+    end
+  end
+
+  def doc(query: string, all: boolean, as_json: boolean): result[string, string] do
+    if String.ends_with?(query, ".alc") do file_doc(query, as_json) else
+      if query == "" do library_doc(query, all, as_json) else
+        # A module the project has in place of a library module of the
+        # same name is the one its programs use, so it is the one shown.
+        replaced = retiring?(Enum.join(Enum.map(Enum.filter(modules(), fn m -> same?(col(m, 0), hd(String.split(bare(query), "."))) end), fn m -> col(m, 0) end), ""))
+        first = if replaced do source_doc(query, as_json) else none end
+        case first do
+          some(outcome) -> outcome
+          none ->
+            case library_doc(query, all, as_json) do
+              ok(text) -> ok(text)
+              error(problem) ->
+                # Not the library's: a module of this project, or of a
+                # package it imports.
+                case source_doc(query, as_json) do
+                  some(outcome) -> outcome
+                  none -> error(problem)
+                end
+            end
+        end
+      end
+    end
+  end
+
+  def library_doc(query: string, all: boolean, as_json: boolean): result[string, string] do
+    known = modules()
+    every = functions()
+    if query == "" do
+      if as_json do ok(encode(J.list(Enum.map(known, fn m -> module_data(m, every, all) end)))) else
+        if all do ok(Enum.join(Enum.map(known, fn m -> module_text(m, true, every) end), "\n")) else ok(doc_index()) end
+      end
+    else
+      case Enum.filter(known, fn m -> same?(col(m, 0), query) end) do
+        [module | _] -> if as_json do ok(encode(module_data(module, every, true))) else ok(module_text(module, all, every)) end
+        [] ->
+          name = bare(query)
+          case Enum.filter(every, fn f -> same?(col(f, 0), name) end) do
+            [f | _] -> if as_json do ok(encode(function_data(f))) else ok(function_text(f)) end
+            [] ->
+              names = Enum.map(every, fn f -> col(f, 0) end) ++ Enum.map(known, fn m -> col(m, 0) end)
+              error("no module or function " <> quoted(query) <> suggest(name, names) <> " (alchem doc lists modules; alchem doc --search text searches)")
+          end
+      end
+    end
+  end
+
+  def first_line(text: string): string do
+    String.trim(hd(String.split(String.trim(text), "\n")))
+  end
+
+  def hit(kind: string, name: string, summary: string, command: string): list[string] do
+    [kind, name, summary, command]
+  end
+
+  def search(text: string, as_json: boolean): result[string, string] do
+    needle = String.downcase(String.trim(text))
+    if needle == "" do error("search needs some text") else
+      every = functions()
+      own = sources()
+      # The library modules the project has a module of its own for are
+      # left out: its programs use the project's.
+      replaced = Enum.filter(Enum.map(own, fn source -> source.module end), fn name -> retiring?(name) end)
+      found = Enum.map(Enum.filter(topics(), fn t -> String.contains?(String.downcase(col(t, 0) <> " " <> col(t, 2) <> " " <> Enum.join(items(col(t, 3)), " ")), needle) end), fn t -> hit("topic", col(t, 0), col(t, 2), "alchem syntax " <> col(t, 0)) end) ++
+        Enum.map(Enum.filter(modules(), fn m -> not (col(m, 0) in replaced) and String.contains?(String.downcase(col(m, 0) <> " " <> col(m, 2)), needle) end), fn m -> hit("module", col(m, 0), col(m, 2), "alchem doc " <> col(m, 0)) end) ++
+        # Functions matching by name come before those matching by description.
+        Enum.map(Enum.filter(every, fn f -> not (col(f, 1) in replaced) and String.contains?(String.downcase(col(f, 0)), needle) end), fn f -> hit("function", col(f, 0), col(f, 4), "alchem doc " <> col(f, 0)) end) ++
+        Enum.map(Enum.filter(every, fn f -> not (col(f, 1) in replaced) and not String.contains?(String.downcase(col(f, 0)), needle) and String.contains?(String.downcase(col(f, 4)), needle) end), fn f -> hit("function", col(f, 0), col(f, 4), "alchem doc " <> col(f, 0)) end) ++
+        # The project's own modules and those of the packages it imports.
+        Enum.flat_map(own, fn found ->
+          case source(found.file) do
+            error(_) -> []
+            ok(m) ->
+              (if String.contains?(String.downcase(m.name <> " " <> m.summary), needle) do [hit("module", m.name, first_line(m.summary), "alchem doc " <> m.name)] else [] end) ++
+              Enum.map(Enum.filter(m.entries, fn entry -> String.contains?(String.downcase(entry.name <> " " <> entry.summary), needle) end), fn entry -> hit("function", entry.name, first_line(entry.summary), "alchem doc " <> entry.name) end)
+          end
+        end)
+      if as_json do
+        ok(encode(J.list(Enum.map(found, fn h -> J.object([{"kind", J.text(col(h, 0))}, {"name", J.text(col(h, 1))}, {"summary", J.text(col(h, 2))}, {"command", J.text(col(h, 3))}]) end))))
+      else
+        if found == [] do error("nothing matches " <> quoted(text)) else
+          ok(Enum.join(Enum.map(found, fn h -> String.pad_trailing(col(h, 0), 8) <> " " <> String.pad_trailing(col(h, 1), 28) <> " " <> col(h, 2) <> "\n" end), "") <>
+            "\nRun alchem doc <name> for a module or function, alchem syntax <name> for a topic.\n")
+        end
+      end
+    end
+  end
+
+  # --- agent-guide ----------------------------------------------------------
+
+  def grouped(table: list[list[string]]): string do
+    Enum.join(Enum.map(groups(table), fn group ->
+      "- **" <> group <> "** (`" <> group_name(group) <> "`): " <> Enum.join(Enum.map(of_group(table, group), fn row -> "`" <> col(row, 0) <> "`" end), ", ") <> "\n"
+    end), "")
+  end
+
+  def agent_guide(): string do
+    "# Alchem agent guide\n\n" <>
+    "Alchem is a statically typed, Elixir-inspired language compiled to native executables. Source files end in `.alc`. This guide is printed by the compiler you have installed, so it matches what that compiler accepts.\n\n" <>
+    "## Commands\n\n" <>
+    Enum.join(Enum.map(commands(), fn c -> "- `" <> col(c, 1) <> "`: " <> col(c, 2) <> "\n" end), "") <>
+    "\n## Looking things up\n\n" <>
+    "This guide is an index. Ask for one thing at a time; each answer is short.\n\n" <>
+    "- `alchem syntax <topic>`: the rules of one construct and a working example.\n" <>
+    "- `alchem syntax --group <group>`: the topics of one group, each with a line saying what it covers.\n" <>
+    "- `alchem doc --group <group>`: the library modules of one group, what each is for, and examples.\n" <>
+    "- `alchem doc <Module>`: every function of a library module with a one-line description.\n" <>
+    "- `alchem doc <Module.function>`: signatures and examples, such as `alchem doc Enum.chunk_every`.\n" <>
+    "- `alchem doc --search <text>`: functions and topics whose name or description contains the text.\n" <>
+    "- `alchem doc <file.alc>`: the `@moduledoc` and `@doc` text of a project file.\n" <>
+    "- Add `--json` to any of these for structured output.\n\n" <>
+    "Every example shown by `syntax` and `doc` is compiled and run by the compiler's own tests.\n\n" <>
+    "## A first program\n\n```elixir\n" <> AlchemGuideData.hello() <> "```\n\n" <>
+    "Save it as `hello.alc`, then `alchem build hello.alc && ./hello`.\n\n" <>
+    "## Working loop\n\n" <>
+    "1. `alchem check --json <entry.alc>` after each change. A diagnostic gives the file, line, column and message; fix all of them before going on.\n" <>
+    "2. `alchem fmt <path>` formats files in place.\n" <>
+    "3. `alchem test <path>` runs `*_test.alc` files. A failing run prints its seed; `--seed N` repeats that order. `--cover` reports line coverage.\n" <>
+    "4. Document public functions with `@doc` and `alx>` examples, and run them with `doctest Module` (see `alchem syntax doctests`).\n\n" <>
+    "## Differences from Elixir\n\n" <>
+    Enum.join(Enum.map(rows(AlchemGuideData.differences()), fn row -> "- " <> col(row, 0) <> "\n" end), "") <>
+    "\n## Syntax topics\n\nBy group; `alchem syntax --group <group>` describes a group's topics and `alchem syntax <topic>` explains one.\n\n" <>
+    grouped(topics()) <>
+    "\n## Library modules\n\nNo import is needed. By group; `alchem doc --group <group>` describes a group's modules and `alchem doc <Module>` lists one's functions.\n\n" <>
+    grouped(modules())
+  end
+
+  def command_data(c: list[string]): J do
+    flags = items(col(c, 3))
+    J.object([{"name", J.text(col(c, 0))}, {"usage", J.text(col(c, 1))}, {"summary", J.text(col(c, 2))}] ++
+      if flags == [] do [] else
+        [{"flags", J.list(Enum.map(flags, fn flag ->
+          J.object([{"name", J.text(col(parts(flag), 0))}, {"summary", J.text(col(parts(flag), 2))}] ++ if col(parts(flag), 1) == "" do [] else [{"default", J.text(col(parts(flag), 1))}] end)
+        end))}]
+      end)
+  end
+
+  def agent_guide_json(): string do
+    every = functions()
+    encode(J.object([
+      {"commands", J.list(Enum.map(commands(), fn c -> command_data(c) end))},
+      {"differences_from_elixir", texts(Enum.map(rows(AlchemGuideData.differences()), fn row -> col(row, 0) end))},
+      {"topics", J.list(Enum.map(topics(), fn t -> J.object([{"name", J.text(col(t, 0))}, {"group", J.text(col(t, 1))}, {"summary", J.text(col(t, 2))}]) end))},
+      {"modules", J.list(Enum.map(modules(), fn m ->
+        count = length(functions_of(every, col(m, 0)))
+        J.object([{"name", J.text(col(m, 0))}, {"group", J.text(col(m, 1))}, {"summary", J.text(col(m, 2))}] ++ if count == 0 do [] else [{"functions", J.number(count)}] end)
+      end))}]))
+  end
+
+  # --- docs -----------------------------------------------------------------
+
+  def anchor(name: string): string do
+    String.downcase(String.replace(name, " ", "-"))
+  end
+
+  def library_reference(): string do
+    known = modules()
+    every = functions()
+    "# Library reference\n\n" <> AlchemGuideData.generated() <>
+    "Every library function with its signatures, a description and examples; `alchem doc <Module>` and `alchem doc <Module.function>` print the same text. `enum[T]` means any enumerable of `T`: a list, a stream or range, a set, or a map, whose elements are its `tuple[K,V]` entries in key order. Lowercase single names are type variables. Every example is compiled and run by the test suite.\n" <>
+    Enum.join(Enum.map(groups(known), fn group ->
+      "\n**" <> group <> "**: " <> Enum.join(Enum.map(of_group(known, group), fn m -> "[" <> col(m, 0) <> "](#" <> anchor(col(m, 0)) <> ")" end), ", ") <> "\n"
+    end), "") <>
+    Enum.join(Enum.map(known, fn m ->
+      "\n## " <> col(m, 0) <> "\n\n" <> col(m, 2) <> "\n" <>
+      Enum.join(Enum.map(functions_of(every, col(m, 0)), fn f ->
+        "\n### " <> col(f, 0) <> "\n\n```\n" <> Enum.join(items(col(f, 2)), "\n") <> "\n```\n\n" <> col(f, 4) <> "\n" <> requires(f) <>
+        if col(f, 5) == "" do "" else "\n```elixir\n" <> col(f, 5) <> "\n```\n" end
+      end), "")
+    end), "")
+  end
+
+  def syntax_reference(): string do
+    all = topics()
+    names = topic_names(all)
+    "# Syntax reference\n\n" <> AlchemGuideData.generated() <>
+    "One section per topic of `alchem syntax`. Every example is compiled and run by the test suite. The [language specification](language-spec.md) has the full rules.\n" <>
+    Enum.join(Enum.map(groups(all), fn group ->
+      "\n**" <> group <> "**: " <> Enum.join(Enum.map(of_group(all, group), fn t -> "[" <> col(t, 0) <> "](#" <> col(t, 0) <> ")" end), ", ") <> "\n"
+    end), "") <>
+    Enum.join(Enum.map(all, fn t -> "\n" <> topic_text(t, "## ", names) end), "")
+  end
+
+  def command_reference(): string do
+    String.trim_trailing("# Command reference\n\n" <> AlchemGuideData.generated() <>
+      Enum.join(Enum.map(commands(), fn c ->
+        flags = items(col(c, 3))
+        "## alchem " <> col(c, 0) <> "\n\n" <> col(c, 2) <> "\n\n```\n" <> col(c, 1) <> "\n```\n\n" <>
+        if flags == [] do "" else
+          "| Option | Meaning | Default |\n| --- | --- | --- |\n" <>
+          Enum.join(Enum.map(flags, fn flag ->
+            "| `--" <> col(parts(flag), 0) <> "` | " <> col(parts(flag), 2) <> " | " <> if col(parts(flag), 1) == "" do "" else "`" <> col(parts(flag), 1) <> "`" end <> " |\n"
+          end), "") <> "\n"
+        end
+      end), ""), "\n") <> "\n"
+  end
+
+  # The generated files, by name, in the order of their names.
+  def references(): list[tuple[string, string]] do
+    [{"agent-guide.md", Enum.join(String.split(agent_guide(), "\n\n", [parts: 2]), "\n\n" <> AlchemGuideData.generated())},
+     {"cli-reference.md", command_reference()},
+     {"library-reference.md", library_reference()},
+     {"syntax-reference.md", syntax_reference()}]
+  end
+
+  # A path under a directory, as the pinned command joins and tidies one.
+  def under(dir: string, name: string): string do
+    tidy = Path.join(dir, name)
+    if String.starts_with?(tidy, "./") and byte_size(tidy) > 2 do binary_part(tidy, 2, byte_size(tidy) - 2) else tidy end
+  end
+
+  # A reason File.read gives for a file that is not there, in the words of
+  # Linux and of Windows: a file to be installed may be in a directory that
+  # is not there either.
+  def missing?(reason: string): boolean do
+    Enum.any?(["no such file or directory", "not a directory", "The system cannot find the file specified.", "The system cannot find the path specified."], fn text -> String.ends_with?(reason, ": " <> text) end)
+  end
+
+  # The directory a path of this module's is in: the paths here are
+  # written with / on every system, and Path.dirname reads them with the
+  # system's separator.
+  def parent(path: string): string do
+    pieces = String.split(path, "/")
+    if length(pieces) < 2 do "." else Enum.join(Enum.take(pieces, length(pieces) - 1), "/") end
+  end
+
+  # A directory and the ones it is in, made a level at a time with the
+  # system's separators: File.mkdir_p of a path written with / leaves the
+  # levels unmade on Windows.
+  def make_dirs(path: string): result[tuple[], string] do
+    pieces = String.split(path, "/")
+    levels = Enum.map(Enum.to_list(1..length(pieces)), fn k -> Enum.join(Enum.take(pieces, k), "/") end)
+    Enum.reduce(Enum.filter(levels, fn level -> level != "" and level != "." and level != ".." end), ok({}), fn level, sofar ->
+      case sofar do
+        error(why) -> error(why)
+        ok(_) ->
+          case File.mkdir(shown(level)) do
+            ok(_) -> ok({})
+            error(why) -> if File.dir?(shown(level)) do ok({}) else error(why) end
+          end
+      end
+    end)
+  end
+
+  # A path as it is printed: with the separators of the system.
+  def shown(path: string): string do
+    if Sys.windows() == 1 do String.replace(path, "/", "\\") else path end
+  end
+
+  # docs [--check] [--dir path]: the files that differ from what is
+  # generated, written unless check; an error is the reason nothing more
+  # was done.
+  def write_references(dir: string, check: boolean): result[list[string], string] do
+    stale = Enum.filter(Enum.map(references(), fn {name, text} -> {under(dir, name), text} end), fn {path, text} ->
+      case File.read(path) do
+        ok(current) -> current != text
+        error(_) -> true
+      end
+    end)
+    if check or stale == [] do ok(Enum.map(stale, fn {path, _} -> shown(path) end)) else
+      case make_dirs(dir) do
+        error(reason) -> error(reason)
+        ok(_) ->
+          failed = Enum.flat_map(stale, fn {path, text} ->
+            case File.write(shown(path), text) do
+              ok(_) -> []
+              error(reason) -> [reason]
+            end
+          end)
+          if failed == [] do ok(Enum.map(stale, fn {path, _} -> shown(path) end)) else error(hd(failed)) end
+      end
+    end
+  end
+
+  # --- agent-install --------------------------------------------------------
+
+  def target_list(as_json: boolean): string do
+    if as_json do
+      encode(J.list(Enum.map(targets(), fn t ->
+        J.object([{"name", J.text(col(t, 0))}, {"summary", J.text(col(t, 1))}, {"path", J.text(col(t, 2))}] ++
+          if col(t, 3) == "" do [] else [{"user_path", J.text(col(t, 3))}] end ++
+          [{"shared", J.truth(col(t, 4) != "")}])
+      end)))
+    else
+      "Agents alchem agent-install can set up:\n\n" <>
+      Enum.join(Enum.map(targets(), fn t ->
+        "  " <> String.pad_trailing(col(t, 0), 9) <> " " <> String.pad_trailing(col(t, 1), 48) <> " " <> col(t, 2) <> " (" <> if col(t, 3) == "" do "project" else "project, user" end <> ")\n"
+      end), "")
+    end
+  end
+
+  def home(): result[string, string] do
+    name = if Sys.windows() == 1 do "USERPROFILE" else "HOME" end
+    case System.get_env(name) do
+      some(value) -> if value == "" do error(missing_home()) else ok(value) end
+      none -> error(missing_home())
+    end
+  end
+  def missing_home(): string do
+    if Sys.windows() == 1 do "%userprofile% is not defined" else "$HOME is not defined" end
+  end
+
+  # The text a shared file holds once the marked block is the skill: the
+  # rest of the file is the user's, and stays.
+  def shared_text(path: string, current: string): result[string, string] do
+    begin_mark = "<!-- BEGIN alchem agent guide -->"
+    end_mark = "<!-- END alchem agent guide -->"
+    block = begin_mark <> "\n" <> String.trim_trailing(AlchemGuideData.skill(), "\n") <> "\n" <> end_mark <> "\n"
+    before = String.split(current, begin_mark, [parts: 2])
+    after_end = String.split(current, end_mark, [parts: 2])
+    begins = length(before) == 2
+    ends = length(after_end) == 2
+    if begins and ends and byte_size(hd(before)) < byte_size(hd(after_end)) do
+      rest = Enum.at(after_end, 1, "")
+      ok(hd(before) <> block <> if String.starts_with?(rest, "\n") do binary_part(rest, 1, byte_size(rest) - 1) else rest end)
+    else
+      if begins or ends do error(shown(path) <> " has an incomplete alchem block; repair or remove its markers first") else
+        if String.trim(current) == "" do ok(block) else ok(String.trim_trailing(current, "\n") <> "\n\n" <> block) end
+      end
+    end
+  end
+
+  # agent-install: the file of an agent written; what was done is
+  # {path, action}.
+  def install(agent: string, scope: string, dir: string, force: boolean): result[tuple[string, string], string] do
+    case Enum.filter(targets(), fn t -> col(t, 0) == agent end) do
+      [] -> error("unknown agent " <> quoted(agent) <> "; choose one of " <> Enum.join(Enum.sort(Enum.map(targets(), fn t -> col(t, 0) end)), ", "))
+      [target | _] ->
+        if scope != "" and scope != "project" and scope != "user" do error("scope must be project or user, not " <> quoted(scope)) else
+          if scope == "user" and col(target, 3) == "" do error(agent <> " has no user-wide location; use --scope project") else
+            base = if dir != "" do ok(dir) else if scope == "user" do home() else ok(".") end end
+            case base do
+              error(problem) -> error(problem)
+              ok(root) ->
+                path = under(root, if scope == "user" do col(target, 3) else col(target, 2) end)
+                read = File.read(path)
+                missing = case read do
+                  ok(_) -> ""
+                  error(reason) -> if missing?(reason) do "" else reason end
+                end
+                if missing != "" do error(missing) else
+                  exists = case read do
+                    ok(_) -> true
+                    error(_) -> false
+                  end
+                  current = case read do
+                    ok(text) -> text
+                    error(_) -> ""
+                  end
+                  want = if col(target, 4) != "" do shared_text(path, current) else
+                    plain = col(target, 5) <> AlchemGuideData.skill()
+                    if exists and current != plain and not force do error(shown(path) <> " already exists with different content; pass --force to replace it") else ok(plain) end
+                  end
+                  case want do
+                    error(problem) -> error(problem)
+                    ok(text) ->
+                      if exists and current == text do ok({shown(path), "unchanged"}) else
+                        case make_dirs(parent(path)) do
+                          error(reason) -> error(reason)
+                          ok(_) ->
+                            case File.write(shown(path), text) do
+                              error(reason) -> error(reason)
+                              ok(_) -> ok({shown(path), if exists do "updated" else "created" end})
+                            end
+                        end
+                      end
+                  end
+                end
+            end
+          end
+        end
+    end
+  end
+
+  # --- the command line -------------------------------------------------------
+
+  # The flags a command takes, from its usage: {name, kind}, where a flag
+  # that is on or off has no kind.
+  def flags_of(command: string): list[tuple[string, string]] do
+    Enum.flat_map(String.split(help(command), "\n"), fn line ->
+      if String.starts_with?(line, "  -") do
+        words = String.split(String.trim(line), " ")
+        [{String.trim_leading(hd(words), "-"), Enum.at(words, 1, "")}]
+      else [] end
+    end)
+  end
+
+  # Arguments read as the pinned command reads them: flags, with one dash
+  # or two, up to the first argument that is not one. The result is
+  # {status, values, rest}: status -1 and the flags given with what follows
+  # them, or the status to leave with once the problem is printed.
+  def parsed(command: string, args: list[string], values: map[string, string]): tuple[integer, map[string, string], list[string]] do
+    case args do
+      [] -> {-1, values, []}
+      [arg | rest] ->
+        if byte_size(arg) < 2 or not String.starts_with?(arg, "-") do {-1, values, args} else
+          if arg == "--" do {-1, values, rest} else
+            body = if String.starts_with?(arg, "--") do binary_part(arg, 2, byte_size(arg) - 2) else binary_part(arg, 1, byte_size(arg) - 1) end
+            if body == "" or String.starts_with?(body, "-") or String.starts_with?(body, "=") do
+              IO.puts(:stderr, "bad flag syntax: " <> arg)
+              IO.puts(:stderr, String.trim_trailing(help(command), "\n"))
+              {2, values, []}
+            else
+              pieces = String.split(body, "=", [parts: 2])
+              name = hd(pieces)
+              valued = length(pieces) == 2
+              case Enum.filter(flags_of(command), fn {flag, _} -> flag == name end) do
+                [] ->
+                  if name == "h" or name == "help" do
+                    IO.puts(:stderr, String.trim_trailing(help(command), "\n"))
+                    {0, values, []}
+                  else
+                    IO.puts(:stderr, "flag provided but not defined: -" <> name)
+                    IO.puts(:stderr, String.trim_trailing(help(command), "\n"))
+                    {2, values, []}
+                  end
+                [{_, kind} | _] ->
+                  if kind == "" do
+                    value = if valued do Enum.at(pieces, 1, "") else "true" end
+                    if value in ["1", "t", "T", "true", "TRUE", "True"] do parsed(command, rest, Map.put(values, name, "true")) else
+                      if value in ["0", "f", "F", "false", "FALSE", "False"] do parsed(command, rest, Map.put(values, name, "false")) else
+                        IO.puts(:stderr, "invalid boolean value " <> quoted(value) <> " for -" <> name <> ": parse error")
+                        IO.puts(:stderr, String.trim_trailing(help(command), "\n"))
+                        {2, values, []}
+                      end
+                    end
+                  else
+                    if not valued and rest == [] do
+                      IO.puts(:stderr, "flag needs an argument: -" <> name)
+                      IO.puts(:stderr, String.trim_trailing(help(command), "\n"))
+                      {2, values, []}
+                    else
+                      value = if valued do Enum.at(pieces, 1, "") else hd(rest) end
+                      if not of_kind?(kind, value) do
+                        IO.puts(:stderr, "invalid value " <> quoted(value) <> " for flag -" <> name <> ": parse error")
+                        IO.puts(:stderr, String.trim_trailing(help(command), "\n"))
+                        {2, values, []}
+                      else parsed(command, if valued do rest else tl(rest) end, Map.put(values, name, value)) end
+                    end
+                  end
+              end
+            end
+          end
+        end
+    end
+  end
+
+  # A value of the kind a flag's usage names: a whole number, a duration
+  # such as 1m30s or 1.5s, or any text.
+  def of_kind?(kind: string, value: string): boolean do
+    case kind do
+      "int" -> value =~ ~r/^[-+]?[0-9]+$/
+      "duration" -> value =~ ~r/^[-+]?(0|(([0-9]+(\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+)$/
+      _ -> true
+    end
+  end
+
+  def on?(values: map[string, string], name: string): boolean do
+    Map.get(values, name, "false") == "true"
+  end
+
+  # What a command printed and how it ends: the text on standard output;
+  # after a problem, the problem on standard error and status 1.
+  def finish(outcome: result[string, string]): integer do
+    case outcome do
+      ok(text) ->
+        IO.write(text)
+        0
+      error(problem) ->
+        IO.puts(:stderr, problem)
+        1
+    end
+  end
+
+  # The one argument of a command, "" when there is none.
+  def one(command: string, arguments: list[string]): result[string, string] do
+    case arguments do
+      [] -> ok("")
+      [name] -> ok(name)
+      _ -> error("alchem " <> command <> " takes one argument, not " <> Integer.to_string(length(arguments)))
+    end
+  end
+
+  def version_text(as_json: boolean): string do
+    if as_json do encode(J.object([{"version", J.text(version())}, {"platform", J.text(platform())}])) else
+      "alchem " <> version() <> " " <> platform() <> "\n"
+    end
+  end
+
+  def documents?(command: string): boolean do
+    command in ["version", "agent-guide", "syntax", "doc", "agent-install", "docs"]
+  end
+
+  # alchem COMMAND ARGUMENT...: one of the commands above.
+  def run(command: string, args: list[string]): integer do
+    nothing: map[string, string] = %{}
+    {status, values, rest} = parsed(command, args, nothing)
+    as_json = on?(values, "json")
+    if status >= 0 do status else
+      case command do
+        "version" -> if rest != [] do finish(error("alchem version takes no arguments")) else finish(ok(version_text(as_json))) end
+        "agent-guide" -> finish(ok(if as_json do agent_guide_json() else agent_guide() end))
+        "syntax" ->
+          group = Map.get(values, "group", "")
+          case one(command, rest) do
+            error(problem) -> finish(error(problem))
+            ok(name) ->
+              if group != "" and name != "" do finish(error("alchem syntax takes a group or a topic, not both")) else
+                if group != "" do finish(syntax_group(group, as_json)) else
+                  if as_json do finish(syntax_json(name)) else
+                    if name != "" do finish(syntax(name)) else
+                      finish(ok(if on?(values, "all") do syntax_all() else syntax_index() end))
+                    end
+                  end
+                end
+              end
+          end
+        "doc" ->
+          group = Map.get(values, "group", "")
+          text = Map.get(values, "search", "")
+          case one(command, rest) do
+            error(problem) -> finish(error(problem))
+            ok(name) ->
+              if text != "" do finish(search(text, as_json)) else
+                if group != "" and name != "" do finish(error("alchem doc takes a group or a name, not both")) else
+                  if group != "" do finish(doc_group(group, as_json)) else finish(doc(name, on?(values, "all"), as_json)) end
+                end
+              end
+          end
+        "agent-install" ->
+          if on?(values, "list") do finish(ok(target_list(as_json))) else
+            case one(command, rest) do
+              error(problem) -> finish(error(problem))
+              ok(name) ->
+                if name == "" do finish(error("name an agent to install for\n\n" <> target_list(false))) else
+                  case install(name, Map.get(values, "scope", "project"), Map.get(values, "dir", ""), on?(values, "force")) do
+                    error(problem) -> finish(error(problem))
+                    ok({path, action}) ->
+                      if as_json do finish(ok(encode(J.object([{"agent", J.text(name)}, {"path", J.text(path)}, {"action", J.text(action)}])))) else
+                        finish(ok(action <> " " <> path <> "\n"))
+                      end
+                  end
+                end
+            end
+          end
+        "docs" ->
+          check = on?(values, "check")
+          case write_references(Map.get(values, "dir", "docs"), check) do
+            error(problem) -> finish(error(problem))
+            ok(changed) ->
+              text = Enum.join(Enum.map(Enum.sort(changed), fn path -> path <> "\n" end), "")
+              if check and changed != [] do
+                IO.puts(:stderr, "generated documentation is out of date; run alchem docs")
+                IO.write(text)
+                1
+              else finish(ok(text)) end
+          end
+        _ -> 2
+      end
+    end
+  end
+end
