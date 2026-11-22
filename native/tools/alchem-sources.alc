@@ -660,8 +660,10 @@ defmodule AlchemSources do
 
   # One file and, when it is a package's, the files of the package it
   # imports: {seen, sources}, the sources last first.
-  def visited(file: string, shown: string, root: string, prefix: string, state: tuple[list[string], list[Source]]): tuple[list[string], list[Source]] do
+  def visited(given: string, shown: string, root: string, prefix: string, state: tuple[list[string], list[Source]]): tuple[list[string], list[Source]] do
     {seen, sources} = state
+    # One file is one path whichever separators name it.
+    file = String.replace(given, "\\", "/")
     if file in seen or length(seen) >= 2000 do state else
       found = case File.read(file) do
         ok(text) -> module(text)
@@ -673,7 +675,7 @@ defmodule AlchemSources do
           Enum.reduce(m.imports, {[file | seen], [%Source{module: m.name, file: file, shown: shown} | sources]}, fn target, sofar ->
             case remote(target) do
               some({key, inside}) ->
-                base = package_root(key)
+                base = String.replace(package_root(key), "\\", "/")
                 if directory?(base) do visited(base <> "/" <> inside, target, base, key <> "/", sofar) else sofar end
               none ->
                 # Only the files of a package are followed here: those of
