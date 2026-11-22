@@ -4,18 +4,21 @@ defmodule AlchemCommand do
   import "alchem-guide.alc"
   import "alchem-sources.alc"
   import "alchem-alx.alc"
+  import "alchem-format.alc"
   # alchem COMMAND ...: the pinned command line's test, run, build, check
   # and new, with the bundler and the compiler in the same program
   # (scripts/build-alchem.py puts them together), and the commands that
   # print documentation (AlchemGuide, tools/alchem-guide.alc): version,
-  # help, syntax, doc, docs, agent-guide and agent-install; and alx, the
-  # shell (spec/alchem-commands.md).
+  # help, syntax, doc, docs, agent-guide and agent-install; alx, the
+  # shell; and fmt, the formatter (AlchemFormat, tools/alchem-format.alc)
+  # (spec/alchem-commands.md).
   #
   #     alchem test [flags] PATH...
   #     alchem run [flags] FILE [ARGUMENT...]
   #     alchem build [flags] FILE
   #     alchem check [flags] FILE
   #     alchem new DIRECTORY
+  #     alchem fmt [--check] PATH...
   #
   # A file is bundled with its imports (Bundler, tools/alchem-bundle.alc)
   # and the bundle compiled by a call of the compiler (AlchemCompiler, the
@@ -311,6 +314,155 @@ defmodule AlchemCommand do
     end)
     problems = Enum.filter(found, &String.starts_with?(&1, "!"))
     if problems != [] do [hd(problems)] else Enum.sort(Enum.uniq(found)) end
+  end
+
+  # fmt: formatPaths of the pinned command. The .alc files named and those
+  # under the directories named, sorted; every one is formatted before any
+  # is written, so a file the parser refuses leaves them all as they were.
+  # The files that change are named; with --check none is written, and
+  # that any would change is a failure.
+  def fmt_command(args: list[string]): integer do
+    nothing: map[string, string] = %{}
+    {status, values, rest} = AlchemGuide.parsed("fmt", args, nothing)
+    if status >= 0 do status else
+      if rest == [] do complain("provide one entry path (fmt and test accept multiple paths)", 2) else
+        empty: list[string] = []
+        case fmt_found(rest, empty) do
+          error(problem) -> complain(problem, 1)
+          ok([]) -> complain("no .alc files found", 1)
+          ok(found) ->
+            unchanged: list[tuple[string, string]] = []
+            case fmt_texts(Enum.sort(Enum.uniq(found)), unchanged) do
+              error(problem) -> complain(problem, 1)
+              ok(changed) ->
+                check = AlchemGuide.on?(values, "check")
+                case fmt_write(changed, check) do
+                  error(problem) -> complain(problem, 1)
+                  ok(_) -> if check and changed != [] do complain("formatting changes required", 1) else 0 end
+                end
+            end
+        end
+      end
+    end
+  end
+
+  # What os.Lstat says of a path it cannot read. On Windows it names the
+  # call it makes, and a path whose directory is there names the file.
+  def lstat_problem(path: string, code: string): string do
+    if Sys.windows() == 1 and reason(code) == "no such file or directory" do
+      name = Enum.at(Enum.reverse(String.split(String.replace(path, "\\", "/"), "/")), 0, "")
+      parent = if name == path do "." else binary_part(path, 0, byte_size(path) - byte_size(name) - 1) end
+      "GetFileAttributesEx " <> path <> ": The system cannot find the " <> (if File.dir?(if parent == "" do "/" else parent end) do "file" else "path" end) <> " specified."
+    else "lstat " <> path <> ": " <> reason(code) end
+  end
+
+  def fmt_found(paths: list[string], found: list[string]): result[list[string], string] do
+    case paths do
+      [] -> ok(found)
+      [path | rest] ->
+        case File.lstat(path) do
+          error(code) -> error(lstat_problem(path, code))
+          ok(info) ->
+            if info.type != :directory do fmt_found(rest, found ++ [path]) else
+              root = cleaned(if Sys.windows() == 1 do String.replace(path, "\\", "/") else path end)
+              base = Enum.at(Enum.reverse(String.split(root, "/")), 0, "")
+              empty: list[string] = []
+              under = if base == ".git" or base == "artifacts" do ok(empty) else fmt_walk(native_path(root)) end
+              case under do
+                error(problem) -> error(problem)
+                ok(more) -> fmt_found(rest, found ++ more)
+              end
+            end
+        end
+    end
+  end
+
+  # A path with the system's separators, as filepath.Join gives one.
+  def native_path(path: string): string do
+    if Sys.windows() == 1 do String.replace(path, "/", "\\") else path end
+  end
+
+  # filepath.WalkDir: the .alc files under a directory, leaving out .git and
+  # artifacts; a link is not followed. The files are named with the
+  # system's separators.
+  def fmt_walk(directory: string): result[list[string], string] do
+    case File.ls(directory) do
+      error(code) -> error("open " <> directory <> ": " <> reason(code))
+      ok(names) -> fmt_entries(directory, Enum.sort(names), [])
+    end
+  end
+  def fmt_entries(directory: string, names: list[string], found: list[string]): result[list[string], string] do
+    case names do
+      [] -> ok(found)
+      [name | rest] ->
+        path = if directory == "." do name else (if String.ends_with?(directory, "/") or String.ends_with?(directory, "\\") do directory <> name else directory <> native_path("/") <> name end) end
+        if linked_kind(path) == "directory" do
+          empty: list[string] = []
+          under = if name == ".git" or name == "artifacts" do ok(empty) else fmt_walk(path) end
+          case under do
+            error(problem) -> error(problem)
+            ok(more) -> fmt_entries(directory, rest, found ++ more)
+          end
+        else
+          fmt_entries(directory, rest, if String.ends_with?(name, ".alc") do found ++ [path] else found end)
+        end
+    end
+  end
+
+  # Each file that formatting changes, with its formatted text.
+  def fmt_texts(names: list[string], changed: list[tuple[string, string]]): result[list[tuple[string, string]], string] do
+    case names do
+      [] -> ok(changed)
+      [name | rest] ->
+        regular = case File.lstat(name) do
+          ok(info) -> if info.type == :regular do "" else name <> ": formatter requires a regular file" end
+          error(code) -> lstat_problem(name, code)
+        end
+        if regular != "" do error(regular) else
+          case File.read_binary(name) do
+            error(code) -> error(name <> ": open " <> name <> ": " <> reason(code))
+            ok(text) ->
+              if byte_size(text) > 1048576 do error(name <> ": source exceeds 1048576 bytes") else
+                case AlchemFormat.format(text) do
+                  error(why) -> error(name <> ":" <> why)
+                  ok(formatted) -> fmt_texts(rest, if formatted == text do changed else changed ++ [{name, formatted}] end)
+                end
+              end
+          end
+        end
+    end
+  end
+
+  # The files named, and unless checking written: by way of a file beside
+  # each with its mode, put in its place.
+  def fmt_write(changed: list[tuple[string, string]], check: boolean): result[integer, string] do
+    case changed do
+      [] -> ok(0)
+      [{name, text} | rest] ->
+        IO.puts(name)
+        if check do fmt_write(rest, check) else
+          mode = case File.stat(name) do
+            ok(info) -> info.mode
+            error(_) -> 420
+          end
+          slash = Enum.at(Enum.reverse(String.split(String.replace(name, "\\", "/"), "/")), 0, "")
+          directory = if slash == name do "." else binary_part(name, 0, byte_size(name) - byte_size(slash) - 1) end
+          temporary = joined(if directory == "" do "/" else directory end, ".alchem-fmt-" <> Integer.to_string(System.monotonic_time(:nanosecond)))
+          written = with ok(_) <- File.write(temporary, text, [:binary]),
+                         ok(_) <- File.chmod(temporary, mode),
+                         ok(_) <- File.rename(temporary, name) do
+            ok(0)
+          else
+            error(code) -> error(reason(code))
+          end
+          case written do
+            ok(_) -> fmt_write(rest, check)
+            error(problem) ->
+              File.rm(temporary)
+              error(problem)
+          end
+        end
+    end
   end
 
   # Bundle the file and compile it into out. "" when that worked, else what
@@ -1055,6 +1207,7 @@ defmodule AlchemCommand do
       ["check" | rest] -> flagged("check", rest)
       ["new" | rest] -> flagged("new", rest)
       ["alx" | rest] -> alx_command(rest)
+      ["fmt" | rest] -> fmt_command(rest)
       [] -> complain(String.trim_trailing(AlchemGuide.usage(), "\n"), 2)
       ["--version" | _] -> AlchemGuide.run("version", [])
       [command | rest] ->

@@ -4,15 +4,18 @@
 
     generate-front-end-cases.py FILE...
 
-The texts are the files given and five broken copies of each, made with a
-fixed seed; for each, the SHA-256 of what the pinned lexer and parser
-(scripts/pinned-lexer, scripts/pinned-parser, built with the Go module
-cache) give for it is written."""
+The texts are the files given, five broken copies of each, made with a
+fixed seed, three copies written otherwise than the formatter writes
+them, and up to four copies with a comment put before a line that the
+pinned formatter takes; for each, the SHA-256 of what the pinned lexer, parser and formatter
+(scripts/pinned-lexer, scripts/pinned-parser, scripts/pinned-format, built
+with the Go module cache) give for it is written."""
 from pathlib import Path
 import json
 import lzma
 import os
 import random
+import re
 import subprocess
 import sys
 import tempfile
@@ -48,33 +51,68 @@ def broken(text, rng):
     return out
 
 
+def unformatted(text):
+    """Three copies of a text written otherwise than the formatter writes it."""
+    lines = text.split('\n')
+    return ['\n'.join(line.lstrip(' ') for line in lines),
+            '\n'.join(('      ' + line + '   ' if line.strip() else line) for line in lines).replace(', ', ','),
+            '\n'.join(re.sub(r' (\|>|<>|\+\+|==|=|->) ', r'  \1  ', line) + ('\n' if k % 5 == 0 else '') for k, line in enumerate(lines) if line.strip())]
+
+
 def main(arguments):
     if not arguments:
         raise SystemExit(__doc__)
     rng = random.Random(7)
-    named = []
+    named, sources = [], []
     for name in arguments:
         text = Path(name).read_bytes().decode('utf8', 'surrogateescape')
         if not text or len(text) > 60000:
             continue
         shown = os.path.relpath(name, ROOT)
+        sources.append((shown, text))
         named.append((shown, text))
         named += [(f'{shown} (broken {k + 1})', b) for k, b in enumerate(broken(text, rng))]
+        named += [(f'{shown} (unformatted {k + 1})', u) for k, u in enumerate(unformatted(text))]
     with tempfile.TemporaryDirectory() as d:
         base = Path(d)
-        for tool in ('pinned-lexer', 'pinned-parser'):
+        for tool in ('pinned-lexer', 'pinned-parser', 'pinned-format'):
             subprocess.run(['go', 'build', '-o', str(base / tool), '.'], cwd=ROOT / 'scripts' / tool, check=True, env=dict(os.environ, GOFLAGS='-mod=mod', GOPROXY='off'))
-        paths = []
-        for k, (_, text) in enumerate(named):
-            path = base / 'texts' / f'{k:05d}.alc'
-            path.parent.mkdir(exist_ok=True)
-            path.write_bytes(text.encode('utf8', 'surrogateescape'))
-            paths.append(path)
-        tokens, trees = front_end.lines(base / 'pinned-lexer', paths), front_end.lines(base / 'pinned-parser', paths)
+
+        def written(texts, folder):
+            paths = []
+            for k, text in enumerate(texts):
+                path = base / folder / f'{k:05d}.alc'
+                path.parent.mkdir(exist_ok=True)
+                path.write_bytes(text.encode('utf8', 'surrogateescape'))
+                paths.append(path)
+            return paths
+
+        # Four copies of each source with a comment put before one of its
+        # lines, at that line's indentation, of those the pinned formatter
+        # takes: where it keeps comments (#40, #42).
+        candidates = []
+        for shown, text in sources:
+            lines = text.split('\n')
+            for i in range(1, len(lines) - 1, max(1, (len(lines) - 2) // 24)):
+                pad = len(lines[i]) - len(lines[i].lstrip(' '))
+                candidates.append((shown, '\n'.join(lines[:i] + [' ' * pad + '# a comment here'] + lines[i:])))
+        tried_paths = written([text for _, text in candidates], 'candidates')
+        tried = front_end.lines(base / 'pinned-format', tried_paths)
+        taken = {}
+        for path, (shown, text) in zip(tried_paths, candidates):
+            if json.loads(tried[str(path)].decode('utf8', 'replace'))[1] != 'error':
+                taken.setdefault(shown, []).append(text)
+        for shown, _ in sources:
+            found = taken.get(shown, [])
+            for k, text in enumerate(found[::max(1, len(found) // 4)][:4]):
+                named.append((f'{shown} (commented {k + 1})', text))
+        paths = written([text for _, text in named], 'texts')
+        tokens, trees, formats = (front_end.lines(base / tool, paths) for tool in ('pinned-lexer', 'pinned-parser', 'pinned-format'))
         held = []
         for path, (shown, text) in zip(paths, named):
             tree = trees[str(path)]
             held.append({'name': shown, 'text': text, 'tokens': front_end.digest(tokens[str(path)], path), 'tree': front_end.digest(tree, path),
+                         'format': front_end.digest(formats[str(path)], path),
                          'refused': 1 if json.loads(tree.decode('utf8', 'replace'))[1] == 'error' else 0})
     front_end.CASES.write_bytes(lzma.compress(json.dumps(held).encode('utf8', 'surrogateescape'), preset=9))
     print(f'wrote {front_end.CASES.relative_to(ROOT)}: {len(held)} texts, {sum(c["refused"] for c in held)} refused, {front_end.CASES.stat().st_size} bytes')

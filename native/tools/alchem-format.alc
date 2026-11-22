@@ -1,0 +1,791 @@
+defmodule AlchemFormat do
+  import "alchem-lexer.alc"
+  import "alchem-json.alc"
+  import "alchem-parse.alc"
+  # A source file in the form the pinned compiler's formatter writes it
+  # (compiler.Format of the pinned tree), from the tree the parser gives
+  # (tools/alchem-parse.alc), or the parser's message for a file it
+  # refuses. It is the pinned formatter function for function.
+
+  # --- the tree ---------------------------------------------------------------------
+
+  def g(o: AlchemJson.J, name: string): AlchemJson.J do AlchemJson.get(o, name) end
+  def tx(o: AlchemJson.J, name: string): string do AlchemJson.text_of(AlchemJson.get(o, name)) end
+  def its(o: AlchemJson.J, name: string): list[AlchemJson.J] do AlchemJson.items_of(AlchemJson.get(o, name)) end
+  def lines_of(o: AlchemJson.J, name: string): list[string] do
+    Enum.map(its(o, name), fn v -> AlchemJson.text_of(v) end)
+  end
+  def present?(v: AlchemJson.J): boolean do not AlchemJson.null?(v) end
+  def truth(o: AlchemJson.J, name: string): boolean do AlchemJson.truth_of(AlchemJson.get(o, name)) end
+  def number_text(v: AlchemJson.J): string do
+    case v do
+      AlchemJson.J.number(text) -> text
+      _ -> "0"
+    end
+  end
+  def first(list: list[AlchemJson.J]): AlchemJson.J do
+    case list do
+      [one | _] -> one
+      [] -> AlchemJson.J.null
+    end
+  end
+  def note(p: AlchemJson.J, key: string): list[string] do lines_of(g(p, "Notes"), key) end
+  def tags_of(p: AlchemJson.J, key: string): list[string] do lines_of(g(p, "GroupTags"), key) end
+
+  # --- text -------------------------------------------------------------------------
+
+  def indent(n: integer): string do
+    if n <= 0 do "" else "  " <> indent(n - 1) end
+  end
+  def quote_text(text: string): string do AlchemLexer.go_quote(text) end
+
+  def kept_end(s: string, i: integer, set: list[integer]): integer do
+    if i > 0 and Sys.byte(Sys.addr(s) + i - 1) in set do kept_end(s, i - 1, set) else i end
+  end
+  def kept_start(s: string, i: integer, set: list[integer]): integer do
+    if i < byte_size(s) and Sys.byte(Sys.addr(s) + i) in set do kept_start(s, i + 1, set) else i end
+  end
+  def trim_right(s: string, set: list[integer]): string do binary_part(s, 0, kept_end(s, byte_size(s), set)) end
+  def trim_left(s: string, set: list[integer]): string do
+    start = kept_start(s, 0, set)
+    binary_part(s, start, byte_size(s) - start)
+  end
+  def spaces(): list[integer] do [9, 10, 11, 12, 13, 32] end
+  def trim_space(s: string): string do trim_left(trim_right(s, spaces()), spaces()) end
+  def trim_spaces_end(s: string): string do trim_right(s, [32]) end
+  def trim_prefix(s: string, prefix: string): string do
+    if String.starts_with?(s, prefix) do binary_part(s, byte_size(prefix), byte_size(s) - byte_size(prefix)) else s end
+  end
+  def trim_suffix(s: string, suffix: string): string do
+    if String.ends_with?(s, suffix) do binary_part(s, 0, byte_size(s) - byte_size(suffix)) else s end
+  end
+  def split(s: string, sep: string): list[string] do
+    case String.split(s, sep) do
+      [] -> [""]
+      found -> found
+    end
+  end
+  def newlines(s: string): integer do length(split(s, "\n")) - 1 end
+  def join(items: list[string], sep: string): string do Enum.join(items, sep) end
+
+  # A line end with the blanks around it, as one space.
+  def one_line(s: string): string do
+    parts = split(s, "\n")
+    last = length(parts) - 1
+    join(Enum.map(Enum.with_index(parts), fn {part, k} ->
+      right = if k < last do trim_right(part, [9, 32]) else part end
+      if k > 0 do trim_left(right, [9, 32]) else right end
+    end), " ")
+  end
+
+  # spaced writes a type as people do, with a space after each comma.
+  def spaced(t: string): string do String.replace(t, ",", ", ") end
+
+  def remarks(lines: list[string], n: integer): string do
+    join(Enum.map(lines, fn line -> trim_spaces_end(indent(n) <> "# " <> line) <> "\n" end), "")
+  end
+  # The comments above a clause that starts a line after pad.
+  def clause_remarks(lines: list[string], pad: string): string do
+    join(Enum.map(lines, fn line -> trim_spaces_end("# " <> line) <> "\n" <> pad end), "")
+  end
+
+  # @doc text as a heredoc at the depth.
+  def docstring(attribute: string, text: string, depth: integer): string do
+    if text == "" do "" else
+      if String.contains?(text, "\"\"\"") do indent(depth) <> "@" <> attribute <> " " <> quote_text(text) <> "\n" else
+        opener = if String.contains?(text, "\\") or String.contains?(text, "\#{") do "~S\"\"\"" else "\"\"\"" end
+        body = join(Enum.map(split(trim_suffix(text, "\n"), "\n"), fn line -> trim_spaces_end(indent(depth) <> line) <> "\n" end), "")
+        indent(depth) <> "@" <> attribute <> " " <> opener <> "\n" <> body <> indent(depth) <> "\"\"\"\n"
+      end
+    end
+  end
+
+  # A number as Go's ParseInt takes it: a sign and decimal digits, in 64 bits.
+  def integer_text?(value: string): boolean do
+    digits = if String.starts_with?(value, "-") or String.starts_with?(value, "+") do binary_part(value, 1, byte_size(value) - 1) else value end
+    if digits == "" or kept_start(digits, 0, [48, 49, 50, 51, 52, 53, 54, 55, 56, 57]) != byte_size(digits) do false else
+      plain = trim_left(digits, [48])
+      limit = if String.starts_with?(value, "-") do "9223372036854775808" else "9223372036854775807" end
+      byte_size(plain) < 19 or (byte_size(plain) == 19 and plain <= limit)
+    end
+  end
+
+  def format_tag(tag: string): string do
+    case String.split(tag, ":", [parts: 2]) do
+      [name, value] ->
+        if integer_text?(value) or value == "true" or value == "false" do name <> ": " <> value else name <> ": " <> quote_text(value) end
+      _ -> quote_text(tag)
+    end
+  end
+
+  # A heredoc as it was written, its lines and closing quotes at depth n.
+  def heredoc(written: string, n: integer): string do
+    case split(written, "\n") do
+      [head | lines] -> head <> join(Enum.map(lines, fn line -> "\n" <> (if line != "" do indent(n) <> line else "" end) end), "")
+      [] -> ""
+    end
+  end
+
+  # --- literals -----------------------------------------------------------------------
+
+  # A float as ast.FormatFloat writes it, from the shortest digits Go's JSON
+  # gives for it.
+  def format_float(given: string): string do
+    negative = String.starts_with?(given, "-")
+    unsigned = if negative do binary_part(given, 1, byte_size(given) - 1) else given end
+    sign = if negative do "-" else "" end
+    {mantissa, power} = case String.split(String.downcase(unsigned), "e", [parts: 2]) do
+      [m, x] -> {m, case Integer.parse(trim_prefix(x, "+")) do
+        ok(v) -> v
+        error(_) -> 0
+      end}
+      [m] -> {m, 0}
+      _ -> {unsigned, 0}
+    end
+    {whole, fraction} = case String.split(mantissa, ".", [parts: 2]) do
+      [w, f] -> {w, f}
+      [w] -> {w, ""}
+      _ -> {mantissa, ""}
+    end
+    all = whole <> fraction
+    lead = byte_size(all) - byte_size(trim_left(all, [48]))
+    digits = trim_right(trim_left(all, [48]), [48])
+    if digits == "" do sign <> "0.0" else
+      e = byte_size(whole) - 1 + power - lead
+      if e >= 16 or e <= -6 do
+        rest = binary_part(digits, 1, byte_size(digits) - 1)
+        shown = binary_part(digits, 0, 1) <> "." <> (if rest == "" do "0" else rest end)
+        sign <> shown <> "e" <> (if e < 0 do "-" <> Integer.to_string(0 - e) else Integer.to_string(e) end)
+      else
+        if e < 0 do sign <> "0." <> zeros(0 - e - 1) <> digits else
+          if byte_size(digits) <= e + 1 do sign <> digits <> zeros(e + 1 - byte_size(digits)) <> ".0" else
+            sign <> binary_part(digits, 0, e + 1) <> "." <> binary_part(digits, e + 1, byte_size(digits) - e - 1)
+          end
+        end
+      end
+    end
+  end
+  def zeros(k: integer): string do
+    if k <= 0 do "" else "0" <> zeros(k - 1) end
+  end
+
+  def literal(v: AlchemJson.J): string do
+    case tx(v, "Kind") do
+      "integer" -> if tx(v, "Text") != "" do tx(v, "Text") else number_text(g(v, "Integer")) end
+      "boolean" -> if truth(v, "Boolean") do "true" else "false" end
+      "float" -> format_float(number_text(g(v, "Float")))
+      "atom" -> ":" <> tx(v, "Text")
+      _ -> String.replace(quote_text(tx(v, "Text")), "\#{", "\\\#{")
+    end
+  end
+
+  # --- expressions ----------------------------------------------------------------------
+
+  def precedence(op: string): integer do
+    case op do
+      "or" -> 1
+      "|||" -> 1
+      "^^^" -> 1
+      "and" -> 2
+      "&&&" -> 2
+      "==" -> 3
+      "!=" -> 3
+      "<" -> 3
+      "<=" -> 3
+      ">" -> 3
+      ">=" -> 3
+      "in" -> 3
+      "=~" -> 3
+      "|>" -> 4
+      "<<<" -> 4
+      ">>>" -> 4
+      "<>" -> 5
+      "++" -> 5
+      "--" -> 5
+      ".." -> 5
+      "+" -> 6
+      "-" -> 6
+      "*" -> 7
+      "/" -> 7
+      "%" -> 7
+      "**" -> 8
+      _ -> -1
+    end
+  end
+
+  def piped?(e: AlchemJson.J): boolean do
+    tx(e, "Kind") == "call" and truth(e, "Pipe") and its(e, "Args") != []
+  end
+
+  # How tightly an expression holds together as the operand of an operator.
+  def binding(e: AlchemJson.J): integer do
+    kind = tx(e, "Kind")
+    if kind == "binary" do precedence(tx(e, "Op")) else
+      if kind == "in" do precedence("in") else
+        if kind == "range" do precedence("..") else
+          if piped?(e) do precedence("|>") else
+            body = its(e, "Body")
+            if kind == "value" and length(body) == 1 and tx(first(body), "Declared") == "do:" do 0 else 100 end
+          end
+        end
+      end
+    end
+  end
+
+  def within(e: AlchemJson.J, n: integer, least: integer): string do
+    text = expr(e, n)
+    if binding(e) < least do "(" <> text <> ")" else text end
+  end
+
+  def args_of(e: AlchemJson.J, n: integer): list[string] do
+    Enum.map(its(e, "Args"), fn a -> expr(a, n) end)
+  end
+
+  def keyword?(item: AlchemJson.J): boolean do tx(item, "Kind") == "tuple" and tx(item, "Op") == "keyword" end
+  def keyword_text(item: AlchemJson.J, n: integer): string do
+    args = its(item, "Args")
+    tx(g(first(args), "Value"), "Text") <> ": " <> expr(Enum.at(args, 1, AlchemJson.J.null), n)
+  end
+
+  def expr(e: AlchemJson.J, n: integer): string do
+    if AlchemJson.null?(e) do "" else
+      if tx(e, "Heredoc") != "" do heredoc(tx(e, "Heredoc"), n) else expr_kind(e, n) end
+    end
+  end
+
+  def expr_kind(e: AlchemJson.J, n: integer): string do
+    case tx(e, "Kind") do
+      "literal" -> literal(g(e, "Value"))
+      "name" -> tx(e, "Name")
+      "constant" -> "@" <> tx(e, "Name")
+      "template" -> template(e, n)
+      "funcref" -> if tx(e, "Op") != "" do "&" <> tx(e, "Name") <> "/" <> tx(e, "Op") else "&" <> tx(e, "Name") end
+      "field" -> within(g(e, "Left"), n, 100) <> "." <> tx(e, "Name")
+      "struct" ->
+        labels = lines_of(e, "Labels")
+        args = Enum.map(Enum.with_index(args_of(e, n)), fn {a, k} -> if k < length(labels) do Enum.at(labels, k, "") <> ": " <> a else a end end)
+        base = if present?(g(e, "Left")) do expr(g(e, "Left"), n) <> " | " else "" end
+        "%" <> tx(e, "Name") <> "{" <> base <> join(args, ", ") <> "}"
+      "list" -> list_expr(e, n)
+      "tuple" -> "{" <> join(args_of(e, n), ", ") <> "}"
+      "map" ->
+        keys = its(e, "Keys")
+        args = Enum.map(Enum.with_index(args_of(e, n)), fn {a, k} -> expr(Enum.at(keys, k, AlchemJson.J.null), n) <> " => " <> a end)
+        "%{" <> join(args, ", ") <> "}"
+      "call" -> call_expr(e, n)
+      "invoke" ->
+        callee = within(g(e, "Left"), n, 100)
+        shown = if tx(g(e, "Left"), "Kind") == "lambda" and not String.starts_with?(callee, "(") do "(" <> callee <> ")" else callee end
+        shown <> "(" <> join(args_of(e, n), ", ") <> ")"
+      "index" -> within(g(e, "Left"), n, 100) <> "[" <> expr(g(e, "Right"), n) <> "]"
+      "unary" -> unary(e, n)
+      "binary" -> binary(e, n)
+      "sigil" -> sigil(e)
+      "try" -> try_expr(e, n)
+      "for" -> for_expr(e, n)
+      "lambda" -> lambda(e, n)
+      "capture" -> "&(" <> expr(g(e, "Left"), n) <> ")"
+      "range" ->
+        args = its(e, "Args")
+        step = if length(args) == 1 do "//" <> within(first(args), n, precedence("+")) else "" end
+        dots = precedence("..")
+        within(g(e, "Left"), n, dots) <> ".." <> within(g(e, "Right"), n, dots + 1) <> step
+      "in" ->
+        compare = precedence("in")
+        within(g(e, "Left"), n, compare + 1) <> " in " <> within(g(e, "Right"), n, compare + 1)
+      "value" -> trim_suffix(trim_prefix(block(its(e, "Body"), n), indent(n)), "\n")
+      "closure" -> "fn(" <> params(its(e, "Params")) <> "): " <> spaced(tx(e, "ReturnType")) <> " do\n" <> block(its(e, "Body"), n + 1) <> indent(n) <> "end"
+      _ -> ""
+    end
+  end
+
+  def template(e: AlchemJson.J, n: integer): string do
+    parts = Enum.map(its(e, "Args"), fn part ->
+      if tx(part, "Op") == "text" do
+        quoted = literal(g(part, "Value"))
+        binary_part(quoted, 1, byte_size(quoted) - 2)
+      else
+        # A string cannot span lines: what was interpolated was written on
+        # one, and is put back on one.
+        "\#{" <> one_line(expr(part, n)) <> "}"
+      end
+    end)
+    "\"" <> join(parts, "") <> "\""
+  end
+
+  def list_expr(e: AlchemJson.J, n: integer): string do
+    items = its(e, "Args")
+    args = Enum.map(items, fn item -> if keyword?(item) do keyword_text(item, n) else expr(item, n) end end)
+    if present?(g(e, "Right")) do "[" <> join(args, ", ") <> " | " <> expr(g(e, "Right"), n) <> "]" else
+      # A long list puts each element on a line of its own, as does a list
+      # with comments among its elements, and one holding a heredoc among
+      # other elements.
+      remarked = its(e, "Closing") != [] or Enum.any?(items, fn item -> its(item, "Comments") != [] end)
+      heredoc = Enum.any?(items, fn item -> tx(item, "Heredoc") != "" end)
+      one = "[" <> join(args, ", ") <> "]"
+      if not remarked and (length(args) < 2 or ((byte_size(one) + 2 * n <= 98 or String.contains?(one, "\n")) and not heredoc)) do one else
+        lines = Enum.map(items, fn item ->
+          text = if keyword?(item) do keyword_text(item, n + 1) else expr(item, n + 1) end
+          remarks(lines_of(item, "Comments"), n + 1) <> indent(n + 1) <> text
+        end)
+        "[\n" <> join(lines, ",\n") <> "\n" <> remarks(lines_of(e, "Closing"), n + 1) <> indent(n) <> "]"
+      end
+    end
+  end
+
+  def call_expr(e: AlchemJson.J, n: integer): string do
+    args = its(e, "Args")
+    if truth(e, "Pipe") and args != [] do
+      if pipe_remarked?(e) do pipeline(e, n) else
+        rest = Enum.map(tl(args), fn a -> expr(a, n) end)
+        within(first(args), n, precedence("|>")) <> " |> " <> tx(e, "Name") <> "(" <> join(rest, ", ") <> ")"
+      end
+    else
+      shown = tx(e, "Name") <> "(" <> join(args_of(e, n), ", ") <> ")"
+      if tx(e, "Op") == "do" do shown <> " do\n" <> block(its(e, "Body"), n + 1) <> indent(n) <> "end" else shown end
+    end
+  end
+
+  def unary(e: AlchemJson.J, n: integer): string do
+    op = tx(e, "Op")
+    left = g(e, "Left")
+    value = g(left, "Value")
+    # The parser folds - and digits into one literal, so that literal is
+    # written.
+    if op == "-" and tx(left, "Kind") == "literal" and tx(value, "Kind") == "integer" and not String.starts_with?(number_text(g(value, "Integer")), "-") do
+      digits = number_text(g(value, "Integer"))
+      if digits == "0" do "0" else "-" <> digits end
+    else
+      operand = within(left, n, 100)
+      if op == "-" do
+        if tx(left, "Kind") == "literal" do "-(" <> operand <> ")" else "-" <> operand end
+      else
+        if op == "~~~" do op <> operand else op <> " " <> operand end
+      end
+    end
+  end
+
+  def mixed?(side: AlchemJson.J, op: string): boolean do
+    tx(side, "Kind") == "binary" and (tx(side, "Op") == "or" or tx(side, "Op") == "and") and tx(side, "Op") != op
+  end
+
+  def binary(e: AlchemJson.J, n: integer): string do
+    op = tx(e, "Op")
+    prec = precedence(op)
+    logical = op == "or" or op == "and"
+    left0 = if logical and mixed?(g(e, "Left"), op) do 100 else prec end
+    right0 = if logical and mixed?(g(e, "Right"), op) do 100 else prec + 1 end
+    {left, right} = if op == "**" do {prec + 1, prec} else
+      if prec == precedence("==") do {prec + 1, right0} else {left0, right0} end
+    end
+    within(g(e, "Left"), n, left) <> " " <> op <> " " <> within(g(e, "Right"), n, right)
+  end
+
+  def sigil_closer(open: string): string do
+    case open do
+      "/" -> "/"
+      "|" -> "|"
+      "\"" -> "\""
+      "'" -> "'"
+      "(" -> ")"
+      "[" -> "]"
+      "{" -> "}"
+      "<" -> ">"
+      _ -> ""
+    end
+  end
+
+  # The text of a sigil with a backslash before each closer, outside the
+  # \#{...} of a sigil that interpolates.
+  def sigil_escape(text: string, closer: integer, interpolates: boolean): string do
+    join(Enum.reverse(escaped(text, 0, closer, interpolates, [])), "")
+  end
+  def escaped(text: string, i: integer, closer: integer, interpolates: boolean, done: list[string]): list[string] do
+    if i >= byte_size(text) do done else
+      c = Sys.byte(Sys.addr(text) + i)
+      inner = if interpolates and c == 35 and i + 1 < byte_size(text) and Sys.byte(Sys.addr(text) + i + 1) == 123 do AlchemLexer.interpolation_end(text, i) else {0, "no"} end
+      if elem(inner, 1) == "" do escaped(text, elem(inner, 0) + 1, closer, interpolates, [binary_part(text, i, elem(inner, 0) + 1 - i) | done]) else
+        one = binary_part(text, i, 1)
+        escaped(text, i + 1, closer, interpolates, if c == closer do [one, "\\" | done] else [one | done] end)
+      end
+    end
+  end
+
+  def first_pair(text: string, pairs: list[string]): tuple[string, string] do
+    case pairs do
+      [pair | rest] ->
+        shut = binary_part(pair, 1, 1)
+        if not String.contains?(text, shut) or pair == "\"\"" do {binary_part(pair, 0, 1), shut} else first_pair(text, rest) end
+      [] -> {"/", "/"}
+    end
+  end
+
+  def sigil(e: AlchemJson.J): string do
+    text = tx(g(e, "Value"), "Text")
+    name = tx(e, "Name")
+    {open0, shut0} = first_pair(text, ["//", "()", "[]", "{}", "||", "\"\""])
+    {open1, shut1} = if name != "r" and open0 == "/" do (if String.contains?(text, ")") do {"[", "]"} else {"(", ")"} end) else {open0, shut0} end
+    {open2, shut2} = if name == "D" or name == "T" or name == "N" or name == "U" do {"[", "]"} else {open1, shut1} end
+    # A sigil keeps the delimiters it was written with.
+    closer = sigil_closer(tx(e, "Delimiter"))
+    {open, shut} = if closer != "" do {tx(e, "Delimiter"), closer} else {open2, shut2} end
+    head = Sys.byte(Sys.addr(name))
+    interpolates = head >= 97 and head <= 122
+    "~" <> name <> open <> sigil_escape(text, Sys.byte(Sys.addr(shut)), interpolates) <> shut <> tx(e, "Op")
+  end
+
+  def try_expr(e: AlchemJson.J, n: integer): string do
+    s = first(its(e, "Body"))
+    arms = its(s, "Arms")
+    handlers = Enum.map(["", "catch", "else"], fn kind ->
+      chosen = Enum.filter(arms, fn arm -> tx(arm, "Kind") == kind end)
+      if chosen == [] do "" else indent(n) <> (if kind == "" do "rescue" else kind end) <> "\n" <> format_arms(chosen, n + 1) end
+    end)
+    after_it = if its(s, "Else") != [] do indent(n) <> "after\n" <> block(its(s, "Else"), n + 1) else "" end
+    "try do\n" <> block(its(s, "Then"), n + 1) <> join(handlers, "") <> after_it <> indent(n) <> "end"
+  end
+
+  def for_expr(e: AlchemJson.J, n: integer): string do
+    s = first(its(e, "Body"))
+    generated = Enum.map(its(s, "Arms"), fn arm ->
+      part = expr(g(arm, "Guard"), n)
+      if present?(g(arm, "Pattern")) do pattern(g(arm, "Pattern")) <> " <- " <> part else part end
+    end)
+    labels = lines_of(e, "Labels")
+    parts = if length(labels) == 1 do generated ++ [Enum.at(labels, 0, "") <> ": " <> expr(first(its(e, "Args")), n)] else generated end
+    if length(labels) == 1 and Enum.at(labels, 0, "") == "reduce" do
+      "for " <> join(parts, ", ") <> " do\n" <> format_arms(its(first(its(s, "Then")), "Arms"), n + 1) <> indent(n) <> "end"
+    else
+      if tx(s, "Name") == "do:" do "for(" <> join(parts, ", ") <> ", do: " <> expr(g(first(its(s, "Then")), "Expr"), n) <> ")" else
+        "for " <> join(parts, ", ") <> " do\n" <> block(its(s, "Then"), n + 1) <> indent(n) <> "end"
+      end
+    end
+  end
+
+  # One statement that is a call or an output, written on one line.
+  def short?(body: list[AlchemJson.J], text: string): boolean do
+    length(body) == 1 and (tx(first(body), "Kind") == "call" or tx(first(body), "Kind") == "output") and newlines(text) == 1
+  end
+
+  def lambda(e: AlchemJson.J, n: integer): string do
+    body = its(e, "Body")
+    if length(body) == 1 and tx(first(body), "Kind") == "clauses" do "fn\n" <> format_arms(its(first(body), "Arms"), n + 1) <> indent(n) <> "end" else
+      head = if its(e, "Params") == [] do "fn" else "fn " <> params(its(e, "Params")) end
+      text = block(body, n + 1)
+      line = trim_space(text)
+      # A function that is one short expression stays on one line.
+      if short?(body, text) and byte_size(head) + byte_size(line) + 8 <= 72 do head <> " -> " <> line <> " end" else
+        head <> " ->\n" <> text <> indent(n) <> "end"
+      end
+    end
+  end
+
+  def params(given: list[AlchemJson.J]): string do
+    join(Enum.map(given, fn p ->
+      named = if present?(g(p, "Pattern")) do pattern(g(p, "Pattern")) else tx(p, "Name") end
+      typed = if tx(p, "Type") != "" do named <> ": " <> spaced(tx(p, "Type")) else named end
+      if present?(g(p, "Default")) do typed <> " \\\\ " <> expr(g(p, "Default"), 0) else typed end
+    end), ", ")
+  end
+
+  # --- patterns -----------------------------------------------------------------------
+
+  def pattern(p: AlchemJson.J): string do
+    case tx(p, "Kind") do
+      "name" -> tx(p, "Name")
+      "wildcard" -> "_"
+      "pin" -> "^" <> tx(p, "Name")
+      "in" -> tx(p, "Name") <> " in " <> tx(p, "Type")
+      "typed" -> tx(p, "Name") <> ": " <> spaced(tx(p, "Type"))
+      "literal" -> literal(g(p, "Value"))
+      kind ->
+        parts = Enum.map(its(p, "Children"), fn c -> pattern(c) end)
+        case kind do
+          "struct" ->
+            labels = lines_of(p, "Labels")
+            labelled = Enum.map(Enum.with_index(parts), fn {part, k} -> if k < length(labels) do Enum.at(labels, k, "") <> ": " <> part else part end end)
+            "%" <> tx(p, "Name") <> "{" <> join(labelled, ", ") <> "}"
+          "variant" -> if parts == [] do tx(p, "Name") else tx(p, "Name") <> "(" <> join(parts, ", ") <> ")" end
+          "map" ->
+            keys = its(p, "Keys")
+            keyed = Enum.map(Enum.with_index(parts), fn {part, k} -> literal(Enum.at(keys, k, AlchemJson.J.null)) <> " => " <> part end)
+            "%{" <> join(keyed, ", ") <> "}"
+          "tuple" -> "{" <> join(parts, ", ") <> "}"
+          _ ->
+            tail = if present?(g(p, "Tail")) do " | " <> pattern(g(p, "Tail")) else "" end
+            "[" <> join(parts, ", ") <> tail <> "]"
+        end
+    end
+  end
+
+  # --- pipelines and blocks -------------------------------------------------------------
+
+  def stages_of(e: AlchemJson.J, done: list[AlchemJson.J]): tuple[AlchemJson.J, list[AlchemJson.J]] do
+    if present?(e) and piped?(e) do stages_of(first(its(e, "Args")), [e | done]) else {e, done} end
+  end
+
+  # A chain of three or more stages one stage to a line, each |> under the
+  # start of the statement; anything else as expr writes it.
+  def pipeline(e: AlchemJson.J, n: integer): string do
+    {head, stages} = stages_of(e, [])
+    if length(stages) < 2 and not pipe_remarked?(e) do expr(e, n) else
+      lines = Enum.map(stages, fn stage ->
+        args = Enum.map(tl(its(stage, "Args")), fn a -> expr(a, n) end)
+        "\n" <> remarks(lines_of(stage, "Comments"), n) <> indent(n) <> "|> " <> tx(stage, "Name") <> "(" <> join(args, ", ") <> ")"
+      end)
+      within(head, n, precedence("|>")) <> join(lines, "")
+    end
+  end
+
+  # Whether a comment is written before a stage of a chain of pipes.
+  def pipe_remarked?(e: AlchemJson.J): boolean do
+    if present?(e) and piped?(e) do (if its(e, "Comments") != [] do true else pipe_remarked?(first(its(e, "Args"))) end) else false end
+  end
+
+  def block(body: list[AlchemJson.J], n: integer): string do
+    join(Enum.map(body, fn s -> statement(s, n) end), "")
+  end
+
+  def statement(s: AlchemJson.J, n: integer): string do
+    pad = indent(n)
+    kind = tx(s, "Kind")
+    e = if kind == "bind" or kind == "call" or kind == "yield" or kind == "return" do pipeline(g(s, "Expr"), n) else expr(g(s, "Expr"), n) end
+    case kind do
+      "comment" -> trim_spaces_end(pad <> "# " <> tx(s, "Name")) <> "\n"
+      "bind" ->
+        annotation = if tx(s, "Declared") != "" do ": " <> spaced(tx(s, "Declared")) else "" end
+        pad <> pattern(g(s, "Pattern")) <> annotation <> " = " <> e <> "\n"
+      "receive" ->
+        args = its(g(s, "Expr"), "Args")
+        guarded = if its(s, "Arms") != [] do " when " <> expr(g(first(its(s, "Arms")), "Guard"), n) else "" end
+        extras = join(Enum.map(tl(args), fn extra -> ", " <> expr(extra, n) end), "")
+        pad <> tx(s, "Name") <> "(" <> expr(first(args), n) <> ", " <> pattern(g(s, "Pattern")) <> guarded <> extras <> ")\n"
+      "output" -> pad <> "IO.puts(" <> e <> ")\n"
+      "assert" -> pad <> "assert(" <> e <> ")\n"
+      "call" -> pad <> e <> "\n"
+      "yield" -> pad <> e <> "\n"
+      "return" -> pad <> "return " <> e <> "\n"
+      "if" ->
+        keyword = if tx(s, "Name") == "unless" do "unless " else "if " end
+        if tx(s, "Declared") == "do:" do
+          otherwise = if its(s, "Else") != [] do ", else: " <> trim_space(block(its(s, "Else"), 0)) else "" end
+          pad <> keyword <> e <> ", do: " <> trim_space(block(its(s, "Then"), 0)) <> otherwise <> "\n"
+        else
+          otherwise = if its(s, "Else") != [] do pad <> "else\n" <> block(its(s, "Else"), n + 1) else "" end
+          pad <> keyword <> e <> " do\n" <> block(its(s, "Then"), n + 1) <> otherwise <> pad <> "end\n"
+        end
+      "cond" ->
+        arms = Enum.map(its(s, "Arms"), fn arm ->
+          head = indent(n + 1) <> expr(g(arm, "Guard"), n + 1) <> " ->"
+          remarks(lines_of(arm, "Comments"), n + 1) <> arm_text(arm, head, n + 2, n + 1)
+        end)
+        pad <> "cond do\n" <> join(arms, "") <> pad <> "end\n"
+      "with" ->
+        clauses = Enum.map(its(s, "Arms"), fn arm -> clause_remarks(lines_of(arm, "Comments"), pad <> "     ") <> pattern(g(arm, "Pattern")) <> " <- " <> expr(g(arm, "Guard"), n) end)
+        otherwise = if its(s, "Else") != [] do pad <> "else\n" <> format_arms(its(first(its(s, "Else")), "Arms"), n + 1) else "" end
+        pad <> "with " <> join(clauses, ",\n" <> pad <> "     ") <> " do\n" <> block(its(s, "Then"), n + 1) <> otherwise <> pad <> "end\n"
+      "case" -> pad <> "case " <> e <> " do\n" <> format_arms(its(s, "Arms"), n + 1) <> pad <> "end\n"
+      "check" ->
+        clauses = Enum.map(its(s, "Arms"), fn arm ->
+          noted = clause_remarks(lines_of(arm, "Comments"), pad <> "          ")
+          if AlchemJson.null?(g(arm, "Pattern")) do noted <> expr(g(arm, "Guard"), n) else noted <> pattern(g(arm, "Pattern")) <> " <- " <> expr(g(arm, "Guard"), n) end
+        end)
+        runs = if present?(g(s, "Expr")) do ["max_runs: " <> expr(g(s, "Expr"), n)] else [] end
+        pad <> "check all " <> join(clauses ++ runs, ",\n" <> pad <> "          ") <> " do\n" <> block(its(s, "Then"), n + 1) <> pad <> "end\n"
+      _ -> ""
+    end
+  end
+
+  # An arm after its head: on the head's line when it is one short
+  # expression, else below it at depth n; its closing comments at depth at.
+  def arm_text(arm: AlchemJson.J, head: string, n: integer, at: integer): string do
+    body = its(arm, "Body")
+    text = block(body, n)
+    line = trim_space(text)
+    if short?(body, text) and byte_size(head) + 1 + byte_size(line) <= 98 do head <> " " <> line <> "\n" <> remarks(lines_of(arm, "Closing"), at) else
+      head <> "\n" <> text <> remarks(lines_of(arm, "Closing"), at)
+    end
+  end
+
+  # pattern [when guard] -> body arms at depth n.
+  def format_arms(arms: list[AlchemJson.J], n: integer): string do
+    join(Enum.map(arms, fn arm ->
+      guard = if present?(g(arm, "Guard")) do " when " <> expr(g(arm, "Guard"), n) else "" end
+      head = indent(n) <> pattern(g(arm, "Pattern")) <> guard <> " ->"
+      remarks(lines_of(arm, "Comments"), n) <> arm_text(arm, head, n + 1, n)
+    end), "")
+  end
+
+  # --- the module ---------------------------------------------------------------------
+
+  def format(source: string): result[string, string] do
+    case AlchemParse.parse(source) do
+      ok(tree) -> ok(module_text(tree))
+      error(why) -> error(why)
+    end
+  end
+
+  def count(p: AlchemJson.J, names: list[string]): integer do
+    Enum.reduce(names, 0, fn name, sofar ->
+      case name do
+        "ModuleDoc" -> sofar + byte_size(tx(p, "ModuleDoc"))
+        "Tags" -> sofar + length(tags_of(p, ""))
+        _ -> sofar + length(its(p, name))
+      end
+    end)
+  end
+
+  def line_key(prefix: string, v: AlchemJson.J): string do prefix <> number_text(g(v, "Line")) end
+
+  def module_text(p: AlchemJson.J): string do
+    head = remarks(lines_of(p, "Leading"), 0) <> "defmodule " <> tx(p, "Module") <> " do\n" <> remarks(note(p, "moduledoc"), 1) <> docstring("moduledoc", tx(p, "ModuleDoc"), 1)
+    imports = Enum.map(lines_of(p, "Imports"), fn path -> remarks(note(p, "import:" <> path), 1) <> "  import " <> quote_text(path) <> "\n" end)
+    uses = Enum.map(its(p, "Uses"), fn use ->
+      options = Enum.map(Enum.zip(lines_of(use, "Names"), its(use, "Values")), fn {name, value} -> ", " <> name <> ": " <> expr(value, 1) end)
+      remarks(note(p, "use:" <> tx(use, "Module")), 1) <> "  use " <> tx(use, "Module") <> join(options, "") <> "\n"
+    end)
+    doctests = Enum.map(lines_of(p, "Doctests"), fn name -> remarks(note(p, "doctest:" <> name), 1) <> "  doctest " <> name <> "\n" end)
+    moduletags = remarks(note(p, "moduletag"), 1) <> join(Enum.map(tags_of(p, ""), fn tag -> "  @moduletag " <> format_tag(tag) <> "\n" end), "")
+    requires = Enum.map(its(p, "Requires"), fn r -> remarks(note(p, "require:" <> tx(r, "Path")), 1) <> "  require " <> quote_text(tx(r, "Path")) <> " " <> quote_text(tx(r, "Version")) <> "\n" end)
+    constants_before = count(p, ["Imports", "Requires", "Uses", "Doctests", "Tags", "ModuleDoc"]) > 0
+    constants = Enum.map(Enum.with_index(its(p, "Constants")), fn {c, i} ->
+      (if i == 0 and constants_before do "\n" else "" end) <> remarks(lines_of(c, "Comments"), 1) <> "  @" <> tx(c, "Name") <> " " <> expr(g(c, "Value"), 1) <> "\n"
+    end)
+    types_before = count(p, ["Imports", "Requires", "Constants", "ModuleDoc"]) > 0
+    types = Enum.map(Enum.with_index(its(p, "Types")), fn {decl, i} -> (if i > 0 or types_before do "\n" else "" end) <> type_text(p, decl) end)
+    protocols_before = count(p, ["Imports", "Requires", "Types", "Doctests", "Tags", "Constants", "ModuleDoc"]) > 0
+    protocols = Enum.map(Enum.with_index(its(p, "Protocols")), fn {protocol, i} -> (if i > 0 or protocols_before do "\n" else "" end) <> protocol_text(p, protocol) end)
+    macros_before = count(p, ["Imports", "Requires", "Types", "Protocols", "Doctests", "Tags", "Constants", "ModuleDoc"]) > 0
+    macros = Enum.map(Enum.with_index(its(p, "Macros")), fn {macro, i} -> (if i > 0 or macros_before do "\n" else "" end) <> macro_text(p, macro) end)
+    functions_before = count(p, ["Imports", "Requires", "Types", "Protocols", "Macros", "Doctests", "Tags", "Constants", "ModuleDoc"]) > 0
+    empty: list[string] = []
+    functions = functions_text(p, its(p, "Functions"), 0, functions_before, empty, "", empty)
+    head <> join(imports, "") <> join(uses, "") <> join(doctests, "") <> moduletags <> join(requires, "") <> join(constants, "") <> join(types, "") <> join(protocols, "") <> join(macros, "") <> functions <> remarks(lines_of(p, "Trailing"), 1) <> "end\n"
+  end
+
+  def type_text(p: AlchemJson.J, decl: AlchemJson.J): string do
+    lead = remarks(lines_of(decl, "Comments"), 1) <> docstring("typedoc", tx(decl, "Doc"), 1) <> remarks(note(p, line_key("documented:", decl)), 1)
+    if tx(decl, "Kind") == "extern" do
+      keyword = if truth(decl, "Shared") do "  extern shared type " else "  extern type " end
+      lead <> keyword <> tx(decl, "Local") <> " = " <> quote_text(tx(decl, "Extern")) <> "\n"
+    else
+      keyword = if truth(decl, "Exception") do "defexception" else (if tx(decl, "Kind") == "sum" do "type" else "struct" end) end
+      parameters = if lines_of(decl, "Params") != [] do "[" <> join(lines_of(decl, "Params"), ", ") <> "]" else "" end
+      name = tx(decl, "Name")
+      fields = Enum.map(its(decl, "Fields"), fn field ->
+        default = if present?(g(field, "Default")) do " = " <> expr(g(field, "Default"), 2) else "" end
+        remarks(note(p, "field:" <> name <> "." <> tx(field, "Name")), 2) <> "    " <> tx(field, "Name") <> ": " <> spaced(tx(field, "Type")) <> default <> "\n"
+      end)
+      variants = Enum.map(its(decl, "Variants"), fn v ->
+        shown = if its(v, "Fields") != [] do "(" <> params(its(v, "Fields")) <> ")" else "" end
+        remarks(note(p, "field:" <> name <> "." <> tx(v, "Name")), 2) <> "    " <> tx(v, "Name") <> shown <> "\n"
+      end)
+      lead <> "  " <> keyword <> " " <> tx(decl, "Local") <> parameters <> " do\n" <> join(fields, "") <> join(variants, "") <> remarks(note(p, "ends:type:" <> name), 2) <> "  end\n"
+    end
+  end
+
+  def protocol_text(p: AlchemJson.J, protocol: AlchemJson.J): string do
+    name = tx(protocol, "Name")
+    functions = Enum.map(its(protocol, "Functions"), fn f ->
+      typed = if tx(f, "Type") != "void" do ": " <> spaced(tx(f, "Type")) else "" end
+      remarks(note(p, "declares:" <> name <> "." <> tx(f, "Name")), 2) <> "    def " <> tx(f, "Name") <> "(" <> join(lines_of(f, "Params"), ", ") <> ")" <> typed <> "\n"
+    end)
+    remarks(note(p, "protocol:" <> name), 1) <> "  defprotocol " <> name <> " do\n" <> join(functions, "") <> remarks(note(p, "ends:protocol:" <> name), 2) <> "  end\n"
+  end
+
+  def macro_text(p: AlchemJson.J, macro: AlchemJson.J): string do
+    name = tx(macro, "Name")
+    parameters = if tx(macro, "Block") != "" do lines_of(macro, "Params") ++ ["do: " <> tx(macro, "Block")] else lines_of(macro, "Params") end
+    definitions = Enum.map(Enum.with_index(its(macro, "Definitions")), fn {f, j} ->
+      keyword = if truth(f, "Private") do "defp" else "def" end
+      typed = if tx(f, "Type") != "void" do ": " <> spaced(tx(f, "Type")) else "" end
+      guard = if present?(g(f, "Guard")) do " when " <> expr(g(f, "Guard"), 3) else "" end
+      (if j > 0 do "\n" else "" end) <> remarks(lines_of(f, "Comments"), 3) <> indent(3) <> keyword <> " " <> tx(f, "Name") <> "(" <> params(its(f, "Params")) <> ")" <> typed <> guard <> " do\n" <> block(its(f, "Body"), 4) <> indent(3) <> "end\n"
+    end)
+    remarks(note(p, "macro:" <> name), 1) <> "  defmacro " <> name <> "(" <> join(parameters, ", ") <> ") do\n" <> remarks(note(p, "quote:" <> name), 2) <> "    quote do\n" <> join(definitions, "") <> block(its(macro, "Body"), 3) <> remarks(note(p, "ends:macro:" <> name), 3) <> "    end\n" <> remarks(note(p, "ends:defmacro:" <> name), 2) <> "  end\n"
+  end
+
+  def separator(): string do "\u{1F}" end
+
+  def groups(group: string): list[string] do
+    empty: list[string] = []
+    if group == "" do empty else split(group, separator()) end
+  end
+
+  def shared_count(open: list[string], path: list[string], k: integer): integer do
+    if k < length(open) and k < length(path) and Enum.at(open, k, "") == Enum.at(path, k, "") do shared_count(open, path, k + 1) else k end
+  end
+
+  # The describe blocks closed down to depth, and those still open.
+  def close_to(p: AlchemJson.J, open: list[string], depth: integer, done: list[string]): tuple[string, list[string]] do
+    if length(open) > depth do
+      remark = remarks(note(p, "ends:describe:" <> join(open, separator())), length(open) + 1)
+      kept = Enum.take(open, length(open) - 1)
+      close_to(p, kept, depth, done ++ [remark <> indent(length(kept) + 1) <> "end\n"])
+    else {join(done, ""), open} end
+  end
+
+  def open_describes(p: AlchemJson.J, open: list[string], names: list[string], done: list[string]): tuple[string, list[string]] do
+    case names do
+      [name | rest] ->
+        inside = join(open ++ [name], separator())
+        at = indent(length(open) + 1)
+        tags = join(Enum.map(tags_of(p, inside), fn tag -> at <> "@tag " <> format_tag(tag) <> "\n" end), "")
+        open_describes(p, open ++ [name], rest, done ++ [remarks(note(p, "describe:" <> inside), length(open) + 1) <> tags <> at <> "describe " <> quote_text(name) <> " do\n"])
+      [] -> {join(done, ""), open}
+    end
+  end
+
+  def impl_block(f: AlchemJson.J): string do
+    if tx(f, "Protocol") == "" do "" else
+      case String.split(tx(f, "Name"), "$", [parts: 2]) do
+        [_, after_it] -> "$" <> after_it
+        _ -> ""
+      end
+    end
+  end
+
+  def functions_text(p: AlchemJson.J, functions: list[AlchemJson.J], i: integer, before: boolean, open: list[string], implementing: string, done: list[string]): string do
+    case functions do
+      [] ->
+        ending = if implementing != "" do remarks(note(p, "ends:impl:" <> implementing), 2) <> "  end\n" else "" end
+        {closed, _} = close_to(p, open, 0, [])
+        join(done, "") <> ending <> closed
+      [f | rest] ->
+        path = groups(tx(f, "Group"))
+        shared = shared_count(open, path, 0)
+        {closed, open1} = close_to(p, open, shared, [])
+        block_name = impl_block(f)
+        ended = if block_name != implementing and implementing != "" do remarks(note(p, "ends:impl:" <> implementing), 2) <> "  end\n" else "" end
+        gap = if i > 0 or before do "\n" else "" end
+        started = if block_name != implementing and block_name != "" do remarks(note(p, "impl:" <> block_name), 1) <> "  defimpl " <> tx(f, "Protocol") <> ", for: " <> tx(f, "For") <> " do\n" else "" end
+        inner = if block_name != "" do 1 else 0 end
+        {described, open2} = open_describes(p, open1, Enum.drop(path, shared), [])
+        d = length(open2) + 1 + inner
+        lead = remarks(lines_of(f, "Comments"), d) <> docstring("doc", tx(f, "Doc"), d) <> remarks(note(p, line_key("documented:", f)), d)
+        text = closed <> ended <> gap <> started <> described <> lead <> function_text(f, length(open2) + 1)
+        functions_text(p, rest, i + 1, before, open2, block_name, done ++ [text])
+    end
+  end
+
+  def function_text(f: AlchemJson.J, depth: integer): string do
+    if tx(f, "Test") != "" or truth(f, "Setup") do
+      plain = if truth(f, "All") do "setup_all" else "setup" end
+      named = if tx(f, "Test") != "" do "test " <> quote_text(tx(f, "Test")) else plain end
+      head = if length(its(f, "Params")) == 1 do named <> (if tx(f, "Test") != "" do ", " else " " end) <> params(its(f, "Params")) else named end
+      tags = join(Enum.map(lines_of(f, "Tags"), fn tag -> indent(depth) <> "@tag " <> format_tag(tag) <> "\n" end), "")
+      tags <> indent(depth) <> head <> " do\n" <> block(its(f, "Body"), depth + 1) <> indent(depth) <> "end\n"
+    else
+      keyword = if tx(f, "Extern") != "" do "extern" else (if truth(f, "Private") do "defp" else "def" end) end
+      protocol = tx(f, "Protocol") != ""
+      name = if protocol do tx(f, "ProtocolFunction") else tx(f, "Name") end
+      at = if protocol do 2 else 1 end
+      typed = if tx(f, "Type") != "void" do ": " <> spaced(tx(f, "Type")) else "" end
+      head = indent(at) <> keyword <> " " <> name <> "(" <> params(its(f, "Params")) <> ")" <> typed
+      if tx(f, "Extern") != "" do head <> " = " <> quote_text(tx(f, "Extern")) <> "\n" else
+        guard = if present?(g(f, "Guard")) do " when " <> expr(g(f, "Guard"), at) else "" end
+        head <> guard <> " do\n" <> block(its(f, "Body"), at + 1) <> indent(at) <> "end\n"
+      end
+    end
+  end
+end

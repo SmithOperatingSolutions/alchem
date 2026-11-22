@@ -4,7 +4,8 @@ help, syntax, doc, docs, agent-guide and agent-install as the pinned command
 line prints them, and version; the flags of build, run, check and new as
 the pinned command line reads them; and doc of a source file, of a module
 of the project in the current directory and of a package it imports
-(tools/alchem-sources.alc); and alx, the shell, in sessions.
+(tools/alchem-sources.alc); alx, the shell, in sessions; and fmt, which
+formats files in place (tools/alchem-format.alc).
 
 harness/commands-cases.json.xz holds scenes (scripts/generate-command-cases.py
 makes it from the pinned command): the files a directory starts with, the
@@ -166,6 +167,15 @@ ALX=[['alx','<1 + 1\nx = 5\nx * 2\n{a, b} = {1, "two"}\nb\nIO.puts("hello")\ndef
      ['alx','<text = "a = b"\nString.length(text)\nlist = [1, 2]\n[first | rest] = list\nfirst\nrest\nraise("stopped here")\nfirst + 1\n'],
      ['alx','-h'],['alx','-zz']]
 TREE=tree()
+# fmt: files formatted and not, one the parser refuses, and directories with
+# .git and artifacts, which are passed over; the command lines change the
+# files one after another.
+UNFORMATTED='\n'.join(line.lstrip(' ') for line in PROJECT['lib/shapes.alc'].split('\n')).replace(', ',',')
+FORMATTING={'p/a.alc':PROJECT['lib/version.alc'],'p/b.alc':UNFORMATTED,'p/sub/c.alc':UNFORMATTED,'p/sub/deep/d.alc':PROJECT['main.alc'].replace('  ','    '),
+    'p/sub/notes.txt':'not source\n','p/.git/e.alc':UNFORMATTED,'p/artifacts/f.alc':UNFORMATTED,'empty/notes.txt':'x\n','broken.alc':'defmodule X do\n  def f( do\nend\n',
+    'ugly.alc':UNFORMATTED,'library.alc':'def twice(n: integer): integer do n * 2 end\n'}
+FORMAT=[['fmt'],['fmt','-h'],['fmt','-zz','p'],['fmt','--check'],['fmt','missing.alc'],['fmt','empty'],['fmt','library.alc'],['fmt','--check','p'],['fmt','-check','p/a.alc'],
+    ['fmt','-check','broken.alc','p'],['fmt','p/sub'],['fmt','--check','p'],['fmt','./p/'],['fmt','--check','p'],['fmt','p','p/b.alc'],['fmt','-check=false','ugly.alc'],['fmt','--check','.'],['fmt','.'],['fmt','--','ugly.alc']]
 SCENES=[
     ('alx',{'lib.alc':'defmodule Lib do\n  @doc "Twice a number."\n  def twice(n: integer): integer do n * 2 end\nend\n'},ALX),
     ('reads',{},READS),
@@ -179,6 +189,7 @@ SCENES=[
       ['agent-install','--scope','project','--dir','sub','windsurf']]),
     ('blocks',{'AGENTS.md':'before\n'+BLOCK+'\nafter\n','.github/copilot-instructions.md':BLOCK,'one/AGENTS.md':'\n\n','two/AGENTS.md':'x\n<!-- END alchem agent guide -->\n<!-- BEGIN alchem agent guide -->\n','three/AGENTS.md':'no newline at the end'},
      [['agent-install','agents'],['agent-install','copilot'],['agent-install','--dir','one','agents'],['agent-install','--dir','two','agents'],['agent-install','--dir','three','agents'],['agent-install','--dir','three','--json','agents']]),
+    ('fmt',FORMATTING,FORMAT),
     ('docs',{'held/cli-reference.md':'old\n'},
      [['docs','--check'],['docs'],['docs'],['docs','--check'],['docs','--dir','out/ref'],['docs','--dir','./dot/'],['docs','--check','--dir','held'],['docs','--dir','held'],['docs','-check=false','-dir=held'],['docs','x']]),
 ]
@@ -238,7 +249,7 @@ def against(pinned,alchem):
         assert kept==left,(name,{path:(kept.get(path),left.get(path)) for path in set(kept)|set(left) if kept.get(path)!=left.get(path)})
     runs,_=scene(alchem,{},[['version'],['version','--json']])
     assert runs[0][0]==0 and runs[0][1].startswith('alchem ') and runs[0][2]=='' and set(json.loads(runs[1][1]))=={'version','platform'},runs
-    print(f'PASS commands: {count} command lines of help, syntax, doc (the library, files, a project and its packages), docs, agent-guide, agent-install, alx and the flags of build, run, check and new in {len(cases())} scenes as {pinned.name} prints them, with the files they write; {runs[0][1].strip()}')
+    print(f'PASS commands: {count} command lines of help, syntax, doc (the library, files, a project and its packages), docs, agent-guide, agent-install, alx, fmt and the flags of build, run, check and new in {len(cases())} scenes as {pinned.name} prints them, with the files they write; {runs[0][1].strip()}')
 
 
 def platform(compiler):
@@ -274,7 +285,7 @@ def verify(compiler):
         runs,_=scene(alchem,{},[['version'],['--version'],['version','--json'],['version','-json']])
         text=f'alchem v9.8.7-test {target}\n';data=json.dumps({'version':'v9.8.7-test','platform':target},indent=2)+'\n'
         assert runs==[[0,text,''],[0,text,''],[0,data,''],[0,data,'']],runs
-    print(f'PASS commands: {count} command lines of help, syntax, doc (the library, files, a project and its packages), docs, agent-guide, agent-install, alx and the flags of build, run, check and new in {len(known)} scenes as the pinned command line prints them, with the files they write; version for {target}; a refusal named by its function and place')
+    print(f'PASS commands: {count} command lines of help, syntax, doc (the library, files, a project and its packages), docs, agent-guide, agent-install, alx, fmt and the flags of build, run, check and new in {len(known)} scenes as the pinned command line prints them, with the files they write; version for {target}; a refusal named by its function and place')
 
 
 if __name__=='__main__':

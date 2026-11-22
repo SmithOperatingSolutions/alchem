@@ -10,16 +10,18 @@ import (
 )
 
 // TestFormatKeepsEveryCommentInPlace writes a comment before each line of
-// every Alchem file in the repository, one at a time, and checks that the
+// every Alchem file of the Go project, one at a time, and checks that the
 // formatter leaves the comment where it was: directly above the same line,
-// at its indentation, with nothing else moved.
+// at its indentation, with nothing else moved. native/ is left out: it is
+// the toolchain written in Alchem, whose formatter is checked against this
+// one, commented copies included, by its own gate (native/harness/front_end.py).
 func TestFormatKeepsEveryCommentInPlace(t *testing.T) {
 	if testing.Short() {
 		t.Skip("formats every file in the repository many times")
 	}
 	var files []string
 	filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
-		if err == nil && d.IsDir() && path != ".." && strings.HasPrefix(d.Name(), ".") {
+		if err == nil && d.IsDir() && path != ".." && (strings.HasPrefix(d.Name(), ".") || path == filepath.Join("..", "native")) {
 			return filepath.SkipDir
 		}
 		if err == nil && !d.IsDir() && strings.HasSuffix(path, ".alc") {
