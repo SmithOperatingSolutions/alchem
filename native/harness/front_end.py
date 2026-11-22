@@ -19,9 +19,11 @@ from pathlib import Path
 import hashlib
 import json
 import lzma
+import os
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from importlib.util import module_from_spec, spec_from_file_location
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +47,32 @@ def lines(program, paths):
 def digest(line, path):
     """The SHA-256 of a dump's line with the file's name taken out."""
     return hashlib.sha256(line.replace(json.dumps(str(path)).encode(), b'"FILE"', 1)).hexdigest()
+
+
+def checked(command, texts, pinned=False, flags=()):
+    """What `check` says of each text as the file x.alc of a directory of
+    its own: the status and the standard error, with the directory as D,
+    the one above it as P and the one above that as T.
+    The pinned command is given the Go toolchain, kept from the network."""
+    environment = dict(os.environ, GOTOOLCHAIN='local', GOPROXY='off', GOFLAGS='-mod=mod') if pinned else {'PATH': '/usr/bin:/bin', 'HOME': os.environ.get('HOME', '/')}
+    with tempfile.TemporaryDirectory(prefix='alchem-check-') as top:
+        def one(k):
+            directory = Path(top).resolve() / f'{k:05d}' / 'x'
+            directory.mkdir(parents=True)
+            (directory / 'x.alc').write_bytes(texts[k].encode('utf8', 'surrogateescape'))
+            run = subprocess.run([str(command), 'check', *flags, 'x.alc'], cwd=directory, capture_output=True, env=environment, timeout=600)
+            said = run.stderr.decode('utf8', 'replace').replace(str(directory), 'D').replace(str(directory.parent), 'P')
+            return [run.returncode, said.replace(str(Path(top).resolve()), 'T').replace(top, 'T')]
+        with ThreadPoolExecutor(os.cpu_count() or 2) as pool:
+            return list(pool.map(one, range(len(texts))))
+
+
+# What is said of a program the native compiler or bundler refuses that the
+# front end does not explain (spec/alchem-commands.md).
+UNEXPLAINED = ('E_COMPILE: ', 'E_BUNDLE: ')
+# How many of the texts the pinned compiler refuses check explains as it
+# does, at the least: the count may only grow.
+EXPLAINED = 1860
 
 
 def verify(compiler):
@@ -71,7 +99,20 @@ def verify(compiler):
             assert digest(trees.get(str(path), b''), path) == case['tree'], ('tree', case['name'])
             assert digest(formats.get(str(path), b''), path) == case['format'], ('format', case['name'])
             refused += case['refused']
-    print(f'PASS front_end: {len(held)} texts lexed, parsed and formatted as the pinned compiler lexes, parses and formats them, byte for byte; {refused} of them refused with its message')
+        # check: the pinned message for every text the pinned compiler
+        # refuses, and with --json its diagnostic, or none where the front
+        # end does not reach the reason.
+        refusing = [case for case in held if case['check'][0] != 0]
+        explained = 0
+        texts = [case['text'] for case in refusing]
+        for case, seen, described in zip(refusing, checked(alchem, texts), checked(alchem, texts, flags=('--json',))):
+            if seen == case['check']:
+                explained += 1
+                assert described == case['described'], ('check --json', case['name'], described, case['described'])
+            else:
+                assert seen[0] == 0 or any(word in seen[1] for word in UNEXPLAINED), ('check', case['name'], seen, case['check'])
+        assert explained >= EXPLAINED, f'check explains {explained} of the {len(refusing)} refused texts, fewer than {EXPLAINED}'
+    print(f'PASS front_end: {len(held)} texts lexed, parsed and formatted as the pinned compiler lexes, parses and formats them, byte for byte; {refused} of them refused with its message; check gives the pinned message and --json diagnostic for {explained} of the {len(refusing)} texts the pinned compiler refuses, and no other message')
 
 
 if __name__ == '__main__':

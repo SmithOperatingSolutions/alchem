@@ -43,6 +43,20 @@ quoted as Go's `strconv.Quote` quotes it (`AlchemLexer.go_quote`): a rune
 pinned Go toolchain's tables. A float is written as `ast.FormatFloat`
 writes it, from the shortest digits the tree holds.
 
+## What is said of a refused program: `tools/alchem-check.alc`
+
+`AlchemCheck.load(entry, directory)` reads a program as the pinned
+compiler's `loadProjectAs` does: the entry (`main.alc` of a directory), then
+the files it imports in sorted order, depth first, each read once, an
+import cycle, a missing file, a duplicate or reserved module name and an
+import path that is not relative said as the pinned compiler says them,
+each with the place of the import that led to it. Each file is parsed as
+`ParseModule` parses it (`AlchemParse.parse_module`, without the comments
+the formatter keeps) and checked as `ParseModule` then checks it
+(`AlchemLower.problem`, `tools/alchem-lower.alc`: `resolveConstants`, and
+the parts of `lower` that refuse, `separateArities` and `mergeClauses`). A
+package's file (`host/owner/repo@v1.2.3/...`) is not followed.
+
 ## The check
 
 `harness/front_end.py` (the gate `front_end`) holds 3,004 texts: the
@@ -59,7 +73,12 @@ SHA-256 of what the pinned lexer, parser and formatter give as JSON
 `scripts/lexer-dump.alc`, `scripts/parser-dump.alc` and
 `scripts/format-dump.alc`, built by `alchem`, must give the same bytes for
 every text: 1,541 of the texts are refused, each with the pinned message at
-the pinned place. `scripts/generate-front-end-cases.py` makes
+the pinned place. The cases also hold what the pinned command's `check`
+says of each text as a file of its own; `alchem check` must say the same,
+or, where the front end does not reach the reason, the native compiler's
+or bundler's own message (`E_COMPILE`, `E_BUNDLE`). It says the same for
+1,860 of the 2,005 texts the pinned compiler refuses; the gate holds that
+count as the least it may give (`EXPLAINED`). `scripts/generate-front-end-cases.py` makes
 the file; `scripts/compare-lexer.py` compares the lexers on any files.
 
 ## Not as the pinned front end

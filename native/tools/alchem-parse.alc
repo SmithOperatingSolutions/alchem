@@ -2677,12 +2677,18 @@ end
   end
 
   # The tree of a source file, as ParseSyntax gives it, or its message.
-  def parse(source: string): result[AlchemJson.J, string] do
+  def parse(source: string): result[AlchemJson.J, string] do parse_as(source, true) end
+
+  # The syntax of a source file as ParseModule reads it for a build, without
+  # the comments the formatter keeps: its message, or the tree.
+  def parse_module(source: string): result[AlchemJson.J, string] do parse_as(source, false) end
+
+  def parse_as(source: string, keep: boolean): result[AlchemJson.J, string] do
     if byte_size(source) > 1048576 do error(problem(1, 1, "source exceeds 1048576 bytes")) else
       case AlchemLexer.scan(source) do
         error(why) -> error(why)
         ok({tokens, comments}) ->
-          p = %P{rest: tokens, last: %AlchemLexer.Token{kind: "", text: "", line: 0, column: 0}, depth: 0, in_arm: false, probing: false, noted: [], carry: [], arm_column: 0, cond_arms: false, capture: -1, comments: comments, keep: true, tags: [], trying: 0, source: source, starts: line_starts(source)}
+          p = %P{rest: tokens, last: %AlchemLexer.Token{kind: "", text: "", line: 0, column: 0}, depth: 0, in_arm: false, probing: false, noted: [], carry: [], arm_column: 0, cond_arms: false, capture: -1, comments: comments, keep: keep, tags: [], trying: 0, source: source, starts: line_starts(source)}
           {leading, p0} = before(p, peek(p))
           with ok({_, p1}) <- expect(p0, "identifier", "defmodule"),
                ok({module, p2}) <- expect(p1, "identifier", "") do

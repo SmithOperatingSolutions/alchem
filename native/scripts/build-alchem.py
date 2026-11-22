@@ -35,8 +35,8 @@ import tempfile
 from importlib.util import module_from_spec, spec_from_file_location
 
 ROOT = Path(__file__).resolve().parents[1]
-# The formatter and the front end it reads with (fmt).
-FRONT_END = ('alchem-format.alc', 'alchem-parse.alc', 'alchem-lexer.alc', 'alchem-print-data.alc', 'alchem-json.alc', 'alchem-types.alc')
+# The formatter and the front end (fmt, and what is said of a refused program).
+FRONT_END = ('alchem-check.alc', 'alchem-lower.alc', 'alchem-format.alc', 'alchem-parse.alc', 'alchem-lexer.alc', 'alchem-print-data.alc', 'alchem-json.alc', 'alchem-types.alc')
 BUNDLER_MAIN = '  def main() do\n    System.halt(emit(run(System.argv())))\n  end\nend\n'
 
 

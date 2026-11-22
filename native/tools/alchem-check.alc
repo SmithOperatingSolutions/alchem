@@ -1,0 +1,166 @@
+defmodule AlchemCheck do
+  import "alchem-lexer.alc"
+  import "alchem-json.alc"
+  import "alchem-parse.alc"
+  import "alchem-lower.alc"
+  # What the pinned compiler says of a program it refuses, as far as this
+  # module follows it (spec/alchem-front-end.md): the program an entry file
+  # makes with the files it imports, read as the pinned compiler's
+  # loadProjectAs reads them, file by file in its order, and each parsed as
+  # ParseModule parses it. A problem is the pinned compiler's error: its
+  # text, and the place and message of the diagnostic `check --json` gives.
+
+  struct Problem do
+    # The error as the pinned command prints it.
+    text: string
+    # The diagnostic inside it: its file, line, column and message; the
+    # file is "" where there is none.
+    file: string
+    line: integer
+    column: integer
+    message: string
+  end
+
+  struct Loaded do
+    names: map[string, string]
+    active: list[string]
+    done: list[string]
+    # An import of a package, which is not followed here.
+    remote: boolean
+  end
+
+  def diagnostic(file: string, line: integer, column: integer, message: string): Problem do
+    %Problem{text: file <> ":" <> Integer.to_string(line) <> ":" <> Integer.to_string(column) <> ": " <> message, file: file, line: line, column: column, message: message}
+  end
+  def plain(text: string): Problem do %Problem{text: text, file: "", line: 0, column: 0, message: ""} end
+
+  # filepath.Clean of an absolute path.
+  def clean(path: string): string do
+    nothing: list[string] = []
+    parts = Enum.reduce(String.split(path, "/"), nothing, fn part, kept ->
+      if part == "" or part == "." do kept else
+        if part == ".." do (if kept == [] do kept else tl(kept) end) else [part | kept] end
+      end
+    end)
+    "/" <> Enum.join(Enum.reverse(parts), "/")
+  end
+  def directory_of(path: string): string do
+    case Enum.reverse(String.split(path, "/")) do
+      [_ | rest] -> if rest == [""] or rest == [] do "/" else Enum.join(Enum.reverse(rest), "/") end
+      [] -> "/"
+    end
+  end
+
+  def reserved?(name: string): boolean do
+    name in ["IO", "List", "Map", "Process", "Supervisor", "Server", "String", "Integer", "Float", "File", "System", "Time",
+      "Kernel", "Enum", "Stream", "MapSet", "Path", "Base", "Bitwise", "Regex", "Task", "Agent", "Function", "JSON", "Date", "DateTime", "NaiveDateTime", "Calendar", "URI", "Version", "Duration", "Logger", "OptionParser", "Atom", "Keyword", "Port", "Node", "Registry", "DynamicSupervisor", "TCP", "HTTP", "Task.Supervisor", "TCP.Event", "UDP", "UDP.Event", "Gen", "IO.ANSI", "Port.Info", "File.Stat", "Version.Requirement", "PortEvent", "Range", "WebSocket", "WebSocket.Event", "Markup.Value", "Markup.Parts", "Crypto", "Markup", "DiskStore"]
+  end
+  def retiring?(name: string): boolean do name in ["DiskStore", "WebSocket", "Version", "OptionParser"] end
+
+  # What Go says of a file that cannot be opened, from the library's word.
+  def reason(code: string): string do
+    case code do
+      "enoent" -> "no such file or directory"
+      "eacces" -> "permission denied"
+      "enotdir" -> "not a directory"
+      "eisdir" -> "is a directory"
+      "eloop" -> "too many levels of symbolic links"
+      "enametoolong" -> "file name too long"
+      _ -> code
+    end
+  end
+
+  # The problem the pinned compiler finds in the files of the program an
+  # entry makes, or none: none too where a file imports a package, which is
+  # not fetched here. directory is the working directory an entry that is
+  # not absolute is read from.
+  def load(entry: string, directory: string): option[Problem] do
+    absolute = clean(if String.starts_with?(entry, "/") do entry else directory <> "/" <> entry end)
+    path = case File.stat(absolute) do
+      ok(info) -> if info.type == :directory do clean(absolute <> "/main.alc") else absolute end
+      error(_) -> absolute
+    end
+    names: map[string, string] = %{}
+    nothing: list[string] = []
+    case visit(path, %Loaded{names: names, active: nothing, done: nothing, remote: false}) do
+      error(problem) -> some(problem)
+      ok(_) -> none
+    end
+  end
+
+  def visit(path: string, given: Loaded): result[Loaded, Problem] do
+    if given.remote or path in given.done do ok(given) else
+      if path in given.active do error(plain(path <> ": import cycle")) else
+        if not String.ends_with?(path, ".alc") do error(plain(path <> ": source must have .alc extension")) else
+          case File.read_binary(path) do
+            error(why) -> error(plain(path <> ": read source: " <> (if String.starts_with?(why, "open ") do why else "open " <> path <> ": " <> reason(why) end)))
+            ok(text) ->
+              if byte_size(text) > 1048576 do error(plain(path <> ": read source: source exceeds 1048576 bytes")) else
+                case AlchemParse.parse_module(text) do
+                  error(why) -> error(syntax_problem(path, why))
+                  ok(tree) ->
+                    lowered = AlchemLower.problem(tree)
+                    if lowered != "" do error(syntax_problem(path, lowered)) else declared(path, tree, given) end
+                end
+              end
+          end
+        end
+      end
+    end
+  end
+
+  # syntaxDiagnostic: a message with its place is unsupported syntax there.
+  def syntax_problem(path: string, why: string): Problem do
+    case Regex.run(~r/^([0-9]+):([0-9]+): (.*)$/, why) do
+      some([_, line, column, message]) -> diagnostic(path, String.to_integer(line), String.to_integer(column), "unsupported syntax: " <> message)
+      _ -> diagnostic(path, 1, 1, why)
+    end
+  end
+
+  def number(v: AlchemJson.J, name: string): integer do AlchemJson.int_of(AlchemJson.get(v, name)) end
+
+  def declared(path: string, tree: AlchemJson.J, given: Loaded): result[Loaded, Problem] do
+    name = AlchemJson.text_of(AlchemJson.get(tree, "Module"))
+    line = number(tree, "ModuleLine")
+    column = number(tree, "ModuleColumn")
+    case Map.get(given.names, name) do
+      some(previous) -> error(diagnostic(path, line, column, "duplicate module " <> name <> " (also " <> previous <> ")"))
+      none ->
+        if reserved?(name) and not retiring?(name) do error(diagnostic(path, line, column, "reserved module name " <> name)) else
+          imports = Enum.map(AlchemJson.items_of(AlchemJson.get(tree, "Imports")), fn v -> AlchemJson.text_of(v) end)
+          positions = AlchemJson.items_of(AlchemJson.get(tree, "ImportPositions"))
+          placed = Enum.zip(imports, positions)
+          started = %Loaded{given | names: Map.put(given.names, name, path), active: [path | given.active]}
+          case imported(path, Enum.sort(imports), placed, started) do
+            error(problem) -> error(problem)
+            ok(after_it) -> ok(%Loaded{after_it | active: Enum.filter(after_it.active, fn p -> p != path end), done: [path | after_it.done]})
+          end
+        end
+    end
+  end
+
+  def imported(path: string, imports: list[string], placed: list[tuple[string, AlchemJson.J]], given: Loaded): result[Loaded, Problem] do
+    case imports do
+      [] -> ok(given)
+      [imp | rest] ->
+        {line, column} = case Enum.filter(placed, fn {value, _} -> value == imp end) do
+          [{_, position} | _] -> {number(position, "Line"), number(position, "Column")}
+          [] -> {1, 1}
+        end
+        if imp == "" or String.contains?(imp, "\u{0}") or String.contains?(imp, "\r") or String.contains?(imp, "\n") or String.starts_with?(imp, "/") do
+          error(diagnostic(path, line, column, "imports must be nonempty relative .alc paths"))
+        else
+          if String.contains?(imp, "@") do ok(%Loaded{given | remote: true}) else
+            case visit(clean(directory_of(path) <> "/" <> imp), given) do
+              error(inner) ->
+                # wrapImport: the place of the import, and inside it the
+                # diagnostic of the file, or this place where there is none.
+                outer = diagnostic(path, line, column, "import " <> AlchemLexer.go_quote(imp) <> ": " <> inner.text)
+                error(if inner.file == "" do outer else %Problem{outer | file: inner.file, line: inner.line, column: inner.column, message: inner.message} end)
+              ok(next) -> imported(path, rest, placed, next)
+            end
+          end
+        end
+    end
+  end
+end

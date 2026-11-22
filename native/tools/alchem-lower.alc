@@ -1,0 +1,289 @@
+defmodule AlchemLower do
+  import "alchem-json.alc"
+  # What the pinned compiler's ParseModule finds wrong in a module once it
+  # is parsed, before anything is imported: its resolveConstants and the
+  # parts of lower that refuse (separateArities, mergeClauses), in their
+  # order, on the tree tools/alchem-parse.alc gives. A problem is
+  # "line:column: message", as the pinned parser gives one.
+
+  def g(o: AlchemJson.J, name: string): AlchemJson.J do AlchemJson.get(o, name) end
+  def tx(o: AlchemJson.J, name: string): string do AlchemJson.text_of(AlchemJson.get(o, name)) end
+  def its(o: AlchemJson.J, name: string): list[AlchemJson.J] do AlchemJson.items_of(AlchemJson.get(o, name)) end
+  def num(o: AlchemJson.J, name: string): integer do AlchemJson.int_of(AlchemJson.get(o, name)) end
+  def truth(o: AlchemJson.J, name: string): boolean do AlchemJson.truth_of(AlchemJson.get(o, name)) end
+  def present?(v: AlchemJson.J): boolean do not AlchemJson.null?(v) end
+
+  def at(v: AlchemJson.J, message: string): string do
+    Integer.to_string(num(v, "Line")) <> ":" <> Integer.to_string(num(v, "Column")) <> ": " <> message
+  end
+
+  # The problem, or "".
+  def problem(tree: AlchemJson.J): string do
+    constants = constants_problem(tree)
+    if constants != "" do constants else
+      {renamed, arities} = separate_arities(tree)
+      if arities != "" do arities else merge_problem(renamed) end
+    end
+  end
+
+  # --- the expressions walkExpr visits, in its order -------------------------------------
+
+  def walk_expr(e: AlchemJson.J, done: list[AlchemJson.J]): list[AlchemJson.J] do
+    if AlchemJson.null?(e) do done else
+      after_left = walk_expr(g(e, "Right"), walk_expr(g(e, "Left"), [e | done]))
+      after_args = Enum.reduce(its(e, "Args"), after_left, fn a, sofar -> walk_expr(a, sofar) end)
+      after_keys = Enum.reduce(its(e, "Keys"), after_args, fn k, sofar -> walk_expr(k, sofar) end)
+      after_params = Enum.reduce(its(e, "Params"), after_keys, fn p, sofar -> walk_expr(g(p, "Default"), sofar) end)
+      walk_block(its(e, "Body"), after_params)
+    end
+  end
+  def walk_block(body: list[AlchemJson.J], done: list[AlchemJson.J]): list[AlchemJson.J] do
+    Enum.reduce(body, done, fn s, sofar ->
+      inner = walk_block(its(s, "Else"), walk_block(its(s, "Then"), walk_expr(g(s, "Expr"), sofar)))
+      Enum.reduce(its(s, "Arms"), inner, fn arm, more -> walk_block(its(arm, "Body"), walk_expr(g(arm, "Guard"), more)) end)
+    end)
+  end
+  def walk_function(f: AlchemJson.J, done: list[AlchemJson.J]): list[AlchemJson.J] do
+    after_params = Enum.reduce(its(f, "Params"), done, fn p, sofar -> walk_expr(g(p, "Default"), sofar) end)
+    walk_block(its(f, "Body"), walk_expr(g(f, "Guard"), after_params))
+  end
+  def in_order(walked: list[AlchemJson.J]): list[AlchemJson.J] do Enum.reverse(walked) end
+
+  # --- resolveConstants -----------------------------------------------------------------
+
+  def unknown_constant(exprs: list[AlchemJson.J], known: list[string]): string do
+    case Enum.filter(exprs, fn e -> tx(e, "Kind") == "constant" and not (tx(e, "Name") in known) end) do
+      [e | _] -> at(e, "@" <> tx(e, "Name") <> " is not a module constant; define it with @" <> tx(e, "Name") <> " value")
+      [] -> ""
+    end
+  end
+
+  def constants_problem(tree: AlchemJson.J): string do
+    nothing: list[string] = []
+    {problem, known} = Enum.reduce(its(tree, "Constants"), {"", nothing}, fn c, {found, sofar} ->
+      if found != "" do {found, sofar} else {unknown_constant(in_order(walk_expr(g(c, "Value"), [])), sofar), sofar ++ [tx(c, "Name")]} end
+    end)
+    if problem != "" do problem else
+      none_yet: list[AlchemJson.J] = []
+      functions = Enum.reduce(its(tree, "Functions"), none_yet, fn f, sofar -> walk_function(f, sofar) end)
+      defaults = Enum.reduce(its(tree, "Types"), functions, fn t, sofar -> Enum.reduce(its(t, "Fields"), sofar, fn field, more -> walk_expr(g(field, "Default"), more) end) end)
+      statements = walk_block(its(tree, "Statements"), defaults)
+      macros = Enum.reduce(its(tree, "Macros"), statements, fn m, sofar -> Enum.reduce(its(m, "Definitions"), walk_block(its(m, "Body"), sofar), fn f, more -> walk_function(f, more) end) end)
+      unknown_constant(in_order(macros), known)
+    end
+  end
+
+  # --- separateArities --------------------------------------------------------------------
+
+  struct Span do
+    name: string
+    min: integer
+    max: integer
+  end
+
+  def span_of(name: string, f: AlchemJson.J): Span do
+    params = its(f, "Params")
+    %Span{name: name, min: length(Enum.filter(params, fn p -> AlchemJson.null?(g(p, "Default")) end)), max: length(params)}
+  end
+
+  def none_counted(): list[integer] do
+    nothing: list[integer] = []
+    nothing
+  end
+
+  def overloadable?(f: AlchemJson.J): boolean do tx(f, "Test") == "" and not truth(f, "Setup") and tx(f, "Protocol") == "" end
+
+  # size#2 is size, and size/2 is size.
+  def first_form(name: string): string do
+    case String.split(name, "#") do
+      [_] -> name
+      parts -> if hd(parts) == "" do name else Enum.join(Enum.take(parts, length(parts) - 1), "#") end
+    end
+  end
+  def plain_name(given: string): string do
+    name = first_form(given)
+    parts = String.split(name, "/")
+    last = Enum.at(Enum.reverse(parts), 0, "")
+    if length(parts) > 1 and byte_size(name) > byte_size(last) + 1 and Regex.match?(~r/^[+-]?[0-9]+$/, last) do binary_part(name, 0, byte_size(name) - byte_size(last) - 1) else name end
+  end
+
+  def pick(spans: list[Span], count: integer): string do
+    case Enum.filter(spans, fn s -> s.min <= count and count <= s.max end) do
+      [s | _] -> s.name
+      [] -> ""
+    end
+  end
+  def arity_list(spans: list[Span]): string do Enum.join(Enum.map(spans, fn s -> plain_name(s.name) <> "/" <> Integer.to_string(s.max) end), " or ") end
+  def reference_list(spans: list[Span]): string do Enum.join(Enum.map(spans, fn s -> "&" <> plain_name(s.name) <> "/" <> Integer.to_string(s.max) end), " or ") end
+
+  def spans_for(spans: list[tuple[string, list[Span]]], name: string): list[Span] do
+    case Enum.filter(spans, fn {key, _} -> key == name end) do
+      [{_, found} | _] -> found
+      [] -> []
+    end
+  end
+
+  # The functions with their names as separateArities gives them, and its
+  # problem or "".
+  def separate_arities(tree: AlchemJson.J): tuple[list[AlchemJson.J], string] do
+    functions = its(tree, "Functions")
+    no_counts: map[string, list[integer]] = %{}
+    counts = Enum.reduce(functions, no_counts, fn f, sofar ->
+      if overloadable?(f) do Map.put(sofar, tx(f, "Name"), Enum.uniq([length(its(f, "Params")) | Map.get(sofar, tx(f, "Name"), none_counted())])) else sofar end
+    end)
+    nothing: list[tuple[string, list[Span]]] = []
+    renamed_none: list[AlchemJson.J] = []
+    {renamed, spans, problem} = Enum.reduce(functions, {renamed_none, nothing, ""}, fn f, {done, sofar, found} ->
+      original = tx(f, "Name")
+      if found != "" or not overloadable?(f) or length(Map.get(counts, original, [])) <= 1 do {done ++ [f], sofar, found} else
+        name = original <> "/" <> Integer.to_string(length(its(f, "Params")))
+        s = span_of(name, f)
+        known = spans_for(sofar, original)
+        clash = Enum.filter(known, fn other -> other.name != s.name and s.min <= other.max and other.min <= s.max end)
+        case clash do
+          [other | _] ->
+            {done, sofar, at(f, plain_name(other.name) <> "/" <> Integer.to_string(other.max) <> " and " <> original <> "/" <> Integer.to_string(s.max) <> " both accept " <> Integer.to_string(max(s.min, other.min)) <> " arguments; a default argument overlaps another arity")}
+          [] ->
+            grown = if known == [] or Enum.at(Enum.reverse(known), 0, s).name != s.name do known ++ [s] else known end
+            kept = Enum.filter(sofar, fn {key, _} -> key != original end) ++ [{original, grown}]
+            {done ++ [AlchemJson.put(f, "Name", AlchemJson.J.text(name))], kept, found}
+        end
+      end
+    end)
+    if problem != "" or spans == [] do {renamed, problem} else
+      none_yet: list[AlchemJson.J] = []
+      walked = Enum.reduce(its(tree, "Macros"), Enum.reduce(functions, none_yet, fn f, sofar -> walk_function(f, sofar) end), fn m, sofar -> walk_block(its(m, "Body"), sofar) end)
+      calls = Enum.filter(in_order(walked), fn e -> (tx(e, "Kind") == "call" or tx(e, "Kind") == "funcref") and spans_for(spans, tx(e, "Name")) != [] end)
+      found = Enum.reduce(calls, "", fn e, sofar ->
+        if sofar != "" do sofar else
+          candidates = spans_for(spans, tx(e, "Name"))
+          name = tx(e, "Name")
+          if tx(e, "Kind") == "funcref" do
+            case Integer.parse(tx(e, "Op")) do
+              error(_) -> at(e, name <> " has more than one arity; write " <> reference_list(candidates))
+              ok(arity) -> if pick(candidates, arity) != "" do "" else at(e, name <> " takes " <> arity_list(candidates) <> "; no " <> name <> "/" <> Integer.to_string(arity) <> " is defined") end
+            end
+          else
+            count = length(its(e, "Args"))
+            if pick(candidates, count) != "" do "" else at(e, name <> " takes " <> arity_list(candidates) <> "; no " <> name <> "/" <> Integer.to_string(count) <> " is defined") end
+          end
+        end
+      end)
+      {renamed, found}
+    end
+  end
+
+  # --- mergeClauses -----------------------------------------------------------------------
+
+  # The type each parameter of a clause declares, or "": a literal pattern
+  # declares the type of its literal.
+  def clause_types(clause: AlchemJson.J): list[string] do
+    Enum.map(its(clause, "Params"), fn p ->
+      pattern = g(p, "Pattern")
+      if tx(p, "Type") == "" and present?(pattern) and tx(pattern, "Kind") == "literal" do tx(g(pattern, "Value"), "Kind") else tx(p, "Type") end
+    end)
+  end
+
+  def next_form?(types: list[string], clause: AlchemJson.J): boolean do
+    declared = clause_types(clause)
+    length(declared) == length(types) and Enum.any?(Enum.zip(declared, types), fn {t, before} -> t != "" and before != "" and t != before end)
+  end
+  def declared(types: list[string], clause: AlchemJson.J): list[string] do
+    given = clause_types(clause)
+    if length(given) != length(types) do given else Enum.map(Enum.zip(given, types), fn {t, before} -> if before != "" do before else t end end) end
+  end
+
+  def forms(group: list[AlchemJson.J]): list[list[AlchemJson.J]] do
+    nothing: list[string] = []
+    empty: list[AlchemJson.J] = []
+    done: list[list[AlchemJson.J]] = []
+    {out, current, _} = Enum.reduce(group, {done, empty, nothing}, fn clause, {sofar, form, types} ->
+      if next_form?(types, clause) do {sofar ++ [form], [clause], declared(nothing, clause)} else {sofar, form ++ [clause], declared(types, clause)} end
+    end)
+    out ++ [current]
+  end
+
+  def parameter_types(types: list[string]): string do Enum.join(types, ", ") end
+
+  # The types of a merged form's parameters and the problem mergeGroup
+  # finds, or "".
+  def merge_group(form: list[AlchemJson.J]): tuple[list[string], string] do
+    first = hd(form)
+    name = tx(first, "Name")
+    blank: list[string] = Enum.map(its(first, "Params"), fn _ -> "" end)
+    {types, returns, problem} = Enum.reduce(form, {blank, "void", ""}, fn clause, {types, returns, found} ->
+      if found != "" do {types, returns, found} else
+        if truth(clause, "Private") != truth(first, "Private") do {types, returns, at(clause, "clauses of " <> name <> " must all be def or all be defp")} else
+          if length(its(clause, "Params")) != length(types) do {types, returns, at(clause, "clauses of " <> name <> " must have the same number of parameters")} else
+            {next, clash} = Enum.reduce(Enum.with_index(Enum.zip(its(clause, "Params"), clause_types(clause))), {types, ""}, fn {{p, t}, i}, {sofar, wrong} ->
+              before = Enum.at(sofar, i, "")
+              if wrong != "" do {sofar, wrong} else
+                if t != "" and before != "" and t != before do {sofar, at(p, "parameter " <> Integer.to_string(i + 1) <> " of " <> name <> " is " <> before <> " in one clause and " <> t <> " in another")} else
+                  {if before == "" do List.replace_at(sofar, i, t) else sofar end, ""}
+                end
+              end
+            end)
+            if clash != "" do {types, returns, clash} else
+              kind = tx(clause, "Type")
+              if kind != "void" and returns != "void" and kind != returns do {next, returns, at(clause, name <> " returns " <> returns <> " in one clause and " <> kind <> " in another")} else
+                {next, if returns == "void" do kind else returns end, ""}
+              end
+            end
+          end
+        end
+      end
+    end)
+    if problem != "" do {types, problem} else
+      if returns == "void" do {types, at(first, name <> " needs a return type in one clause")} else
+        untyped = Enum.filter(Enum.with_index(types), fn {t, _} -> t == "" end)
+        case untyped do
+          [{_, i} | _] -> {types, at(Enum.at(its(first, "Params"), i, first), "parameter " <> Integer.to_string(i + 1) <> " of " <> name <> " needs a type in one clause")}
+          [] -> {types, ""}
+        end
+      end
+    end
+  end
+
+  # The clauses of one function: from i, those after it of its name.
+  def group_end(functions: list[AlchemJson.J], first: AlchemJson.J, rest: list[AlchemJson.J], taken: integer): integer do
+    case rest do
+      [next | more] ->
+        if tx(first, "Extern") == "" and its(first, "Params") != [] and tx(next, "Name") == tx(first, "Name") and tx(next, "Extern") == "" do group_end(functions, first, more, taken + 1) else taken end
+      [] -> taken
+    end
+  end
+
+  def merge_problem(functions: list[AlchemJson.J]): string do
+    nothing: list[string] = []
+    merge_from(functions, nothing)
+  end
+  def merge_from(functions: list[AlchemJson.J], seen: list[string]): string do
+    case functions do
+      [] -> ""
+      [first | rest] ->
+        count = group_end(functions, first, rest, 0)
+        group = [first | Enum.take(rest, count)]
+        left = Enum.drop(rest, count)
+        name = tx(first, "Name")
+        if tx(first, "Test") != "" or truth(first, "Setup") do merge_from(left, seen) else
+          if name in seen and tx(first, "Extern") == "" and its(first, "Params") != [] do at(first, "clauses of " <> name <> " must be adjacent") else
+            earlier: list[string] = []
+            found = Enum.reduce(forms(group), {"", earlier}, fn form, {wrong, before} ->
+              if wrong != "" do {wrong, before} else
+                merged = hd(form)
+                plain = length(form) == 1 and AlchemJson.null?(g(merged, "Guard")) and Enum.all?(its(merged, "Params"), fn p -> AlchemJson.null?(g(p, "Pattern")) and tx(p, "Type") != "" end)
+                {types, problem} = if plain do {Enum.map(its(merged, "Params"), fn p -> tx(p, "Type") end), ""} else merge_group(form) end
+                if problem != "" do {problem, before} else
+                  if truth(merged, "Private") != truth(first, "Private") do {at(merged, "clauses of " <> name <> " must all be def or all be defp"), before} else
+                    shown = parameter_types(types)
+                    if shown in before do {at(hd(form), plain_name(name) <> " is defined twice for (" <> shown <> ")"), before} else {"", before ++ [shown]} end
+                  end
+                end
+              end
+            end)
+            if elem(found, 0) != "" do elem(found, 0) else merge_from(left, seen ++ [name]) end
+          end
+        end
+    end
+  end
+end
