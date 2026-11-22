@@ -681,7 +681,7 @@ defmodule AlchemSources do
                 # Only the files of a package are followed here: those of
                 # the project itself are found by walking its directory.
                 if root == "" or String.contains?(target, "@") or String.starts_with?(target, "/") do sofar else
-                  path = tidy(Path.dirname(file) <> "/" <> target)
+                  path = tidy(Enum.join(Enum.drop(Enum.reverse(String.split(file, "/")), 1) |> Enum.reverse(), "/") <> "/" <> target)
                   if not String.starts_with?(path, root <> "/") do sofar else
                     visited(path, prefix <> binary_part(path, byte_size(root) + 1, byte_size(path) - byte_size(root) - 1), root, prefix, sofar)
                   end

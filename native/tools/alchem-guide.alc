@@ -602,6 +602,14 @@ defmodule AlchemGuide do
     if String.starts_with?(tidy, "./") and byte_size(tidy) > 2 do binary_part(tidy, 2, byte_size(tidy) - 2) else tidy end
   end
 
+  # The directory a path of this module's is in: the paths here are
+  # written with / on every system, and Path.dirname reads them with the
+  # system's separator.
+  def parent(path: string): string do
+    pieces = String.split(path, "/")
+    if length(pieces) < 2 do "." else Enum.join(Enum.take(pieces, length(pieces) - 1), "/") end
+  end
+
   # A path as it is printed: with the separators of the system.
   def shown(path: string): string do
     if Sys.windows() == 1 do String.replace(path, "/", "\\") else path end
@@ -715,7 +723,7 @@ defmodule AlchemGuide do
                     error(problem) -> error(problem)
                     ok(text) ->
                       if exists and current == text do ok({shown(path), "unchanged"}) else
-                        case File.mkdir_p(Path.dirname(path)) do
+                        case File.mkdir_p(parent(path)) do
                           error(reason) -> error(reason)
                           ok(_) ->
                             case File.write(path, text) do
