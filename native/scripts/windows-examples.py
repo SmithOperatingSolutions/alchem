@@ -194,7 +194,7 @@ GATE_SKIPPED = {
     'a228f4f023154423': 'network: connectex texts',
     '12f31b3e08f968ed': 'network: wsasend text',
     '6dfc963e00010c6f': 'network: connectex, open texts, a reset read',
-    '17b06680c1383be9': 'network: connectex texts',
+    'c69976f3d1434a12': 'network: connectex texts',
     'c73676a8ef191eae': 'nodes: connectex texts',
     '9930ad7067555640': 'processes: runs sh',
     '5bc42070a9b52aec': 'processes: runs sort',
