@@ -17,6 +17,7 @@ from pathlib import Path
 import json
 import lzma
 import os
+import hashlib
 import random
 import re
 import subprocess
@@ -111,16 +112,19 @@ def main(arguments):
             for k, text in enumerate(found[::max(1, len(found) // 4)][:4]):
                 named.append((f'{shown} (commented {k + 1})', text))
         paths = written([text for _, text in named], 'texts')
+        subprocess.run([sys.executable, str(ROOT / 'scripts/pinned-loaded.py'), str(base / 'pinned-loaded')], check=True, env=dict(os.environ, GOFLAGS='-mod=mod', GOPROXY='off'))
+        loads = front_end.loaded(base / 'pinned-loaded', [text for _, text in named], True)
+        skipped = hashlib.sha256(b'["x.alc","skipped"]\n').hexdigest()
         checks = front_end.checked(pinned, [text for _, text in named], True)
         described = front_end.checked(pinned, [text for _, text in named], True, ('--json',))
         tokens, trees, formats, modules = (front_end.lines(base / tool, paths) for tool in ('pinned-lexer', 'pinned-parser', 'pinned-format', 'pinned-module'))
         held = []
-        for path, (shown, text), check, description in zip(paths, named, checks, described):
+        for path, (shown, text), check, description, load in zip(paths, named, checks, described, loads):
             tree = trees[str(path)]
             held.append({'name': shown, 'text': text, 'tokens': front_end.digest(tokens[str(path)], path), 'tree': front_end.digest(tree, path),
                          'format': front_end.digest(formats[str(path)], path),
                          'module': front_end.digest(modules[str(path)], path),
-                         'check': check, 'described': description,
+                         'check': check, 'described': description, 'loaded': load, 'skipped': skipped,
                          'refused': 1 if json.loads(tree.decode('utf8', 'replace'))[1] == 'error' else 0})
     front_end.CASES.write_bytes(lzma.compress(json.dumps(held).encode('utf8', 'surrogateescape'), preset=9))
     print(f'wrote {front_end.CASES.relative_to(ROOT)}: {len(held)} texts, {sum(c["refused"] for c in held)} refused, {front_end.CASES.stat().st_size} bytes')

@@ -51,6 +51,23 @@ def digest(line, path):
     return hashlib.sha256(line.replace(json.dumps(str(path)).encode(), b'"FILE"', 1)).hexdigest()
 
 
+def loaded(command, texts, pinned=False):
+    """The program the loader gives the checker for each text as the file
+    x.alc of a directory of its own (scripts/loaded-dump.alc, or the pinned
+    loader of scripts/pinned-loaded.py), with the directory as D."""
+    environment = dict(os.environ, GOTOOLCHAIN='local', GOPROXY='off', GOFLAGS='-mod=mod') if pinned else {'PATH': '/usr/bin:/bin', 'HOME': os.environ.get('HOME', '/')}
+    with tempfile.TemporaryDirectory(prefix='alchem-loaded-') as top:
+        def one(k):
+            directory = Path(top).resolve() / f'{k:05d}' / 'x'
+            directory.mkdir(parents=True)
+            (directory / 'x.alc').write_bytes(texts[k].encode('utf8', 'surrogateescape'))
+            run = subprocess.run([str(command), 'x.alc'], cwd=directory, capture_output=True, env=environment, timeout=600)
+            said = run.stdout.replace(str(directory).encode(), b'D').replace(str(directory.parent).encode(), b'P')
+            return hashlib.sha256(said.replace(str(Path(top).resolve()).encode(), b'T')).hexdigest()
+        with ThreadPoolExecutor(os.cpu_count() or 2) as pool:
+            return list(pool.map(one, range(len(texts))))
+
+
 def checked(command, texts, pinned=False, flags=()):
     """What `check` says of each text as the file x.alc of a directory of
     its own: the status and the standard error, with the directory as D,
@@ -74,7 +91,7 @@ def checked(command, texts, pinned=False, flags=()):
 UNEXPLAINED = ('E_COMPILE: ', 'E_BUNDLE: ')
 # How many of the texts the pinned compiler refuses check explains as it
 # does, at the least: the count may only grow.
-EXPLAINED = 1892
+EXPLAINED = 1893
 
 
 def verify(compiler):
@@ -86,7 +103,7 @@ def verify(compiler):
         base = Path(top)
         alchem = base / 'alchem'
         builder.build(compiler, alchem, builder.platform_of(compiler).startswith('darwin/'))
-        for name in ('lexer-dump', 'parser-dump', 'format-dump', 'module-dump'):
+        for name in ('lexer-dump', 'parser-dump', 'format-dump', 'module-dump', 'loaded-dump'):
             subprocess.run([str(alchem), 'build', '-o', str(base / name), name + '.alc'], cwd=ROOT / 'scripts', check=True, timeout=1800)
         paths = []
         for k, case in enumerate(held):
@@ -102,6 +119,14 @@ def verify(compiler):
             assert digest(formats.get(str(path), b''), path) == case['format'], ('format', case['name'])
             assert digest(modules.get(str(path), b''), path) == case['module'], ('module', case['name'])
             refused += case['refused']
+        # The program the loader gives the checker, for every text the
+        # loader is followed to its end for here: the pinned one, byte for
+        # byte.
+        followed = 0
+        for case, seen in zip(held, loaded(base / 'loaded-dump', [case['text'] for case in held])):
+            if seen != case['skipped']:
+                assert seen == case['loaded'], ('loaded', case['name'])
+                followed += 1
         # check: the pinned message for every text the pinned compiler
         # refuses, and with --json its diagnostic, or none where the front
         # end does not reach the reason.
@@ -115,7 +140,7 @@ def verify(compiler):
             else:
                 assert seen[0] == 0 or any(word in seen[1] for word in UNEXPLAINED), ('check', case['name'], seen, case['check'])
         assert explained >= EXPLAINED, f'check explains {explained} of the {len(refusing)} refused texts, fewer than {EXPLAINED}'
-    print(f'PASS front_end: {len(held)} texts lexed, parsed, formatted and lowered as the pinned compiler lexes, parses, formats and lowers them, byte for byte; {refused} of them refused with its message; check gives the pinned message and --json diagnostic for {explained} of the {len(refusing)} texts the pinned compiler refuses, and no other message')
+    print(f'PASS front_end: {len(held)} texts lexed, parsed, formatted and lowered as the pinned compiler lexes, parses, formats and lowers them, byte for byte; {refused} of them refused with its message; {followed} loaded as its loader loads them; check gives the pinned message and --json diagnostic for {explained} of the {len(refusing)} texts the pinned compiler refuses, and no other message')
 
 
 if __name__ == '__main__':

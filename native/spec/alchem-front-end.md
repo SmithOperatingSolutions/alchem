@@ -83,6 +83,24 @@ shares its array with `main`'s body in Go and so holds what Go's memory
 layout leaves there, and the fields kept for the literal-only parser API
 are left out; the checker reads `Functions`.
 
+## The program as the loader gives it: `AlchemCheck.program`
+
+`AlchemCheck.program(entry, directory, analyzing)` gives the program the
+pinned compiler's loader gives its checker, as JSON: each module lowered
+(`lower_module`), its functions named in the program (`Module.name`, or
+`main`) with their module, local name and file, the calls of each body
+named as the loader names them (`Kernel.name` the builtin, a function of the
+module its name in the program), the calls of another module's function of
+more than one arity named by the one they fit (`ResolveArities`), and the
+types, protocols and modules the program takes over. Before that, the one
+check `ExpandMacros` makes of a program without macros: only a macro takes
+a `do ... end` block. A program with macros, a `use`, a `require` or a
+`doctest` is not followed to its end. `scripts/loaded-dump.alc` writes it,
+and `scripts/pinned-loaded.py` builds the pinned loader to write the same:
+the pinned module copied from the module cache with only an exported entry
+to the loader added and a test before the checker, so that it stops where
+the checker would begin.
+
 ## The checker: `tools/alchem-analyze.alc`
 
 `AlchemAnalyze.problem` follows the pinned compiler's checker
@@ -114,11 +132,13 @@ as JSON (`scripts/pinned-lexer`, `scripts/pinned-parser`,
 `scripts/parser-dump.alc`, `scripts/format-dump.alc` and
 `scripts/module-dump.alc`, built by `alchem`, must give the same bytes for
 every text: 1,541 of the texts are refused, each with the pinned message at
-the pinned place. The cases also hold what the pinned command's `check`
+the pinned place. Each text loaded as a program of its own gives the
+program the pinned loader gives, byte for byte, for all but the 8 the
+loader is not followed to its end for. The cases also hold what the pinned command's `check`
 says of each text as a file of its own; `alchem check` must say the same,
 or, where the front end does not reach the reason, the native compiler's
 or bundler's own message (`E_COMPILE`, `E_BUNDLE`). It says the same for
-1,892 of the 2,005 texts the pinned compiler refuses; the gate holds that
+1,893 of the 2,005 texts the pinned compiler refuses; the gate holds that
 count as the least it may give (`EXPLAINED`). `scripts/generate-front-end-cases.py` makes
 the file; `scripts/compare-lexer.py` compares the lexers on any files.
 
