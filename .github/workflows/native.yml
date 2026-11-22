@@ -240,13 +240,14 @@ jobs:
         # run in a few: none may.
         if: ${{ !cancelled() }}
         run: python windows-examples.py check examples ./alchem-compiler-windows.exe --jobs 4 --only gate/processes/ --repeat 20
-      - name: The supervised server that fails, three hundred times
+      - name: The supervised server that fails, a thousand times
         # The program sleeps 50 ms while its supervisor starts the server
         # again: the trace of the failure may not take the 50 ms from it
-        # (spec/windows.md, The trace and the clock).
+        # (spec/windows.md, Processes). Eight at once, so that a trace
+        # takes longer than it does alone.
         if: ${{ !cancelled() }}
-        run: python windows-examples.py check examples ./alchem-compiler-windows.exe --jobs 4 --only gate/processes/66 --repeat 300
-      - name: How long a failing call takes
+        run: python windows-examples.py check examples ./alchem-compiler-windows.exe --jobs 8 --only gate/processes/66 --repeat 1000
+      - name: How long a failing call takes on the program's clock
         if: ${{ !cancelled() }}
         run: |
           cat > trace.alc <<'ALC'
