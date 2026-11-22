@@ -46,6 +46,7 @@ extern W void wait_for(const i64 *timespec);
 extern u16 wpath1[32768], wpath2[32768];
 extern u64 regions[][2];
 extern u32 region_count;
+extern u64 frozen_ticks;        /* what the monotonic clock leaves out */
 #define REGIONS 1024
 void region_add(u64 at, u64 size);
 /* Set while a copy of the program runs (fork, below); the assembly's
@@ -115,6 +116,7 @@ extern W i32 (*imp_GetFileInformationByHandle)(u64, void *);
 extern W i32 (*imp_SetFileTime)(u64, const u64 *, const u64 *, const u64 *);
 extern W void (*imp_GetSystemTimeAsFileTime)(u64 *);
 extern W u64 (*imp_GetTickCount64)(void);
+extern W i32 (*imp_QueryPerformanceCounter)(u64 *);
 extern W i32 (*imp_MultiByteToWideChar)(u32, u32, const char *, i32, u16 *, i32);
 extern W u32 (*imp_GetEnvironmentVariableW)(const u16 *, u16 *, u32);
 extern W i32 (*imp_CreatePipe)(u64 *, u64 *, void *, u32);
@@ -1468,8 +1470,12 @@ static void spill_send(void) {
 }
 
 /* fork: the copy starts (0), or -errno. */
+/* When the copy was made, on the performance counter. */
+static u64 fork_ticks;
+
 static i64 sys_fork(unsigned char *c) {
   if (copying) return -11;                                   /* EAGAIN */
+  imp_QueryPerformanceCounter(&fork_ticks);
   if (!copy_store && !(copy_store = imp_VirtualAlloc(0, COPY_STORE, 0x2000, 4))) return -12;
   if (!protected_ranges) {
     protected_ranges = imp_VirtualAlloc(0, RANGES * 16, 0x3000, 4);
@@ -1593,6 +1599,13 @@ void copy_resume_c(void) {
     a = end;
   }
   imp_VirtualFree(stack_copy, 0, 0x8000);
+  /* The program's clock stood still while the copy ran: on Linux a fork
+     and the copy's failure take microseconds, here they can take longer
+     than a process sleeps, and a process that slept would wake before
+     the one the failure hands over to. */
+  u64 now;
+  imp_QueryPerformanceCounter(&now);
+  frozen_ticks += now - fork_ticks;
   u8 *c = copy_context;
   u64 rip = *(u64 *)(c + 0xF8) + 2;
   *(u64 *)(c + 0xF8) = rip;

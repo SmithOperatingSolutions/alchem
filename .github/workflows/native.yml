@@ -240,6 +240,35 @@ jobs:
         # run in a few: none may.
         if: ${{ !cancelled() }}
         run: python windows-examples.py check examples ./alchem-compiler-windows.exe --jobs 4 --only gate/processes/ --repeat 20
+      - name: The supervised server that fails, a thousand times
+        # The program sleeps 50 ms while its supervisor starts the server
+        # again: the trace of the failure may not take the 50 ms from it
+        # (spec/windows.md, Processes). Eight at once, so that a trace
+        # takes longer than it does alone.
+        if: ${{ !cancelled() }}
+        run: python windows-examples.py check examples ./alchem-compiler-windows.exe --jobs 8 --only gate/processes/66 --repeat 1000
+      - name: How long a failing call takes on the program's clock
+        if: ${{ !cancelled() }}
+        run: |
+          cat > trace.alc <<'ALC'
+          defmodule T do
+            def main() do
+              tree = Supervisor.start("one_for_one", 3, 1000, [Supervisor.server(:t, "permanent", 0, fn(total: integer, n: integer): tuple[integer, integer] do {total + n, div(10, n)} end)], 1)
+              found: option[server[integer, integer]] = Server.whereis(:t)
+              case found do
+                some(total) ->
+                  t0 = System.monotonic_time(:millisecond)
+                  Server.call(total, 0, 1000)
+                  t1 = System.monotonic_time(:millisecond)
+                  IO.puts(Integer.to_string(t1 - t0))
+                none -> IO.puts("none")
+              end
+              Supervisor.stop(tree, 1000)
+            end
+          end
+          ALC
+          ./alchem-compiler-windows.exe < trace.alc > trace.exe
+          seq 200 | xargs -P 4 -I{} ./trace.exe | sort -n | uniq -c | tr '\n' ' '
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: ${{ !cancelled() }}
         with:

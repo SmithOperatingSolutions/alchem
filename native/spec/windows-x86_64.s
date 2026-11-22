@@ -901,7 +901,9 @@ emulate:
         call [rip+imp_QueryPerformanceCounter]
         lea rcx, [rsp+56]
         call [rip+imp_QueryPerformanceFrequency]
+        # The time a copy of the program ran is no time of the program's.
         mov rax, [rsp+48]
+        sub rax, [rip+frozen_ticks]
         xor edx, edx
         div qword ptr [rsp+56]
         mov rcx, [r12+0xA8]
@@ -1385,6 +1387,9 @@ sleep_timer: .quad 0
 region_count: .long 0
         .globl last_error
 last_error: .long 0
+        .balign 8
+        .globl frozen_ticks
+frozen_ticks: .quad 0           # performance-counter ticks spent as copies
 busy:   .byte 0
         .balign 8
 thread_teb: .quad 0, 0, 0       # StackBase, StackLimit, DeallocationStack

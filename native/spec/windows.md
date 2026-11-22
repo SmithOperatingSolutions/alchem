@@ -202,6 +202,14 @@ The calls made so far:
   library reads and writes). The memory is the
   program's regions: what `mmap` and the layer map for it, and the block
   of the initial stack (1024 at most).
+- **The clock while a copy runs.** Making the copy and having it fail takes
+  about 25 ms here (microseconds on Linux), more when the machine is busy.
+  The monotonic clock (`clock_gettime` but for the real-time and CPU
+  clocks) leaves that time out (`frozen_ticks`): a process that sleeps
+  50 ms while a supervisor starts a failed server again would otherwise
+  wake before the server is there, as one run in some hundreds of the
+  processes gate's program for it did. CI runs that program a thousand
+  times, eight at once.
 
 ## The library's view of Windows
 
