@@ -602,6 +602,13 @@ defmodule AlchemGuide do
     if String.starts_with?(tidy, "./") and byte_size(tidy) > 2 do binary_part(tidy, 2, byte_size(tidy) - 2) else tidy end
   end
 
+  # A reason File.read gives for a file that is not there, in the words of
+  # Linux and of Windows: a file to be installed may be in a directory that
+  # is not there either.
+  def missing?(reason: string): boolean do
+    Enum.any?(["no such file or directory", "not a directory", "The system cannot find the file specified.", "The system cannot find the path specified."], fn text -> String.ends_with?(reason, ": " <> text) end)
+  end
+
   # The directory a path of this module's is in: the paths here are
   # written with / on every system, and Path.dirname reads them with the
   # system's separator.
@@ -722,7 +729,7 @@ defmodule AlchemGuide do
                 read = File.read(path)
                 missing = case read do
                   ok(_) -> ""
-                  error(reason) -> if String.ends_with?(reason, ": no such file or directory") or String.ends_with?(reason, ": not a directory") do "" else reason end
+                  error(reason) -> if missing?(reason) do "" else reason end
                 end
                 if missing != "" do error(missing) else
                   exists = case read do
