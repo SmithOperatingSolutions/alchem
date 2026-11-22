@@ -1,5 +1,7 @@
 defmodule AlchemLower do
   import "alchem-json.alc"
+  import "alchem-parse.alc"
+  import "alchem-types.alc"
   # What the pinned compiler's ParseModule finds wrong in a module once it
   # is parsed, before anything is imported: its resolveConstants and the
   # parts of lower that refuse (separateArities, mergeClauses), in their
@@ -285,5 +287,105 @@ defmodule AlchemLower do
           end
         end
     end
+  end
+
+  # --- the module as ParseModule gives it -------------------------------------------------
+
+  # The tree of a source file as the pinned compiler's ParseModule gives it,
+  # lowered as it lowers a module before it is loaded, or its message.
+  def lower_module(source: string): result[AlchemJson.J, string] do
+    case AlchemParse.parse_module(source) do
+      ok(tree) ->
+        found = problem(tree)
+        if found != "" do error(found) else ok(lowered(tree)) end
+      error(why) -> error(why)
+    end
+  end
+
+  def lowered(tree: AlchemJson.J): AlchemJson.J do qualify(tree) end
+
+  # --- Qualify ------------------------------------------------------------------------------
+  # A module's own types, and their variants, named Module.Name wherever the
+  # module names them; a module that takes over a retiring library module
+  # (Version, say) keeps the library's names.
+
+  struct Names do
+    module: string
+    local: list[string]
+    retiring: boolean
+  end
+
+  def q_name(n: Names, name: string): string do
+    first = hd(String.split(name, "."))
+    if first in n.local do q_qualified(n, name) else name end
+  end
+  def q_qualified(n: Names, name: string): string do
+    first = hd(String.split(name, "."))
+    if n.retiring and first == n.module do name else n.module <> "." <> name end
+  end
+  def q_type(n: Names, t: string): string do
+    if t == "" do t else
+      {head, args} = AlchemTypeNames.split_type(t)
+      named = if head in n.local do q_qualified(n, head) else head end
+      if args == [] and named != "tuple" do named else named <> "[" <> Enum.join(Enum.map(args, fn a -> q_type(n, a) end), ",") <> "]" end
+    end
+  end
+  def q_params(n: Names, list: AlchemJson.J): AlchemJson.J do
+    case list do
+      AlchemJson.J.list(items) -> AlchemJson.J.list(Enum.map(items, fn p -> AlchemJson.put(p, "Type", AlchemJson.J.text(q_type(n, tx(p, "Type")))) end))
+      other -> other
+    end
+  end
+  def q_map(list: AlchemJson.J, f: fn[AlchemJson.J, AlchemJson.J]): AlchemJson.J do
+    case list do
+      AlchemJson.J.list(items) -> AlchemJson.J.list(Enum.map(items, f))
+      other -> other
+    end
+  end
+  def q_pattern(n: Names, p: AlchemJson.J): AlchemJson.J do
+    if AlchemJson.null?(p) do p else
+      kind = tx(p, "Kind")
+      named = if kind == "struct" or kind == "variant" do AlchemJson.put(p, "Name", AlchemJson.J.text(q_name(n, tx(p, "Name")))) else p end
+      typed = if kind == "in" do AlchemJson.put(named, "Type", AlchemJson.J.text(q_name(n, tx(p, "Type")))) else
+        if kind == "typed" do AlchemJson.put(named, "Type", AlchemJson.J.text(q_type(n, tx(p, "Type")))) else named end
+      end
+      AlchemJson.put_all(typed, [{"Children", q_map(g(typed, "Children"), fn c -> q_pattern(n, c) end)}, {"Tail", q_pattern(n, g(typed, "Tail"))}])
+    end
+  end
+  def q_expr(n: Names, e: AlchemJson.J): AlchemJson.J do
+    if AlchemJson.null?(e) do e else
+      kind = tx(e, "Kind")
+      name = tx(e, "Name")
+      renamed = if kind == "struct" or ((kind == "call" or kind == "name" or kind == "funcref") and name != "" and upper_first?(name)) do AlchemJson.put(e, "Name", AlchemJson.J.text(q_name(n, name))) else e end
+      typed = if kind == "closure" do AlchemJson.put_all(renamed, [{"Params", q_params(n, g(renamed, "Params"))}, {"ReturnType", AlchemJson.J.text(q_type(n, tx(renamed, "ReturnType")))}]) else renamed end
+      AlchemJson.put_all(typed, [{"Left", q_expr(n, g(typed, "Left"))}, {"Right", q_expr(n, g(typed, "Right"))},
+        {"Args", q_map(g(typed, "Args"), fn a -> q_expr(n, a) end)}, {"Keys", q_map(g(typed, "Keys"), fn k -> q_expr(n, k) end)},
+        {"Body", q_block(n, g(typed, "Body"))}])
+    end
+  end
+  def q_block(n: Names, body: AlchemJson.J): AlchemJson.J do
+    q_map(body, fn s ->
+      arms = q_map(g(s, "Arms"), fn arm -> AlchemJson.put_all(arm, [{"Pattern", q_pattern(n, g(arm, "Pattern"))}, {"Guard", q_expr(n, g(arm, "Guard"))}, {"Body", q_block(n, g(arm, "Body"))}]) end)
+      AlchemJson.put_all(s, [{"Declared", AlchemJson.J.text(q_type(n, tx(s, "Declared")))}, {"Pattern", q_pattern(n, g(s, "Pattern"))}, {"Expr", q_expr(n, g(s, "Expr"))},
+        {"Then", q_block(n, g(s, "Then"))}, {"Else", q_block(n, g(s, "Else"))}, {"Arms", arms}])
+    end)
+  end
+  def upper_first?(name: string): boolean do
+    c = Sys.byte(Sys.addr(name))
+    c >= 65 and c <= 90
+  end
+
+  def qualify(tree: AlchemJson.J): AlchemJson.J do
+    module = tx(tree, "Module")
+    n = %Names{module: module, local: Enum.map(its(tree, "Types"), fn d -> tx(d, "Local") end), retiring: module in ["DiskStore", "WebSocket", "Version", "OptionParser"]}
+    types = q_map(g(tree, "Types"), fn d ->
+      AlchemJson.put_all(d, [{"Name", AlchemJson.J.text(q_qualified(n, tx(d, "Local")))}, {"Fields", q_params(n, g(d, "Fields"))},
+        {"Variants", q_map(g(d, "Variants"), fn v -> AlchemJson.put(v, "Fields", q_params(n, g(v, "Fields"))) end)}])
+    end)
+    functions = q_map(g(tree, "Functions"), fn f ->
+      params = q_map(q_params(n, g(f, "Params")), fn p -> AlchemJson.put(p, "Pattern", q_pattern(n, g(p, "Pattern"))) end)
+      AlchemJson.put_all(f, [{"Params", params}, {"Type", AlchemJson.J.text(q_type(n, tx(f, "Type")))}, {"Guard", q_expr(n, g(f, "Guard"))}, {"Body", q_block(n, g(f, "Body"))}])
+    end)
+    AlchemJson.put_all(tree, [{"Types", types}, {"Functions", functions}])
   end
 end

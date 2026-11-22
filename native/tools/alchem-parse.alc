@@ -2688,7 +2688,7 @@ end
       case AlchemLexer.scan(source) do
         error(why) -> error(why)
         ok({tokens, comments}) ->
-          p = %P{rest: tokens, last: %AlchemLexer.Token{kind: "", text: "", line: 0, column: 0}, depth: 0, in_arm: false, probing: false, noted: [], carry: [], arm_column: 0, cond_arms: false, capture: -1, comments: comments, keep: keep, tags: [], trying: 0, source: source, starts: line_starts(source)}
+          p = %P{rest: tokens, last: %AlchemLexer.Token{kind: "", text: "", line: 0, column: 0}, depth: 0, in_arm: false, probing: false, noted: [], carry: [], arm_column: 0, cond_arms: false, capture: -1, comments: comments, keep: keep, tags: [], trying: 0, source: if keep do source else "" end, starts: if keep do line_starts(source) else %{} end}
           {leading, p0} = before(p, peek(p))
           with ok({_, p1}) <- expect(p0, "identifier", "defmodule"),
                ok({module, p2}) <- expect(p1, "identifier", "") do
