@@ -1,0 +1,1934 @@
+[
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      _ -> 2\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      _ -> 2\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      nope(1)\n    rescue\n      _ -> 2\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:7: undefined function nope\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      nope(1)\n    rescue\n      _ -> 2\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:7: undefined function nope\n"
+]
+},
+{
+"text": "defmodule Main do\n  defexception Oops do\n    message: string\n    code: integer\n  end\n  struct Plain do\n    n: integer\n  end\n  def main() do\n    x = try do\n      1\n    rescue\n      e in Plain -> 2\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:13:7: Main.Plain is not an exception; declare it with defexception\n"
+]
+},
+{
+"text": "defmodule Main do\n  defexception Oops do\n    message: string\n    code: integer\n  end\n  struct Plain do\n    n: integer\n  end\n  def main() do\n    x = try do\n      1\n    rescue\n      e in Plain -> 2\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:13:7: Main.Plain is not an exception; declare it with defexception\n"
+]
+},
+{
+"text": "defmodule Main do\n  defexception Oops do\n    message: string\n    code: integer\n  end\n  struct Plain do\n    n: integer\n  end\n  def main() do\n    x = try do\n      1\n    rescue\n      e in Oops -> e.code\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:15:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  defexception Oops do\n    message: string\n    code: integer\n  end\n  struct Plain do\n    n: integer\n  end\n  def main() do\n    x = try do\n      1\n    rescue\n      e in Oops -> e.code\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  defexception Oops do\n    message: string\n    code: integer\n  end\n  struct Plain do\n    n: integer\n  end\n  def main() do\n    x = try do\n      1\n    rescue\n      e in Oops -> e.nothing\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:13:20: Oops has no field nothing\n"
+]
+},
+{
+"text": "defmodule Main do\n  defexception Oops do\n    message: string\n    code: integer\n  end\n  struct Plain do\n    n: integer\n  end\n  def main() do\n    x = try do\n      1\n    rescue\n      e in Oops -> e.nothing\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:13:20: Oops has no field nothing\n"
+]
+},
+{
+"text": "defmodule Main do\n  defexception Oops do\n    message: string\n    code: integer\n  end\n  struct Plain do\n    n: integer\n  end\n  def main() do\n    x = try do\n      1\n    rescue\n      %Oops{code: c} -> c\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:15:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  defexception Oops do\n    message: string\n    code: integer\n  end\n  struct Plain do\n    n: integer\n  end\n  def main() do\n    x = try do\n      1\n    rescue\n      %Oops{code: c} -> c\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  defexception Oops do\n    message: string\n    code: integer\n  end\n  struct Plain do\n    n: integer\n  end\n  def main() do\n    x = try do\n      1\n    rescue\n      %Plain{n: c} -> c\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:13:7: Main.Plain is not an exception; declare it with defexception\n"
+]
+},
+{
+"text": "defmodule Main do\n  defexception Oops do\n    message: string\n    code: integer\n  end\n  struct Plain do\n    n: integer\n  end\n  def main() do\n    x = try do\n      1\n    rescue\n      %Plain{n: c} -> c\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:13:7: Main.Plain is not an exception; declare it with defexception\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      m: integer -> m\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:7: a rescue arm matches a message or an exception; name: type is for catch\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      m: integer -> m\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:7: a rescue arm matches a message or an exception; name: type is for catch\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      m -> String.length(m)\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      m -> String.length(m)\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      m -> m\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:12: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      m -> m\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:12: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x: integer = try do\n      1\n    rescue\n      _ -> \"a\"\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:12: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x: integer = try do\n      1\n    rescue\n      _ -> \"a\"\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:12: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      IO.puts(\"a\")\n    rescue\n      _ -> 1\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: the body of try and every rescue, catch and else arm must end in a value\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      IO.puts(\"a\")\n    rescue\n      _ -> 1\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: the body of try and every rescue, catch and else arm must end in a value\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      _ -> 2\n    else\n      n -> n + 1\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:10:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      _ -> 2\n    else\n      n -> n + 1\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      IO.puts(\"a\")\n    rescue\n      _ -> 2\n    else\n      n -> n + 1\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: the body of a try with else must end in a value\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      IO.puts(\"a\")\n    rescue\n      _ -> 2\n    else\n      n -> n + 1\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: the body of a try with else must end in a value\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      \"a\"\n    rescue\n      _ -> 2\n    else\n      n -> n + 1\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:16: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      \"a\"\n    rescue\n      _ -> 2\n    else\n      n -> n + 1\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:16: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      _ -> 2\n    after\n      IO.puts(\"t\")\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:10:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      _ -> 2\n    after\n      IO.puts(\"t\")\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      _ -> 2\n    after\n      nope(2)\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:7: undefined function nope\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      _ -> 2\n    after\n      nope(2)\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:7: undefined function nope\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw(5)\n      1\n    catch\n      v: integer -> v\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw(5)\n      1\n    catch\n      v: integer -> v\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw(5)\n      1\n    catch\n      v: nothing -> 2\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:7: unknown type \"nothing\"\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw(5)\n      1\n    catch\n      v: nothing -> 2\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:7: unknown type \"nothing\"\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw(5)\n      1\n    catch\n      v: string -> v\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw(5)\n      1\n    catch\n      v: string -> v\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw(5)\n      1\n    catch\n      v -> v\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw(5)\n      1\n    catch\n      v -> v\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    try do\n      IO.puts(\"a\")\n    rescue\n      _ -> IO.puts(\"b\")\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    try do\n      IO.puts(\"a\")\n    rescue\n      _ -> IO.puts(\"b\")\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    try do\n      IO.puts(\"a\")\n    rescue\n      _ -> nope(3)\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:12: undefined function nope\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    try do\n      IO.puts(\"a\")\n    rescue\n      _ -> nope(3)\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:12: undefined function nope\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    try do\n      1\n    rescue\n      m -> m\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:7: expected binding or function call\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    try do\n      1\n    rescue\n      m -> m\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:7: expected binding or function call\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      raise(\"boom\")\n    rescue\n      m -> m\n    end\n    y: integer = x\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:18: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      raise(\"boom\")\n    rescue\n      m -> m\n    end\n    y: integer = x\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:18: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      []\n    rescue\n      _ -> [1]\n    end\n    y: integer = x\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:18: expected integer, found list[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      []\n    rescue\n      _ -> [1]\n    end\n    y: integer = x\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:18: expected integer, found list[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      []\n    rescue\n      _ -> []\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:12: empty list requires an expected list type\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      []\n    rescue\n      _ -> []\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:12: empty list requires an expected list type\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      raise(\"boom\")\n    rescue\n      _ -> raise(\"again\")\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:12: cannot infer the type this raise stands in for\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      raise(\"boom\")\n    rescue\n      _ -> raise(\"again\")\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:12: cannot infer the type this raise stands in for\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      m when String.length(m) > 2 -> 2\n      _ -> 3\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      m when String.length(m) > 2 -> 2\n      _ -> 3\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      m when m -> 2\n      _ -> 3\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:14: expected boolean, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    rescue\n      m when m -> 2\n      _ -> 3\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:14: expected boolean, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      if 1 > 2 do\n        return 5\n      end\n      1\n    rescue\n      _ -> 2\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:9: return cannot be used inside an if or case that produces a value\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      if 1 > 2 do\n        return 5\n      end\n      1\n    rescue\n      _ -> 2\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:9: return cannot be used inside an if or case that produces a value\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2026-02-30]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 2026-02-30\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2026-02-30]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 2026-02-30\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2024-02-29]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2024-02-29]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2023-02-29]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 2023-02-29\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2023-02-29]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 2023-02-29\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[1900-02-29]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 1900-02-29\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[1900-02-29]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 1900-02-29\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2000-02-29]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2000-02-29]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[ 2026-01-05 ]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[ 2026-01-05 ]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2026-1-05]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 2026-1-05\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2026-1-05]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 2026-1-05\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2026-13-01]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 2026-13-01\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2026-13-01]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 2026-13-01\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2026-00-10]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 2026-00-10\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2026-00-10]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 2026-00-10\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2026-01-00]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 2026-01-00\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2026-01-00]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 2026-01-00\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[0000-01-01]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[0000-01-01]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2026-01-05x]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 2026-01-05x\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2026-01-05x]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 2026-01-05x\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[26-01-05]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 26-01-05\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[26-01-05]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 26-01-05\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2026/01/05]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 2026/01/05\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2026/01/05]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found 2026/01/05\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found \n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~D needs a valid ISO 8601 Date, found \n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:00:00.123456]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:00:00.123456]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[1:02:03]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[1:02:03]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[24:00:00]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~T needs a valid ISO 8601 Time, found 24:00:00\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[24:00:00]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~T needs a valid ISO 8601 Time, found 24:00:00\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[23:59:59]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[23:59:59]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:00:60]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~T needs a valid ISO 8601 Time, found 10:00:60\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:00:60]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~T needs a valid ISO 8601 Time, found 10:00:60\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:60:00]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~T needs a valid ISO 8601 Time, found 10:60:00\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:60:00]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~T needs a valid ISO 8601 Time, found 10:60:00\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:00:00,5]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:00:00,5]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:00:00.]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~T needs a valid ISO 8601 Time, found 10:00:00.\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:00:00.]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~T needs a valid ISO 8601 Time, found 10:00:00.\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:0:00]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~T needs a valid ISO 8601 Time, found 10:0:00\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:0:00]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~T needs a valid ISO 8601 Time, found 10:0:00\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:00:0]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~T needs a valid ISO 8601 Time, found 10:00:0\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:00:0]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~T needs a valid ISO 8601 Time, found 10:00:0\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:00]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~T needs a valid ISO 8601 Time, found 10:00\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:00]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~T needs a valid ISO 8601 Time, found 10:00\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:00:00.1234567890123]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:00:00.1234567890123]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:00:00.5x]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~T needs a valid ISO 8601 Time, found 10:00:00.5x\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~T[10:00:00.5x]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~T needs a valid ISO 8601 Time, found 10:00:00.5x\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~N[2026-01-05 13:04:05]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~N[2026-01-05 13:04:05]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~N[2026-01-05T13:04:05]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~N[2026-01-05T13:04:05]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~N[2026-01-05  13:04:05]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~N[2026-01-05  13:04:05]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~N[2026-01-0513:04:05]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~N needs a valid ISO 8601 NaiveDateTime, found 2026-01-0513:04:05\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~N[2026-01-0513:04:05]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~N needs a valid ISO 8601 NaiveDateTime, found 2026-01-0513:04:05\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~N[2026-01-05t13:04:05]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~N needs a valid ISO 8601 NaiveDateTime, found 2026-01-05t13:04:05\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~N[2026-01-05t13:04:05]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~N needs a valid ISO 8601 NaiveDateTime, found 2026-01-05t13:04:05\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~N[2026-01-05 13:04:05Z]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~N needs a valid ISO 8601 NaiveDateTime, found 2026-01-05 13:04:05Z\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~N[2026-01-05 13:04:05Z]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~N needs a valid ISO 8601 NaiveDateTime, found 2026-01-05 13:04:05Z\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~N[2026-01-05 13:04:05.25]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~N[2026-01-05 13:04:05.25]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~N[2026-01-05]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~N needs a valid ISO 8601 NaiveDateTime, found 2026-01-05\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~N[2026-01-05]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~N needs a valid ISO 8601 NaiveDateTime, found 2026-01-05\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05Z]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05Z]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05 13:04:05Z]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05 13:04:05Z]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05 13:04:05+02:00]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05 13:04:05+02:00]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05.5-07:00]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05.5-07:00]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05+25:00]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05+25:00\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05+25:00]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05+25:00\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05z]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05z\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05z]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05z\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05+24:60]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05+24:60]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05+0200]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05+0200\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05+0200]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05+0200\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05+02]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05+02\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05+02]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05+02\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05 Z]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05 Z\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05 Z]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05 Z\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T3:04:05Z]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T3:04:05Z]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05*02:00]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05*02:00\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05*02:00]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05*02:00\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05+2:00]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05+2:00\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05+2:00]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05+2:00\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05+02:61]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05+02:61\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05+02:61]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-05T13:04:05+02:61\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-03T0:0:00:00Z]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-03T0:0:00:00Z\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-03T0:0:00:00Z]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~U needs a valid ISO 8601 DateTime, found 2026-01-03T0:0:00:00Z\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05,123Z]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-05T13:04:05,123Z]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d: Time = ~D[2026-01-01]\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:15: expected Time, found Date\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d: Time = ~D[2026-01-01]\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:15: expected Time, found Date\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2026-01-01]\n    y = d.year + d.nothing\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:18: Date has no field nothing\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~D[2026-01-01]\n    y = d.year + d.nothing\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:18: Date has no field nothing\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-01T00:00:00Z]\n    z: integer = d.time_zone\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:18: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    d = ~U[2026-01-01T00:00:00Z]\n    z: integer = d.time_zone\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:18: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    c = ~c\"abc\"\n    n: string = c\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found list[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    c = ~c\"abc\"\n    n: string = c\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found list[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    c: list[string] = ~c\"ab\"\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:23: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    c: list[string] = ~c\"ab\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:23: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    c = ~c\"\"\n    n: string = c\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found list[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    c = ~c\"\"\n    n: string = c\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found list[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    c = ~C\"a#{1}\"\n    n: string = c\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found list[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    c = ~C\"a#{1}\"\n    n: string = c\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found list[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    n = 1\n    c = ~c\"a#{n}\"\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:9: ~c does not interpolate\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    n = 1\n    c = ~c\"a#{n}\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:9: ~c does not interpolate\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    h = ~h\"<b>x</b>\"\n    n: string = h\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found Markup\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    h = ~h\"<b>x</b>\"\n    n: string = h\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found Markup\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = \"x\"\n    h = ~h\"<b>#{w}</b>\"\n    n: string = h\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:17: expected string, found Markup\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = \"x\"\n    h = ~h\"<b>#{w}</b>\"\n    n: string = h\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:17: expected string, found Markup\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = {1, 2}\n    h = ~h\"<b>#{w}</b>\"\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:9: ~h cannot put a tuple[integer,integer] into HTML: a value in a template must be a string, integer, float, atom, Markup or list of Markup; convert it to a string first\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = {1, 2}\n    h = ~h\"<b>#{w}</b>\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:9: ~h cannot put a tuple[integer,integer] into HTML: a value in a template must be a string, integer, float, atom, Markup or list of Markup; convert it to a string first\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = [1]\n    h = ~h\"<b>#{w}</b>\"\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:9: ~h cannot put a list[integer] into HTML: a value in a template must be a string, integer, float, atom, Markup or list of Markup; convert it to a string first\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = [1]\n    h = ~h\"<b>#{w}</b>\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:9: ~h cannot put a list[integer] into HTML: a value in a template must be a string, integer, float, atom, Markup or list of Markup; convert it to a string first\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = 1.5\n    h = ~h\"<b>#{w}</b>#{:a}#{1}\"\n    n: string = h\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:17: expected string, found Markup\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = 1.5\n    h = ~h\"<b>#{w}</b>#{:a}#{1}\"\n    n: string = h\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:17: expected string, found Markup\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    h = ~h\"x\"i\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~h takes no modifiers\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    h = ~h\"x\"i\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~h takes no modifiers\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    h = ~H\"x#{1}\"\n    n: string = h\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found Markup\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    h = ~H\"x#{1}\"\n    n: string = h\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found Markup\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    h = ~H\"x\"q\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~H takes no modifiers\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    h = ~H\"x\"q\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~H takes no modifiers\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    h = ~h\"<i>#{nope}</i>\"\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:15: undefined binding nope\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    h = ~h\"<i>#{nope}</i>\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:15: undefined binding nope\n"
+]
+},
+{
+"text": "defmodule Main do\n  def sigil_x(text: string, modifiers: string): integer do\n    String.length(text) + String.length(modifiers)\n  end\n  def main() do\n    v = ~x\"abc\"\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:17: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def sigil_x(text: string, modifiers: string): integer do\n    String.length(text) + String.length(modifiers)\n  end\n  def main() do\n    v = ~x\"abc\"\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:17: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def sigil_x(text: string, modifiers: string): integer do\n    String.length(text) + String.length(modifiers)\n  end\n  def main() do\n    v = ~x\"abc\"ab\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:17: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def sigil_x(text: string, modifiers: string): integer do\n    String.length(text) + String.length(modifiers)\n  end\n  def main() do\n    v = ~x\"abc\"ab\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:17: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def sigil_x(text: string, modifiers: string): integer do\n    String.length(text) + String.length(modifiers)\n  end\n  def main() do\n    w = \"q\"\n    v = ~x\"a#{w}c\"\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:17: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def sigil_x(text: string, modifiers: string): integer do\n    String.length(text) + String.length(modifiers)\n  end\n  def main() do\n    w = \"q\"\n    v = ~x\"a#{w}c\"\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:17: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def sigil_x(text: string, modifiers: string): integer do\n    String.length(text) + String.length(modifiers)\n  end\n  def main() do\n    v = ~q\"abc\"\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:9: unknown sigil ~q: define sigil_q(text: string, modifiers: string) to give it a meaning\n"
+]
+},
+{
+"text": "defmodule Main do\n  def sigil_x(text: string, modifiers: string): integer do\n    String.length(text) + String.length(modifiers)\n  end\n  def main() do\n    v = ~q\"abc\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:9: unknown sigil ~q: define sigil_q(text: string, modifiers: string) to give it a meaning\n"
+]
+},
+{
+"text": "defmodule Main do\n  def sigil_x(text: string, modifiers: string): integer do\n    String.length(text) + String.length(modifiers)\n  end\n  def main() do\n    w = \"q\"\n    v = ~q\"a#{w}c\"\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:9: unknown sigil ~q: define sigil_q(text: string, modifiers: string) to give it a meaning\n"
+]
+},
+{
+"text": "defmodule Main do\n  def sigil_x(text: string, modifiers: string): integer do\n    String.length(text) + String.length(modifiers)\n  end\n  def main() do\n    w = \"q\"\n    v = ~q\"a#{w}c\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:9: unknown sigil ~q: define sigil_q(text: string, modifiers: string) to give it a meaning\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    r = ~r/a b #c/x\n    n: string = r\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found regex\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    r = ~r/a b #c/x\n    n: string = r\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found regex\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    r = ~r/a [ #]b/xi\n    n: string = r\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found regex\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    r = ~r/a [ #]b/xi\n    n: string = r\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found regex\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    r = ~r/a/q\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~r accepts the modifiers i, m, s and u\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    r = ~r/a/q\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: ~r accepts the modifiers i, m, s and u\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = \"q\"\n    r = ~r/a#{w}/\n    n: string = r\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:17: expected string, found regex\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = \"q\"\n    r = ~r/a#{w}/\n    n: string = r\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:17: expected string, found regex\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = \"q\"\n    r = ~r/a#{w}/i\n    n: string = r\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:17: expected string, found regex\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = \"q\"\n    r = ~r/a#{w}/i\n    n: string = r\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:17: expected string, found regex\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = \"q\"\n    r = ~r/a#{w}/q\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:9: ~r accepts the modifiers i, m, s and u\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = \"q\"\n    r = ~r/a#{w}/q\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:9: ~r accepts the modifiers i, m, s and u\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = 1\n    r = ~r/a#{w}/\n    n: string = r\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:17: expected string, found regex\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = 1\n    r = ~r/a#{w}/\n    n: string = r\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:17: expected string, found regex\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = {1}\n    r = ~r/a#{w}/\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:13: interpolation requires a string, integer, float, boolean or atom, found tuple[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    w = {1}\n    r = ~r/a#{w}/\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:13: interpolation requires a string, integer, float, boolean or atom, found tuple[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x -> raise(\"no\") end)\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found list[tuple[]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x -> raise(\"no\") end)\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found list[tuple[]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    assert_raise(\"boom\", fn -> raise(\"boom\") end)\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    assert_raise(\"boom\", fn -> raise(\"boom\") end)\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      if x > 1 do\n        raise(\"no\")\n      else\n        raise(\"never\")\n      end\n    end)\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:10:17: expected string, found list[tuple[]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      if x > 1 do\n        raise(\"no\")\n      else\n        raise(\"never\")\n      end\n    end)\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:10:17: expected string, found list[tuple[]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      if x > 1 do\n        raise(\"no\")\n      else\n        x\n      end\n    end)\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:10:17: expected string, found list[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      if x > 1 do\n        raise(\"no\")\n      else\n        x\n      end\n    end)\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:10:17: expected string, found list[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      if x > 1 do\n        []\n      else\n        [x]\n      end\n    end)\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:10:17: expected string, found list[list[integer]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      if x > 1 do\n        []\n      else\n        [x]\n      end\n    end)\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:10:17: expected string, found list[list[integer]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      if x > 1 do\n        []\n      else\n        []\n      end\n    end)\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:9: empty list requires an expected list type\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      if x > 1 do\n        []\n      else\n        []\n      end\n    end)\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:9: empty list requires an expected list type\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      if x > 1 do\n        []\n      else\n        x\n      end\n    end)\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:9: empty list requires an expected list type\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      if x > 1 do\n        []\n      else\n        x\n      end\n    end)\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:9: empty list requires an expected list type\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      case x do\n        1 -> []\n        2 -> none\n        _ -> [x]\n      end\n    end)\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:14: cannot infer the type of none here; annotate the binding it is assigned to\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      case x do\n        1 -> []\n        2 -> none\n        _ -> [x]\n      end\n    end)\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:14: cannot infer the type of none here; annotate the binding it is assigned to\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      case x do\n        1 -> []\n        2 -> raise(\"two\")\n        _ -> [x]\n      end\n    end)\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:10:17: expected string, found list[list[integer]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      case x do\n        1 -> []\n        2 -> raise(\"two\")\n        _ -> [x]\n      end\n    end)\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:10:17: expected string, found list[list[integer]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      case x do\n        1 -> []\n        _ -> []\n      end\n    end)\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:14: empty list requires an expected list type\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      case x do\n        1 -> []\n        _ -> []\n      end\n    end)\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:14: empty list requires an expected list type\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      []\n    else\n      [1]\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found list[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      []\n    else\n      [1]\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found list[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      []\n    else\n      1\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:7: empty list requires an expected list type\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      []\n    else\n      1\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:7: empty list requires an expected list type\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      []\n    else\n      []\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:7: empty list requires an expected list type\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      []\n    else\n      []\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:7: empty list requires an expected list type\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> none\n      _ -> some(2)\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:17: expected string, found option[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> none\n      _ -> some(2)\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:17: expected string, found option[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> raise(\"x\")\n      _ -> 2\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:17: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> raise(\"x\")\n      _ -> 2\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:17: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> raise(\"x\")\n      2 -> %{}\n      _ -> %{\"a\" => 1}\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found map[string,integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> raise(\"x\")\n      2 -> %{}\n      _ -> %{\"a\" => 1}\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found map[string,integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> raise(\"x\")\n      _ -> raise(\"y\")\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:12: cannot infer the type this raise stands in for\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> raise(\"x\")\n      _ -> raise(\"y\")\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:12: cannot infer the type this raise stands in for\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      ok(1)\n    else\n      error(\"x\")\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found result[integer,string]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      ok(1)\n    else\n      error(\"x\")\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found result[integer,string]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      if a > 1 do\n        []\n      else\n        [2]\n      end\n    else\n      [1]\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:13:17: expected string, found list[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      if a > 1 do\n        []\n      else\n        [2]\n      end\n    else\n      [1]\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:13:17: expected string, found list[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = %Version{major: 1, minor: 2, patch: 3}\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found Version\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = %Version{major: 1, minor: 2, patch: 3}\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found Version\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = %Version{major: 1, minor: 2}\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: missing field patch\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = %Version{major: 1, minor: 2}\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:9: missing field patch\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = %Version{major: 1, minor: 2, patch: 3, pre: [\"rc\"], build: some(\"b\")}\n    n: string = v.pre\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found list[string]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = %Version{major: 1, minor: 2, patch: 3, pre: [\"rc\"], build: some(\"b\")}\n    n: string = v.pre\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found list[string]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = %Version{major: 1, minor: 2, patch: 3, pre: [1]}\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:54: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = %Version{major: 1, minor: 2, patch: 3, pre: [1]}\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:54: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = %HTTP.Response{status: 200, headers: [], body: \"\"}\n    n: string = v.chunks\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found option[stream[string]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = %HTTP.Response{status: 200, headers: [], body: \"\"}\n    n: string = v.chunks\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:17: expected string, found option[stream[string]]\n"
+]
+}
+]
