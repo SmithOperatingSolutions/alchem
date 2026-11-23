@@ -71,7 +71,7 @@ var differences = []string{
 	"Map keys are integers, strings, booleans or atoms, and a map's keys share one type, as do its values. Use structs for records.",
 	"Processes have typed mailboxes (`pid[T]`); `Server`, `Task` and `Agent` cover what GenServer, Task and Agent do.",
 	"Nodes connect with `Node.start` and `Node.connect`, and messages between them are copied (`alchem syntax nodes`); a process is reached by a registered name, not by an Erlang-style pid from another system.",
-	"Hex packages do not work. Go packages do, through `extern`.",
+	"Hex packages do not work, and Go packages are not called: a program uses the library and packages written in Alchem.",
 }
 
 // featured names the functions whose first example introduces each group of

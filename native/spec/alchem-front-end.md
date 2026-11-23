@@ -113,7 +113,7 @@ what it finds is always the pinned compiler's first problem. Now: the pass
 over every function before any body (a function defined twice, a name no
 function may have, `main`'s form, a return type that is not a type, such
 as none at all) and a module with both tests and `main`. A program with an
-`extern` function is not followed.
+`extern` function is refused before it (below).
 
 The bodies of functions are walked by `tools/alchem-typing.alc`
 (`AlchemTyping`), which follows `syntax.Analyze` after that pass: the
@@ -163,66 +163,12 @@ before it out too, since the pinned checker reads them from the tree
 after a body that failed.
 
 The walk stops, and says nothing, at what it does not follow: a program
-with an `extern` function or one that defines a retiring library module
-of its own, a `catch` arm that names no type in a `try` whose body is
+that defines a retiring library module of its own, a `catch` arm that names no type in a `try` whose body is
 come back to with a `throw` among the arguments of a call tried against
 several forms, and a program where several implementations of a protocol
 each lack a function (the pinned checker names one of them, in no
 order). `scripts/typing-dump.alc` prints where the walk ends for each
 file it is given.
-
-## The checker: `tools/alchem-analyze.alc`
-
-`AlchemAnalyze.problem` follows the pinned compiler's checker
-(`syntax.Analyze`) on the program as the loader leaves it: each function as
-`mergeClauses` makes it (one for each form, named `name`, `name/2` or
-`name#2`, with the form's return type), named `Module.name` or `main`. It
-is followed in pieces, each finding what the pinned one finds in its order;
-where it reaches a check that is not here yet it finds nothing, so that
-what it finds is always the pinned compiler's first problem. Now: the pass
-over every function before any body (a function defined twice, a name no
-function may have, `main`'s form, a return type that is not a type, such
-as none at all) and a module with both tests and `main`. A program with an
-`extern` function is not followed.
-
-The bodies of functions are walked by `tools/alchem-typing.alc`
-(`AlchemTyping`), which follows `syntax.Analyze` after that pass: the
-program's types declared and checked, a test that takes a context with no
-setup block to give one, and then each function in order, its type
-variables, return type and parameters, and its body statement by
-statement and expression by expression as `checker.block` and
-`checker.expr` type them, with the patterns, the exhaustiveness of a case,
-calls of library functions (with their overloads and constraints), the
-oldest builtins, the program's own functions, constructors, structs and
-functions written in place. The tables the pinned checker types library
-calls with (`syntax.Libraries`, `Overloads`, `SimpleBuiltins`,
-`BuiltinTypes`) are `tools/alchem-check-data.alc`, which
-`scripts/generate-check-data.py` writes from the pinned module
-(`scripts/pinned-checkdata`). The calls of `Process`, `Server` and
-`Supervisor`, `for` (with `uniq:`, `into:` and `reduce:`), a `with` clause
-that does not match, `put_elem`, a function of several forms called, the
-constraints of library functions that read JSON or send between nodes,
-`try` with its `rescue`, `catch`, `else` and `after`, a builtin struct's
-defaults, and the sigils are followed too: `~s`, `~w`, `~c`, `~h`, those
-the program defines, `~r` (whose pattern the native `Regex` must compile)
-and the calendar's `~D`, `~T`, `~N` and `~U`, whose text is read as Go's
-`time.Parse` reads the layouts of `ParseClock`.
-
-The pinned checker comes back to a branch whose type another settles
-(`checker.undetermined`): an `if`, a `case` arm or the body of a `try`
-that fails to infer a type while the type of its context is still open,
-and a function written in place whose every path raises. It asks the
-context after the failure; here a failure carries out of each block
-whether that block's type was open then (`mark`, `remark`), and the
-branch is walked again once the others have settled it.
-
-The walk stops, and says nothing, at what it does not follow yet:
-protocols, setup blocks, a `with` that has an `else`, a `catch` arm that
-names no type (its type is that of the values the body throws), and a
-branch that ends in a constructor which shows only part of its type
-(`none`, `ok(1)`), where the pinned checker keeps what it showed as a
-hint for the other branches. `scripts/typing-dump.alc` prints where the
-walk ends for each file it is given.
 
 ## The check
 
@@ -268,6 +214,16 @@ native compiler, as Elixir, takes exactly one space or a `T`.
 
 ## Not as the pinned front end
 
+- `extern` is out of the language (it bound a name to a Go function or
+  type, and a program is not built with Go). The pinned compiler still
+  takes it; of a program that has one `check`, `build`, `run` and `test`
+  say so at the first of them, once the files are read and their syntax
+  is right, with the library function to use where there is one
+  (`AlchemCheck.extern_problem`; `docs/interop.md` has the list):
+  `main.alc:2:10: extern is no longer in the language: sqrt was bound to
+  the Go function "math.Sqrt", and a program is not built with Go; use
+  Float.pow(value, 0.5)`. The `front_end` gate takes that for a text
+  with an `extern`, whatever the pinned compiler says of it.
 - A letter, a digit, an upper case letter and a space beyond ASCII are told
   apart by ranges, not by Unicode's tables.
 - A float literal of more than 15 significant digits is written with the

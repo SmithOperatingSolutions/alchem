@@ -342,7 +342,7 @@ def fact(_) do
 end
 ```
 
-Clauses are tried in source order and must be adjacent. Each parameter needs a type in at least one clause (a literal pattern supplies its own), and the return type is written on at least one clause. The clauses together must cover every argument: a missing case is the compile error `non-exhaustive case`, and a clause that can never be reached is rejected. `main` and `extern` functions cannot have clauses. Clause parameters accept every pattern form, including lists, tuples, maps, structs and variants.
+Clauses are tried in source order and must be adjacent. Each parameter needs a type in at least one clause (a literal pattern supplies its own), and the return type is written on at least one clause. The clauses together must cover every argument: a missing case is the compile error `non-exhaustive case`, and a clause that can never be reached is rejected. `main` cannot have clauses. Clause parameters accept every pattern form, including lists, tuples, maps, structs and variants.
 
 ### Functions for arguments of several types
 
@@ -372,7 +372,7 @@ end
 - Two forms may not declare the same parameter types (`show is defined twice for (integer)`), and the forms of one function are all `def` or all `defp`.
 - A reference `&show/1` is the form the expected function type names, as in `Enum.map(names, &show/1)` or `f: fn[integer, string] = &show/1`; where nothing says, the compiler asks for the type.
 - Forms and arities combine: `size(text)`, `size(items)` and `size(text, extra)` are three functions.
-- `extern` functions and the functions of a `defimpl` have one form. A protocol is what gives one function to types that are not known where it is written.
+- The functions of a `defimpl` have one form. A protocol is what gives one function to types that are not known where it is written.
 
 Exhaustiveness is checked structurally for booleans, lists, tuples, structs and sum types, including combinations such as a tuple of a boolean and a list. Integers, floats, strings and maps always need a catch-all.
 

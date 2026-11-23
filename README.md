@@ -22,7 +22,7 @@ irm https://raw.githubusercontent.com/SmithOperatingSolutions/alchem/main/instal
 
 The scripts install the latest release, after checking it against the release's checksums, into `~/.local/bin` or `%LOCALAPPDATA%\Programs\alchem`; `ALCHEM_VERSION` and `ALCHEM_INSTALL_DIR` choose another release or place.
 
-`ALCHEM_NATIVE=1` installs the `alchem` written in Alchem instead (`$env:ALCHEM_NATIVE = '1'` before the PowerShell line), from the releases that have it. It compiles programs itself, with no Go and nothing downloaded on first use, for Linux, macOS on Apple silicon and Windows on x64. It is offered beside the Go `alchem` until it does everything that one does: it does not take `extern`. [native/](native/README.md) is its source.
+`ALCHEM_NATIVE=1` installs the `alchem` written in Alchem instead (`$env:ALCHEM_NATIVE = '1'` before the PowerShell line), from the releases that have it. It compiles programs itself, with no Go and nothing downloaded on first use, for Linux, macOS on Apple silicon and Windows on x64. It is offered beside the Go `alchem` until that one is retired. `extern`, which bound a function to a Go function, is out of the language: the native `alchem` refuses it and says what to write instead ([what replaces extern](docs/interop.md)). [native/](native/README.md) is its source.
 
 With Homebrew, this repository is a tap:
 
@@ -154,15 +154,9 @@ end
 
 The last expression of a body is its value. Functions can be written as pattern-matching clauses with guards, checked for exhaustiveness. Structs, sum types, `option`/`result`, floats, string interpolation and generic functions and types (`def fold(xs: list[a], acc: b, f: fn[b, a, b]): b`) are covered in the [language specification](docs/language-spec.md).
 
-## Go interop and standard library
+## Standard library
 
-```elixir
-require "github.com/google/uuid" "v1.6.0"
-extern new_id(): string = "github.com/google/uuid.NewString"
-extern read_file(path: string): result[string, string] = "os.ReadFile"
-```
-
-`extern` binds an Alchem function to a Go function from the standard library, a required module or a Go package inside the project; see [Go interop](docs/interop.md). Strings, numbers, files, environment, time and the typed request/reply `Server` are in the [standard library](docs/stdlib.md). Modules can keep functions private with `defp` and import versioned remote packages; see [modules](docs/modules.md).
+Strings, numbers, files, environment, time and the typed request/reply `Server` are in the [standard library](docs/stdlib.md). Modules can keep functions private with `defp` and import versioned remote packages; see [modules](docs/modules.md).
 
 ## Enum, Stream and tests
 

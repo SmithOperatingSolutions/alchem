@@ -138,7 +138,7 @@ Library entry points are `Check`/`CheckContext`, `Format`, `BuildWithOptions`/`B
 
 ## The Go toolchain
 
-Builds, tests, `run`, `alx`, and `check` of a program with `extern` run a `go` command, found in this order:
+The Go `alchem` (not the native one, which compiles programs itself) runs a `go` command for builds, tests, `run` and `alx`, found in this order:
 
 1. `ALCHEM_GO`, the path of a go executable.
 2. `go` on `PATH`, when it is Go 1.27 or newer. An older one is skipped, and `alchem version` says so; one whose version cannot be read is used as it is.
@@ -151,7 +151,7 @@ Compiled programs are self-contained native executables: running one needs neith
 
 ## Go declarations and the lock file
 
-`alchem check` verifies every `extern` against the Go declaration it names. For a program with `extern` declarations this runs the Go toolchain (`go list`) to read the packages' type information, compiling them into the build cache on first use; programs without `extern` are checked without Go. Mismatches are ordinary diagnostics at the `extern` line and appear in `--json` output.
+`alchem check` checks a program without Go.
 
 `check` and `build` accept `--locked`, which fails instead of updating `alchem.lock`; see [modules](modules.md).
 

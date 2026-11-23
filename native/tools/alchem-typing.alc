@@ -3783,7 +3783,7 @@ defmodule AlchemTyping do
   # What the walk ends in: {"found", message}, {"skip", why} or {"clean", ""}.
   def outcome(program: AlchemJson.J): tuple[string, string] do
     functions = its(program, "Functions")
-    if not null?(program, "Replaced") or Enum.any?(functions, fn fun -> tx(fun, "Extern") != "" end) do {"skip", "externs or replaced modules"} else
+    if not null?(program, "Replaced") or Enum.any?(functions, fn fun -> tx(fun, "Extern") != "" end) do {"skip", "replaced modules, or an extern (AlchemCheck.extern_problem)"} else
       t = tables()
       case protocols(program, functions) do
         error(stop) -> stop

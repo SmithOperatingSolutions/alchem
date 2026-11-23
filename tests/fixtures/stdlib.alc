@@ -10,14 +10,6 @@ defmodule Stdlib do
     read
   end
 
-  extern atoi(text: string): result[integer,string] = "strconv.Atoi"
-
-  extern lookup_env(name: string): option[string] = "os.LookupEnv"
-
-  extern setenv(name: string, value: string): result[tuple[],string] = "os.Setenv"
-
-  extern unquote(text: string): result[string,string] = "strconv.Unquote"
-
   def handle(state: Counter, request: Request): tuple[Counter,integer] do
     case request do
       Request.increment(by) ->
@@ -34,17 +26,16 @@ defmodule Stdlib do
   end
 
   def main() do
-    assert((atoi("42") == ok(42)))
-    case atoi("4x2") do
+    assert((Integer.parse("42") == ok(42)))
+    case Integer.parse("4x2") do
       ok(_) ->
         assert(false)
       error(reason) ->
-        assert(String.contains(reason, "invalid syntax"))
+        assert(String.contains(reason, "is not an integer"))
     end
-    assert((unquote("\"hi\"") == ok("hi")))
-    assert((setenv("ALCHEM_FIXTURE", "set") == ok({})))
-    assert(((lookup_env("ALCHEM_FIXTURE") == some("set")) and (System.env("ALCHEM_FIXTURE") == some("set"))))
-    assert(((lookup_env("ALCHEM_FIXTURE_ABSENT") == none) and (System.env("ALCHEM_FIXTURE_ABSENT") == none)))
+    System.put_env("ALCHEM_FIXTURE", "set")
+    assert(((System.get_env("ALCHEM_FIXTURE") == some("set")) and (System.env("ALCHEM_FIXTURE") == some("set"))))
+    assert(((System.get_env("ALCHEM_FIXTURE_ABSENT") == none) and (System.env("ALCHEM_FIXTURE_ABSENT") == none)))
     assert(((Integer.parse("-17") == ok(-17)) and (Float.parse("2.5") == ok(2.5))))
     case Float.parse("") do
       ok(_) ->

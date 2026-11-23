@@ -150,6 +150,7 @@ Run the harness before and after a performance change on the same machine and re
 - [x] `alchem.lock` and `--locked`.
 - [x] Servers as named children of a user `Supervisor` (`Supervisor.server`), registered before `Supervisor.start` returns.
 - [x] Bindings to generic Go functions, with inferred type arguments, and Go interfaces implemented by Alchem functions and structs of functions.
+- [x] `extern` taken out of the language, with the native `alchem` that has no Go to call ([what replaces it](interop.md)); the Go `alchem` takes it until it is retired.
 - [x] Go may keep Alchem callbacks and interface implementations and call them later from its own goroutines, such as an `http.Handler` served by `net/http`: each call runs in the lending process during the extern, or in a process of its own.
 
 ## M8 — Elixir-style library and testing

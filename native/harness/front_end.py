@@ -92,6 +92,15 @@ def checked(command, texts, pinned=False, flags=()):
 # What is said of a program the native compiler or bundler refuses that the
 # front end does not explain (spec/alchem-commands.md).
 UNEXPLAINED = ('E_COMPILE: ', 'E_BUNDLE: ')
+# extern is out of the language (#89): of a text that has one, check says
+# so, whatever the pinned compiler, which still takes it, says of the text.
+EXTERN = 'extern is no longer in the language: '
+
+
+def quiet(seen, text):
+    """What check may say that is not the pinned compiler's word: nothing,
+    its own message, or that an extern the text has is gone."""
+    return seen[0] == 0 or any(word in seen[1] for word in UNEXPLAINED) or (EXTERN in seen[1] and 'extern ' in text)
 # How many of the texts the pinned compiler refuses check explains as it
 # does, at the least: the count may only grow.
 EXPLAINED = 2005
@@ -143,12 +152,12 @@ def verify(compiler):
                 explained += 1
                 assert described == case['described'], ('check --json', case['name'], described, case['described'])
             else:
-                assert seen[0] == 0 or any(word in seen[1] for word in UNEXPLAINED), ('check', case['name'], seen, case['check'])
+                assert quiet(seen, case['text']), ('check', case['name'], seen, case['check'])
         assert explained >= EXPLAINED, f'check explains {explained} of the {len(refusing)} refused texts, fewer than {EXPLAINED}'
         # And no text the pinned compiler accepts is refused with a reason.
         accepting = [case for case in held if case['check'][0] == 0]
         for case, seen in zip(accepting, checked(alchem, [case['text'] for case in accepting])):
-            assert seen[0] == 0 or any(word in seen[1] for word in UNEXPLAINED), ('check of an accepted text', case['name'], seen)
+            assert quiet(seen, case['text']), ('check of an accepted text', case['name'], seen)
         # The probes: the pinned answer, or none.
         probes = json.loads(PROBES.read_text())
         answered = 0
@@ -156,7 +165,7 @@ def verify(compiler):
             if seen == probe['check']:
                 answered += 1
             else:
-                assert seen[0] == 0 or any(word in seen[1] for word in UNEXPLAINED), ('check of a probe', probe['text'], seen, probe['check'])
+                assert quiet(seen, probe['text']), ('check of a probe', probe['text'], seen, probe['check'])
         assert answered >= PROBED, f'check answers {answered} of the {len(probes)} probes as the pinned command does, fewer than {PROBED}'
     print(f'PASS front_end: {len(held)} texts lexed, parsed, formatted and lowered as the pinned compiler lexes, parses, formats and lowers them, byte for byte; {refused} of them refused with its message; {followed} loaded as its loader loads them; check gives the pinned message and --json diagnostic for {explained} of the {len(refusing)} texts the pinned compiler refuses, and no other message, and refuses none of the {len(accepting)} it accepts; {answered} of {len(probes)} probes of the walk over function bodies answered as the pinned command answers them')
 

@@ -72,7 +72,7 @@ Save it as `hello.alc`, then `alchem build hello.alc && ./hello`.
 - Map keys are integers, strings, booleans or atoms, and a map's keys share one type, as do its values. Use structs for records.
 - Processes have typed mailboxes (`pid[T]`); `Server`, `Task` and `Agent` cover what GenServer, Task and Agent do.
 - Nodes connect with `Node.start` and `Node.connect`, and messages between them are copied (`alchem syntax nodes`); a process is reached by a registered name, not by an Erlang-style pid from another system.
-- Hex packages do not work. Go packages do, through `extern`.
+- Hex packages do not work, and Go packages are not called: a program uses the library and packages written in Alchem.
 
 ## Syntax topics
 
@@ -82,7 +82,7 @@ By group; `alchem syntax --group <group>` describes a group's topics and `alchem
 - **Functions** (`functions`): `functions`, `clauses`, `anonymous-functions`, `generics`
 - **Control flow** (`control-flow`): `if`, `case`, `cond`, `patterns`, `pipes`, `with`, `for`, `try`
 - **Data** (`data`): `lists`, `tuples`, `maps`, `structs`, `sum-types`, `option-result`, `atoms`, `ranges`, `streams`, `sigils`
-- **Modules** (`modules`): `modules`, `packages`, `constants`, `protocols`, `macros`, `extern`
+- **Modules** (`modules`): `modules`, `packages`, `constants`, `protocols`, `macros`
 - **Text** (`text`): `templates`
 - **Concurrency** (`concurrency`): `nodes`, `processes`
 - **Testing** (`testing`): `tests`, `properties`, `doctests`
