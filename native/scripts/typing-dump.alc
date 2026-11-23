@@ -1,0 +1,20 @@
+defmodule TypingDump do
+  import "../tools/alchem-check.alc"
+  import "../tools/alchem-typing.alc"
+  # For each file named, one line: the path, then where the walk over the
+  # bodies ends (AlchemTyping.outcome): found and the message, skip and why,
+  # or clean; or "unloaded" where the loader is not followed to its end.
+  # For finding what the walk does not follow yet; not used by normal
+  # builds.
+  def main() do
+    Enum.each(System.argv(), fn path ->
+      line = case elem(AlchemCheck.program(path, File.cwd!(), false), 1) do
+        some(program) ->
+          {kind, said} = AlchemTyping.outcome(program)
+          kind <> " " <> String.replace(said, "\n", " ")
+        none -> "unloaded"
+      end
+      IO.puts(path <> "\t" <> line)
+    end)
+  end
+end

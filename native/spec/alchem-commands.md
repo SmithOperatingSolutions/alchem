@@ -197,11 +197,12 @@ declares no module and directories with `.git` and `artifacts`.
   file the pinned command leaves out because it does not compile is listed.
   A file that declares no module is refused in this command's own words.
 - `build`, `run`, `check` and `alx` give the pinned message for a mistake
-  in a program's syntax, constants, arities and clauses, and for a file
-  it cannot import. For a mistake the checks after those would find (an
-  undefined name, a call of the wrong arity, a type), they say where the
-  refused function is, not what is wrong in it, where the pinned compiler
-  gives the line and the reason (`** line 1: undefined function nope`).
+  in a program's syntax, constants, arities and clauses, for a file it
+  cannot import, and for a mistake in a function's body as far as the
+  checker's walk follows it (spec/alchem-front-end.md: an undefined name, a
+  call of the wrong arity, a type: `** line 1: undefined function nope`).
+  Where the walk stops before the mistake, they say where the refused
+  function is, not what is wrong in it.
   `alx` reads no input with the front end. It decides what a statement
   binds from its text: a statement that binds after other statements in
   one input is run and not shown, and a comment alone runs nothing.

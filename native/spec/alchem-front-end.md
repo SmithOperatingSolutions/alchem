@@ -113,7 +113,28 @@ what it finds is always the pinned compiler's first problem. Now: the pass
 over every function before any body (a function defined twice, a name no
 function may have, `main`'s form, a return type that is not a type, such
 as none at all) and a module with both tests and `main`. A program with an
-`extern` function is not followed. The bodies of functions come next.
+`extern` function is not followed.
+
+The bodies of functions are walked by `tools/alchem-typing.alc`
+(`AlchemTyping`), which follows `syntax.Analyze` after that pass: the
+program's types declared and checked, a test that takes a context with no
+setup block to give one, and then each function in order, its type
+variables, return type and parameters, and its body statement by
+statement and expression by expression as `checker.block` and
+`checker.expr` type them, with the patterns, the exhaustiveness of a case,
+calls of library functions (with their overloads and constraints), the
+oldest builtins, the program's own functions, constructors, structs and
+functions written in place. The tables the pinned checker types library
+calls with (`syntax.Libraries`, `Overloads`, `SimpleBuiltins`,
+`BuiltinTypes`) are `tools/alchem-check-data.alc`, which
+`scripts/generate-check-data.py` writes from the pinned module
+(`scripts/pinned-checkdata`). The walk stops, and says nothing, at what it
+does not follow yet: protocols, setup blocks, the calls of `Process`,
+`Server` and `Supervisor`, `try`, `for`, sigils, `put_elem`, a function of
+several forms called, a library function that reads JSON or sends between
+nodes, a builtin struct's default, and a branch whose type a later branch
+settles (`checker.undetermined`). `scripts/typing-dump.alc` prints where
+the walk ends for each file it is given.
 
 ## The check
 

@@ -1,0 +1,2455 @@
+defmodule AlchemTyping do
+  import "alchem-lexer.alc"
+  import "alchem-json.alc"
+  import "alchem-parse.alc"
+  import "alchem-types.alc"
+  import "alchem-lower.alc"
+  import "alchem-check-data.alc"
+  # The pinned checker's walk over the bodies of a program's functions
+  # (syntax.Analyze after its first pass: compiler/syntax/analyze.go,
+  # types.go, patterns.go, library.go, builtins.go, lambda.go of the pinned
+  # tree), over the program as the loader gives it (AlchemCheck.program).
+  #
+  # It follows the pinned checker in its order, and where it reaches what
+  # is not followed here it stops: the outcome is then skip, and nothing is
+  # said, so that what is found is the pinned checker's first problem. A
+  # problem is {"found", "line:column: message"}; a stop {"skip", why}.
+
+  def g(o: AlchemJson.J, name: string): AlchemJson.J do AlchemJson.get(o, name) end
+  def tx(o: AlchemJson.J, name: string): string do AlchemJson.text_of(AlchemJson.get(o, name)) end
+  def its(o: AlchemJson.J, name: string): list[AlchemJson.J] do AlchemJson.items_of(AlchemJson.get(o, name)) end
+  def truth(o: AlchemJson.J, name: string): boolean do AlchemJson.truth_of(AlchemJson.get(o, name)) end
+  def num(o: AlchemJson.J, name: string): integer do AlchemJson.int_of(AlchemJson.get(o, name)) end
+  def null?(o: AlchemJson.J, name: string): boolean do AlchemJson.null?(AlchemJson.get(o, name)) end
+  def texts(o: AlchemJson.J, name: string): list[string] do Enum.map(its(o, name), fn t -> AlchemJson.text_of(t) end) end
+
+  # ---- The pinned tables (tools/alchem-check-data.alc) ----
+
+  struct Lib do
+    key: string
+    name: string
+    params: list[string]
+    result: string
+    vars: list[string]
+    equal: list[string]
+    order: list[string]
+    show: list[string]
+    keys: list[string]
+    num: list[string]
+    cal: list[string]
+    codec: list[string]
+    read: list[string]
+  end
+
+  struct Field do
+    name: string
+    type: string
+    line: integer
+    column: integer
+    default: AlchemJson.J
+  end
+
+  struct Variant do
+    name: string
+    fields: list[Field]
+  end
+
+  struct Decl do
+    kind: string
+    name: string
+    local: string
+    params: list[string]
+    fields: list[Field]
+    variants: list[Variant]
+    exception: boolean
+  end
+
+  struct Tables do
+    libs: map[string, Lib]
+    overloads: map[string, list[string]]
+    simple: map[string, tuple[list[string], string]]
+    builtin: list[Decl]
+    arities: map[string, list[string]]
+  end
+
+  def items(field: string): list[string] do
+    if field == "" do none_strings() else String.split(field, "\u{1E}") end
+  end
+
+  def none_strings(): list[string] do
+    nothing: list[string] = []
+    nothing
+  end
+
+  def nojson(): AlchemJson.J do AlchemJson.J.null end
+
+  def none_json(): list[AlchemJson.J] do
+    nothing: list[AlchemJson.J] = []
+    nothing
+  end
+
+  def none_map(): map[string, string] do
+    nothing: map[string, string] = %{}
+    nothing
+  end
+
+  # A builtin type's field: name:type, or name=:type for one with a default
+  # value, which is not followed here (its default stands as a string).
+  def field_of(text: string): Field do
+    case String.split(text, ":", [parts: 2]) do
+      [name, type] -> if String.ends_with?(name, "=") do %Field{name: String.trim_trailing(name, "="), type: type, line: 0, column: 0, default: AlchemJson.str("builtin default")} else %Field{name: name, type: type, line: 0, column: 0, default: nojson()} end
+      _ -> %Field{name: text, type: "", line: 0, column: 0, default: nojson()}
+    end
+  end
+
+  def tables(): Tables do
+    rows = Enum.map(String.split(AlchemCheckData.records(), "\n"), fn line -> String.split(line, "\u{1F}") end)
+    libs = Map.new(Enum.flat_map(rows, fn row ->
+      case row do
+        ["L", key, name, params, result, vars, equal, order, show, keys, nums, cal, codec, read] ->
+          [{key, %Lib{key: key, name: name, params: items(params), result: result, vars: items(vars), equal: items(equal), order: items(order), show: items(show), keys: items(keys), num: items(nums), cal: items(cal), codec: items(codec), read: items(read)}}]
+        _ -> []
+      end
+    end))
+    overloads = Map.new(Enum.flat_map(rows, fn row ->
+      case row do
+        ["O", key, further] -> [{key, items(further)}]
+        _ -> []
+      end
+    end))
+    simple = Map.new(Enum.flat_map(rows, fn row ->
+      case row do
+        ["S", name, params, result] -> [{name, {items(params), result}}]
+        _ -> []
+      end
+    end))
+    builtin = Enum.flat_map(rows, fn row ->
+      case row do
+        ["T", kind, name, local, params, fields, variants] ->
+          [%Decl{kind: kind, name: name, local: local, params: items(params), fields: Enum.map(items(fields), &field_of/1),
+                 variants: Enum.map(items(variants), fn v ->
+                   [vname | vfields] = String.split(v, "\u{1D}")
+                   %Variant{name: vname, fields: Enum.map(vfields, &field_of/1)}
+                 end), exception: false}]
+        _ -> []
+      end
+    end)
+    nothing: map[string, list[string]] = %{}
+    arities = Enum.reduce(Map.keys(libs), nothing, fn key, sofar ->
+      if String.contains?(key, "#") do sofar else
+        [name, arity] = String.split(key, "/", [parts: 2])
+        Map.put(sofar, name, Map.get(sofar, name, none_strings()) ++ [arity])
+      end
+    end)
+    %Tables{libs: libs, overloads: overloads, simple: simple, builtin: builtin, arities: arities}
+  end
+
+  # ---- Types as text (compiler/ast/types.go) ----
+
+  def split(t: string): tuple[string, list[string]] do AlchemTypeNames.split_type(t) end
+
+  def parts_of(t: string, name: string): option[list[string]] do AlchemTypeNames.parts(t, name) end
+
+  def fn_parts(t: string): option[tuple[list[string], string]] do
+    case parts_of(t, "fn") do
+      some(found) -> if found == [] do none else some({Enum.drop(found, -1), List.last(found, "")}) end
+      none -> none
+    end
+  end
+
+  def map_parts(t: string): option[tuple[string, string]] do
+    case parts_of(t, "map") do
+      some([k, v]) -> some({k, v})
+      _ -> none
+    end
+  end
+
+  def list_elem(t: string): option[string] do
+    if String.starts_with?(t, "list[") and String.ends_with?(t, "]") do some(binary_part(t, 5, byte_size(t) - 6)) else none end
+  end
+
+  def tuple_elems(t: string): option[list[string]] do parts_of(t, "tuple") end
+
+  def tvar?(t: string): boolean do AlchemTypeNames.variable?(t) end
+
+  def tvars(t: string, seen: list[string]): list[string] do
+    {head, args} = split(t)
+    first = if tvar?(head) and not (head in seen) do seen ++ [head] else seen end
+    Enum.reduce(args, first, fn arg, sofar -> tvars(arg, sofar) end)
+  end
+
+  def join(head: string, args: list[string]): string do
+    if args == [] and head != "tuple" do head else head <> "[" <> Enum.join(args, ",") <> "]" end
+  end
+
+  def subst(t: string, bindings: map[string, string]): string do
+    {head, args} = split(t)
+    if args == [] do Map.get(bindings, head, t) else join(head, Enum.map(args, fn arg -> subst(arg, bindings) end)) end
+  end
+
+  def builtin_head?(t: string): boolean do t in AlchemTypeNames.builtin_heads() end
+
+  def named(t: string): option[tuple[string, list[string]]] do
+    {head, args} = split(t)
+    if head == "option" or head == "result" or head == "step" do some({head, args}) else
+      if head == "" or builtin_head?(head) or tvar?(head) do none else some({head, args}) end
+    end
+  end
+
+  def key_type?(t: string): boolean do AlchemTypeNames.key?(t) end
+
+  def valid_type?(t: string): boolean do AlchemTypeNames.valid?(t) end
+
+  def handles(): list[string] do
+    ["server", "stream", "regex", "port", "task", "agent", "registry", "dynamic_supervisor", "socket", "http_server", "websocket", "generator", "file", "disk_store"]
+  end
+
+  def capability?(t: string, kind: string): boolean do
+    case parts_of(t, kind) do
+      some([_]) -> true
+      _ -> false
+    end
+  end
+
+  # ast.Equatable.
+  def equatable_shape?(t: string): boolean do
+    {head, _} = split(t)
+    if capability?(t, "pid") or capability?(t, "supervisor") or head in handles() or fn_parts(t) != none or tvar?(t) do false else
+      args_ok = case named(t) do
+        some({_, args}) -> Enum.all?(args, &equatable_shape?/1)
+        none -> true
+      end
+      if not args_ok do false else
+        case list_elem(t) do
+          some(e) -> equatable_shape?(e)
+          none ->
+            case map_parts(t) do
+              some({_, v}) -> equatable_shape?(v)
+              none ->
+                case tuple_elems(t) do
+                  some(ps) -> Enum.all?(ps, &equatable_shape?/1)
+                  none -> true
+                end
+            end
+        end
+      end
+    end
+  end
+
+  def unify(pattern: string, actual: string, vars: list[string], b: map[string, string]): option[map[string, string]] do
+    {head, args} = split(pattern)
+    if head in vars and args == [] do
+      case Map.get(b, head) do
+        some(bound) -> if bound == actual do some(b) else none end
+        none -> some(Map.put(b, head, actual))
+      end
+    else
+      {other, others} = split(actual)
+      if head != other or length(args) != length(others) do none else
+        Enum.reduce(Enum.zip(args, others), some(b), fn {x, y}, sofar ->
+          case sofar do
+            some(now) -> unify(x, y, vars, now)
+            none -> none
+          end
+        end)
+      end
+    end
+  end
+
+  def unifies?(pattern: string, actual: string, vars: list[string], b: map[string, string]): boolean do
+    unify(pattern, actual, vars, b) != none
+  end
+
+  def resolved?(t: string, vars: list[string], b: map[string, string]): boolean do
+    Enum.all?(tvars(t, none_strings()), fn name -> not (name in vars) or Map.has_key?(b, name) end)
+  end
+
+  def instantiate(t: string, vars: list[string], b: map[string, string]): string do
+    subst(t, Map.new(Enum.filter(Map.to_list(b), fn {name, _} -> name in vars end)))
+  end
+
+  def element(t: string): option[string] do
+    {head, args} = split(t)
+    if head == "list" or head == "stream" or head == "set" do some(Enum.at(args, 0, "")) else
+      if head == "map" do some("tuple[" <> Enum.at(args, 0, "") <> "," <> Enum.at(args, 1, "") <> "]") else
+        if head == "Range" do some("integer") else none end
+      end
+    end
+  end
+
+  def plural(n: integer, word: string): string do
+    Integer.to_string(n) <> " " <> word <> (if n == 1 do "" else "s" end)
+  end
+
+  # ---- The checker's state ----
+
+  struct Ctx do
+    t: Tables
+    functions: map[string, AlchemJson.J]
+    types: map[string, Decl]
+    variants: map[string, tuple[string, integer]]
+    vars: list[string]
+    current: string
+  end
+
+  # What a block's typing carries on to what comes after it: the type the
+  # branches of the if or case it is a value of produce (yield), and the
+  # result an inferred function's returns have shown (infer).
+  struct Flow do
+    yielding: boolean
+    yield: string
+    inferring: boolean
+    infer: string
+  end
+
+  def at(e: AlchemJson.J, message: string): tuple[string, string] do
+    {"found", Integer.to_string(num(e, "Line")) <> ":" <> Integer.to_string(num(e, "Column")) <> ": " <> message}
+  end
+
+  def found(e: AlchemJson.J, message: string): result[tuple[string, Flow], tuple[string, string]] do error(at(e, message)) end
+
+  def skip(why: string): tuple[string, string] do {"skip", why} end
+
+  # undetermined: a failure to infer a type in a branch whose type another
+  # branch may settle, which the pinned checker comes back to. Not
+  # followed here.
+  def undetermined?(stop: tuple[string, string], f: Flow): boolean do
+    {kind, message} = stop
+    open = (f.yielding and f.yield == "") or (f.inferring and f.infer == "")
+    kind == "found" and open and (String.contains?(message, "cannot infer") or String.contains?(message, "requires an expected"))
+  end
+
+  # ---- Declared types ----
+
+  def decl_of(j: AlchemJson.J): Decl do
+    fields = Enum.map(its(j, "Fields"), fn f -> %Field{name: tx(f, "Name"), type: tx(f, "Type"), line: num(f, "Line"), column: num(f, "Column"), default: g(f, "Default")} end)
+    variants = Enum.map(its(j, "Variants"), fn v -> %Variant{name: tx(v, "Name"), fields: Enum.map(its(v, "Fields"), fn f -> %Field{name: tx(f, "Name"), type: tx(f, "Type"), line: num(f, "Line"), column: num(f, "Column"), default: g(f, "Default")} end)} end)
+    %Decl{kind: tx(j, "Kind"), name: tx(j, "Name"), local: tx(j, "Local"), params: texts(j, "Params"), fields: fields, variants: variants, exception: truth(j, "Exception")}
+  end
+
+  def constructor_name(d: Decl, variant: string): string do
+    first = String.slice(d.name, 0, 1)
+    if first == String.downcase(first) do variant else d.name <> "." <> variant end
+  end
+
+  def field_types(c: Ctx, t: string, variant: integer): option[tuple[Decl, list[string]]] do
+    {head, args} = split(t)
+    case Map.get(c.types, head) do
+      none -> none
+      some(d) ->
+        if length(args) != length(d.params) or d.kind == "extern" do none else
+          b = Map.new(Enum.zip(d.params, args))
+          fields = if d.kind == "sum" do Enum.at(d.variants, variant, %Variant{name: "", fields: []}).fields else d.fields end
+          some({d, Enum.map(fields, fn f -> subst(f.type, b) end)})
+        end
+    end
+  end
+
+  def well_formed(c: Ctx, t: string, vars: list[string]): string do
+    {head, args} = split(t)
+    if tvar?(head) do
+      if head in vars do "" else "unknown type " <> AlchemLexer.go_quote(head) end
+    else
+      inner = Enum.reduce(args, "", fn arg, sofar -> if sofar != "" do sofar else well_formed(c, arg, vars) end end)
+      if inner != "" do inner else
+        case Map.get(c.types, head) do
+          some(d) -> if length(args) != length(d.params) do d.local <> " requires " <> plural(length(d.params), "type argument") else "" end
+          none ->
+            if named(t) != none do "unknown type " <> AlchemLexer.go_quote(head) else
+              if (head == "pid" or head == "supervisor" or head == "server") and not Enum.all?(args, fn a -> sendable?(c, a) end) do "mailbox messages cannot contain functions" else "" end
+            end
+        end
+      end
+    end
+  end
+
+  # contains, with the predicates the checker gives it.
+  def contains?(c: Ctx, t: string, predicate: fn[string, boolean], visited: list[string]): boolean do
+    if predicate(t) do true else
+      {head, args} = split(t)
+      if head in ["pid", "supervisor", "server", "task", "agent", "registry", "dynamic_supervisor"] do false else
+        if Enum.any?(args, fn a -> contains?(c, a, predicate, visited) end) do true else
+          case Map.get(c.types, head) do
+            none -> false
+            some(d) ->
+              if t in visited or length(args) != length(d.params) do false else
+                count = if d.kind == "struct" do 1 else length(d.variants) end
+                Enum.any?(List.duplicate(0, count) |> Enum.with_index(), fn {_, i} ->
+                  case field_types(c, t, i) do
+                    some({_, fields}) -> Enum.any?(fields, fn f -> contains?(c, f, predicate, visited ++ [t]) end)
+                    none -> false
+                  end
+                end)
+              end
+          end
+        end
+      end
+    end
+  end
+
+  def opaque?(c: Ctx, t: string): boolean do
+    case Map.get(c.types, t) do
+      some(d) -> d.kind == "extern"
+      none -> false
+    end
+  end
+
+  def sendable?(c: Ctx, t: string): boolean do
+    not contains?(c, t, fn part ->
+      {head, _} = split(part)
+      fn_parts(part) != none or tvar?(part) or opaque?(c, part) or head == "stream"
+    end, none_strings())
+  end
+
+  def equatable?(c: Ctx, t: string): boolean do
+    equatable_shape?(t) and not contains?(c, t, fn part ->
+      {head, _} = split(part)
+      fn_parts(part) != none or tvar?(part) or opaque?(c, part) or head == "pid" or head == "supervisor" or head in handles()
+    end, none_strings())
+  end
+
+  # comparable: type variables stand in as integers.
+  def comparable?(c: Ctx, t: string): boolean do
+    equatable?(c, subst(t, Map.new(Enum.map(tvars(t, none_strings()), fn v -> {v, "integer"} end))))
+  end
+
+  def orderable?(t: string): boolean do
+    if t in ["integer", "float", "string", "boolean", "atom"] do true else
+      case list_elem(t) do
+        some(e) -> orderable?(e)
+        none ->
+          case tuple_elems(t) do
+            some(ps) -> ps != [] and Enum.all?(ps, &orderable?/1)
+            none -> false
+          end
+      end
+    end
+  end
+
+  # ---- Patterns ----
+
+  struct Pat do
+    kind: string
+    name: string
+    value: string
+    vkind: string
+    truth: boolean
+    children: list[Pat]
+    labels: list[string]
+    fields: list[integer]
+    index: integer
+    keys: list[string]
+    tail: option[Pat]
+  end
+
+  def literal_key(v: AlchemJson.J): string do AlchemJson.encode(v) end
+
+  def raw(p: AlchemJson.J): Pat do
+    empty: list[integer] = []
+    %Pat{kind: tx(p, "Kind"), name: tx(p, "Name"), value: literal_key(g(p, "Value")), vkind: tx(g(p, "Value"), "Kind"), truth: truth(g(p, "Value"), "Boolean"),
+         children: Enum.map(its(p, "Children"), &raw/1), labels: texts(p, "Labels"), fields: empty, index: 0,
+         keys: Enum.map(its(p, "Keys"), &literal_key/1), tail: if null?(p, "Tail") do none else some(raw(g(p, "Tail"))) end}
+  end
+
+  def wildcard(): Pat do
+    empty: list[integer] = []
+    nothing: list[Pat] = []
+    %Pat{kind: "wildcard", name: "", value: "", vkind: "", truth: false, children: nothing, labels: none_strings(), fields: empty, index: 0, keys: none_strings(), tail: none}
+  end
+
+  def display(d: Decl, index: integer): string do
+    variant = Enum.at(d.variants, index, %Variant{name: "", fields: []}).name
+    if d.name == d.local do constructor_name(d, variant) else d.local <> "." <> variant end
+  end
+
+  # constructor: the variant a name is, or a message for Type.variant of a
+  # sum type that has none of that name.
+  def constructor(c: Ctx, name: string): tuple[option[tuple[Decl, integer]], string] do
+    case Map.get(c.variants, name) do
+      some({decl, index}) -> {some({Map.get(c.types, decl, hd(c.t.builtin)), index}), ""}
+      none ->
+        cut = String.split(name, ".")
+        if length(cut) < 2 do {none, ""} else
+          owner = Enum.join(Enum.drop(cut, -1), ".")
+          case Map.get(c.types, owner) do
+            some(d) -> if d.kind == "sum" do {none, d.local <> " has no variant " <> List.last(cut, "")} else {none, ""} end
+            none -> {none, ""}
+          end
+        end
+    end
+  end
+
+  # checkPatternIn: the pattern as checked, with the bindings it adds.
+  def pattern(c: Ctx, j: AlchemJson.J, typ: string, scope: map[string, string], outer: map[string, string]): result[tuple[Pat, map[string, string]], tuple[string, string]] do
+    p = raw(j)
+    {head, _} = split(typ)
+    kind = if p.kind == "name" and p.name == "none" and head == "option" do "variant" else p.kind end
+    case kind do
+      "struct" ->
+        case Map.get(c.types, p.name) do
+          none -> error(at(j, "unknown type " <> AlchemLexer.go_quote(p.name)))
+          some(d) ->
+            if d.kind != "struct" do error(at(j, "unknown type " <> AlchemLexer.go_quote(p.name))) else
+              case field_types(c, typ, 0) do
+                some({fd, types}) ->
+                  if fd.name != d.name do error(at(j, d.local <> " pattern does not match " <> typ)) else
+                    children = its(j, "Children")
+                    empty: list[integer] = []
+                    nothing: list[Pat] = []
+                    start: result[tuple[list[integer], list[Pat], list[string], map[string, string]], tuple[string, string]] = ok({empty, nothing, none_strings(), scope})
+                    done = Enum.reduce(Enum.with_index(p.labels), start, fn {label, i}, sofar ->
+                      case sofar do
+                        error(e) -> error(e)
+                        ok({fields, kids, seen, now}) ->
+                          index = Enum.find_index(d.fields, fn f -> f.name == label end)
+                          case index do
+                            none -> error(at(j, d.local <> " has no field " <> label))
+                            some(k) ->
+                              if label in seen do error(at(j, "duplicate field " <> label)) else
+                                case pattern(c, Enum.at(children, i, nojson()), Enum.at(types, k, ""), now, outer) do
+                                  error(e) -> error(e)
+                                  ok({kid, next}) -> ok({fields ++ [k], kids ++ [kid], seen ++ [label], next})
+                                end
+                              end
+                          end
+                      end
+                    end)
+                    case done do
+                      error(e) -> error(e)
+                      ok({fields, kids, _, now}) -> ok({%Pat{p | kind: "struct", fields: fields, children: kids}, now})
+                    end
+                  end
+                none -> error(at(j, d.local <> " pattern does not match " <> typ))
+              end
+            end
+        end
+      "variant" ->
+        {ref, message} = constructor(c, p.name)
+        case ref do
+          none -> if message != "" do error(at(j, message)) else error(at(j, "unknown constructor " <> p.name)) end
+          some({d, index}) ->
+            if message != "" do error(at(j, message)) else
+            matching = case field_types(c, typ, 0) do
+              some({fd, _}) -> fd.name == d.name
+              none -> false
+            end
+            if not matching do error(at(j, "pattern " <> display(d, index) <> " does not match " <> typ)) else
+              types = case field_types(c, typ, index) do
+                some({_, ts}) -> ts
+                none -> none_strings()
+              end
+              children = its(j, "Children")
+              if length(types) != length(children) do error(at(j, display(d, index) <> " requires " <> plural(length(types), "argument"))) else
+                nothing: list[Pat] = []
+                start: result[tuple[list[Pat], map[string, string]], tuple[string, string]] = ok({nothing, scope})
+                done = Enum.reduce(Enum.zip(children, types), start, fn {child, t}, sofar ->
+                  case sofar do
+                    error(e) -> error(e)
+                    ok({kids, now}) ->
+                      case pattern(c, child, t, now, outer) do
+                        error(e) -> error(e)
+                        ok({kid, next}) -> ok({kids ++ [kid], next})
+                      end
+                  end
+                end)
+                case done do
+                  error(e) -> error(e)
+                  ok({kids, now}) -> ok({%Pat{p | kind: "variant", index: index, children: kids}, now})
+                end
+              end
+            end
+            end
+        end
+      "wildcard" -> ok({p, scope})
+      "pin" ->
+        case Map.get(outer, p.name) do
+          none -> error(at(j, "pinned binding " <> AlchemLexer.go_quote(p.name) <> " is not defined before this pattern"))
+          some(bound) ->
+            if bound != typ do error(at(j, "pinned binding " <> AlchemLexer.go_quote(p.name) <> " has type " <> bound <> ", pattern requires " <> typ)) else
+              if not comparable?(c, typ) do error(at(j, "pinned binding " <> AlchemLexer.go_quote(p.name) <> " has a type without equality")) else ok({p, scope}) end
+            end
+        end
+      "name" ->
+        if builtin_name?(p.name) do error(at(j, p.name <> " is reserved for a builtin and cannot name a binding")) else
+          if not generated_name?(p.name) and not AlchemParse.binding_name?(p.name) do error(at(j, "invalid pattern binding " <> AlchemLexer.go_quote(p.name))) else
+            if Map.has_key?(scope, p.name) do error(at(j, "immutable binding " <> AlchemLexer.go_quote(p.name) <> " already defined")) else ok({p, Map.put(scope, p.name, typ)}) end
+          end
+        end
+      "literal" -> if p.vkind != typ do error(at(j, "pattern type does not match " <> typ)) else ok({p, scope}) end
+      "list" ->
+        case list_elem(typ) do
+          none -> error(at(j, "list pattern requires list value"))
+          some(elem) ->
+            nothing: list[Pat] = []
+            start: result[tuple[list[Pat], map[string, string]], tuple[string, string]] = ok({nothing, scope})
+            done = Enum.reduce(its(j, "Children"), start, fn child, sofar ->
+              case sofar do
+                error(e) -> error(e)
+                ok({kids, now}) ->
+                  case pattern(c, child, elem, now, outer) do
+                    error(e) -> error(e)
+                    ok({kid, next}) -> ok({kids ++ [kid], next})
+                  end
+              end
+            end)
+            case done do
+              error(e) -> error(e)
+              ok({kids, now}) ->
+                if null?(j, "Tail") do ok({%Pat{p | children: kids}, now}) else
+                  case pattern(c, g(j, "Tail"), typ, now, outer) do
+                    error(e) -> error(e)
+                    ok({tail, next}) -> ok({%Pat{p | children: kids, tail: some(tail)}, next})
+                  end
+                end
+            end
+        end
+      "map" ->
+        case map_parts(typ) do
+          none -> error(at(j, "map pattern requires map value"))
+          some({key, value}) ->
+            keys = its(j, "Keys")
+            children = its(j, "Children")
+            nothing: list[Pat] = []
+            start: result[tuple[list[Pat], list[string], map[string, string]], tuple[string, string]] = ok({nothing, none_strings(), scope})
+            done = Enum.reduce(Enum.zip(keys, children), start, fn {k, child}, sofar ->
+              case sofar do
+                error(e) -> error(e)
+                ok({kids, seen, now}) ->
+                  if tx(k, "Kind") != key do error(at(j, "map pattern key type mismatch")) else
+                    if literal_key(k) in seen do error(at(j, "duplicate map pattern key")) else
+                      case pattern(c, child, value, now, outer) do
+                        error(e) -> error(e)
+                        ok({kid, next}) -> ok({kids ++ [kid], seen ++ [literal_key(k)], next})
+                      end
+                    end
+                  end
+              end
+            end)
+            case done do
+              error(e) -> error(e)
+              ok({kids, _, now}) -> ok({%Pat{p | children: kids}, now})
+            end
+        end
+      "tuple" ->
+        children = its(j, "Children")
+        case tuple_elems(typ) do
+          some(elems) ->
+            if length(elems) != length(children) do error(at(j, "tuple pattern arity/type mismatch")) else
+              nothing: list[Pat] = []
+              start: result[tuple[list[Pat], map[string, string]], tuple[string, string]] = ok({nothing, scope})
+              done = Enum.reduce(Enum.zip(children, elems), start, fn {child, t}, sofar ->
+                case sofar do
+                  error(e) -> error(e)
+                  ok({kids, now}) ->
+                    case pattern(c, child, t, now, outer) do
+                      error(e) -> error(e)
+                      ok({kid, next}) -> ok({kids ++ [kid], next})
+                    end
+                end
+              end)
+              case done do
+                error(e) -> error(e)
+                ok({kids, now}) -> ok({%Pat{p | children: kids}, now})
+              end
+            end
+          none -> error(at(j, "tuple pattern arity/type mismatch"))
+        end
+      _ -> error(skip("pattern " <> kind))
+    end
+  end
+
+  def builtin_name?(name: string): boolean do
+    name != "main" and AlchemParse.member_name?(name) and not AlchemParse.binding_name?(name)
+  end
+
+  def generated_name?(name: string): boolean do String.contains?(name, "$") end
+
+  def generated?(name: string): boolean do String.contains?(name, "$") or String.starts_with?(name, "&") end
+
+  def irrefutable?(p: Pat): boolean do
+    if p.kind == "name" or p.kind == "wildcard" do true else
+      if p.kind == "map" and p.keys == [] do true else
+        if p.kind == "tuple" or p.kind == "struct" do Enum.all?(p.children, &irrefutable?/1) else false end
+      end
+    end
+  end
+
+  def subsumes?(a: Pat, b: Pat): boolean do
+    if irrefutable?(a) do true else
+      if a.kind != b.kind do false else
+        case a.kind do
+          "literal" -> a.value == b.value
+          "pin" -> a.name == b.name
+          "map" ->
+            Enum.all?(Enum.zip(a.keys, a.children), fn {key, child} ->
+              Enum.any?(Enum.zip(b.keys, b.children), fn {other, theirs} -> key == other and subsumes?(child, theirs) end)
+            end)
+          "struct" ->
+            labelled = Enum.all?(Enum.zip(a.labels, a.children), fn {label, child} ->
+              Enum.reduce(Enum.zip(b.labels, b.children), irrefutable?(child), fn {other, theirs}, matched -> if label == other do subsumes?(child, theirs) else matched end end)
+            end)
+            labelled and a.name == b.name
+          "variant" ->
+            if a.name != b.name or a.index != b.index do false else
+              length(a.children) == length(b.children) and Enum.all?(Enum.zip(a.children, b.children), fn {x, y} -> subsumes?(x, y) end)
+            end
+          "tuple" -> length(a.children) == length(b.children) and Enum.all?(Enum.zip(a.children, b.children), fn {x, y} -> subsumes?(x, y) end)
+          "list" ->
+            if a.tail == none and (b.tail != none or length(a.children) != length(b.children)) do false else
+              if length(a.children) > length(b.children) do false else
+                heads = Enum.all?(Enum.zip(a.children, Enum.take(b.children, length(a.children))), fn {x, y} -> subsumes?(x, y) end)
+                case a.tail do
+                  none -> heads
+                  some(t) -> heads and subsumes?(t, %Pat{wildcard() | kind: "list", children: Enum.drop(b.children, length(a.children)), tail: b.tail})
+                end
+              end
+            end
+          _ -> false
+        end
+      end
+    end
+  end
+
+  def open?(p: Pat): boolean do
+    p.kind == "name" or p.kind == "wildcard" or (p.kind == "map" and p.keys == [])
+  end
+
+  # signature: the constructors of a type with finitely many, or none.
+  def signature(c: Ctx, t: string): option[list[tuple[string, list[string]]]] do
+    case field_types(c, t, 0) do
+      some({d, types}) ->
+        if d.kind == "struct" do some([{"struct", types}]) else
+          some(Enum.map(Enum.with_index(d.variants), fn {v, i} ->
+            case field_types(c, t, i) do
+              some({_, ts}) -> {v.name, ts}
+              none -> {v.name, none_strings()}
+            end
+          end))
+        end
+      none ->
+        if t == "boolean" do some([{"true", none_strings()}, {"false", none_strings()}]) else
+          case list_elem(t) do
+            some(e) -> some([{"nil", none_strings()}, {"cons", [e, t]}])
+            none ->
+              case tuple_elems(t) do
+                some(ps) -> some([{"tuple", ps}])
+                none -> none
+              end
+          end
+        end
+    end
+  end
+
+  def constructor_of(c: Ctx, p: Pat, t: string): string do
+    case p.kind do
+      "struct" -> "struct"
+      "variant" ->
+        case field_types(c, t, 0) do
+          some({d, _}) -> if d.kind == "sum" do Enum.at(d.variants, p.index, %Variant{name: "", fields: []}).name else "" end
+          none -> ""
+        end
+      "literal" -> if t == "boolean" do (if p.truth do "true" else "false" end) else "" end
+      "list" -> if p.children == [] do "nil" else "cons" end
+      "tuple" -> "tuple"
+      _ -> ""
+    end
+  end
+
+  def subpatterns(c: Ctx, p: Pat): list[Pat] do
+    case p.kind do
+      "struct" ->
+        count = case Map.get(c.types, p.name) do
+          some(d) -> length(d.fields)
+          none -> 0
+        end
+        Enum.map(Enum.with_index(List.duplicate(0, count)), fn {_, k} ->
+          case Enum.find_index(p.fields, fn f -> f == k end) do
+            some(i) -> Enum.at(p.children, i, wildcard())
+            none -> wildcard()
+          end
+        end)
+      "tuple" -> p.children
+      "variant" -> p.children
+      "list" ->
+        case p.children do
+          [] -> []
+          [first | rest] ->
+            tail = %Pat{wildcard() | kind: "list", children: rest, tail: p.tail}
+            case p.tail do
+              some(t) -> if rest == [] do [first, t] else [first, tail] end
+              none -> [first, tail]
+            end
+        end
+      _ -> []
+    end
+  end
+
+  def covers?(c: Ctx, rows: list[list[Pat]], types: list[string]): boolean do
+    if rows == [] do false else
+      if types == [] do true else
+        first = hd(types)
+        named = Enum.any?(rows, fn row -> constructor_of(c, hd(row), first) != "" end)
+        case signature(c, first) do
+          some(constructors) ->
+            if not named do covers?(c, Enum.flat_map(rows, fn row -> if open?(hd(row)) do [tl(row)] else [] end end), tl(types)) else
+              Enum.all?(constructors, fn {name, ts} ->
+                specialized = Enum.flat_map(rows, fn row ->
+                  if open?(hd(row)) do [List.duplicate(wildcard(), length(ts)) ++ tl(row)] else
+                    if constructor_of(c, hd(row), first) == name do [subpatterns(c, hd(row)) ++ tl(row)] else [] end
+                  end
+                end)
+                covers?(c, specialized, ts ++ tl(types))
+              end)
+            end
+          none -> covers?(c, Enum.flat_map(rows, fn row -> if open?(hd(row)) do [tl(row)] else [] end end), tl(types))
+        end
+      end
+    end
+  end
+
+  def exhaustive?(c: Ctx, arms: list[tuple[Pat, boolean]], typ: string): boolean do
+    covers?(c, Enum.flat_map(arms, fn {p, guarded} -> if guarded do [] else [[p]] end end), [typ])
+  end
+
+  # ---- Expressions ----
+
+  def fail(e: AlchemJson.J, message: string): result[tuple[string, Flow], tuple[string, string]] do error(at(e, message)) end
+
+  def typed(t: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do ok({t, f}) end
+
+  # A JSON object of the fields given, for the expressions the checker
+  # rewrites one into: a call becomes an index, a reference a capture.
+  def object(fields: list[tuple[string, AlchemJson.J]]): AlchemJson.J do AlchemJson.J.object(fields) end
+
+  def expression(kind: string, e: AlchemJson.J, more: list[tuple[string, AlchemJson.J]]): AlchemJson.J do
+    object([{"Kind", AlchemJson.str(kind)}, {"Line", g(e, "Line")}, {"Column", g(e, "Column")}] ++ more)
+  end
+
+  def fills_hint?(t: string, hint: string): boolean do
+    if hint == "?" do true else
+      if not String.contains?(hint, "?") do t == hint else
+        {head, args} = split(t)
+        {hh, hargs} = split(hint)
+        head == hh and length(args) == length(hargs) and Enum.all?(Enum.zip(args, hargs), fn {a, b} -> fills_hint?(a, b) end)
+      end
+    end
+  end
+
+  # Typing an expression: the checks every kind ends with.
+  def ex(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, st: boolean, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    case kind_of(c, e, scope, want, st, f) do
+      error(stop) -> error(stop)
+      ok({t, next}) ->
+        if t == "void" and not st do fail(e, tx(e, "Name") <> " returns no value") else
+          if want != "" and t != want and not fills_hint?(t, want) do fail(e, "expected " <> want <> ", found " <> t) else ok({t, next}) end
+        end
+    end
+  end
+
+  def each(c: Ctx, es: list[AlchemJson.J], scope: map[string, string], wants: list[string], f: Flow): result[tuple[list[string], Flow], tuple[string, string]] do
+    start: result[tuple[list[string], Flow], tuple[string, string]] = ok({none_strings(), f})
+    Enum.reduce(Enum.zip(es, wants), start, fn {e, w}, sofar ->
+      case sofar do
+        error(s) -> error(s)
+        ok({ts, now}) ->
+          case ex(c, e, scope, w, false, now) do
+            error(s) -> error(s)
+            ok({t, next}) -> ok({ts ++ [t], next})
+          end
+      end
+    end)
+  end
+
+  def kind_of(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, st: boolean, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    case tx(e, "Kind") do
+      "literal" -> typed(tx(g(e, "Value"), "Kind"), f)
+      "name" -> name(c, e, scope, want, st, f)
+      "list" -> list(c, e, scope, want, f)
+      "map" -> mapping(c, e, scope, want, f)
+      "tuple" ->
+        wanted = case tuple_elems(want) do
+          some(ps) -> ps
+          none -> none_strings()
+        end
+        args = its(e, "Args")
+        case each(c, args, scope, Enum.map(Enum.with_index(args), fn {_, i} -> Enum.at(wanted, i, "") end), f) do
+          error(s) -> error(s)
+          ok({ts, next}) -> typed("tuple[" <> Enum.join(ts, ",") <> "]", next)
+        end
+      "template" ->
+        start: result[tuple[string, Flow], tuple[string, string]] = ok({"string", f})
+        Enum.reduce(its(e, "Args"), start, fn part, sofar ->
+          case sofar do
+            error(s) -> error(s)
+            ok({_, now}) ->
+              case ex(c, part, scope, "", false, now) do
+                error(s) -> error(s)
+                ok({t, next}) -> if t in ["string", "integer", "float", "boolean", "atom"] do ok({"string", next}) else fail(part, "interpolation requires a string, integer, float, boolean or atom, found " <> t) end
+              end
+          end
+        end)
+      "unary" ->
+        case ex(c, g(e, "Left"), scope, "", false, f) do
+          error(s) -> error(s)
+          ok({t, next}) ->
+            w = if tx(e, "Op") == "not" do "boolean" else if t == "float" do "float" else "integer" end end
+            if t != w do fail(e, "unary " <> tx(e, "Op") <> " requires " <> w) else typed(w, next) end
+        end
+      "binary" -> binary(c, e, scope, f)
+      "index" -> index(c, e, scope, f)
+      "field" ->
+        case ex(c, g(e, "Left"), scope, "", false, f) do
+          error(s) -> error(s)
+          ok({target, next}) ->
+            case field_types(c, target, 0) do
+              some({d, types}) ->
+                if d.kind != "struct" do fail(e, "field access requires a struct, found " <> target) else
+                  case Enum.find_index(d.fields, fn fd -> fd.name == tx(e, "Name") end) do
+                    some(i) -> typed(Enum.at(types, i, ""), next)
+                    none -> fail(e, d.local <> " has no field " <> tx(e, "Name"))
+                  end
+                end
+              none -> fail(e, "field access requires a struct, found " <> target)
+            end
+        end
+      "range" ->
+        bounds = [g(e, "Left"), g(e, "Right")] ++ its(e, "Args")
+        case each(c, bounds, scope, Enum.map(bounds, fn _ -> "integer" end), f) do
+          error(s) -> error(s)
+          ok({_, next}) -> typed(if want == "stream[integer]" do want else "Range" end, next)
+        end
+      "in" ->
+        case ex(c, g(e, "Right"), scope, "", false, f) do
+          error(s) -> error(s)
+          ok({collection, next}) ->
+            case element(collection) do
+              none -> fail(e, "in requires a list, map, set or stream on the right, found " <> collection)
+              some(member) ->
+                case ex(c, g(e, "Left"), scope, member, false, next) do
+                  error(s) -> error(s)
+                  ok({_, after}) -> if not comparable?(c, member) do fail(e, "in requires elements that support equality") else typed("boolean", after) end
+                end
+            end
+        end
+      "invoke" ->
+        case ex(c, g(e, "Left"), scope, "", false, f) do
+          error(s) -> error(s)
+          ok({callee, next}) ->
+            case fn_parts(callee) do
+              none -> fail(e, "expression is not callable")
+              some({params, result}) ->
+                if length(params) != length(its(e, "Args")) do fail(e, "wrong function argument count") else
+                  case each(c, its(e, "Args"), scope, params, next) do
+                    error(s) -> error(s)
+                    ok({_, after}) -> typed(result, after)
+                  end
+                end
+            end
+        end
+      "value" -> value(c, e, scope, want, f)
+      "closure" -> closure(c, e, scope, f)
+      "lambda" -> written_function(c, e, scope, want, f)
+      "capture" -> written_function(c, e, scope, want, f)
+      "funcref" -> reference(c, e, scope, want, f)
+      "struct" -> struct_literal(c, e, scope, want, f)
+      "call" -> call(c, e, scope, want, st, f)
+      kind -> error(skip("expression " <> kind))
+    end
+  end
+
+  def name(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, st: boolean, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    case Map.get(scope, tx(e, "Name")) do
+      some(t) -> typed(t, f)
+      none ->
+        {ref, message} = constructor(c, tx(e, "Name"))
+        if message != "" do fail(e, message) else
+          case ref do
+            none -> fail(e, "undefined binding " <> tx(e, "Name"))
+            some({d, i}) -> construct(c, e, d, i, scope, want, st, f)
+          end
+        end
+    end
+  end
+
+  def list(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    given = case list_elem(want) do
+      some(x) -> x
+      none -> ""
+    end
+    args = its(e, "Args")
+    if args == [] and given == "" do fail(e, "empty list requires an expected list type") else
+      start: result[tuple[string, Flow], tuple[string, string]] = ok({given, f})
+      elems = Enum.reduce(args, start, fn arg, sofar ->
+        case sofar do
+          error(s) -> error(s)
+          ok({elem, now}) ->
+            case ex(c, arg, scope, elem, false, now) do
+              error(s) -> error(s)
+              ok({t, next}) -> ok({if elem == "" do t else elem end, next})
+            end
+        end
+      end)
+      case elems do
+        error(s) -> error(s)
+        ok({elem, next}) ->
+          t = "list[" <> elem <> "]"
+          if null?(e, "Right") do typed(t, next) else
+            case ex(c, g(e, "Right"), scope, t, false, next) do
+              error(s) -> error(s)
+              ok({_, after}) -> typed(t, after)
+            end
+          end
+      end
+    end
+  end
+
+  def mapping(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    {key0, value0} = case map_parts(want) do
+      some(kv) -> kv
+      none -> {"", ""}
+    end
+    keys = its(e, "Keys")
+    if keys == [] and key0 == "" do fail(e, "empty map requires an expected map type") else
+      start: result[tuple[string, string, list[string], Flow], tuple[string, string]] = ok({key0, value0, none_strings(), f})
+      done = Enum.reduce(Enum.zip(keys, its(e, "Args")), start, fn {k, v}, sofar ->
+        case sofar do
+          error(s) -> error(s)
+          ok({key, value, seen, now}) ->
+            case ex(c, k, scope, key, false, now) do
+              error(s) -> error(s)
+              ok({kt, next}) ->
+                if not key_type?(kt) do error(at(e, "map keys must be integers, floats, strings, booleans, atoms or tuples of them")) else
+                  key1 = if key == "" do kt else key end
+                  literal = tx(k, "Kind") == "literal"
+                  if literal and literal_key(g(k, "Value")) in seen do error(at(e, "duplicate literal map key")) else
+                    seen1 = if literal do seen ++ [literal_key(g(k, "Value"))] else seen end
+                    case ex(c, v, scope, value, false, next) do
+                      error(s) -> error(s)
+                      ok({vt, after}) -> ok({key1, if value == "" do vt else value end, seen1, after})
+                    end
+                  end
+                end
+            end
+        end
+      end)
+      case done do
+        error(s) -> error(s)
+        ok({key, value, _, next}) -> typed("map[" <> key <> "," <> value <> "]", next)
+      end
+    end
+  end
+
+  def binary(c: Ctx, e: AlchemJson.J, scope: map[string, string], f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    left = g(e, "Left")
+    right = g(e, "Right")
+    empty_left = (tx(left, "Kind") == "list" or tx(left, "Kind") == "map") and its(left, "Args") == []
+    sides = if empty_left do
+      case ex(c, right, scope, "", false, f) do
+        error(s) -> error(s)
+        ok({b, next}) ->
+          case ex(c, left, scope, b, false, next) do
+            error(s) -> error(s)
+            ok({a, after}) -> ok({a, b, after})
+          end
+      end
+    else
+      case ex(c, left, scope, "", false, f) do
+        error(s) -> error(s)
+        ok({a, next}) ->
+          case ex(c, right, scope, a, false, next) do
+            error(s) -> error(s)
+            ok({b, after}) -> ok({a, b, after})
+          end
+      end
+    end
+    case sides do
+      error(s) -> error(s)
+      ok({a, b, next}) ->
+        op = tx(e, "Op")
+        if a != b do fail(e, "operands must have the same type") else
+          if op == "and" or op == "or" do (if a != "boolean" do fail(e, "boolean operator requires booleans") else typed("boolean", next) end) else
+            if op in ["+", "-", "*", "/"] do (if a != "integer" and a != "float" do fail(e, "arithmetic requires integers or floats") else typed(a, next) end) else
+              if op == "%" do (if a != "integer" do fail(e, "% requires integers") else typed("integer", next) end) else
+                if op == "<>" do (if a != "string" do fail(e, "<> requires strings") else typed("string", next) end) else
+                  if op == "++" or op == "--" do
+                    case list_elem(a) do
+                      none -> fail(e, op <> " requires lists")
+                      some(member) -> if op == "--" and not comparable?(c, member) do fail(e, "-- requires elements that support equality") else typed(a, next) end
+                    end
+                  else
+                    if op == "**" do (if a != "integer" and a != "float" do fail(e, "** requires integers or floats") else typed(a, next) end) else
+                      if op == "==" or op == "!=" do (if not comparable?(c, a) do fail(e, "function values do not support equality") else typed("boolean", next) end) else
+                        if a != "integer" and a != "float" and a != "string" and a != "atom" do fail(e, "ordering requires integers, floats, strings or atoms") else typed("boolean", next) end
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+    end
+  end
+
+  def index(c: Ctx, e: AlchemJson.J, scope: map[string, string], f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    case ex(c, g(e, "Left"), scope, "", false, f) do
+      error(s) -> error(s)
+      ok({collection, next}) ->
+        key = case map_parts(collection) do
+          some({k, _}) -> k
+          none -> "integer"
+        end
+        right = g(e, "Right")
+        case ex(c, right, scope, key, false, next) do
+          error(s) -> error(s)
+          ok({_, after}) ->
+            case map_parts(collection) do
+              some({_, v}) -> typed(v, after)
+              none ->
+                case list_elem(collection) do
+                  some(x) -> typed(x, after)
+                  none ->
+                    case tuple_elems(collection) do
+                      some(parts) ->
+                        if tx(right, "Kind") != "literal" do fail(e, "tuple index must be an integer literal") else
+                          i = num(g(right, "Value"), "Integer")
+                          if i < 0 or i >= length(parts) do fail(e, "tuple index out of bounds") else typed(Enum.at(parts, i, ""), after) end
+                        end
+                      none -> fail(e, "indexing requires a list or tuple")
+                    end
+                end
+            end
+        end
+    end
+  end
+
+  # An if or case used as a value: its branches' last expressions are what
+  # it produces (yields).
+  def value(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    body = yields(its(e, "Body"))
+    inner = %Flow{f | yielding: true, yield: want}
+    case block(c, body, scope, "void", inner) do
+      error(s) -> error(s)
+      ok({complete, after}) ->
+        if not complete do
+          first = hd(body)
+          if tx(first, "Kind") == "if" and its(first, "Else") == [] do fail(e, "an if used as a value needs an else") else fail(e, "every branch of an if or case used as a value must end in a value") end
+        else typed(after.yield, f) end
+    end
+  end
+
+  def with_kind(s: AlchemJson.J, kind: string): AlchemJson.J do AlchemJson.put(s, "Kind", AlchemJson.str(kind)) end
+
+  # implicitReturns and yields: the last expression of a body, and of each
+  # branch of a last if or case, made its return or its value.
+  def finals(body: list[AlchemJson.J], kind: string): list[AlchemJson.J] do
+    case body do
+      [] -> body
+      _ ->
+        last = List.last(body, nojson())
+        changed = case tx(last, "Kind") do
+          "call" -> with_kind(last, kind)
+          "if" -> AlchemJson.put(AlchemJson.put(last, "Then", AlchemJson.J.list(finals(its(last, "Then"), kind))), "Else", AlchemJson.J.list(finals(its(last, "Else"), kind)))
+          "case" -> AlchemJson.put(last, "Arms", AlchemJson.J.list(Enum.map(its(last, "Arms"), fn arm -> AlchemJson.put(arm, "Body", AlchemJson.J.list(finals(its(arm, "Body"), kind))) end)))
+          _ -> last
+        end
+        Enum.drop(body, -1) ++ [changed]
+    end
+  end
+
+  def returns_of(body: list[AlchemJson.J]): list[AlchemJson.J] do finals(body, "return") end
+  def yields(body: list[AlchemJson.J]): list[AlchemJson.J] do finals(body, "yield") end
+
+  # ---- Functions as values ----
+
+  def closure(c: Ctx, e: AlchemJson.J, scope: map[string, string], f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    start: result[tuple[map[string, string], list[string]], tuple[string, string]] = ok({scope, none_strings()})
+    params = Enum.reduce(its(e, "Params"), start, fn p, sofar ->
+      case sofar do
+        error(s) -> error(s)
+        ok({local, parts}) ->
+          n = tx(p, "Name")
+          t = tx(p, "Type")
+          if builtin_name?(n) do error(at(e, n <> " is reserved for a builtin and cannot name a parameter")) else
+            if (not generated?(n) and not AlchemParse.binding_name?(n)) or not valid_type?(t) or well_formed(c, t, c.vars) != "" do error(at(e, "invalid closure parameter")) else
+              if Map.has_key?(local, n) do error(at(e, "closure parameter shadows an existing binding: " <> n)) else ok({Map.put(local, n, t), parts ++ [t]}) end
+            end
+          end
+      end
+    end)
+    case params do
+      error(s) -> error(s)
+      ok({local, parts}) ->
+        result = tx(e, "ReturnType")
+        message = well_formed(c, result, c.vars)
+        if message != "" do fail(e, message) else
+          case block(c, returns_of(its(e, "Body")), local, result, %Flow{f | yielding: false, yield: ""}) do
+            error(s) -> error(s)
+            ok({returns, _}) -> if not returns do fail(e, "closure must return on every path") else typed("fn[" <> Enum.join(parts ++ [result], ",") <> "]", f) end
+          end
+        end
+    end
+  end
+
+  def written_function(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    case fn_parts(want) do
+      none -> fail(e, "cannot infer the parameter types of this function here; write fn(name: type): type do ... end, or pass it where a function type is expected")
+      some({params, result}) -> lambda(c, e, scope, params, result, f)
+    end
+  end
+
+  def void_call?(c: Ctx, name: string): boolean do
+    case Map.get(c.t.simple, name) do
+      some({_, "void"}) -> true
+      _ -> Enum.any?(Map.values(c.t.libs), fn lib -> lib.result == "void" and lib.name == name end)
+    end
+  end
+
+  # lambdaTail: the last expression of an inferred function is its result; a
+  # body that ends in what has no value returns the empty tuple.
+  def lambda_tail(c: Ctx, body: list[AlchemJson.J]): list[AlchemJson.J] do
+    last = List.last(body, nojson())
+    unit = expression("return", last, [{"Expr", expression("tuple", last, [{"Args", AlchemJson.J.list(none_json())}])}])
+    case tx(last, "Kind") do
+      "return" -> body
+      "call" -> if tx(g(last, "Expr"), "Kind") == "call" and void_call?(c, tx(g(last, "Expr"), "Name")) do body ++ [unit] else Enum.drop(body, -1) ++ [with_kind(last, "return")] end
+      "if" -> if its(last, "Else") == [] do body ++ [unit] else Enum.drop(body, -1) ++ [AlchemJson.put(AlchemJson.put(last, "Then", AlchemJson.J.list(lambda_tail(c, its(last, "Then")))), "Else", AlchemJson.J.list(lambda_tail(c, its(last, "Else"))))] end
+      "case" -> Enum.drop(body, -1) ++ [AlchemJson.put(last, "Arms", AlchemJson.J.list(Enum.map(its(last, "Arms"), fn arm -> AlchemJson.put(arm, "Body", AlchemJson.J.list(lambda_tail(c, its(arm, "Body")))) end)))]
+      _ -> body ++ [unit]
+    end
+  end
+
+  def lambda(c: Ctx, e: AlchemJson.J, scope: map[string, string], params: list[string], result: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    {written, body0} = if tx(e, "Kind") == "capture" do
+      n = num(g(e, "Value"), "Integer")
+      {Enum.map(Enum.with_index(List.duplicate(0, n)), fn {_, i} -> object([{"Name", AlchemJson.str("&" <> Integer.to_string(i + 1))}, {"Type", AlchemJson.str("")}, {"Pattern", nojson()}, {"Line", g(e, "Line")}, {"Column", g(e, "Column")}]) end),
+       [expression("call", e, [{"Expr", g(e, "Left")}])]}
+    else {its(e, "Params"), its(e, "Body")} end
+    if length(written) != length(params) do fail(e, "this function takes " <> plural(length(written), "parameter") <> ", but " <> Integer.to_string(length(params)) <> " expected here") else
+      start: result[tuple[map[string, string], list[AlchemJson.J]], tuple[string, string]] = ok({scope, none_json()})
+      bound = Enum.reduce(Enum.with_index(Enum.zip(written, params)), start, fn {{p, t}, i}, sofar ->
+        case sofar do
+          error(s) -> error(s)
+          ok({local, binds}) ->
+            if not null?(p, "Pattern") do
+              n = "arg$" <> Integer.to_string(i + 1)
+              bind = object([{"Kind", AlchemJson.str("bind")}, {"Pattern", g(p, "Pattern")}, {"Declared", AlchemJson.str("")}, {"Line", g(p, "Line")}, {"Column", g(p, "Column")}, {"Expr", object([{"Kind", AlchemJson.str("name")}, {"Name", AlchemJson.str(n)}, {"Line", g(p, "Line")}, {"Column", g(p, "Column")}])}])
+              if Map.has_key?(local, n) do error(at(p, "parameter " <> n <> " shadows an existing binding")) else ok({Map.put(local, n, t), binds ++ [bind]}) end
+            else
+              n = tx(p, "Name")
+              if builtin_name?(n) do error(at(p, n <> " is reserved for a builtin and cannot name a parameter")) else
+                if not generated?(n) and not AlchemParse.binding_name?(n) do error(at(p, "invalid parameter name " <> AlchemLexer.go_quote(n))) else
+                  if Map.has_key?(local, n) do error(at(p, "parameter " <> n <> " shadows an existing binding")) else ok({Map.put(local, n, t), binds}) end
+                end
+              end
+            end
+        end
+      end)
+      case bound do
+        error(s) -> error(s)
+        ok({local, binds}) ->
+          body = lambda_tail(c, binds ++ body0)
+          case block(c, body, local, "?", %Flow{f | yielding: false, yield: "", inferring: true, infer: result}) do
+            error({kind, message}) ->
+              if kind == "found" and String.contains?(message, "cannot infer the type this raise stands in for") do error(skip("a function that only raises")) else error({kind, message}) end
+            ok({returns, after}) ->
+              if not returns or after.infer == "" do fail(e, "every path of this function must produce a value") else typed("fn[" <> Enum.join(params ++ [after.infer], ",") <> "]", f) end
+          end
+      end
+    end
+  end
+
+  def lambda_argument(c: Ctx, arg: AlchemJson.J, scope: map[string, string], param: string, vars: list[string], b: map[string, string], f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    case fn_parts(param) do
+      none -> fail(arg, "a function is not expected here; expected " <> instantiate(param, vars, b))
+      some({parts, result}) ->
+        open = Enum.find_index(parts, fn part -> not resolved?(part, vars, b) end)
+        case open do
+          some(i) -> fail(arg, "cannot infer the type of parameter " <> Integer.to_string(i + 1) <> " of this function; write fn(name: type): type do ... end")
+          none ->
+            expected = if resolved?(result, vars, b) do instantiate(result, vars, b) else "" end
+            lambda(c, arg, scope, Enum.map(parts, fn part -> instantiate(part, vars, b) end), expected, f)
+        end
+    end
+  end
+
+  def generic(fun: AlchemJson.J): list[string] do
+    Enum.reduce(its(fun, "Params"), none_strings(), fn p, seen -> tvars(tx(p, "Type"), seen) end)
+  end
+
+  def fn_type(fun: AlchemJson.J): string do
+    "fn[" <> Enum.join(Enum.map(its(fun, "Params"), fn p -> tx(p, "Type") end) ++ [tx(fun, "Type")], ",") <> "]"
+  end
+
+  def form_name(name: string, n: integer): string do name <> "#" <> Integer.to_string(n) end
+
+  def forms(c: Ctx, name: string): list[AlchemJson.J] do
+    case Map.get(c.functions, name) do
+      none -> []
+      some(first) -> [first] ++ more_forms(c, name, 2)
+    end
+  end
+
+  def more_forms(c: Ctx, name: string, n: integer): list[AlchemJson.J] do
+    case Map.get(c.functions, form_name(name, n)) do
+      some(fun) -> [fun] ++ more_forms(c, name, n + 1)
+      none -> []
+    end
+  end
+
+  def form_list(c: Ctx, name: string): string do
+    Enum.join(Enum.map(forms(c, name), fn fun -> "(" <> Enum.join(Enum.map(its(fun, "Params"), fn p -> tx(p, "Type") end), ", ") <> ")" end), " or ")
+  end
+
+  def local_name(fun: AlchemJson.J): string do
+    if tx(fun, "ProtocolFunction") != "" do tx(fun, "ProtocolFunction") else
+      AlchemLower.plain_name(if tx(fun, "LocalName") != "" do tx(fun, "LocalName") else tx(fun, "Name") end)
+    end
+  end
+
+  # builtinReference: &name/arity of what the program does not define, as
+  # the capture &name(&1, ..., &arity).
+  def builtin_reference(c: Ctx, e: AlchemJson.J): AlchemJson.J do
+    n = tx(e, "Name")
+    arity = case Integer.parse(tx(e, "Op")) do
+      ok(a) -> a
+      error(_) -> -1
+    end
+    known = String.contains?(n, ".") or Map.has_key?(c.t.libs, n <> "/" <> tx(e, "Op")) or (case Map.get(c.t.simple, n) do
+      some({ps, _}) -> length(ps) == arity
+      none -> false
+    end)
+    if tx(e, "Kind") != "funcref" or Map.has_key?(c.functions, n) or arity < 0 or arity > 16 or not known do e else
+      args = Enum.map(Enum.with_index(List.duplicate(0, arity)), fn {_, i} -> expression("name", e, [{"Name", AlchemJson.str("&" <> Integer.to_string(i + 1))}]) end)
+      call = expression("call", e, [{"Name", AlchemJson.str(n)}, {"Args", AlchemJson.J.list(args)}])
+      expression("capture", e, [{"Left", call}, {"Value", object([{"Kind", AlchemJson.str("integer")}, {"Integer", AlchemJson.int(arity)}])}])
+    end
+  end
+
+  # reference: for a reference to a function of several forms, the form
+  # whose parameters the expected function type names.
+  def chosen_reference(c: Ctx, arg: AlchemJson.J, param: string, vars: list[string], b: map[string, string]): AlchemJson.J do
+    n = tx(arg, "Name")
+    if tx(arg, "Kind") != "funcref" or truth(arg, "Chosen") or not Map.has_key?(c.functions, n) or not Map.has_key?(c.functions, form_name(n, 2)) do arg else
+      case fn_parts(param) do
+        none -> arg
+        some({parts, _}) ->
+          fitting = Enum.find(forms(c, n), fn form ->
+            ps = its(form, "Params")
+            length(ps) == length(parts) and (Enum.reduce(Enum.zip(ps, parts), some(none_map()), fn {p, part}, sofar ->
+              case sofar do
+                none -> none
+                some(own) -> if resolved?(part, vars, b) do unify(tx(p, "Type"), instantiate(part, vars, b), generic(form), own) else some(own) end
+              end
+            end) != none)
+          end)
+          case fitting do
+            some(form) -> AlchemJson.put(AlchemJson.put(arg, "Name", AlchemJson.str(tx(form, "Name"))), "Chosen", AlchemJson.bool(true))
+            none -> arg
+          end
+      end
+    end
+  end
+
+  def reference(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    n = tx(e, "Name")
+    case Map.get(c.t.simple, n) do
+      some({ps, result}) -> typed("fn[" <> Enum.join(ps ++ [result], ",") <> "]", f)
+      none ->
+        rewritten = builtin_reference(c, e)
+        if not Map.has_key?(c.functions, n) and tx(rewritten, "Kind") == "capture" do ex(c, rewritten, scope, want, false, f) else
+          case Map.get(c.functions, n) do
+            none -> fail(e, "unknown function reference " <> n)
+            some(fun0) ->
+              if n == "main" do fail(e, "unknown function reference " <> n) else
+                several = not truth(e, "Chosen") and Map.has_key?(c.functions, form_name(n, 2))
+                picked = if not several do some(fun0) else
+                  Enum.find(forms(c, n), fn form -> want != "" and unifies?(fn_type(form), want, generic(form), none_map()) end)
+                end
+                case picked do
+                  none -> fail(e, local_name(fun0) <> " is defined for arguments of several types, and a reference to it needs an expected function type: one of " <> form_list(c, n))
+                  some(fun) ->
+                    if tx(fun, "Type") == "void" do fail(e, tx(fun, "Name") <> " returns no value and cannot be referenced") else
+                      op = tx(e, "Op")
+                      if op != "" and op != Integer.to_string(length(its(fun, "Params"))) do fail(e, local_name(fun) <> " takes " <> Integer.to_string(length(its(fun, "Params"))) <> " arguments, not " <> op) else
+                        t = fn_type(fun)
+                        names = generic(fun)
+                        if names == [] do typed(t, f) else
+                          case (if want == "" do none else unify(t, want, names, none_map()) end) do
+                            none -> fail(e, "reference to generic function " <> tx(fun, "Name") <> " needs an expected function type")
+                            some(b) -> if not resolved?(t, names, b) do fail(e, "reference to generic function " <> tx(fun, "Name") <> " needs an expected function type") else typed(instantiate(t, names, b), f) end
+                          end
+                        end
+                      end
+                    end
+                end
+              end
+          end
+        end
+    end
+  end
+
+  # ---- Constructors and structs ----
+
+  def construct(c: Ctx, e: AlchemJson.J, d: Decl, index: integer, scope: map[string, string], want: string, st: boolean, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    fields = Enum.at(d.variants, index, %Variant{name: "", fields: []}).fields
+    args = its(e, "Args")
+    if length(args) != length(fields) do fail(e, display(d, index) <> " requires " <> plural(length(fields), "argument")) else
+      {wh, wargs} = split(want)
+      b0 = if wh == d.name and length(wargs) == length(d.params) do Map.new(Enum.filter(Enum.zip(d.params, wargs), fn {_, a} -> a != "?" end)) else none_map() end
+      case arguments(c, args, scope, Enum.map(fields, fn fd -> fd.type end), d.params, b0, display(d, index), f) do
+        error(s) -> error(s)
+        ok({b, next}) ->
+          missing = Enum.find(d.params, fn p -> not Map.has_key?(b, p) end)
+          case missing do
+            some(_) -> if st do typed(join(d.name, Enum.map(d.params, fn p -> Map.get(b, p, "tuple[]") end)), next) else fail(e, "cannot infer the type of " <> display(d, index) <> " here; annotate the binding it is assigned to") end
+            none -> typed(join(d.name, Enum.map(d.params, fn p -> Map.get(b, p, "") end)), next)
+          end
+      end
+    end
+  end
+
+  def arguments(c: Ctx, args: list[AlchemJson.J], scope: map[string, string], params: list[string], vars: list[string], b0: map[string, string], what: string, f: Flow): result[tuple[map[string, string], Flow], tuple[string, string]] do
+    start: result[tuple[map[string, string], Flow], tuple[string, string]] = ok({b0, f})
+    Enum.reduce(Enum.zip(args, params), start, fn {arg, param}, sofar ->
+      case sofar do
+        error(s) -> error(s)
+        ok({b, now}) ->
+          expected = if resolved?(param, vars, b) do instantiate(param, vars, b) else "" end
+          kind = tx(arg, "Kind")
+          got = if kind == "lambda" or kind == "capture" do lambda_argument(c, arg, scope, param, vars, b, now) else ex(c, chosen_reference(c, arg, param, vars, b), scope, expected, false, now) end
+          case got do
+            error(s) -> error(s)
+            ok({t, next}) ->
+              case unify(param, t, vars, b) do
+                some(b1) -> ok({b1, next})
+                none -> error(at(arg, "argument type mismatch for " <> what <> ": expected " <> instantiate(param, vars, b) <> ", found " <> t))
+              end
+          end
+      end
+    end)
+  end
+
+  def bound_of(d: Decl, t: string): option[map[string, string]] do
+    {head, args} = split(t)
+    if head != d.name or length(args) != length(d.params) do none else some(Map.new(Enum.zip(d.params, args))) end
+  end
+
+  def struct_literal(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    case Map.get(c.types, tx(e, "Name")) do
+      none -> fail(e, "unknown type " <> AlchemLexer.go_quote(tx(e, "Name")))
+      some(d) ->
+        if d.kind != "struct" do fail(e, "unknown type " <> AlchemLexer.go_quote(tx(e, "Name"))) else
+          based = if null?(e, "Left") do
+            ok({case bound_of(d, want) do
+              some(b) -> b
+              none -> none_map()
+            end, f})
+          else
+            case ex(c, g(e, "Left"), scope, "", false, f) do
+              error(s) -> error(s)
+              ok({base, next}) ->
+                case bound_of(d, base) do
+                  some(b) -> ok({b, next})
+                  none -> error(at(e, d.local <> " update requires a " <> d.local <> " value, found " <> base))
+                end
+            end
+          end
+          case based do
+            error(s) -> error(s)
+            ok({b0, f0}) ->
+              labels0 = texts(e, "Labels")
+              args0 = its(e, "Args")
+              extra0: list[Field] = []
+              extra = if null?(e, "Left") do Enum.filter(d.fields, fn fd -> not (fd.name in labels0) and not AlchemJson.null?(fd.default) end) else extra0 end
+              builtin_default = Enum.any?(extra, fn fd -> AlchemJson.text_of(fd.default) == "builtin default" end)
+              labels = labels0 ++ Enum.map(extra, fn fd -> fd.name end)
+              args = args0 ++ Enum.map(extra, fn fd -> fd.default end)
+              start: result[tuple[map[string, string], list[string], Flow], tuple[string, string]] = if builtin_default do error(skip("a builtin struct's default")) else ok({b0, none_strings(), f0}) end
+              done = Enum.reduce(Enum.zip(labels, args), start, fn {label, arg}, sofar ->
+                case sofar do
+                  error(s) -> error(s)
+                  ok({b, seen, now}) ->
+                    case Enum.find(d.fields, fn fd -> fd.name == label end) do
+                      none -> error(at(e, d.local <> " has no field " <> label))
+                      some(fd) ->
+                        if label in seen do error(at(e, "duplicate field " <> label)) else
+                          expected = if resolved?(fd.type, d.params, b) do instantiate(fd.type, d.params, b) else "" end
+                          case ex(c, arg, scope, expected, false, now) do
+                            error(s) -> error(s)
+                            ok({t, next}) ->
+                              case unify(fd.type, t, d.params, b) do
+                                some(b1) -> ok({b1, seen ++ [label], next})
+                                none -> error(at(arg, "field " <> label <> ": expected " <> instantiate(fd.type, d.params, b) <> ", found " <> t))
+                              end
+                          end
+                        end
+                    end
+                end
+              end)
+              case done do
+                error(s) -> error(s)
+                ok({b, seen, next}) ->
+                  missing = if null?(e, "Left") do Enum.find(d.fields, fn fd -> not (fd.name in seen) end) else none end
+                  case missing do
+                    some(fd) -> fail(e, "missing field " <> fd.name)
+                    none ->
+                      case Enum.find(d.params, fn p -> not Map.has_key?(b, p) end) do
+                        some(p) -> fail(e, "cannot infer type parameter " <> p <> " of " <> d.local <> "; annotate the binding it is assigned to")
+                        none -> typed(join(d.name, Enum.map(d.params, fn p -> Map.get(b, p, "") end)), next)
+                      end
+                  end
+              end
+          end
+        end
+    end
+  end
+
+  # ---- Calls ----
+
+  def shadowed?(c: Ctx, n: string, scope: map[string, string]): boolean do Map.has_key?(scope, n) end
+
+  def regular?(e: AlchemJson.J, scope: map[string, string]): boolean do
+    case tx(e, "Kind") do
+      "sigil" -> tx(e, "Name") == "r"
+      "name" -> Map.get(scope, tx(e, "Name"), "") == "regex"
+      "call" -> tx(e, "Name") == "Regex.compile!"
+      _ -> false
+    end
+  end
+
+  def call(c: Ctx, e0: AlchemJson.J, scope: map[string, string], want: string, st: boolean, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    n0 = tx(e0, "Name")
+    args0 = its(e0, "Args")
+    if (n0 == "elem" or n0 == "put_elem") and not Map.has_key?(c.functions, n0) and Map.get(scope, n0, "") == "" do tuple_call(c, e0, scope, want, f) else
+      key0 = n0 <> "/" <> Integer.to_string(length(args0))
+      regex = case key0 do
+        "String.replace/3" -> "Regex.replace"
+        "String.split/2" -> "Regex.split"
+        _ -> ""
+      end
+      e = if regex != "" and regular?(Enum.at(args0, 1, nojson()), scope) do
+        AlchemJson.put(AlchemJson.put(e0, "Name", AlchemJson.str(regex)), "Args", AlchemJson.J.list([Enum.at(args0, 1, nojson()), Enum.at(args0, 0, nojson())] ++ Enum.drop(args0, 2)))
+      else e0 end
+      n = tx(e, "Name")
+      args = its(e, "Args")
+      key = n <> "/" <> Integer.to_string(length(args))
+      library = Map.has_key?(c.t.libs, key)
+      {ref, message} = if not shadowed?(c, n, scope) and not library do constructor(c, n) else {none, ""} end
+      if message != "" do fail(e, message) else
+        case ref do
+          some({d, i}) -> construct(c, e, d, i, scope, want, st, f)
+          none ->
+            if library and not shadowed?(c, n, scope) and not Map.has_key?(c.functions, n) do
+              first = Map.get(c.t.libs, key, hd(Map.values(c.t.libs)))
+              chosen = if Map.get(c.t.overloads, first.key, none_strings()) != [] do overload(c, e, first, scope, f) else ok(first) end
+              case chosen do
+                error(s) -> error(s)
+                ok(entry) -> library_call(c, e, entry, scope, want, f)
+              end
+            else
+              other_call(c, e, scope, want, st, f)
+            end
+        end
+      end
+    end
+  end
+
+  def tuple_call(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    n = tx(e, "Name")
+    wanted = if n == "elem" do 2 else 3 end
+    args = its(e, "Args")
+    if length(args) != wanted do fail(e, n <> " takes " <> Integer.to_string(wanted) <> " arguments") else
+      i = Enum.at(args, 1, nojson())
+      if tx(i, "Kind") != "literal" or tx(g(i, "Value"), "Kind") != "integer" do fail(e, n <> " needs an integer literal for the index, since each element of a tuple has its own type") else
+        if n == "elem" do ex(c, expression("index", e, [{"Left", hd(args)}, {"Right", i}]), scope, want, false, f) else error(skip("put_elem")) end
+      end
+    end
+  end
+
+  # The arguments that tell the entries of an overloaded function apart.
+  def overload(c: Ctx, e: AlchemJson.J, first: Lib, scope: map[string, string], f: Flow): result[Lib, tuple[string, string]] do
+    entries = [first] ++ Enum.map(Map.get(c.t.overloads, first.key, none_strings()), fn k -> Map.get(c.t.libs, k, first) end)
+    args = its(e, "Args")
+    telling = Enum.filter(Enum.with_index(first.params) |> Enum.map(fn {_, i} -> i end), fn i -> Enum.any?(tl(entries), fn entry -> Enum.at(entry.params, i, "") != Enum.at(first.params, i, "") end) end)
+    nothing: map[integer, string] = %{}
+    start: result[tuple[option[Lib], map[integer, string]], tuple[string, string]] = ok({none, nothing})
+    picked = Enum.reduce(entries, start, fn entry, sofar ->
+      case sofar do
+        error(s) -> error(s)
+        ok({some(done), plain}) -> ok({some(done), plain})
+        ok({none, plain}) ->
+          tried: result[tuple[boolean, map[string, string], map[integer, string]], tuple[string, string]] = ok({true, none_map(), plain})
+          fits = Enum.reduce(telling, tried, fn i, inner ->
+            case inner do
+              error(s) -> error(s)
+              ok({false, b, known}) -> ok({false, b, known})
+              ok({true, b, known}) ->
+                param = Enum.at(entry.params, i, "")
+                arg = Enum.at(args, i, nojson())
+                case function_arity(arg) do
+                  some(arity) ->
+                    {head, parts} = split(param)
+                    ok({head == "fn" and length(parts) - 1 == arity, b, known})
+                  none ->
+                    if not String.contains?(param, "enum[") and tvars(param, none_strings()) == [] do
+                      case ex(c, arg, scope, param, false, f) do
+                        error({"skip", why}) -> error({"skip", why})
+                        error(_) -> ok({false, b, known})
+                        ok(_) -> ok({true, b, known})
+                      end
+                    else
+                      typed_arg = case Map.get(known, i) do
+                        some(t) -> ok({t, known})
+                        none ->
+                          case ex(c, arg, scope, "", false, f) do
+                            error({"skip", why}) -> error({"skip", why})
+                            error(_) -> ok({"", known})
+                            ok({t, _}) -> ok({t, Map.put(known, i, t)})
+                          end
+                      end
+                      case typed_arg do
+                        error(s) -> error(s)
+                        ok({"", known1}) -> ok({false, b, known1})
+                        ok({t, known1}) ->
+                          {head, inner_types} = split(param)
+                          if head == "enum" do
+                            case element(t) do
+                              some(member) ->
+                                case unify(Enum.at(inner_types, 0, ""), member, entry.vars, b) do
+                                  some(b1) -> ok({true, b1, known1})
+                                  none -> ok({false, b, known1})
+                                end
+                              none -> ok({false, b, known1})
+                            end
+                          else
+                            case unify(param, t, entry.vars, b) do
+                              some(b1) -> ok({true, b1, known1})
+                              none -> ok({false, b, known1})
+                            end
+                          end
+                      end
+                    end
+                end
+            end
+          end)
+          case fits do
+            error(s) -> error(s)
+            ok({true, _, known}) -> ok({some(entry), known})
+            ok({false, _, known}) -> ok({none, known})
+          end
+      end
+    end)
+    case picked do
+      error(s) -> error(s)
+      ok({some(entry), _}) -> ok(entry)
+      ok({none, _}) -> ok(first)
+    end
+  end
+
+  def function_arity(e: AlchemJson.J): option[integer] do
+    case tx(e, "Kind") do
+      "lambda" -> some(length(its(e, "Params")))
+      "capture" -> some(num(g(e, "Value"), "Integer"))
+      "funcref" ->
+        case Integer.parse(tx(e, "Op")) do
+          ok(n) -> some(n)
+          error(_) -> none
+        end
+      _ -> none
+    end
+  end
+
+  def library_call(c: Ctx, e: AlchemJson.J, entry: Lib, scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    vars = entry.vars
+    b0 = if want != "" and entry.result != "void" do
+      case unify(entry.result, want, vars, none_map()) do
+        some(trial) -> trial
+        none -> none_map()
+      end
+    else none_map() end
+    args = its(e, "Args")
+    order = if entry.name == "Enum.into" and length(args) == 3 do [0, 2, 1] else Enum.map(Enum.with_index(args), fn {_, i} -> i end) end
+    start: result[tuple[map[string, string], Flow], tuple[string, string]] = ok({b0, f})
+    walked = Enum.reduce(order, start, fn i, sofar ->
+      case sofar do
+        error(s) -> error(s)
+        ok({b, now}) ->
+          arg = builtin_reference(c, Enum.at(args, i, nojson()))
+          param = Enum.at(entry.params, i, "")
+          {head, inner} = split(param)
+          if head == "enum" do
+            member_type = Enum.at(inner, 0, "")
+            expected = if tx(arg, "Kind") == "list" and its(arg, "Args") == [] and resolved?(member_type, vars, b) do "list[" <> instantiate(member_type, vars, b) <> "]" else "" end
+            case ex(c, arg, scope, expected, false, now) do
+              error(s) -> error(s)
+              ok({t, next}) ->
+                case element(t) do
+                  none -> error(at(arg, entry.name <> " expects a list, map, set, stream or range here, found " <> t))
+                  some(member) ->
+                    case unify(member_type, member, vars, b) do
+                      some(b1) -> ok({b1, next})
+                      none -> error(at(arg, "argument type mismatch for " <> entry.name <> ": expected elements of " <> instantiate(member_type, vars, b) <> ", found " <> member))
+                    end
+                end
+            end
+          else
+            kind = tx(arg, "Kind")
+            got = if kind == "lambda" or kind == "capture" do lambda_argument(c, arg, scope, param, vars, b, now) else
+              chosen = chosen_reference(c, arg, param, vars, b)
+              expected0 = if resolved?(param, vars, b) do instantiate(param, vars, b) else "" end
+              expected = if entry.name == "Enum.into" and expected0 == "" and its(chosen, "Args") == [] and its(chosen, "Keys") == [] do into_target(chosen, Map.get(b, "a", "")) else expected0 end
+              ex(c, chosen, scope, expected, false, now)
+            end
+            case got do
+              error(s) -> error(s)
+              ok({t, next}) ->
+                case unify(param, t, vars, b) do
+                  some(b1) -> ok({b1, next})
+                  none -> error(at(arg, "argument type mismatch for " <> entry.name <> ": expected " <> instantiate(param, vars, b) <> ", found " <> t))
+                end
+            end
+          end
+      end
+    end)
+    case walked do
+      error(s) -> error(s)
+      ok({b, next}) ->
+        problem = library_problem(c, entry, b)
+        if problem == "\u{0}skip" do error(skip("codec or read constraints")) else
+        if problem != "" do fail(e, problem) else
+          result = instantiate(entry.result, vars, b)
+          if result == "void" do typed(result, next) else
+            message = well_formed(c, result, c.vars)
+            if message != "" do fail(e, message) else
+              if not valid_type?(result) do fail(e, entry.name <> " cannot produce " <> result) else typed(result, next) end
+            end
+          end
+        end
+        end
+    end
+  end
+
+  def into_target(arg: AlchemJson.J, element: string): string do
+    {head, parts} = split(element)
+    if tx(arg, "Kind") == "map" and head == "tuple" and length(parts) == 2 do "map[" <> Enum.at(parts, 0, "") <> "," <> Enum.at(parts, 1, "") <> "]" else
+      if tx(arg, "Kind") == "list" do "list[" <> element <> "]" else
+        if tx(arg, "Kind") == "call" and tx(arg, "Name") == "MapSet.new" do "set[" <> element <> "]" else "" end
+      end
+    end
+  end
+
+  # What library() finds once the arguments are typed: a variable left
+  # unbound, a constraint a bound type does not meet.
+  def library_problem(c: Ctx, entry: Lib, b: map[string, string]): string do
+    if Enum.any?(entry.vars, fn v -> not Map.has_key?(b, v) end) do "cannot infer the result type of " <> entry.name <> " here; annotate the binding it is assigned to" else
+      equal = Enum.find(entry.equal, fn v -> not comparable?(c, Map.get(b, v, "")) end)
+      order = Enum.find(entry.order, fn v -> not orderable?(Map.get(b, v, "")) end)
+      show = Enum.find(entry.show, fn v -> not (Map.get(b, v, "") in ["string", "integer", "float", "boolean", "atom"]) end)
+      keys = Enum.find(entry.keys, fn v -> not key_type?(Map.get(b, v, "")) end)
+      nums = Enum.find(entry.num, fn v -> Map.get(b, v, "") != "integer" and Map.get(b, v, "") != "float" end)
+      cal = Enum.find(entry.cal, fn v -> not (Map.get(b, v, "") in ["Date", "Time", "NaiveDateTime", "DateTime"]) end)
+      into = if entry.name == "Enum.into" do into_problem(Map.get(b, "a", ""), Map.get(b, "c", "")) else "" end
+      case equal do
+        some(v) -> entry.name <> " needs values that support equality, which " <> Map.get(b, v, "") <> " does not"
+        none ->
+          case order do
+            some(v) -> entry.name <> " needs values with an order (integers, floats, strings, booleans, or tuples and lists of them), which " <> Map.get(b, v, "") <> " does not have"
+            none ->
+              case show do
+                some(v) -> entry.name <> " needs strings, integers, floats or booleans, found " <> Map.get(b, v, "")
+                none ->
+                  case keys do
+                    some(v) -> entry.name <> " needs keys that are integers, floats, strings, booleans, atoms or tuples of them, found " <> Map.get(b, v, "")
+                    none ->
+                      case nums do
+                        some(v) -> entry.name <> " needs integers or floats, found " <> Map.get(b, v, "")
+                        none ->
+                          if into != "" do into else
+                            if entry.codec != [] or entry.read != [] do "\u{0}skip" else
+                              case cal do
+                                some(v) -> entry.name <> " needs a Date, Time, NaiveDateTime or DateTime, found " <> Map.get(b, v, "")
+                                none -> ""
+                              end
+                            end
+                          end
+                      end
+                  end
+              end
+          end
+      end
+    end
+  end
+
+  def into_problem(element: string, target: string): string do
+    {head, args} = split(target)
+    fits = if head == "list" or head == "set" do length(args) == 1 and Enum.at(args, 0, "") == element else
+      if head == "map" do length(args) == 2 and element == "tuple[" <> Enum.at(args, 0, "") <> "," <> Enum.at(args, 1, "") <> "]" else
+        if head == "string" do element == "string" else false end
+      end
+    end
+    if fits do "" else "Enum.into cannot collect " <> element <> " into " <> target <> ": a list or set takes its own elements, a map takes {key, value} tuples, and a string takes strings" end
+  end
+
+  def builtin?(n: string): boolean do
+    n in ["prepend", "concat", "map", "filter", "reduce", "put", "get", "has_key", "Map.keys", "Map.values", "Map.entries", "Map.delete", "Map.merge",
+          "List.reverse", "List.take", "List.drop", "List.contains", "List.sort", "List.range", "List.zip",
+          "String.length", "String.slice", "String.contains", "String.split", "String.join", "String.trim", "String.upcase", "String.downcase",
+          "Integer.to_string", "Integer.parse", "Time.monotonic", "Time.now", "System.argv", "IO.read_line", "IO.read_all", "File.read"]
+  end
+
+  def other_call(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, st: boolean, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    n = tx(e, "Name")
+    args = its(e, "Args")
+    if n == "raise" or (n == "throw" and length(args) == 1) do raising(c, e, scope, want, st, f) else
+      if n == "length" do
+        if length(args) != 1 do fail(e, "length requires one argument") else
+          case ex(c, hd(args), scope, "", false, f) do
+            error(s) -> error(s)
+            ok({t, next}) -> if list_elem(t) == none and tuple_elems(t) == none and map_parts(t) == none do fail(e, "length requires a list, tuple or map") else typed("integer", next) end
+          end
+        end
+      else
+        if String.starts_with?(n, "Server.") or String.starts_with?(n, "Process.") or String.starts_with?(n, "Supervisor.") do error(skip("process call " <> n)) else
+          case Map.get(c.t.simple, n) do
+            some({ps, result}) ->
+              if length(args) != length(ps) do fail(e, n <> " requires " <> Integer.to_string(length(ps)) <> " argument" <> (if length(ps) == 1 do "" else "s" end)) else
+                case each(c, args, scope, ps, f) do
+                  error(s) -> error(s)
+                  ok({_, next}) -> typed(result, next)
+                end
+              end
+            none ->
+              if builtin?(n) do builtin(c, e, scope, want, f) else
+                if Map.has_key?(scope, n) and not Map.has_key?(c.functions, n) do
+                  case fn_parts(Map.get(scope, n, "")) do
+                    none -> fail(e, "binding is not callable: " <> n)
+                    some({ps, result}) ->
+                      if length(ps) != length(args) do fail(e, "wrong callback argument count") else
+                        case each(c, args, scope, ps, f) do
+                          error(s) -> error(s)
+                          ok({_, next}) -> typed(result, next)
+                        end
+                      end
+                  end
+                else program_call(c, e, scope, want, f) end
+              end
+          end
+        end
+      end
+    end
+  end
+
+  def raising(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, st: boolean, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    n = tx(e, "Name")
+    args = its(e, "Args")
+    if length(args) != 1 do fail(e, "raise requires one argument") else
+      arg = hd(args)
+      checked = if n == "throw" do
+        case ex(c, arg, scope, "", false, f) do
+          error(s) -> error(s)
+          ok({_, next}) -> ok(next)
+        end
+      else
+        bound = Map.get(scope, tx(arg, "Name"), "")
+        if tx(arg, "Kind") == "struct" or (tx(arg, "Kind") == "name" and bound != "" and bound != "string") do
+          case ex(c, arg, scope, "", false, f) do
+            error(s) -> error(s)
+            ok({t, next}) ->
+              case Map.get(c.types, t) do
+                some(d) -> if d.exception do ok(next) else error(at(e, "raise takes a message or an exception, not a " <> t)) end
+                none -> error(at(e, "raise takes a message or an exception, not a " <> t))
+              end
+          end
+        else
+          case ex(c, arg, scope, "string", false, f) do
+            error(s) -> error(s)
+            ok({_, next}) -> ok(next)
+          end
+        end
+      end
+      case checked do
+        error(s) -> error(s)
+        ok(next) ->
+          if want != "" do typed(want, next) else
+            if not st do fail(e, "cannot infer the type this " <> n <> " stands in for") else typed("void", next) end
+          end
+      end
+    end
+  end
+
+  def fixed(n: string): option[tuple[list[string], string]] do
+    case n do
+      "String.length" -> some({["string"], "integer"})
+      "String.slice" -> some({["string", "integer", "integer"], "string"})
+      "String.contains" -> some({["string", "string"], "boolean"})
+      "String.split" -> some({["string", "string"], "list[string]"})
+      "String.join" -> some({["list[string]", "string"], "string"})
+      "String.trim" -> some({["string"], "string"})
+      "String.upcase" -> some({["string"], "string"})
+      "String.downcase" -> some({["string"], "string"})
+      "Integer.to_string" -> some({["integer"], "string"})
+      "Integer.parse" -> some({["string"], "result[integer,string]"})
+      "Time.monotonic" -> some({none_strings(), "integer"})
+      "Time.now" -> some({none_strings(), "integer"})
+      "System.argv" -> some({none_strings(), "list[string]"})
+      "IO.read_line" -> some({none_strings(), "option[string]"})
+      "IO.read_all" -> some({none_strings(), "string"})
+      "File.read" -> some({["string"], "result[string,string]"})
+      _ -> none
+    end
+  end
+
+  def builtin(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    n = tx(e, "Name")
+    args = its(e, "Args")
+    arity = if n in ["reduce", "put", "get", "String.slice"] do 3 else
+      if n in ["Map.keys", "Map.values", "Map.entries", "List.reverse", "List.sort", "String.length", "String.trim", "String.upcase", "String.downcase", "Integer.to_string", "Integer.parse", "File.read"] do 1 else
+        if n in ["Time.monotonic", "Time.now", "System.argv", "IO.read_line", "IO.read_all"] do 0 else 2 end
+      end
+    end
+    if length(args) != arity do fail(e, n <> " requires " <> Integer.to_string(arity) <> " arguments") else
+      case fixed(n) do
+        some({ps, result}) ->
+          case each(c, args, scope, ps, f) do
+            error(s) -> error(s)
+            ok({_, next}) -> typed(result, next)
+          end
+        none -> old_builtin(c, e, n, args, scope, want, f)
+      end
+    end
+  end
+
+  def one(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do ex(c, e, scope, want, false, f) end
+
+  # The oldest builtins, typed as builtins.go types them.
+  def old_builtin(c: Ctx, e: AlchemJson.J, n: string, args: list[AlchemJson.J], scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    a0 = Enum.at(args, 0, nojson())
+    a1 = Enum.at(args, 1, nojson())
+    a2 = Enum.at(args, 2, nojson())
+    if n in ["List.reverse", "List.sort", "List.take", "List.drop", "List.contains"] do
+      expected = if list_elem(want) != none and n != "List.contains" do want else "" end
+      case one(c, a0, scope, expected, f) do
+        error(s) -> error(s)
+        ok({lt, f1}) ->
+          case list_elem(lt) do
+            none -> fail(e, n <> " requires a list")
+            some(elem) ->
+              if n == "List.sort" do (if elem != "integer" and elem != "string" and elem != "float" do fail(e, "List.sort requires list[integer], list[float] or list[string]") else typed(lt, f1) end) else
+                if n == "List.take" or n == "List.drop" do
+                  case one(c, a1, scope, "integer", f1) do
+                    error(s) -> error(s)
+                    ok({_, f2}) -> typed(lt, f2)
+                  end
+                else
+                  if n == "List.contains" do
+                    if not comparable?(c, elem) do fail(e, "List.contains requires elements that support equality") else
+                      case one(c, a1, scope, elem, f1) do
+                        error(s) -> error(s)
+                        ok({_, f2}) -> typed("boolean", f2)
+                      end
+                    end
+                  else typed(lt, f1) end
+                end
+              end
+          end
+      end
+    else
+      if n == "List.range" do
+        case each(c, args, scope, Enum.map(args, fn _ -> "integer" end), f) do
+          error(s) -> error(s)
+          ok({_, f1}) -> typed("list[integer]", f1)
+        end
+      else
+        if n == "List.zip" do
+          start: result[tuple[list[string], Flow], tuple[string, string]] = ok({none_strings(), f})
+          zipped = Enum.reduce(args, start, fn arg, sofar ->
+            case sofar do
+              error(s) -> error(s)
+              ok({parts, now}) ->
+                case one(c, arg, scope, "", now) do
+                  error(s) -> error(s)
+                  ok({lt, next}) ->
+                    case list_elem(lt) do
+                      none -> error(at(e, "List.zip requires two lists"))
+                      some(elem) -> ok({parts ++ [elem], next})
+                    end
+                end
+            end
+          end)
+          case zipped do
+            error(s) -> error(s)
+            ok({parts, f1}) -> typed("list[tuple[" <> Enum.at(parts, 0, "") <> "," <> Enum.at(parts, 1, "") <> "]]", f1)
+          end
+        else
+          if n == "Map.merge" do
+            expected = if map_parts(want) != none do want else "" end
+            case one(c, a0, scope, expected, f) do
+              error(s) -> error(s)
+              ok({mt, f1}) ->
+                if map_parts(mt) == none do fail(e, "Map.merge requires two maps of the same type") else
+                  case one(c, a1, scope, mt, f1) do
+                    error(s) -> error(s)
+                    ok({_, f2}) -> typed(mt, f2)
+                  end
+                end
+            end
+          else
+            if n in ["Map.keys", "Map.values", "Map.entries", "Map.delete"] do
+              expected = if n == "Map.delete" and map_parts(want) != none do want else "" end
+              case one(c, a0, scope, expected, f) do
+                error(s) -> error(s)
+                ok({mt, f1}) ->
+                  case map_parts(mt) do
+                    none -> fail(e, n <> " requires a map")
+                    some({k, v}) ->
+                      if n == "Map.keys" do typed("list[" <> k <> "]", f1) else
+                        if n == "Map.values" do typed("list[" <> v <> "]", f1) else
+                          if n == "Map.entries" do typed("list[tuple[" <> k <> "," <> v <> "]]", f1) else
+                            case one(c, a1, scope, k, f1) do
+                              error(s) -> error(s)
+                              ok({_, f2}) -> typed(mt, f2)
+                            end
+                          end
+                        end
+                      end
+                  end
+              end
+            else
+              if n == "prepend" or n == "concat" do
+                given = if list_elem(want) != none do want else "" end
+                first = if given == "" and tx(a0, "Kind") == "list" and its(a0, "Args") == [] do
+                  case one(c, a1, scope, "", f) do
+                    error(s) -> error(s)
+                    ok({t, f1}) -> ok({if n == "prepend" do "list[" <> t <> "]" else t end, f1})
+                  end
+                else ok({given, f}) end
+                case first do
+                  error(s) -> error(s)
+                  ok({expected, f1}) ->
+                    case one(c, a0, scope, expected, f1) do
+                      error(s) -> error(s)
+                      ok({lt, f2}) ->
+                        case list_elem(lt) do
+                          none -> fail(e, n <> " requires a list")
+                          some(elem) ->
+                            case one(c, a1, scope, if n == "concat" do lt else elem end, f2) do
+                              error(s) -> error(s)
+                              ok({_, f3}) -> typed(lt, f3)
+                            end
+                        end
+                    end
+                end
+              else
+                if n == "map" or n == "filter" or n == "reduce" do
+                  callback_at = if n == "reduce" do 2 else 1 end
+                  case one(c, Enum.at(args, callback_at, nojson()), scope, "", f) do
+                    error(s) -> error(s)
+                    ok({callback, f1}) ->
+                      case fn_parts(callback) do
+                        none -> fail(e, "callback must be a function reference/value")
+                        some({ps, result}) ->
+                          if length(ps) != (if n == "reduce" do 2 else 1 end) do fail(e, "callback has wrong arity") else
+                            elem = if n == "reduce" do Enum.at(ps, 1, "") else Enum.at(ps, 0, "") end
+                            case one(c, a0, scope, "list[" <> elem <> "]", f1) do
+                              error(s) -> error(s)
+                              ok({lt, f2}) ->
+                                if n == "reduce" do
+                                  if result != Enum.at(ps, 0, "") do fail(e, "reduce callback must return accumulator type") else
+                                    case one(c, a1, scope, result, f2) do
+                                      error(s) -> error(s)
+                                      ok({_, f3}) -> if want != "" and want != result do fail(e, "reduce result type mismatch") else typed(result, f3) end
+                                    end
+                                  end
+                                else
+                                  if n == "filter" do (if result != "boolean" do fail(e, "filter callback must return boolean") else typed(lt, f2) end) else typed("list[" <> result <> "]", f2) end
+                                end
+                            end
+                          end
+                      end
+                  end
+                else
+                  expected = if n == "put" and map_parts(want) != none do want else "" end
+                  case one(c, a0, scope, expected, f) do
+                    error(s) -> error(s)
+                    ok({mt, f1}) ->
+                      case map_parts(mt) do
+                        none -> fail(e, n <> " requires a map")
+                        some({k, v}) ->
+                          case one(c, a1, scope, k, f1) do
+                            error(s) -> error(s)
+                            ok({_, f2}) ->
+                              if n == "has_key" do typed("boolean", f2) else
+                                case one(c, a2, scope, v, f2) do
+                                  error(s) -> error(s)
+                                  ok({_, f3}) -> if n == "put" do typed(mt, f3) else typed(v, f3) end
+                                end
+                              end
+                          end
+                      end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  def place(e: AlchemJson.J, line: AlchemJson.J, column: AlchemJson.J): AlchemJson.J do
+    if AlchemJson.null?(e) do e else
+      moved = AlchemJson.put(AlchemJson.put(e, "Line", line), "Column", column)
+      kids = Enum.reduce(["Left", "Right"], moved, fn k, sofar -> if null?(sofar, k) do sofar else AlchemJson.put(sofar, k, place(g(sofar, k), line, column)) end end)
+      Enum.reduce(["Args", "Keys"], kids, fn k, sofar -> if null?(sofar, k) do sofar else AlchemJson.put(sofar, k, AlchemJson.J.list(Enum.map(its(sofar, k), fn x -> place(x, line, column) end))) end end)
+    end
+  end
+
+  def program_call(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    n = tx(e, "Name")
+    args0 = its(e, "Args")
+    case Map.get(c.functions, n) do
+      none -> undefined(c, e, n, length(args0))
+      some(fun0) ->
+        if tx(fun0, "Name") == "main" do undefined(c, e, n, length(args0)) else
+          picked = if Map.has_key?(c.functions, form_name(n, 2)) do form(c, e, scope, f) else ok(fun0) end
+          case picked do
+            error(s) -> error(s)
+            ok(fun) ->
+              params = its(fun, "Params")
+              defaults = Enum.drop(params, length(args0))
+              filled = take_defaults(defaults, g(e, "Line"), g(e, "Column"))
+              args = args0 ++ filled
+              if length(params) != length(args) do fail(e, "wrong argument count for " <> tx(fun, "Name")) else
+                names = generic(fun)
+                b0 = if names != [] and want != "" do
+                  case unify(tx(fun, "Type"), want, names, none_map()) do
+                    some(trial) -> trial
+                    none -> none_map()
+                  end
+                else none_map() end
+                case arguments(c, args, scope, Enum.map(params, fn p -> tx(p, "Type") end), names, b0, tx(fun, "Name"), f) do
+                  error(s) -> error(s)
+                  ok({b, next}) -> typed(instantiate(tx(fun, "Type"), names, b), next)
+                end
+              end
+          end
+        end
+    end
+  end
+
+  def take_defaults(params: list[AlchemJson.J], line: AlchemJson.J, column: AlchemJson.J): list[AlchemJson.J] do
+    case params do
+      [] -> []
+      [p | rest] -> if null?(p, "Default") do [] else [place(g(p, "Default"), line, column)] ++ take_defaults(rest, line, column) end
+    end
+  end
+
+  def undefined(c: Ctx, e: AlchemJson.J, n: string, arity: integer): result[tuple[string, Flow], tuple[string, string]] do
+    case Map.get(c.t.arities, n) do
+      some(arities) -> fail(e, n <> "/" <> Integer.to_string(arity) <> " is undefined; " <> n <> " takes " <> Enum.join(Enum.sort(arities), " or ") <> " arguments")
+      none -> fail(e, "undefined function " <> n)
+    end
+  end
+
+  # form: the form of a function of several the call's arguments fit.
+  def form(c: Ctx, e: AlchemJson.J, scope: map[string, string], f: Flow): result[AlchemJson.J, tuple[string, string]] do
+    error(skip("a function of several forms"))
+  end
+
+  # ---- Statements ----
+
+  def clause_flow(): Flow do %Flow{yielding: false, yield: "", inferring: false, infer: ""} end
+
+  # The kind an expression ends as once checked, which a statement's check
+  # reads: a constructor applied, elem as an index.
+  def final_kind(c: Ctx, e: AlchemJson.J, scope: map[string, string]): string do
+    n = tx(e, "Name")
+    case tx(e, "Kind") do
+      "call" ->
+        if (n == "elem" or n == "put_elem") and not Map.has_key?(c.functions, n) and Map.get(scope, n, "") == "" do (if n == "elem" do "index" else "value" end) else
+          library = Map.has_key?(c.t.libs, n <> "/" <> Integer.to_string(length(its(e, "Args"))))
+          {ref, _} = if not Map.has_key?(scope, n) and not library do constructor(c, n) else {none, ""} end
+          if ref != none do "variant" else "call" end
+        end
+      "name" ->
+        if Map.has_key?(scope, n) do "name" else
+          {ref, _} = constructor(c, n)
+          if ref != none do "variant" else "name" end
+        end
+      kind -> kind
+    end
+  end
+
+  def block(c: Ctx, body: list[AlchemJson.J], scope: map[string, string], result: string, f: Flow): result[tuple[boolean, Flow], tuple[string, string]] do
+    start: result[tuple[boolean, map[string, string], Flow], tuple[string, string]] = ok({false, scope, f})
+    count = length(body)
+    walked = Enum.reduce(Enum.with_index(body), start, fn {s, i}, sofar ->
+      case sofar do
+        error(stop) -> error(stop)
+        ok({returned, now, flow}) ->
+          if returned do error(at(s, "unreachable statement after return")) else statement(c, s, i == count - 1, now, result, flow) end
+      end
+    end)
+    case walked do
+      error(stop) -> error(stop)
+      ok({returned, _, flow}) -> ok({returned, flow})
+    end
+  end
+
+  def statement(c: Ctx, s: AlchemJson.J, last: boolean, scope: map[string, string], result: string, f: Flow): result[tuple[boolean, map[string, string], Flow], tuple[string, string]] do
+    kind = tx(s, "Kind")
+    declared = tx(s, "Declared")
+    message = if declared != "" do well_formed(c, declared, c.vars) else "" end
+    if not (kind in ["bind", "output", "assert", "call", "yield", "return", "case", "if"]) do error(skip("statement " <> kind)) else
+      if message != "" do error(at(s, message)) else
+        if kind == "return" and f.yielding do error(at(s, "return cannot be used inside an if or case that produces a value")) else
+          expected = if kind == "bind" do declared else
+            if kind == "return" and result == "?" do f.infer else
+              if kind == "return" and result != "void" do result else
+                if kind == "yield" do f.yield else "" end
+              end
+            end
+          end
+          e = g(s, "Expr")
+          case ex(c, e, scope, expected, kind == "call", f) do
+            error(stop) -> error(stop)
+            ok({typ, next}) ->
+              case kind do
+                "bind" ->
+                  case pattern(c, g(s, "Pattern"), typ, scope, scope) do
+                    error(stop) -> error(stop)
+                    ok({_, bound}) -> ok({false, bound, next})
+                  end
+                "output" -> if typ != "string" do error(at(s, "IO.puts requires a string")) else ok({false, scope, next}) end
+                "assert" -> if typ != "boolean" do error(at(s, "assert requires boolean or comparison")) else ok({false, scope, next}) end
+                "call" ->
+                  final = final_kind(c, e, scope)
+                  if not (final in ["call", "invoke", "try", "for", "unmatched"]) and not (last and final == "variant") do error(at(s, "expected binding or function call")) else ok({false, scope, next}) end
+                "yield" -> ok({true, scope, %Flow{next | yield: typ}})
+                "return" ->
+                  if result == "?" do ok({true, scope, %Flow{next | infer: typ}}) else
+                    if result == "void" or typ != result do error(at(s, "return type " <> typ <> " does not match " <> result)) else ok({true, scope, next}) end
+                  end
+                "case" -> case_statement(c, s, typ, scope, result, next)
+                _ -> if_statement(c, s, typ, scope, result, next)
+              end
+          end
+        end
+      end
+    end
+  end
+
+  def if_statement(c: Ctx, s: AlchemJson.J, typ: string, scope: map[string, string], result: string, f: Flow): result[tuple[boolean, map[string, string], Flow], tuple[string, string]] do
+    if typ != "boolean" do error(at(s, "if requires boolean condition")) else
+      case block(c, its(s, "Then"), scope, result, f) do
+        error(stop) -> if undetermined?(stop, f) do error(skip("an if whose type its else settles")) else error(stop) end
+        ok({a, f1}) ->
+          case block(c, its(s, "Else"), scope, result, f1) do
+            error(stop) -> error(stop)
+            ok({b, f2}) -> ok({a and b, scope, f2})
+          end
+      end
+    end
+  end
+
+  def case_statement(c: Ctx, s: AlchemJson.J, typ: string, scope: map[string, string], result: string, f: Flow): result[tuple[boolean, map[string, string], Flow], tuple[string, string]] do
+    if tx(s, "Name") == "with-else" do error(skip("with ... else")) else
+      arms = its(s, "Arms")
+      checked: list[tuple[Pat, boolean]] = []
+      start: result[tuple[list[tuple[Pat, boolean]], boolean, boolean, Flow], tuple[string, string]] = ok({checked, false, true, f})
+      walked = Enum.reduce(arms, start, fn arm, sofar ->
+        case sofar do
+          error(stop) -> error(stop)
+          ok({done, covered, all, flow}) ->
+            pj = g(arm, "Pattern")
+            here = raw(pj)
+            subsumed = Enum.any?(done, fn {previous, guarded} -> not guarded and subsumes?(previous, here) end)
+            if covered or subsumed do error(at(pj, "unreachable case branch")) else
+              case pattern(c, pj, typ, scope, scope) do
+                error(stop) -> error(stop)
+                ok({p, branch}) ->
+                  guard = g(arm, "Guard")
+                  guarded = case (if AlchemJson.null?(guard) do ok({"boolean", flow}) else ex(c, guard, branch, "boolean", false, flow) end) do
+                    error(stop) -> error(stop)
+                    ok({_, f1}) -> ok(f1)
+                  end
+                  case guarded do
+                    error(stop) -> error(stop)
+                    ok(f1) ->
+                      case block(c, its(arm, "Body"), branch, result, f1) do
+                        error(stop) -> if undetermined?(stop, f1) do error(skip("a case arm whose type a later arm settles")) else error(stop) end
+                        ok({r, f2}) ->
+                          rows = done ++ [{p, not AlchemJson.null?(guard)}]
+                          ok({rows, exhaustive?(c, rows, typ), all and r, f2})
+                      end
+                  end
+              end
+            end
+        end
+      end)
+      case walked do
+        error(stop) -> error(stop)
+        ok({rows, _, all, flow}) -> if not exhaustive?(c, rows, typ) do error(at(s, "non-exhaustive case: add a catch-all pattern")) else ok({all, scope, flow}) end
+      end
+    end
+  end
+
+  # ---- A program ----
+
+  def located(path: string, stop: tuple[string, string]): tuple[string, string] do
+    {kind, message} = stop
+    if kind == "found" do {kind, path <> ":" <> message} else stop end
+  end
+
+  # The program's types, its own after the builtin ones; or why they are
+  # not followed here, or the problem declare finds.
+  def declare(program: AlchemJson.J, t: Tables): result[tuple[map[string, Decl], map[string, tuple[string, integer]]], tuple[string, string]] do
+    builtin_types = Map.new(Enum.map(t.builtin, fn d -> {d.name, d} end))
+    builtin_variants = Map.new(Enum.flat_map(t.builtin, fn d -> Enum.map(Enum.with_index(d.variants), fn {v, i} -> {constructor_name(d, v.name), {d.name, i}} end) end))
+    start: result[tuple[map[string, Decl], map[string, tuple[string, integer]]], tuple[string, string]] = ok({builtin_types, builtin_variants})
+    Enum.reduce(its(program, "Types"), start, fn j, sofar ->
+      case sofar do
+        error(stop) -> error(stop)
+        ok({types, variants}) ->
+          d = decl_of(j)
+          if Map.has_key?(types, d.name) do error(located(tx(j, "Source"), at(j, "duplicate type " <> d.local))) else
+            if d.kind == "extern" or reserved?(d.local) do error(skip("type " <> d.local)) else
+              ok({Map.put(types, d.name, d), Enum.reduce(Enum.with_index(d.variants), variants, fn {v, i}, vs -> Map.put(vs, d.name <> "." <> v.name, {d.name, i}) end)})
+            end
+          end
+      end
+    end)
+  end
+
+  def reserved?(name: string): boolean do
+    name in ["IO", "List", "Map", "Process", "Supervisor", "Server", "String", "Integer", "Float", "File", "System", "Time",
+             "Kernel", "Enum", "Stream", "MapSet", "Path", "Base", "Bitwise", "Regex", "Task", "Agent", "Function", "JSON", "Date", "DateTime", "NaiveDateTime", "Calendar", "URI", "Version", "Duration", "Logger", "OptionParser", "Atom", "Keyword", "Port", "Node", "Registry", "DynamicSupervisor", "TCP", "HTTP", "Task.Supervisor", "TCP.Event", "UDP", "UDP.Event", "Gen", "IO.ANSI", "Port.Info", "File.Stat", "Version.Requirement", "PortEvent", "Range", "WebSocket", "WebSocket.Event", "Markup.Value", "Markup.Parts", "Crypto", "Markup", "DiskStore"]
+  end
+
+  # The checks of each declaration after all are known.
+  def declarations(c: Ctx, program: AlchemJson.J): result[integer, tuple[string, string]] do
+    start: result[integer, tuple[string, string]] = ok(0)
+    Enum.reduce(its(program, "Types"), start, fn j, sofar ->
+      case sofar do
+        error(stop) -> error(stop)
+        ok(_) ->
+          d = decl_of(j)
+          fields = d.fields ++ Enum.flat_map(d.variants, fn v -> v.fields end)
+          wrong = Enum.find(fields, fn fd -> well_formed(c, fd.type, d.params) != "" end)
+          case wrong do
+            some(fd) -> error(located(tx(j, "Source"), {"found", Integer.to_string(fd.line) <> ":" <> Integer.to_string(fd.column) <> ": " <> well_formed(c, fd.type, d.params)}))
+            none -> if d.kind == "struct" and inline?(c, d.name, d.name, none_strings()) do error(located(tx(j, "Source"), at(j, "struct " <> d.local <> " contains itself; put the recursion behind a list, option or sum type"))) else ok(0) end
+          end
+      end
+    end)
+  end
+
+  def inline?(c: Ctx, from: string, target: string, visited: list[string]): boolean do
+    case Map.get(c.types, from) do
+      none -> false
+      some(d) ->
+        if d.kind != "struct" or from in visited do false else
+          Enum.any?(d.fields, fn fd -> reaches?(c, fd.type, target, visited ++ [from]) end)
+        end
+    end
+  end
+
+  def reaches?(c: Ctx, t: string, target: string, visited: list[string]): boolean do
+    {head, args} = split(t)
+    if head == "tuple" do Enum.any?(args, fn a -> reaches?(c, a, target, visited) end) else
+      case Map.get(c.types, head) do
+        some(other) -> other.kind == "struct" and (head == target or inline?(c, head, target, visited) or Enum.any?(args, fn a -> reaches?(c, a, target, visited) end))
+        none -> false
+      end
+    end
+  end
+
+  def function(c0: Ctx, fun: AlchemJson.J): result[integer, tuple[string, string]] do
+    vars = generic(fun)
+    c = %Ctx{c0 | vars: vars, current: tx(fun, "Name")}
+    path = tx(fun, "Source")
+    rtype = tx(fun, "Type")
+    stray = Enum.find(tvars(rtype, none_strings()), fn v -> not (v in vars) end)
+    checked = case stray do
+      some(v) -> error(at(fun, "type variable " <> v <> " does not appear in a parameter of " <> local_name(fun)))
+      none ->
+        message = if rtype != "void" do well_formed(c, rtype, vars) else "" end
+        if message != "" do error(at(fun, message)) else
+          start: result[map[string, string], tuple[string, string]] = ok(none_map())
+          params = Enum.reduce(its(fun, "Params"), start, fn p, sofar ->
+            case sofar do
+              error(stop) -> error(stop)
+              ok(scope) ->
+                n = tx(p, "Name")
+                t = tx(p, "Type")
+                if builtin_name?(n) do error(at(p, n <> " is reserved for a builtin and cannot name a parameter")) else
+                  if (not generated_name?(n) and not AlchemParse.binding_name?(n)) or not valid_type?(t) do error(at(p, "invalid parameter name or type")) else
+                    wf = well_formed(c, t, vars)
+                    if wf != "" do error(at(p, wf)) else
+                      if Map.has_key?(scope, n) do error(at(p, "duplicate parameter " <> AlchemLexer.go_quote(n))) else ok(Map.put(scope, n, t)) end
+                    end
+                  end
+                end
+            end
+          end)
+          case params do
+            error(stop) -> error(stop)
+            ok(scope) ->
+              body = if rtype != "void" do returns_of(its(fun, "Body")) else its(fun, "Body") end
+              case block(c, body, scope, rtype, clause_flow()) do
+                error(stop) -> error(stop)
+                ok({returns, _}) -> if rtype != "void" and not returns do error(at(fun, "function " <> AlchemLexer.go_quote(tx(fun, "Name")) <> " must return on every path")) else ok(0) end
+              end
+          end
+        end
+    end
+    case checked do
+      error(stop) -> error(located(path, stop))
+      ok(n) -> ok(n)
+    end
+  end
+
+  # The problem the pinned checker finds in the bodies of a program's
+  # functions, or none when it finds none or the walk stops at what is not
+  # followed here.
+  def problem(program: AlchemJson.J): option[string] do
+    case outcome(program) do
+      {"found", message} -> some(message)
+      _ -> none
+    end
+  end
+
+  # What the walk ends in: {"found", message}, {"skip", why} or {"clean", ""}.
+  def outcome(program: AlchemJson.J): tuple[string, string] do
+    functions = its(program, "Functions")
+    if not null?(program, "Protocols") or not null?(program, "Replaced") or Enum.any?(functions, fn fun -> truth(fun, "Setup") or tx(fun, "Protocol") != "" or tx(fun, "ProtocolFunction") != "" or tx(fun, "For") != "" or tx(fun, "Extern") != "" end) do {"skip", "protocols, setup blocks, externs or replaced modules"} else
+      t = tables()
+      case declare(program, t) do
+        error(stop) -> stop
+        ok({types, variants}) ->
+          c = %Ctx{t: t, functions: Map.new(Enum.map(functions, fn fun -> {tx(fun, "Name"), fun} end)), types: types, variants: variants, vars: none_strings(), current: ""}
+          # contexts: with no setup block, a test that takes a context
+          # has none to take.
+          start: result[integer, tuple[string, string]] = case declarations(c, program) do
+            error(stop) -> error(stop)
+            ok(_) ->
+              case Enum.find(functions, fn fun -> tx(fun, "Test") != "" and its(fun, "Params") != [] end) do
+                some(fun) -> error(located(tx(program, "Source"), at(fun, "this takes a context, but no setup block above it ends in a value")))
+                none -> ok(0)
+              end
+          end
+          walked = Enum.reduce(functions, start, fn fun, sofar ->
+            case sofar do
+              error(stop) -> error(stop)
+              ok(_) -> function(c, fun)
+            end
+          end)
+          case walked do
+            error(stop) -> stop
+            ok(_) -> {"clean", ""}
+          end
+      end
+    end
+  end
+end
