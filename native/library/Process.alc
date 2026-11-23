@@ -15,8 +15,8 @@
 #      function values kept for Process.__until (and 272), 184 a message
 #      or an answer passed on, 200 a time, 216 two descriptors, 224 and 232
 #      where a walk stands, 240 the size of a stack, 248 the timers, 264
-#      the functions of children that say when they have started, 2048 to
-#      4096 zeros.
+#      the functions of children that say when they have started, 1048 the
+#      time spent writing traces, 2048 to 4096 zeros.
 # process: 0 to 32 what Process.__switch keeps, 40 its number, 48 its state
 #      (0 ready, 1 running, 2 waiting, 3 over), 56 asked to stop, 64 the
 #      next ready one, 72 and 80 newer and older live ones, 88 the time it
@@ -839,10 +839,14 @@
   def _ref(g: integer): integer do
     Sys.poke(g + 24, Sys.peek(g + 24) + 1)
   end
+# The time the program's waits are measured by: the clock less the time
+# spent writing the traces of failures (g + 1048). A trace is written by a
+# copy of the program, which the system may run late; no wait runs out
+# over that.
 #: _now/1
   def _now(g: integer): integer do
     Sys.call(228, 1, g + 200)
-    Sys.peek(g + 200) * 1000000000 + Sys.peek(g + 208)
+    Sys.peek(g + 200) * 1000000000 + Sys.peek(g + 208) - Sys.peek(g + 1048)
   end
 # Those whose time came first are ready, and the earliest time of the
 # others is kept: one time at a turn, so that what an earlier one sets off
@@ -959,9 +963,13 @@
 # What a failing process would have written had it been the program: its
 # place, its reason and its calls. A copy of the program writes them into
 # a pipe by failing in earnest: 0 in the copy, the text's word in the
-# program.
-#: _trace/1 needs Sys.got/0 Sys.load/1 Sys.pad/0 Sys.wait/4
+# program. The program waits for the copy and no other process runs: a
+# failure and its trace are one step, as in the pinned runtime, where the
+# trace is taken in the failing goroutine itself. The time the copy takes
+# counts for no wait (_now).
+#: _trace/1 needs Sys.got/0 Sys.take/1 Sys.pad/0 Sys.wait/4 _now/1
   def _trace(g: integer): integer do
+    t0 = Process._now(g)
     Sys.call(293, g + 216, 0)
     r = rem(Sys.peek(g + 216), 4294967296)
     w = div(Sys.peek(g + 216), 4294967296)
@@ -974,9 +982,10 @@
     else
       Sys.call(3, w)
       Sys.pad()
-      Sys.load(r)
+      Sys.take(r)
       Sys.call(3, r)
       if k > 0 do Sys.wait(61, k, 0, 0) end
+      Sys.poke(g + 1048, Sys.peek(g + 1048) + Process._now(g) - t0)
       Process.__word(Sys.got())
     end
   end

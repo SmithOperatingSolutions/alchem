@@ -84,6 +84,34 @@
       if r == -4 do Sys._gather(fd, b, n, c) else if r <= 0 do {r, b, n, c} else Sys._gather(fd, b, n + r, c) end end
     end
   end
+# As load, but the program waits for what fd gives: no other process runs
+# meanwhile. For the trace of a failure, which is part of the failure.
+#: take/1 needs room/1 state/0 _drain/4
+  def take(fd: integer): integer do
+    s = Sys.state()
+    n = Sys.peek(s + 64)
+    c = if n < 32768 do 65536 else n * 2 end
+    m = Sys.call(9, 0, c, 3, 34, -1, 0)
+    if m < 0 do System.halt(71) end
+    if n > 0 do Sys.copy(m, Sys.peek(s + 56), n) end
+    {r, b, k, z} = Sys._drain(fd, m, n, c)
+    Sys.poke(s + 64, 0)
+    Sys.copy(Sys.room(k), b, k)
+    Sys.poke(s + 64, k)
+    Sys.call(11, b, z)
+    r
+  end
+#: _drain/4
+  def _drain(fd: integer, b: integer, n: integer, c: integer): tuple[integer, integer, integer, integer] do
+    if n == c do
+      m = Sys.call(25, b, c, c * 2, 1)
+      if m < 0 do System.halt(71) end
+      Sys._drain(fd, m, n, c * 2)
+    else
+      r = Sys.call(0, fd, b + n, c - n)
+      if r == -4 do Sys._drain(fd, b, n, c) else if r <= 0 do {r, b, n, c} else Sys._drain(fd, b, n + r, c) end end
+    end
+  end
 # Writes n bytes at a to descriptor fd; 0 or the error.
 #: put/3
   def put(fd: integer, a: integer, n: integer): integer do
