@@ -902,6 +902,105 @@ defmodule AlchemFetch do
     end
   end
 
+  # The hash of the records lo to hi of a tree from its tiles, those that
+  # hold the records before cut and after it apart: the hashes that make
+  # up the tree of cut records are the same in a larger tree (tlog.TreeHash
+  # through a TileHashReader of the larger tree).
+  def spanned(lo: integer, hi: integer, cut: integer, size: integer, db: Database, tiles: map[string, string]): result[tuple[string, map[string, string]], string] do
+    n = hi - lo
+    whole = Bitwise.band(n, n - 1) == 0 and rem(lo, n) == 0 and not (lo < cut and cut < hi)
+    if whole do stored(level_of(n), div(lo, n), size, db, tiles) else
+      k = largest_power(n, 1)
+      case spanned(lo, lo + k, cut, size, db, tiles) do
+        error(why) -> error(why)
+        ok({left, after}) ->
+          case spanned(lo + k, hi, cut, size, db, after) do
+            error(why) -> error(why)
+            ok({right, last}) -> ok({node(left, right), last})
+          end
+      end
+    end
+  end
+
+  # Client.checkTrees: whether the tree of older records with hash old is
+  # the start of the tree of newer records with hash new, from the newer
+  # tree's tiles; the tiles fetched.
+  def consistent(older: integer, old: string, newer: integer, new: string, db: Database, tiles: map[string, string]): result[tuple[boolean, map[string, string]], string] do
+    if older == newer do ok({old == new, tiles}) else
+      if older == 0 do ok({true, tiles}) else
+        case spanned(0, newer, older, newer, db, tiles) do
+          error(why) -> error(why)
+          ok({top, after}) ->
+            if top != new do ok({false, after}) else
+              case spanned(0, older, older, newer, db, after) do
+                error(why) -> error(why)
+                ok({start, last}) -> ok({start == old, last})
+              end
+            end
+        end
+      end
+    end
+  end
+
+  # The tree a database showed last, as alchem keeps it: the note's path.
+  def latest_path(db: Database): string do
+    root = cache_root()
+    if root == "" do "" else root <> "/sumdb/" <> db.name <> "/latest" end
+  end
+
+  # Client.mergeLatest: the tree of a note checked against the latest one
+  # the database showed here, which a larger one replaces. A tree that is
+  # not on the latest one's timeline, or the latest not on its, is the
+  # database showing different trees to different people. The tiles
+  # fetched to tell are given back for the record's proof.
+  def against_latest(db: Database, size: integer, root: string, note: string): result[map[string, string], string] do
+    path = latest_path(db)
+    known = if path == "" do none else
+      case File.read(path) do
+        error(_) -> none
+        ok(text) ->
+          case signed_tree(text, db) do
+            ok({n, hash}) -> some({n, hash, text})
+            error(_) -> none
+          end
+      end
+    end
+    case known do
+      none -> keep_latest(path, note, %{})
+      some({n, hash, text}) ->
+        checked = if size <= n do consistent(size, root, n, hash, db, %{}) else consistent(n, hash, size, root, db, %{}) end
+        case checked do
+          error(why) -> error("checking tree#" <> Integer.to_string(min(size, n)) <> " against tree#" <> Integer.to_string(max(size, n)) <> ": " <> why)
+          ok({false, _}) ->
+            older = if size <= n do note else text end
+            newer = if size <= n do text else note end
+            error("SECURITY ERROR\ngo.sum database server misbehavior detected!\n\nold database:\n\t" <> String.replace(older, "\n", "\n\t") <> "\nnew database:\n\t" <> String.replace(newer, "\n", "\n\t"))
+          ok({true, tiles}) -> if size > n do keep_latest(path, note, tiles) else ok(tiles) end
+        end
+    end
+  end
+
+  # The note written as the latest, by a rename so that it is read whole.
+  def keep_latest(path: string, note: string, tiles: map[string, string]): result[map[string, string], string] do
+    if path == "" do ok(tiles) else
+      staged = path <> ".new-" <> hex(Crypto.strong_rand_bytes(4))
+      written = case File.mkdir_p(Path.dirname(path)) do
+        error(why) -> error(why)
+        ok(_) ->
+          case File.write(staged, note) do
+            error(why) -> error(why)
+            ok(_) -> File.rename(staged, path)
+          end
+      end
+      case written do
+        ok(_) -> ok(tiles)
+        error(why) ->
+          File.rm(staged)
+          error("writing " <> path <> ": " <> why)
+      end
+    end
+  end
+
   # What the database records for a package: its h1 hash, checked to be in
   # the signed tree.
   def recorded(path: string, version: string, db: Database): result[string, string] do
@@ -918,7 +1017,10 @@ defmodule AlchemFetch do
                   error(why) -> error(why)
                   ok({size, root}) ->
                     if id < 0 or id >= size do error("malformed lookup response") else
-                      case subtree(0, size, id, Crypto.hash(:sha256, "\x00" <> data), size, db, %{}) do
+                      case against_latest(db, size, root, note) do
+                        error(why) -> error(why)
+                        ok(tiles) ->
+                      case subtree(0, size, id, Crypto.hash(:sha256, "\x00" <> data), size, db, tiles) do
                         error(why) -> error(why)
                         ok({top, _}) ->
                           if top != root do error("verifying tree: the record is not in the signed tree") else
@@ -927,6 +1029,7 @@ defmodule AlchemFetch do
                               [] -> error("malformed lookup response: no hash of " <> path <> " " <> version)
                             end
                           end
+                      end
                       end
                     end
                 end

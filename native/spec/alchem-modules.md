@@ -216,9 +216,14 @@ The bundlers read the caches and do not download: a package in neither is
   tree is a note signed with the database's Ed25519 key, and the record is
   proved to be in that tree from the database's tiles (RFC 6962 hashes,
   tiles of height 8). A hash that differs from the record's is the pinned
-  compiler's `checksum mismatch` with its `SECURITY ERROR`. A tree is not
-  checked against those seen before, as Go checks it against the one it
-  keeps.
+  compiler's `checksum mismatch` with its `SECURITY ERROR`. As Go does, the
+  latest tree a database showed is kept (`sumdb/NAME/latest` in alchem's
+  cache, a signed note, replaced by a larger one), and each tree is checked
+  against it: the smaller tree's hash, computed from the larger tree's
+  tiles, which are checked against the larger tree's hash, must be the
+  smaller tree's. A tree that is not on the latest one's timeline is the
+  database showing different trees to different people: `SECURITY ERROR`,
+  `go.sum database server misbehavior detected!`, with both notes.
 - **The cache.** The files and the hash are written to a directory of their
   own and renamed into place, so a build at the same time sees the whole
   package or none of it; a package that fails a check is not kept.

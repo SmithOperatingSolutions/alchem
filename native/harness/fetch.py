@@ -10,7 +10,8 @@ Checked: the archive's h1 hash as Go computes it; the lock; the cache read
 again without the network; two builds that fetch at once; doc of a
 package's file; GOPROXY lists, off and fall-through; a record the database
 does not hold, a signature by another key, a tile that is not the tree's
-and a hash that differs (nothing kept); GONOSUMDB; private packages, fetched
+and a hash that differs (nothing kept); the latest tree kept, and trees grown
+from it, older than it and forked from it, larger and of its size; GONOSUMDB; private packages, fetched
 with git from repositories made here (a module at the root, in a directory and
 in a major version's directory, with the files go mod download leaves out),
 with the hashes go mod download gave for them, the pattern set in the
@@ -363,20 +364,20 @@ def verify(compiler):
             with_git = {'PATH': os.path.dirname(git), 'GIT_CONFIG_GLOBAL': str(config), 'GIT_CONFIG_NOSYSTEM': '1'}
             Served.asked.clear()
             made = {}
-            for key, sum_ in DIRECT.items():
-                module, version = key.split('@')
+            for package, sum_ in DIRECT.items():
+                module, version = package.split('@')
                 inside = {'github.com/owner/private-repo': 'lib/live.alc', 'github.com/owner/mono/tools': 't.alc', 'github.com/owner/mono/v2': 'm.alc'}[module]
                 for setting in ({'ALCHEM_PRIVATE': 'github.com/owner/*'}, {'goenv': 'GOPRIVATE=github.com/owner\n'}):
-                    directory = base / ('git-' + hashlib.sha256((key + repr(setting)).encode()).hexdigest()[:8])
+                    directory = base / ('git-' + hashlib.sha256((package + repr(setting)).encode()).hexdigest()[:8])
                     directory.mkdir()
-                    (directory / 'main.alc').write_text(f'defmodule Main do\n  import "{key}/{inside}"\n\n  def main() do\n    IO.puts("ok")\n  end\nend\n')
+                    (directory / 'main.alc').write_text(f'defmodule Main do\n  import "{package}/{inside}"\n\n  def main() do\n    IO.puts("ok")\n  end\nend\n')
                     if 'goenv' in setting:
                         (base / 'goenv').write_text(setting['goenv'])
                     done = run(directory, ['run', 'main.alc'], ALCHEM_CACHE=str(directory / 'cache'), **with_git, **{k: v for k, v in setting.items() if k != 'goenv'})
                     (base / 'goenv').unlink(missing_ok=True)
-                    assert done == (0, 'ok\n', ''), (key, setting, done)
-                    assert (directory / 'alchem.lock').read_text() == HEADER + f'package {module} {version} {sum_}\n', (key, (directory / 'alchem.lock').read_text())
-                    made.setdefault(key, directory)
+                    assert done == (0, 'ok\n', ''), (package, setting, done)
+                    assert (directory / 'alchem.lock').read_text() == HEADER + f'package {module} {version} {sum_}\n', (package, (directory / 'alchem.lock').read_text())
+                    made.setdefault(package, directory)
             assert Served.asked == [], Served.asked
             private = made['github.com/owner/private-repo@v0.1.0']
             kept = private / 'cache/packages/github.com/owner/private-repo@v0.1.0/files'
@@ -398,6 +399,26 @@ def verify(compiler):
             assert run(project, ['run', 'main.alc'], ALCHEM_CACHE=None)[0] == 0
             where = home / ('Library/Caches' if system == 'darwin' else '.cache') / 'alchem/packages/example.test/lib@v0.1.0/h1'
             assert where.exists(), list(home.rglob('h1'))
+            # The tree the database showed last is kept, and each tree is
+            # checked against it (Client.checkTrees): one grown from it and an
+            # older one are on its timeline; a fork, larger or of the same
+            # size, is the database showing different trees.
+            trees = {'grown': records + records[:10], 'fork': records[:100] + [b'filler.test/forked v1.0.0 h1:x=\n'] + records[101:] + records[:20],
+                     'same': records[:100] + [b'filler.test/forked v1.0.0 h1:x=\n'] + records[101:] + records[:10]}
+            for name, held in trees.items():
+                write_database(web / ('sumdb-' + name), 'test.sumdb', key, held)
+            # The tree of 300 again, with the tiles of the tree of 310 the
+            # check reads.
+            shutil.copytree(web / 'sumdb-grown', web / 'sumdb-back')
+            shutil.copytree(web / 'sumdb', web / 'sumdb-back', dirs_exist_ok=True)
+            seen = base / 'cache-trees'
+            latest = seen / 'sumdb/test.sumdb/latest'
+            for served, works, size in [('sumdb', True, 300), ('sumdb-grown', True, 310), ('sumdb-back', True, 310), ('sumdb-fork', False, 310), ('sumdb-same', False, 310)]:
+                shutil.rmtree(seen / 'packages', ignore_errors=True)
+                status, _, err = run(project, ['run', 'main.alc'], ALCHEM_CACHE=str(seen), GOSUMDB=verifier('test.sumdb', key[2]) + ' ' + address + '/' + served)
+                assert (status == 0) == works, (served, status, err)
+                assert works or ('go.sum database server misbehavior detected!' in err and not (seen / 'packages/example.test/lib@v0.1.0').exists()), (served, err)
+                assert latest.read_text().split('\n')[1] == str(size), (served, latest.read_text())
             # A tile that is not the tree's: the record is not proved.
             tile = web / 'sumdb/tile/8/0/001.p/44'
             tile.write_bytes(bytes([tile.read_bytes()[0] ^ 1]) + tile.read_bytes()[1:])
@@ -405,7 +426,7 @@ def verify(compiler):
         finally:
             server.shutdown()
             os.chdir(ROOT)
-    print('PASS fetch: a package fetched from a module proxy over HTTP and from files, proved in a signed checksum database by its tiles, kept in alchem\'s cache and read from it offline; two fetches at once; doc of a package file; GOPROXY lists, off and fall-through; a differing hash, another key, a tile not the tree\'s, an unrecorded package, GONOSUMDB, private packages fetched with git as Go fetches them (asked of no server), GOPROXY=direct, three bad archives and the default cache directory')
+    print('PASS fetch: a package fetched from a module proxy over HTTP and from files, proved in a signed checksum database by its tiles, kept in alchem\'s cache and read from it offline; two fetches at once; doc of a package file; GOPROXY lists, off and fall-through; a differing hash, another key, trees grown, older and forked against the latest one seen, a tile not the tree\'s, an unrecorded package, GONOSUMDB, private packages fetched with git as Go fetches them (asked of no server), GOPROXY=direct, three bad archives and the default cache directory')
 
 
 if __name__ == '__main__':
