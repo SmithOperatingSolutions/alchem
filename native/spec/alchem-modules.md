@@ -187,12 +187,26 @@ The bundlers read the caches and do not download: a package in neither is
   the next after `,`; one that fails in any way passes to the next after
   `|`. `off` refuses: `module lookup disabled by GOPROXY=off`.
 - **Private packages.** A path that `GONOPROXY` (default `GOPRIVATE` with
-  `ALCHEM_PRIVATE`) matches, or a `direct` entry reached, is to be fetched
-  from its own repository with git, which is not supported yet (#90): it is
-  refused, and nothing about it is asked of any server.
-- **The archive.** Every file's name begins with `path@version/` and is a
-  plain relative path; no two names differ only in case; each file's CRC is
-  right; the files come to at most 500 MB. The hash is Go's: `h1:` and the
+  `ALCHEM_PRIVATE`) matches, or a `direct` entry reached, is fetched with git
+  from its own repository, as the go command fetches it in direct mode, and
+  nothing about it is asked of a proxy. The repository is the path's first
+  three elements on github.com and bitbucket.org, the path up to an element
+  ending in `.git`, or what the host announces at `https://PATH?go-get=1`
+  (`<meta name="go-import" content="prefix git address">`). git (with
+  `GIT_TERMINAL_PROMPT=0`, so that it asks for nothing) lists the
+  repository's references, fetches the version's tag (`dir/vX.Y.Z` for a
+  module in a directory), and `git archive` gives its files (with
+  `core.autocrlf=input` and `core.eol=lf`). The module's directory is found
+  from the go.mod files as `codeRepo.findDir` finds it, `/vN` directories
+  included. Its files are kept as `zip.Create` keeps them: files of nested
+  modules, of vendored packages (by the root go.mod's `go` version),
+  symbolic links and `.hg_archival.txt` are left out, and the repository's
+  `LICENSE` is added to a module in a directory without one. The hashes are
+  the ones go mod download gives (`harness/fetch.py` holds three).
+- **The archive.** As `zip.CheckZip` checks a proxy's: every file's name
+  begins with `path@version/` and is a file path (`module.CheckFilePath`);
+  go.mod is only at the top and in lower case; no two names differ only in
+  case; each file's CRC is right; the files come to at most 500 MB. The hash is Go's: `h1:` and the
   base64 SHA-256 of one line per file, in the order of their names, of the
   file's hex SHA-256, two spaces and its name.
 - **The checksum database.** Unless `GONOSUMDB` (default `GOPRIVATE` with

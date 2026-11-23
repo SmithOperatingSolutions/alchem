@@ -266,11 +266,13 @@ defmodule AlchemFetch do
     end
   end
 
-  # The archive of a package from the first proxy that has it.
-  def download(path: string, version: string, s: Settings): result[string, string] do
+  # The files of a package, {path@version/name, content}: from the first
+  # proxy that has it, or from its own repository (direct).
+  def download(path: string, version: string, s: Settings): result[list[tuple[string, string]], string] do
     named = path <> "@" <> version
-    if matches?(s.noproxy, path) do error(named <> ": " <> direct_refusal(path)) else
-      none_yet: result[string, tuple[integer, string]] = error({404, named <> ": no module proxy in GOPROXY"})
+    prefix = named <> "/"
+    if matches?(s.noproxy, path) do direct(path, version) else
+      none_yet: result[list[tuple[string, string]], tuple[integer, string]] = error({404, named <> ": no module proxy in GOPROXY"})
       tried = Enum.reduce(proxies(s.proxy), none_yet, fn {proxy, any}, sofar ->
         case sofar do
           ok(found) -> ok(found)
@@ -279,14 +281,23 @@ defmodule AlchemFetch do
             # package (or, after |, failed in any way).
             if status != 404 and status != 410 and status != -1 do error({status, said}) else
               if proxy == "off" do error({1, named <> ": module lookup disabled by GOPROXY=off"}) else
-                if proxy == "direct" do error({1, named <> ": " <> direct_refusal(path)}) else
+                if proxy == "direct" do
+                  case direct(path, version) do
+                    ok(files) -> ok(files)
+                    error(why) -> error({1, why})
+                  end
+                else
                   base = String.trim_trailing(proxy, "/") <> "/" <> escaped(path) <> "/@v/" <> escaped(version)
                   case get(base <> ".info") do
                     error({code, why}) -> error({if any do -1 else code end, named <> ": " <> why})
                     ok(_) ->
                       case get(base <> ".zip") do
-                        ok(archive) -> ok(archive)
                         error({code, why}) -> error({if any do -1 else code end, named <> ": " <> why})
+                        ok(archive) ->
+                          case module_files(archive, prefix) do
+                            ok(files) -> ok(files)
+                            error(why) -> error({1, named <> ": " <> why})
+                          end
                       end
                   end
                 end
@@ -295,14 +306,261 @@ defmodule AlchemFetch do
         end
       end)
       case tried do
-        ok(archive) -> ok(archive)
+        ok(files) -> ok(files)
         error({_, said}) -> error(said)
       end
     end
   end
 
-  def direct_refusal(path: string): string do
-    "fetching " <> path <> " from its own repository (GOPROXY direct, GOPRIVATE, ALCHEM_PRIVATE) is not supported yet"
+  # ---- A package from its own repository ----
+
+  # The repository of a path: {its root path, the address git fetches},
+  # for the hosts Go knows, a path with a .git element, or what the host
+  # says at https://path?go-get=1.
+  def repository(path: string): result[tuple[string, string], string] do
+    parts = String.split(path, "/")
+    host = hd(parts)
+    if host in ["github.com", "bitbucket.org"] and length(parts) >= 3 do
+      root = Enum.join(Enum.take(parts, 3), "/")
+      ok({root, "https://" <> root})
+    else
+      dotted = Enum.find_index(parts, fn part -> String.ends_with?(part, ".git") and byte_size(part) > 4 end)
+      case dotted do
+        some(i) ->
+          root = Enum.join(Enum.take(parts, i + 1), "/")
+          ok({root, "https://" <> root})
+        none -> announced(path)
+      end
+    end
+  end
+
+  # <meta name="go-import" content="prefix git address"> at
+  # https://path?go-get=1, the longest prefix of the path.
+  def announced(path: string): result[tuple[string, string], string] do
+    address = "https://" <> path <> "?go-get=1"
+    case get(address) do
+      error({_, why}) -> error("unrecognized import path " <> inspect(path) <> ": " <> why)
+      ok(page) ->
+        metas = Regex.scan(~r/<meta\s+name=["']go-import["']\s+content=["']([^"']*)["']/i, page)
+        found = Enum.flat_map(metas, fn m ->
+          case String.split(String.trim(Enum.at(m, 1, ""))) do
+            [prefix, "git", repo] -> if path == prefix or String.starts_with?(path, prefix <> "/") do [{prefix, repo}] else [] end
+            _ -> []
+          end
+        end)
+        case Enum.sort_by(found, fn {prefix, _} -> 0 - byte_size(prefix) end) do
+          [best | _] -> ok(best)
+          [] -> error("unrecognized import path " <> inspect(path) <> ": no go-import meta tag for git at " <> address)
+        end
+    end
+  end
+
+  def git(arguments: list[string]): tuple[string, integer] do
+    System.cmd("git", arguments, [env: "GIT_TERMINAL_PROMPT=0", env: "GCM_INTERACTIVE=never", stderr_to_stdout: "true"])
+  end
+
+  # The file a revision holds, or none.
+  def git_file(work: string, revision: string, file: string): option[string] do
+    {text, status} = git(["-C", work, "cat-file", "blob", revision <> ":" <> file])
+    if status == 0 do some(text) else none end
+  end
+
+  # module.SplitPathVersion: {prefix, /vN or ""}.
+  def split_major(path: string): tuple[string, string] do
+    case Regex.run(~r/^(.*)\/(v[0-9]+)$/, path) do
+      some([_, prefix, major]) -> if major != "v0" and major != "v1" and not String.starts_with?(major, "v0") do {prefix, "/" <> major} else {path, ""} end
+      _ -> {path, ""}
+    end
+  end
+
+  # The module path a go.mod declares, or "".
+  def declared(text: string): string do
+    case Regex.run(~r/(?m)^\s*module\s+"?([^\s"]+)"?/, text) do
+      some([_, name]) -> name
+      _ -> ""
+    end
+  end
+
+  def major_of(path: string): string do elem(split_major(path), 1) end
+
+  # A package fetched with git from its own repository, as the go command
+  # fetches one in direct mode: the tag of the version, its files under the
+  # module's directory as git archive gives them, filtered as zip.Create
+  # filters them.
+  def direct(path: string, version: string): result[list[tuple[string, string]], string] do
+    named = path <> "@" <> version
+    case System.find_executable("git") do
+      none -> error(named <> ": git is not installed: a package that is not fetched from a module proxy is fetched with git")
+      some(_) ->
+        case repository(path) do
+          error(why) -> error(named <> ": " <> why)
+          ok({root, address}) ->
+            work = System.tmp_dir!() <> "/alchem-git-" <> Integer.to_string(System.os_time(:nanosecond)) <> "-" <> hex(Crypto.strong_rand_bytes(4))
+            found = fetched(path, version, root, address, work)
+            File.rm_rf(work)
+            case found do
+              ok(files) -> ok(files)
+              error(why) -> error(named <> ": " <> why)
+            end
+        end
+    end
+  end
+
+  def fetched(path: string, version: string, root: string, address: string, work: string): result[list[tuple[string, string]], string] do
+    {prefix, major} = split_major(path)
+    base = if root == path do "" else String.trim(binary_part(if root == path do path else prefix end, byte_size(root), byte_size(if root == path do path else prefix end) - byte_size(root)), "/") end
+    plain = hd(String.split(version, "+"))
+    tag = if base == "" do plain else base <> "/" <> plain end
+    {said, made} = git(["init", "-q", "--bare", work])
+    if made != 0 do error("git init: " <> String.trim(said)) else
+      # As the go command: the repository's references first, then the tag.
+      {listed, answered} = git(["-C", work, "ls-remote", "-q", "--end-of-options", address])
+      tagged = Enum.any?(String.split(listed, "\n"), fn line -> String.ends_with?(line, "\trefs/tags/" <> tag) end)
+      {output, status} = if answered != 0 or not tagged do {"", 0} else git(["-C", work, "fetch", "-f", "-q", "--depth=1", address, "refs/tags/" <> tag <> ":refs/tags/" <> tag]) end
+      if answered != 0 do error("invalid version: git ls-remote -q --end-of-options " <> address <> " in " <> work <> ": exit status " <> Integer.to_string(answered) <> ":\n\t" <> String.replace(String.trim(listed), "\n", "\n\t")) else
+      if not tagged do error("invalid version: unknown revision " <> tag) else
+      if status != 0 do error("git fetch -f --depth=1 " <> address <> " refs/tags/" <> tag <> ":refs/tags/" <> tag <> " in " <> work <> ": exit status " <> Integer.to_string(status) <> ":\n\t" <> String.replace(String.trim(output), "\n", "\n\t")) else
+        revision = "refs/tags/" <> tag
+        case module_directory(path, version, base, major, revision, work) do
+          error(why) -> error(why)
+          ok(directory) ->
+            arguments = ["-C", work, "-c", "core.autocrlf=input", "-c", "core.eol=lf", "archive", "--format=zip", "--prefix=prefix/", revision] ++ (if directory == "" do [] else ["--", directory] end)
+            {archive, archived} = System.cmd("git", arguments, [env: "GIT_TERMINAL_PROMPT=0"])
+            if archived != 0 do error("git archive: exit status " <> Integer.to_string(archived)) else
+              case entries(archive) do
+                error(why) -> error(why)
+                ok(found) ->
+                  license = if directory == "" do none else git_file(work, revision, "LICENSE") end
+                  case repository_files(found, directory, license) do
+                    error(why) -> error(why)
+                    ok(files) -> ok(Enum.map(files, fn {name, content} -> {path <> "@" <> version <> "/" <> name, content} end))
+                  end
+              end
+            end
+        end
+      end
+      end
+      end
+    end
+  end
+
+  # codeRepo.findDir: the directory of the module at the revision, from the
+  # go.mod files there, or why the revision has none for the path.
+  def module_directory(path: string, version: string, base: string, major: string, revision: string, work: string): result[string, string] do
+    file1 = if base == "" do "go.mod" else base <> "/go.mod" end
+    gomod1 = git_file(work, revision, file1)
+    found1 = case gomod1 do
+      some(text) -> declared(text) != "" and major_of(declared(text)) == major
+      none -> false
+    end
+    dir2 = if base == "" do String.trim_leading(major, "/") else base <> major end
+    second = if major != "" do git_file(work, revision, dir2 <> "/go.mod") else none end
+    found2 = case second do
+      some(text) -> declared(text) != "" and major_of(declared(text)) == major
+      none -> false
+    end
+    incompatible = String.ends_with?(version, "+incompatible")
+    if found1 and found2 do error(file1 <> " and ..." <> major <> "/go.mod both have ..." <> major <> " module paths at revision " <> revision) else
+      if found2 do ok(dir2) else
+        if found1 do
+          if incompatible do error("invalid version: +incompatible suffix not allowed: module contains a go.mod file") else ok(base) end
+        else
+          case gomod1 do
+            some(text) -> error(file1 <> " has " <> (if declared(text) == "" do "no module path" else "non-..." <> major <> " module path " <> inspect(declared(text)) end) <> " at revision " <> revision)
+            none ->
+              wanted = Regex.run(~r/^v([0-9]+)\./, version)
+              big = case wanted do
+                some([_, n]) -> n != "0" and n != "1"
+                _ -> false
+              end
+              if base == "" and major == "" do
+                if big and not incompatible do error("invalid version: should be v0 or v1, not " <> hd(String.split(version, ".")) <> " (or add +incompatible)") else ok("") end
+              else
+                error("missing " <> path <> "/go.mod at revision " <> revision)
+              end
+          end
+        end
+      end
+    end
+  end
+
+  # The files of the module's directory from git archive's entries, as
+  # codeRepo.Zip and zip.Create keep them: under the one top directory and
+  # the module's directory, no directories, the repository's LICENSE for a
+  # module in a directory without one; and leaving out files of nested
+  # modules, of vendored packages, symbolic links, other files that are not
+  # regular and .hg_archival.txt. A path that is not a file path, a go.mod
+  # not in lower case and two names that differ only in case are errors.
+  def repository_files(found: list[tuple[string, string, integer]], directory: string, license: option[string]): result[list[tuple[string, string]], string] do
+    inside = if directory == "" do "prefix/" else "prefix/" <> directory <> "/" end
+    listed = Enum.flat_map(found, fn {name, content, mode} ->
+      if String.starts_with?(name, inside) and not String.ends_with?(name, "/") and name != inside do [{binary_part(name, byte_size(inside), byte_size(name) - byte_size(inside)), content, mode}] else [] end
+    end)
+    licensed = if directory != "" and not Enum.any?(listed, fn {name, _, _} -> name == "LICENSE" end) do
+      case license do
+        some(text) -> listed ++ [{"LICENSE", text, 33188}]
+        none -> listed
+      end
+    else listed end
+    modules = Enum.flat_map(licensed, fn {name, _, mode} ->
+      base = List.last(String.split(name, "/"), "")
+      if String.downcase(base) == "go.mod" and regular?(mode) and name != base do [binary_part(name, 0, byte_size(name) - byte_size(base))] else [] end
+    end)
+    go = case Enum.filter(licensed, fn {name, _, _} -> name == "go.mod" end) do
+      [{_, text, _} | _] -> go_version(text)
+      [] -> {0, 0}
+    end
+    nothing: list[tuple[string, string]] = []
+    seen: map[string, tuple[string, boolean]] = %{}
+    {kept, wrong, _} = Enum.reduce(licensed, {nothing, "", seen}, fn {name, content, mode}, {kept, wrong, known} ->
+      if wrong != "" or vendored?(name, go) or Enum.any?(modules, fn d -> String.starts_with?(name, d) end) or name == ".hg_archival.txt" do {kept, wrong, known} else
+        problem = file_path_problem(name)
+        if problem != "" do {kept, problem, known} else
+          if String.downcase(name) == "go.mod" and name != "go.mod" do {kept, name <> ": go.mod files must have lowercase names", known} else
+            {clash, next} = collide(name, false, known)
+            if clash != "" do {kept, name <> ": " <> clash, next} else
+              if not regular?(mode) do {kept, wrong, next} else
+                if (name == "go.mod" or name == "LICENSE") and byte_size(content) > 16777216 do {kept, name <> ": " <> name <> " file too large (max size is 16777216 bytes)", next} else
+                  {kept ++ [{name, content}], wrong, next}
+                end
+              end
+            end
+          end
+        end
+      end
+    end)
+    if wrong != "" do error(wrong) else ok(kept) end
+  end
+
+  # A Unix mode of a regular file; an archive's entry with none is one.
+  def regular?(mode: integer): boolean do
+    mode == 0 or Bitwise.band(mode, 61440) == 32768
+  end
+
+  # The go line of a go.mod: {major, minor}, {0, 0} where there is none.
+  def go_version(text: string): tuple[integer, integer] do
+    case Regex.run(~r/(?m)^\s*go\s+([0-9]+)\.([0-9]+)/, text) do
+      some([_, a, b]) ->
+        case {Integer.parse(a), Integer.parse(b)} do
+          {ok(x), ok(y)} -> {x, y}
+          _ -> {0, 0}
+        end
+      _ -> {0, 0}
+    end
+  end
+
+  # isVendoredPackage, for the go version of the module's go.mod.
+  def vendored?(name: string, go: tuple[integer, integer]): boolean do
+    newer = elem(go, 0) > 1 or (elem(go, 0) == 1 and elem(go, 1) >= 24)
+    if newer and name == "vendor/modules.txt" do true else
+      start = if String.starts_with?(name, "vendor/") do 7 else
+        case String.split(name, "/vendor/", [parts: 2]) do
+          [before, _] -> if newer do byte_size(before) + 8 else 8 end
+          _ -> -1
+        end
+      end
+      start >= 0 and String.contains?(binary_part(name, start, byte_size(name) - start), "/")
+    end
   end
 
   # ---- Archives ----
@@ -340,10 +598,9 @@ defmodule AlchemFetch do
     end
   end
 
-  # The files of a module archive, {name, content}, in its order, or why
-  # it is not one: each name begins with path@version/, no two are the same
-  # but for case, and each holds what its CRC says.
-  def unzip(archive: string, prefix: string): result[list[tuple[string, string]], string] do
+  # The entries of a zip archive, {name, content, Unix mode or 0}, in its
+  # order, each holding what its CRC says, or why it is not one.
+  def entries(archive: string): result[list[tuple[string, string, integer]], string] do
     a = Sys.addr(archive)
     n = byte_size(archive)
     e = if n < 22 do -1 else directory_end(a, n, n - 22) end
@@ -351,26 +608,24 @@ defmodule AlchemFetch do
       count = u16(a, e + 10)
       start = u32(a, e + 16)
       if count == 65535 or start == 4294967295 or start > n do error("zip64 archives are not supported") else
-        nothing: list[tuple[string, string]] = []
+        nothing: list[tuple[string, string, integer]] = []
         table = crc_table()
-        begun: result[tuple[list[tuple[string, string]], integer, integer], string] = ok({nothing, start, 0})
+        begun: result[tuple[list[tuple[string, string, integer]], integer, integer], string] = ok({nothing, start, 0})
         found = Enum.reduce(List.duplicate(0, count), begun, fn _, sofar ->
           case sofar do
             error(why) -> error(why)
-            ok({files, at, total}) -> entry(archive, a, n, at, files, total, prefix, table)
+            ok({files, at, total}) -> entry(archive, a, n, at, files, total, table)
           end
         end)
         case found do
           error(why) -> error(why)
-          ok({files, _, _}) ->
-            lower = Enum.map(files, fn {name, _} -> String.downcase(name) end)
-            if length(Enum.uniq(lower)) != length(lower) do error("zip has two files whose names differ only in case") else ok(files) end
+          ok({files, _, _}) -> ok(files)
         end
       end
     end
   end
 
-  def entry(archive: string, a: integer, n: integer, at: integer, files: list[tuple[string, string]], total: integer, prefix: string, table: map[integer, integer]): result[tuple[list[tuple[string, string]], integer, integer], string] do
+  def entry(archive: string, a: integer, n: integer, at: integer, files: list[tuple[string, string, integer]], total: integer, table: map[integer, integer]): result[tuple[list[tuple[string, string, integer]], integer, integer], string] do
     if at + 46 > n or u32(a, at) != 33639248 do error("not a valid zip file") else
       flags = u16(a, at + 8)
       method = u16(a, at + 10)
@@ -379,18 +634,18 @@ defmodule AlchemFetch do
       size = u32(a, at + 24)
       named = u16(a, at + 28)
       next = at + 46 + named + u16(a, at + 30) + u16(a, at + 32)
+      # The Unix mode, where the archive was made on Unix.
+      mode = if Sys.byte(a + at + 5) == 3 do Bitwise.bsr(u32(a, at + 38), 16) else 0 end
       local = u32(a, at + 42)
       name = binary_part(archive, at + 46, named)
       if Bitwise.band(flags, 1) == 1 or (method != 0 and method != 8) do error(name <> ": unsupported compression") else
-        if not String.starts_with?(name, prefix) or not good_name?(binary_part(name, byte_size(prefix), byte_size(name) - byte_size(prefix))) do error(name <> ": file is not inside " <> prefix) else
-          if total + size > 524288000 do error("module source tree too large (max size is 524288000 bytes)") else
-            if local + 30 > n or u32(a, local) != 67324752 do error("not a valid zip file") else
-              data = local + 30 + u16(a, local + 26) + u16(a, local + 28)
-              if data + packed > n do error("not a valid zip file") else
-                {content, bad} = if method == 0 do {binary_part(archive, data, packed), 0} else HTTP._inflate(a + data, packed, size) end
-                if bad != 0 or byte_size(content) != size or crc32(content, table) != crc do error(name <> ": zip: checksum error") else
-                  ok({files ++ [{name, content}], next, total + size})
-                end
+        if total + size > 524288000 do error("module source tree too large (max size is 524288000 bytes)") else
+          if local + 30 > n or u32(a, local) != 67324752 do error("not a valid zip file") else
+            data = local + 30 + u16(a, local + 26) + u16(a, local + 28)
+            if data + packed > n do error("not a valid zip file") else
+              {content, bad} = if method == 0 do {binary_part(archive, data, packed), 0} else HTTP._inflate(a + data, packed, size) end
+              if bad != 0 or byte_size(content) != size or crc32(content, table) != crc do error(name <> ": zip: checksum error") else
+                ok({files ++ [{name, content, mode}], next, total + size})
               end
             end
           end
@@ -399,12 +654,95 @@ defmodule AlchemFetch do
     end
   end
 
-  # A file's path inside a module: no empty, . or .. part, no backslash,
-  # nothing absolute. A directory's entry ends in /.
-  def good_name?(inside: string): boolean do
-    plain = String.trim_trailing(inside, "/")
-    plain != "" and not String.contains?(plain, "\\") and not String.contains?(plain, ":") and not String.contains?(plain, "\x00") and
-      Enum.all?(String.split(plain, "/"), fn part -> part != "" and part != "." and part != ".." end)
+  # The files of a module archive from a proxy, {name, content}, as
+  # zip.CheckZip has them: each name path@version/ and a file path
+  # (module.CheckFilePath), go.mod only at the top and in lower case, no two
+  # names that differ only in case.
+  def module_files(archive: string, prefix: string): result[list[tuple[string, string]], string] do
+    case entries(archive) do
+      error(why) -> error(why)
+      ok(found) ->
+        named = Enum.map(found, fn {name, content, _} -> {name, content} end)
+        wrong = Enum.flat_map(named, fn {name, content} ->
+          inside = if String.starts_with?(name, prefix) do binary_part(name, byte_size(prefix), byte_size(name) - byte_size(prefix)) else "" end
+          if not String.starts_with?(name, prefix) do [name <> ": file is not inside " <> prefix] else
+            problem = file_path_problem(inside)
+            if problem != "" do [problem] else
+              base = List.last(String.split(inside, "/"), "")
+              if String.downcase(base) == "go.mod" and inside != "go.mod" do [name <> (if base == "go.mod" do ": go.mod file not in module root directory" else ": go.mod files must have lowercase names" end)] else
+                if (inside == "go.mod" or inside == "LICENSE") and byte_size(content) > 16777216 do [name <> ": " <> inside <> " file too large (max size is 16777216 bytes)"] else [] end
+              end
+            end
+          end
+        end)
+        case wrong do
+          [first | _] -> error(first)
+          [] ->
+            case collision(Enum.map(named, fn {name, _} -> name end)) do
+              "" -> ok(named)
+              said -> error(said)
+            end
+        end
+    end
+  end
+
+  # The first case-insensitive collision of the paths and their
+  # directories (zip's collisionChecker), or "".
+  def collision(paths: list[string]): string do
+    seen: map[string, tuple[string, boolean]] = %{}
+    {said, _} = Enum.reduce(paths, {"", seen}, fn p, {said, known} ->
+      if said != "" do {said, known} else collide(p, false, known) end
+    end)
+    said
+  end
+
+  def collide(p: string, directory: boolean, known: map[string, tuple[string, boolean]]): tuple[string, map[string, tuple[string, boolean]]] do
+    fold = String.downcase(p)
+    found = case Map.get(known, fold) do
+      some({other, was}) ->
+        if p != other do "case-insensitive file name collision: " <> inspect(other) <> " and " <> inspect(p) else
+          if directory != was do "entry " <> inspect(p) <> " is both a file and a directory" else
+            if not directory do "multiple entries for file " <> inspect(p) else "" end
+          end
+        end
+      none -> ""
+    end
+    next = if Map.has_key?(known, fold) do known else Map.put(known, fold, {p, directory}) end
+    parent = Path.dirname(p)
+    if found != "" or parent == "." or parent == "/" or parent == p do {found, next} else collide(parent, true, next) end
+  end
+
+  # module.CheckFilePath: why a path in a module is not a file path, or "".
+  def file_path_problem(p: string): string do
+    why = if p == "" do "empty string" else
+      if String.contains?(p, "//") do "double slash" else
+        if String.ends_with?(p, "/") do "trailing slash" else
+          Enum.reduce(String.split(p, "/"), "", fn part, sofar -> if sofar != "" do sofar else element_problem(part) end end)
+        end
+      end
+    end
+    if why == "" do "" else "malformed file path " <> inspect(p) <> ": " <> why end
+  end
+
+  def element_problem(part: string): string do
+    if part == "" do "empty path element" else
+      if String.replace(part, ".", "") == "" do "invalid path element " <> inspect(part) else
+        if String.ends_with?(part, ".") do "trailing dot in path element" else
+          bad = Enum.filter(String.codepoints(part), fn c -> not file_char?(c) end)
+          short = String.upcase(hd(String.split(part, ".")))
+          case bad do
+            [c | _] -> "invalid char " <> inspect(c)
+            [] -> if short in ["CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"] do inspect(hd(String.split(part, "."))) <> " disallowed as path element component on Windows" else "" end
+          end
+        end
+      end
+    end
+  end
+
+  # fileNameOK: ASCII letters, digits and !#$%&()+,-.=@[]^_{}~ and space;
+  # beyond ASCII, letters.
+  def file_char?(c: string): boolean do
+    if byte_size(c) == 1 do Regex.match?(~r/^[A-Za-z0-9!#$%&()+,\-.=@\[\]^_{}~ ]$/, c) else Regex.match?(~r/^\p{L}$/, c) end
   end
 
   def hex(bytes: string): string do
@@ -660,10 +998,7 @@ defmodule AlchemFetch do
         prefix = path <> "@" <> version <> "/"
         case download(path, version, s) do
           error(why) -> error(why <> private_hint(path, why))
-          ok(archive) ->
-            case unzip(archive, prefix) do
-              error(why) -> error(path <> "@" <> version <> ": " <> why)
-              ok(files) ->
+          ok(files) ->
                 sum = hash1(files)
                 checked = if matches?(s.nosumdb, path) do ok(sum) else
                   case database(s.sumdb) do
@@ -684,7 +1019,6 @@ defmodule AlchemFetch do
                       error(why) -> error(why)
                     end
                 end
-            end
         end
     end
   end
