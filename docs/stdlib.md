@@ -30,7 +30,7 @@ Functions here report an expected failure with `result` or an absent value with 
 | `Float.round(x)`, `Float.floor(x)`, `Float.ceil(x)` | `float`; each also takes a number of decimal places |
 | `round(x)`, `trunc(x)`, `ceil(x)`, `floor(x)` | `integer`; round is half away from zero; values outside the integer range fail |
 
-Other numeric functions are one line of [Go interop](interop.md) away: `extern sqrt(x: float): float = "math.Sqrt"`.
+A square root is `Float.pow(x, 0.5)`.
 
 ## File, System, Time and IO
 

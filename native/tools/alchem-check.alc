@@ -126,6 +126,45 @@ defmodule AlchemCheck do
     end
   end
 
+  # The library function that does what a Go function did, as the message
+  # about an extern names it; "" where there is none.
+  def in_place_of(target: string): string do
+    known = [{"strconv.Atoi", "Integer.parse"}, {"strconv.ParseFloat", "Float.parse"}, {"strconv.Itoa", "Integer.to_string"},
+      {"os.LookupEnv", "System.get_env"}, {"os.Getenv", "System.get_env"}, {"os.Setenv", "System.put_env"},
+      {"os.ReadFile", "File.read"}, {"os.WriteFile", "File.write"},
+      {"strings.ToUpper", "String.upcase"}, {"strings.ToLower", "String.downcase"}, {"strings.TrimSpace", "String.trim"},
+      {"strings.Contains", "String.contains?"}, {"strings.Split", "String.split"}, {"strings.Join", "Enum.join"},
+      {"strings.Repeat", "String.duplicate"}, {"strings.HasPrefix", "String.starts_with?"}, {"strings.HasSuffix", "String.ends_with?"},
+      {"strings.ReplaceAll", "String.replace"},
+      {"math.Sqrt", "Float.pow(value, 0.5)"}, {"math.Pow", "Float.pow"}, {"math.Floor", "Float.floor"}, {"math.Ceil", "Float.ceil"}, {"math.Abs", "abs"}]
+    case Enum.find(known, fn {go, _} -> go == target end) do
+      some({_, ours}) -> ours
+      none -> ""
+    end
+  end
+
+  # extern is out of the language (it bound a name to a Go function or
+  # type, and a program is not built with Go): the first one of a program,
+  # where it is, with the library function to use where there is one.
+  # The pinned compiler still takes extern; this is said in its place.
+  def extern_problem(order: list[Unit]): option[Problem] do
+    found = Enum.flat_map(order, fn u ->
+      functions = Enum.map(Enum.filter(its(u.tree, "Functions"), fn f -> tx(f, "Extern") != "" end), fn f ->
+        ours = in_place_of(tx(f, "Extern"))
+        diagnostic(u.path, number(f, "Line"), number(f, "Column"), "extern is no longer in the language: " <> List.last(String.split(tx(f, "Name"), "."), "") <> " was bound to the Go function " <> inspect(tx(f, "Extern")) <> ", and a program is not built with Go; " <>
+          (if ours != "" do "use " <> ours else "the library has no function in its place, so what it did is to be written in Alchem" end))
+      end)
+      types = Enum.map(Enum.filter(its(u.tree, "Types"), fn d -> tx(d, "Kind") == "extern" end), fn d ->
+        diagnostic(u.path, number(d, "Line"), number(d, "Column"), "extern is no longer in the language: " <> tx(d, "Local") <> " named the Go type " <> inspect(tx(d, "Extern")) <> ", and a program is not built with Go")
+      end)
+      Enum.sort_by(functions ++ types, fn found -> found.line * 100000 + found.column end)
+    end)
+    case found do
+      [first | _] -> some(first)
+      [] -> none
+    end
+  end
+
   # The problem, and the program as the loader gives it to the checker
   # where there is none and the loader is followed to its end here; with
   # analyzing, the checker's problem too (AlchemAnalyze).
@@ -145,7 +184,8 @@ defmodule AlchemCheck do
           case merged(loaded, path) do
             some(problem) -> {some(problem), nothing_made}
             none ->
-              if skipped?(loaded) do {none, nothing_made} else
+              outside = if analyzing do extern_problem(loaded.order) else none end
+              if skipped?(loaded) or outside != none do {outside, nothing_made} else
                 made = assembled(loaded, path)
                 found = if analyzing do
                   renamed = Enum.map(loaded.order, fn u -> {u, elem(AlchemLower.separate_arities(u.tree), 0)} end)

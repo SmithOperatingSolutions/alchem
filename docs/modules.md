@@ -22,7 +22,7 @@ Run `alchem check examples/system`, `alchem build -o system examples/system`, th
 
 ## Module contents
 
-After its imports a module may declare, in any order, `require` lines and `extern` functions (see [Go interop](interop.md)), `struct` and `type` declarations, and functions. Types declared in a module are named `Module.Type` from other modules that import it directly. A `defp` function, including every clause of it, can be called and referenced only inside its own module; a qualified call from elsewhere is the compile error `Module.name is private to its module`. All types are public.
+After its imports a module may declare, in any order, `struct` and `type` declarations and functions. Types declared in a module are named `Module.Type` from other modules that import it directly. A `defp` function, including every clause of it, can be called and referenced only inside its own module; a qualified call from elsewhere is the compile error `Module.name is private to its module`. All types are public.
 
 ## Remote packages
 
@@ -34,7 +34,7 @@ import "github.com/example/mathlib@v1.2.0/lib/math.alc"
 
 The text before `@` is the package path, the version is an exact tag, and the rest is the file inside the package. Packages are fetched with the Go module system (`go mod download`), so they come from the configured `GOPROXY`, are verified against the Go checksum database, are cached in the Go module cache, and honour `GOPRIVATE` and related settings for private hosts. A package needs no `go.mod`.
 
-Files inside a package import each other with ordinary relative paths, which may not leave the package directory, and may bind `extern` functions to Go packages inside the package. One program may use only one version of a package; two different versions are the compile error `conflicting versions`. `alchem check` and `alchem build` contact the network only when a program has remote imports or `require` lines whose modules are not already cached.
+Files inside a package import each other with ordinary relative paths, which may not leave the package directory. One program may use only one version of a package; two different versions are the compile error `conflicting versions`. `alchem check` and `alchem build` contact the network only when a program has remote imports or `require` lines whose modules are not already cached.
 
 ### Private repositories
 
@@ -99,7 +99,7 @@ A program that uses remote packages or `require` gets an `alchem.lock` beside it
 
 - A remote package whose fetched content differs from its locked hash fails with `module@version does not match alchem.lock`.
 - The locked Go checksums are given to the Go toolchain before it resolves dependencies, so a changed module fails with Go's `checksum mismatch`.
-- New entries are added, and entries no longer used are removed, whenever `check` or `build` runs. `check` only knows the Go checksums of a program it has to prepare a Go module for (one with `extern` declarations); otherwise it leaves them as they are.
+- New entries are added, and entries no longer used are removed, whenever `check` or `build` runs.
 - `--locked` on `check` or `build` writes nothing and fails if the lock lacks an entry the program needs. Use it in CI.
 
 The lock pins content, not just versions, so it also protects packages from hosts outside the Go checksum database (`GONOSUMDB`, `GOPRIVATE`).

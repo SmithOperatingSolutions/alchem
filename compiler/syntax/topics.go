@@ -346,22 +346,22 @@ func init() {
 			"def is public, defp private. Imported types are written Module.Type.",
 			"Imports of a published package name a host path and version: import \"github.com/owner/repo@v1.2.0/lib/math.alc\"; versions are recorded in alchem.lock. See alchem syntax packages.",
 			"Library modules (Enum, String, ...) need no import.",
-		}, []string{"program", "packages", "extern", "functions"},
+		}, []string{"program", "packages", "functions"},
 		Sample{Title: "two files", File: "defmodule ShapesTest do\n  import \"geometry.alc\"\n\n  test \"imported functions and types\" do\n    size = %Geometry.Size{width: 2, height: 3}\n    assert(Geometry.area(size) == 6)\n  end\nend\n",
 			Files: map[string]string{"geometry.alc": "defmodule Geometry do\n  struct Size do\n    width: integer\n    height: integer\n  end\n\n  def area(size: Size): integer do\n    size.width * size.height\n  end\nend\n"}})
 
 	topic("Modules", "packages", "A package is a tagged repository of .alc files, imported by host path and version.",
 		[]string{
-			"import \"github.com/owner/repo@v1.2.0/lib/math.alc\" names the repository, an exact tag, and a file inside it. Files of a package import each other with relative paths, which cannot leave the package, and may bind extern functions to Go code inside it.",
+			"import \"github.com/owner/repo@v1.2.0/lib/math.alc\" names the repository, an exact tag, and a file inside it. Files of a package import each other with relative paths, which cannot leave the package.",
 			"alchem doc, run, build and check take the same path: alchem doc github.com/owner/repo@v1.2.0/lib/math.alc shows a file's documentation, and alchem run github.com/owner/repo@v1.2.0/tools/dev.alc -- arguments runs a program the package carries.",
 			"Inside a project, alchem doc Module, alchem doc Module.function and alchem doc --search text also cover the project's own files and the packages they import, once those have been fetched by a check or a build.",
 			"alchem.lock beside the entry file records the content of each package; commit it, and pass --locked in CI. A program run straight from a package keeps no lock file.",
 			"For a private repository set ALCHEM_PRIVATE to comma-separated patterns such as github.com/owner/*: matching packages are fetched with git from their own host, using the credentials git already has, and nothing about them is sent to the public Go proxy or checksum database.",
 			"require \"alchem\" \"v0.4.0\" in a file names the oldest Alchem release it works with; an older compiler reports that instead of an error about something it does not know. Releases before v0.3.8 do not know the line itself.",
 			"One program uses one version of a package; two are the compile error conflicting versions.",
-			"What a package builds a protocol or a service on is in the library: HTTP.take_over gives a handler its request's connection as a TCP socket, TCP.connect_tls opens an encrypted one, extern binds Go code, and a function may be defined for arguments of several types, as library functions are.",
+			"What a package builds a protocol or a service on is in the library: HTTP.take_over gives a handler its request's connection as a TCP socket, TCP.connect_tls opens an encrypted one, and a function may be defined for arguments of several types, as library functions are.",
 			"Module names are shared by the whole program, so a package's module and one of the program's cannot have the same name, and neither can take a library module's name. The exception is a library module that is moving to a package (DiskStore, WebSocket, Version, OptionParser): a program that imports a module of that name uses it, and one that does not uses the builtin until it is dropped.",
-		}, []string{"modules", "extern", "comments"},
+		}, []string{"modules", "comments"},
 		Sample{Title: "a library file that states the release it needs", File: "defmodule TemperatureTest do\n  import \"temperature.alc\"\n\n  test \"a module of a package is used like any other\" do\n    assert(Temperature.fahrenheit(100) == 212)\n  end\nend\n",
 			Files: map[string]string{"temperature.alc": "defmodule Temperature do\n  @moduledoc \"\"\"\n  Conversions between scales.\n  \"\"\"\n  require \"alchem\" \"v0.3.0\"\n\n  @doc \"Degrees Fahrenheit for degrees Celsius.\"\n  def fahrenheit(celsius: integer): integer do\n    div(celsius * 9, 5) + 32\n  end\nend\n"}})
 
@@ -421,17 +421,6 @@ func init() {
 			"A send to another node returns once the message is written, not once it is received, and a full mailbox there delays and then drops messages.",
 		}, []string{"processes", "Node", "Process"},
 		Sample{Title: "starting a node and naming a process", Body: "started = Node.start(\"example\", \"127.0.0.1:0\", \"secret\")\nassert(started == ok({}) or started == error(\"this program is already a node\"))\ninbox: pid[tuple[atom, integer]] = Process.self(8)\nProcess.register(inbox, :example_inbox)\nfound: option[pid[tuple[atom, integer]]] = Process.whereis(:example_inbox)\nsent = case found do\n  some(named) -> Process.send(named, {:count, 3}, 100)\n  none -> false\nend\nassert(sent)\nassert_receive(inbox, {:count, 3})\nProcess.unregister(:example_inbox)\nelsewhere: option[pid[tuple[atom, integer]]] = Node.whereis(\"other\", :example_inbox, 50)\nreached = case elsewhere do\n  some(_) -> true\n  none -> false\nend\nassert(not reached)"})
-
-	topic("Modules", "extern", "extern name(params): result = \"package.Function\" calls a Go function.",
-		[]string{
-			"The Alchem signature is checked against the Go one by alchem check.",
-			"A Go (T, error) result is declared result[T, string]; (T, bool) is option[T].",
-			"extern type Name = \"*package.Type\" names an opaque Go type; methods are \"package.Type.Method\" with the receiver first.",
-			"A handle stays with the process that has it and is not compared. extern shared type Name = \"*package.Type\" declares one whose Go value is safe to use from several goroutines at once: it can then be sent in messages and kept by servers, like a socket or a file.",
-			"require \"module/path\" \"v1.2.3\" adds a third-party Go module; \"./dir.Function\" refers to Go code beside the program.",
-		}, []string{"modules"},
-		Sample{Title: "calling the Go standard library", Defs: "extern shout(text: string): string = \"strings.ToUpper\"\nextern to_number(text: string): result[integer, string] = \"strconv.Atoi\"",
-			Body: "assert(shout(\"hello\") == \"HELLO\")\nassert(to_number(\"42\") == ok(42))"})
 
 	topic("Concurrency", "processes", "Lightweight processes with typed mailboxes.",
 		[]string{

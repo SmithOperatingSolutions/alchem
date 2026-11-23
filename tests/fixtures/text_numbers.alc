@@ -1,6 +1,4 @@
 defmodule TextNumbers do
-  extern sqrt(value: float): float = "math.Sqrt"
-
   def area(radius: float): float do
     ((3.5 * radius) * radius)
   end
@@ -26,7 +24,7 @@ defmodule TextNumbers do
     assert((((1.5 < 2.0) and (2.0 >= 2.0)) and (1.0 != 1.5)))
     assert((area(2.0) == 14.0))
     assert((((classify(0.0) == "zero") and (classify(-2.5) == "negative")) and (classify(1000.0) == "positive")))
-    assert((sqrt(16.0) == 4.0))
+    assert((Float.pow(16.0, 0.5) == 4.0))
     assert((Float.from_integer(3) == 3.0))
     assert(((trunc(3.99) == 3) and (trunc(-3.99) == -3)))
     assert((((round(2.5) == 3) and (round(-2.5) == -3)) and (round(2.4) == 2)))
