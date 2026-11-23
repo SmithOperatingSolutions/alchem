@@ -58,7 +58,7 @@ defmodule AlchemAlx do
     # where the statements are, and is named without the shell's module.
     text = String.replace(String.replace(given, "something in AlchemShell.main/0", "something in this input"), "something in AlchemShell.", "something in ")
     String.trim(Enum.join(Enum.map(Enum.filter(String.split(text, "\n"), fn line -> not String.starts_with?(String.trim(line), "at AlchemShell.") end), fn line ->
-      Regex.replace(~r/[^\s()]*\.alchem-shell-\d+\.alc:(\d+)(:\d+)?:?/, line, fn(found: list[string]): string do
+      Regex.replace(~r/[^\s()]*\.alchem-shell-[0-9a-f-]+\.alc:(\d+)(:\d+)?:?/, line, fn(found: list[string]): string do
         n = String.to_integer(Enum.at(found, 1, "0"))
         if n < start do "" else "line #{n - start + 1}:" end
       end)

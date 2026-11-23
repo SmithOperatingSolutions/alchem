@@ -91,7 +91,7 @@ def checked(command, texts, pinned=False, flags=()):
 UNEXPLAINED = ('E_COMPILE: ', 'E_BUNDLE: ')
 # How many of the texts the pinned compiler refuses check explains as it
 # does, at the least: the count may only grow.
-EXPLAINED = 1893
+EXPLAINED = 1967
 
 
 def verify(compiler):
@@ -140,7 +140,11 @@ def verify(compiler):
             else:
                 assert seen[0] == 0 or any(word in seen[1] for word in UNEXPLAINED), ('check', case['name'], seen, case['check'])
         assert explained >= EXPLAINED, f'check explains {explained} of the {len(refusing)} refused texts, fewer than {EXPLAINED}'
-    print(f'PASS front_end: {len(held)} texts lexed, parsed, formatted and lowered as the pinned compiler lexes, parses, formats and lowers them, byte for byte; {refused} of them refused with its message; {followed} loaded as its loader loads them; check gives the pinned message and --json diagnostic for {explained} of the {len(refusing)} texts the pinned compiler refuses, and no other message')
+        # And no text the pinned compiler accepts is refused with a reason.
+        accepting = [case for case in held if case['check'][0] == 0]
+        for case, seen in zip(accepting, checked(alchem, [case['text'] for case in accepting])):
+            assert seen[0] == 0 or any(word in seen[1] for word in UNEXPLAINED), ('check of an accepted text', case['name'], seen)
+    print(f'PASS front_end: {len(held)} texts lexed, parsed, formatted and lowered as the pinned compiler lexes, parses, formats and lowers them, byte for byte; {refused} of them refused with its message; {followed} loaded as its loader loads them; check gives the pinned message and --json diagnostic for {explained} of the {len(refusing)} texts the pinned compiler refuses, and no other message, and refuses none of the {len(accepting)} it accepts')
 
 
 if __name__ == '__main__':

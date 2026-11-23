@@ -4,6 +4,7 @@ defmodule AlchemCheck do
   import "alchem-parse.alc"
   import "alchem-lower.alc"
   import "alchem-analyze.alc"
+  import "alchem-typing.alc"
   # What the pinned compiler says of a program it refuses, as far as this
   # module follows it (spec/alchem-front-end.md): the program an entry file
   # makes with the files it imports, read as the pinned compiler's
@@ -127,7 +128,14 @@ defmodule AlchemCheck do
                 made = assembled(loaded, path)
                 found = if analyzing do
                   renamed = Enum.map(loaded.order, fn u -> {u, elem(AlchemLower.separate_arities(u.tree), 0)} end)
-                  analyzed = AlchemAnalyze.problem(Enum.map(renamed, fn {u, functions} -> {shown(u.path), u.tree, functions} end), shown(path))
+                  first = AlchemAnalyze.problem(Enum.map(renamed, fn {u, functions} -> {shown(u.path), u.tree, functions} end), shown(path))
+                  # Then the walk over the bodies (AlchemTyping).
+                  analyzed = if first != "" do first else
+                    case AlchemTyping.problem(made) do
+                      some(message) -> message
+                      none -> ""
+                    end
+                  end
                   if analyzed != "" do some(plain(analyzed)) else none end
                 else none end
                 {found, some(made)}

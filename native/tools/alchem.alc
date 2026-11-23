@@ -698,12 +698,21 @@ defmodule AlchemCommand do
     end
   end
 
-  def fresh(prefix: string): string do
-    path = System.tmp_dir!() <> "/" <> prefix <> "#{System.os_time(:nanosecond)}"
-    case File.mkdir_p(path) do
+  # A directory of its own, as os.MkdirTemp makes one: a name with random
+  # bytes in it, made only where none was, so that two runs at once never
+  # share one.
+  def fresh(prefix: string): string do fresh_try(prefix, 0) end
+
+  def fresh_try(prefix: string, tries: integer): string do
+    path = System.tmp_dir!() <> "/" <> prefix <> unique()
+    case File.mkdir(path) do
       ok(_) -> path
-      error(message) -> raise(message)
+      error(message) -> if tries < 16 and File.exists?(path) do fresh_try(prefix, tries + 1) else raise(message) end
     end
+  end
+
+  def unique(): string do
+    "#{System.os_time(:nanosecond)}-" <> Base.encode16(Crypto.strong_rand_bytes(6), [case: :lower])
   end
 
   # RunTests.
@@ -1095,7 +1104,7 @@ defmodule AlchemCommand do
   # imports are found from there, and built: {the file, the directory the
   # program is in, the problem or ""}.
   def shell_built(source: string): tuple[string, string, string] do
-    file = ".alchem-shell-#{rem(System.os_time(:nanosecond), 1000000000)}.alc"
+    file = ".alchem-shell-" <> unique() <> ".alc"
     work = fresh("alchem-shell-")
     problem = case File.write(file, source) do
       error(message) -> message
