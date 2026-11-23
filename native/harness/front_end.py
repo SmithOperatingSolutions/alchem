@@ -91,7 +91,7 @@ def checked(command, texts, pinned=False, flags=()):
 UNEXPLAINED = ('E_COMPILE: ', 'E_BUNDLE: ')
 # How many of the texts the pinned compiler refuses check explains as it
 # does, at the least: the count may only grow.
-EXPLAINED = 1967
+EXPLAINED = 1998
 
 
 def verify(compiler):

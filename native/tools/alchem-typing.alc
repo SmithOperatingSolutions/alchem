@@ -953,6 +953,9 @@ defmodule AlchemTyping do
       "funcref" -> reference(c, e, scope, want, f)
       "struct" -> struct_literal(c, e, scope, want, f)
       "call" -> call(c, e, scope, want, st, f)
+      "for" -> comprehension(c, e, scope, want, st, f)
+      "unmatched" -> unmatched(c, e, scope, want, st, f)
+      "sigil" -> sigil(c, e, scope, want, f)
       kind -> error(skip("expression " <> kind))
     end
   end
@@ -1160,6 +1163,169 @@ defmodule AlchemTyping do
   def returns_of(body: list[AlchemJson.J]): list[AlchemJson.J] do finals(body, "return") end
   def yields(body: list[AlchemJson.J]): list[AlchemJson.J] do finals(body, "yield") end
 
+  # ---- for, with and sigils (control.go) ----
+
+  # unitTail: a body run for its effects ends in the empty tuple.
+  def unit_tail(body: list[AlchemJson.J]): list[AlchemJson.J] do
+    last = List.last(body, nojson())
+    if tx(last, "Kind") == "yield" and tx(g(last, "Expr"), "Kind") == "tuple" and its(g(last, "Expr"), "Args") == [] do body else
+      body ++ [expression("yield", last, [{"Expr", expression("tuple", last, [{"Args", AlchemJson.J.list(none_json())}])}])]
+    end
+  end
+
+  def ends_in_effect?(c: Ctx, body: list[AlchemJson.J]): boolean do
+    case body do
+      [] -> false
+      _ ->
+        last = List.last(body, nojson())
+        case tx(last, "Kind") do
+          "output" -> true
+          "assert" -> true
+          "call" -> tx(g(last, "Expr"), "Kind") == "call" and void_call?(c, tx(g(last, "Expr"), "Name"))
+          _ -> false
+        end
+    end
+  end
+
+  def comprehension(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, st: boolean, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    labels = texts(e, "Labels")
+    args = its(e, "Args")
+    if length(labels) == 1 and hd(labels) != "reduce" do
+      inner = AlchemJson.put(AlchemJson.put(e, "Labels", AlchemJson.J.null), "Args", AlchemJson.J.null)
+      value = hd(args)
+      if hd(labels) == "uniq" do
+        if tx(value, "Kind") != "literal" or tx(g(value, "Value"), "Kind") != "boolean" do fail(e, "uniq: takes true or false") else
+          if not truth(g(value, "Value"), "Boolean") do ex(c, inner, scope, want, st, f) else ex(c, expression("call", e, [{"Name", AlchemJson.str("Enum.uniq")}, {"Args", AlchemJson.J.list([inner])}]), scope, want, st, f) end
+        end
+      else ex(c, expression("call", e, [{"Name", AlchemJson.str("Enum.into")}, {"Args", AlchemJson.J.list([inner, value])}]), scope, want, st, f) end
+    else
+      statement = hd(its(e, "Body"))
+      initial = if length(labels) == 1 do
+        value = hd(args)
+        empty = (tx(value, "Kind") == "map" or tx(value, "Kind") == "list") and its(value, "Args") == [] and its(value, "Keys") == []
+        if want == "" and empty do error(at(value, "the empty reduce: value needs a type; annotate what the for is bound to, as in counts: map[string, integer] = for ... reduce: %{} do")) else
+          case ex(c, value, scope, want, false, f) do
+            error(s) -> error(s)
+            ok({t, f1}) -> ok({t, f1})
+          end
+        end
+      else ok({"", f}) end
+      case initial do
+        error(s) -> error(s)
+        ok({reduced, f0}) ->
+          start: result[tuple[map[string, string], Flow], tuple[string, string]] = ok({scope, f0})
+          generated = Enum.reduce(its(statement, "Arms"), start, fn arm, sofar ->
+            case sofar do
+              error(s) -> error(s)
+              ok({local, now}) ->
+                guard = g(arm, "Guard")
+                if null?(arm, "Pattern") do
+                  case ex(c, guard, local, "boolean", false, now) do
+                    error(s) -> error(s)
+                    ok({_, next}) -> ok({local, next})
+                  end
+                else
+                  case ex(c, guard, local, "", false, now) do
+                    error(s) -> error(s)
+                    ok({source, next}) ->
+                      case element(source) do
+                        none -> error(at(guard, "a for generator needs a list, map, set, stream or range, found " <> source))
+                        some(member) ->
+                          case pattern(c, g(arm, "Pattern"), member, local, local) do
+                            error(s) -> error(s)
+                            ok({_, bound}) -> ok({bound, next})
+                          end
+                      end
+                  end
+                end
+            end
+          end)
+          case generated do
+            error(s) -> error(s)
+            ok({local, f1}) ->
+              produced = case list_elem(want) do
+                some(m) -> m
+                none -> ""
+              end
+              if reduced != "" do
+                body = yields(its(statement, "Then"))
+                case block(c, body, Map.put(local, tx(e, "Name"), reduced), "void", %Flow{f1 | yielding: true, yield: reduced, inferring: false, infer: ""}) do
+                  error(s) -> error(s)
+                  ok({complete, after}) ->
+                    if not complete or after.yield != reduced do fail(e, "every arm of a for with reduce: must end in the next accumulator, of type " <> reduced) else typed(reduced, f1) end
+                end
+              else
+                effect = st or ends_in_effect?(c, its(statement, "Then"))
+                body = if effect do unit_tail(its(statement, "Then")) else yields(its(statement, "Then")) end
+                case block(c, body, local, "void", %Flow{f1 | yielding: true, yield: if effect do "" else produced end, inferring: false, infer: ""}) do
+                  error(s) -> error(s)
+                  ok({complete, after}) ->
+                    if not complete or after.yield == "" do fail(e, "the body of for must end in a value") else typed("list[" <> after.yield <> "]", f1) end
+                end
+              end
+          end
+      end
+    end
+  end
+
+  # A with clause that does not match, which becomes what the with produces.
+  def unmatched(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, st: boolean, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    case ex(c, g(e, "Left"), scope, "", false, f) do
+      error(s) -> error(s)
+      ok({source, f1}) ->
+        if want == "" do
+          if st do typed("void", f1) else fail(e, "cannot infer the result of this with; a clause that does not match needs the type of the whole expression") end
+        else
+          {from, from_args} = split(source)
+          {to, to_args} = split(want)
+          if source == want or (from == "result" and to == "result" and Enum.at(from_args, 1, "") == Enum.at(to_args, 1, "")) or (from == "option" and to == "option") do typed(want, f1) else
+            fail(e, "a " <> source <> " that does not match its with clause cannot become the " <> want <> " this with produces; add an else")
+          end
+        end
+    end
+  end
+
+  # The sigils that are plain values: ~s and ~w, with or without
+  # interpolation, and ~c's refusal of it.
+  def sigil(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    n = tx(e, "Name")
+    text = tx(g(e, "Value"), "Text")
+    if not null?(e, "Left") do
+      template = g(e, "Left")
+      case n do
+        "s" -> ex(c, template, scope, want, false, f)
+        "w" -> ex(c, expression("call", e, [{"Name", AlchemJson.str("String.split")}, {"Args", AlchemJson.J.list([template])}]), scope, want, false, f)
+        "c" -> fail(e, "~c does not interpolate")
+        _ -> error(skip("sigil ~" <> n))
+      end
+    else
+      if n == "r" do regex_literal(e, text, f) else
+      if n == "s" or n == "S" do typed(tx(g(e, "Value"), "Kind"), f) else
+        if n == "w" do
+          items = Enum.map(String.split(text), fn word -> expression("literal", e, [{"Value", object([{"Kind", AlchemJson.str("string")}, {"Text", AlchemJson.str(word)}])}]) end)
+          if items == [] do typed("list[string]", f) else ex(c, expression("list", e, [{"Args", AlchemJson.J.list(items)}]), scope, want, false, f) end
+        else error(skip("sigil ~" <> n)) end
+      end
+      end
+    end
+  end
+
+  # ~r: the pattern RegexSource makes of the text and modifiers, which
+  # must compile. One the native Regex refuses is not said here.
+  def regex_literal(e: AlchemJson.J, text: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    modifiers = String.codepoints(tx(e, "Op"))
+    if not Enum.all?(modifiers, fn m -> m in ["i", "m", "s", "U", "u", "x"] end) do fail(e, "~r accepts the modifiers i, m, s and u") else
+      if "x" in modifiers do error(skip("~r with x")) else
+        flags = Enum.join(Enum.filter(modifiers, fn m -> m in ["i", "m", "s", "U"] end), "")
+        source = if flags == "" do text else "(?" <> flags <> ")" <> text end
+        case Regex.compile(source) do
+          ok(_) -> typed("regex", f)
+          error(_) -> error(skip("an invalid regular expression"))
+        end
+      end
+    end
+  end
+
   # ---- Functions as values ----
 
   def closure(c: Ctx, e: AlchemJson.J, scope: map[string, string], f: Flow): result[tuple[string, Flow], tuple[string, string]] do
@@ -1232,7 +1398,9 @@ defmodule AlchemTyping do
           error(s) -> error(s)
           ok({local, binds}) ->
             if not null?(p, "Pattern") do
-              n = "arg$" <> Integer.to_string(i + 1)
+              # The checker numbers these from one counter for the whole
+              # program: a name of its own here, from where the parameter is.
+              n = "arg$" <> Integer.to_string(num(p, "Line")) <> "_" <> Integer.to_string(num(p, "Column")) <> "_" <> Integer.to_string(i + 1)
               bind = object([{"Kind", AlchemJson.str("bind")}, {"Pattern", g(p, "Pattern")}, {"Declared", AlchemJson.str("")}, {"Line", g(p, "Line")}, {"Column", g(p, "Column")}, {"Expr", object([{"Kind", AlchemJson.str("name")}, {"Name", AlchemJson.str(n)}, {"Line", g(p, "Line")}, {"Column", g(p, "Column")}])}])
               if Map.has_key?(local, n) do error(at(p, "parameter " <> n <> " shadows an existing binding")) else ok({Map.put(local, n, t), binds ++ [bind]}) end
             else
@@ -1562,8 +1730,32 @@ defmodule AlchemTyping do
     if length(args) != wanted do fail(e, n <> " takes " <> Integer.to_string(wanted) <> " arguments") else
       i = Enum.at(args, 1, nojson())
       if tx(i, "Kind") != "literal" or tx(g(i, "Value"), "Kind") != "integer" do fail(e, n <> " needs an integer literal for the index, since each element of a tuple has its own type") else
-        if n == "elem" do ex(c, expression("index", e, [{"Left", hd(args)}, {"Right", i}]), scope, want, false, f) else error(skip("put_elem")) end
+        if n == "elem" do ex(c, expression("index", e, [{"Left", hd(args)}, {"Right", i}]), scope, want, false, f) else rebuilt_tuple(c, e, args, scope, want, f) end
       end
+    end
+  end
+
+  # put_elem(tuple, i, value): the tuple bound once and made again with the
+  # new element, as tupleCall rewrites it.
+  def rebuilt_tuple(c: Ctx, e: AlchemJson.J, args: list[AlchemJson.J], scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    case ex(c, hd(args), scope, "", false, f) do
+      error(s) -> error(s)
+      ok({t, _}) ->
+        index = num(g(Enum.at(args, 1, nojson()), "Value"), "Integer")
+        case tuple_elems(t) do
+          none -> fail(e, "put_elem needs a tuple, found " <> t)
+          some(parts) ->
+            if index < 0 or index >= length(parts) do fail(e, "tuple index out of bounds") else
+              bound = "tuple$" <> Integer.to_string(num(e, "Line")) <> "_" <> Integer.to_string(num(e, "Column"))
+              literal = fn(k: integer): AlchemJson.J do expression("literal", e, [{"Value", object([{"Kind", AlchemJson.str("integer")}, {"Integer", AlchemJson.int(k)}])}]) end
+              items = Enum.map(Enum.with_index(parts), fn {_, k} ->
+                if k == index do Enum.at(args, 2, nojson()) else expression("index", e, [{"Left", expression("name", e, [{"Name", AlchemJson.str(bound)}])}, {"Right", literal.(k)}]) end
+              end)
+              pattern = expression("name", e, [{"Name", AlchemJson.str(bound)}, {"Value", object([{"Kind", AlchemJson.str("")}])}])
+              body = [expression("bind", e, [{"Pattern", pattern}, {"Expr", hd(args)}, {"Declared", AlchemJson.str("")}]), expression("call", e, [{"Expr", expression("tuple", e, [{"Args", AlchemJson.J.list(items)}])}])]
+              ex(c, expression("value", e, [{"Body", AlchemJson.J.list(body)}]), scope, want, false, f)
+            end
+        end
     end
   end
 
@@ -1716,7 +1908,6 @@ defmodule AlchemTyping do
       error(s) -> error(s)
       ok({b, next}) ->
         problem = library_problem(c, entry, b)
-        if problem == "\u{0}skip" do error(skip("codec or read constraints")) else
         if problem != "" do fail(e, problem) else
           result = instantiate(entry.result, vars, b)
           if result == "void" do typed(result, next) else
@@ -1725,7 +1916,6 @@ defmodule AlchemTyping do
               if not valid_type?(result) do fail(e, entry.name <> " cannot produce " <> result) else typed(result, next) end
             end
           end
-        end
         end
     end
   end
@@ -1766,10 +1956,23 @@ defmodule AlchemTyping do
                         some(v) -> entry.name <> " needs integers or floats, found " <> Map.get(b, v, "")
                         none ->
                           if into != "" do into else
-                            if entry.codec != [] or entry.read != [] do "\u{0}skip" else
-                              case cal do
-                                some(v) -> entry.name <> " needs a Date, Time, NaiveDateTime or DateTime, found " <> Map.get(b, v, "")
-                                none -> ""
+                            codec = first_of(Enum.map(entry.codec, fn v ->
+                              bound = Map.get(b, v, "")
+                              if bound == "" do entry.name <> " needs the type of the process's messages: annotate what it is bound to, as in orders: option[pid[Order]] = " <> entry.name <> "(...)" else
+                                blocked = unwired(c, bound)
+                                if blocked != "" do entry.name <> " cannot be used with messages of type " <> bound <> ": " <> blocked <> " cannot be sent to another node" else "" end
+                              end
+                            end))
+                            if codec != "" do codec else
+                              read = first_of(Enum.map(entry.read, fn v ->
+                                blocked = readable(c, Map.get(b, v, ""))
+                                if blocked != "" do entry.name <> " cannot read " <> Map.get(b, v, "") <> ": " <> blocked <> " has no JSON form" else "" end
+                              end))
+                              if read != "" do read else
+                                case cal do
+                                  some(v) -> entry.name <> " needs a Date, Time, NaiveDateTime or DateTime, found " <> Map.get(b, v, "")
+                                  none -> ""
+                                end
                               end
                             end
                           end
@@ -1778,6 +1981,73 @@ defmodule AlchemTyping do
               end
           end
       end
+    end
+  end
+
+  def first_of(said: list[string]): string do
+    case Enum.filter(said, fn s -> s != "" end) do
+      [s | _] -> s
+      [] -> ""
+    end
+  end
+
+  # The first part of a type, in the order contains walks it, that the
+  # predicate holds for, or "".
+  def first_part(c: Ctx, t: string, predicate: fn[string, boolean], visited: list[string]): string do
+    if predicate(t) do t else
+      {head, args} = split(t)
+      if head in ["pid", "supervisor", "server", "task", "agent", "registry", "dynamic_supervisor"] do "" else
+        in_args = first_of(Enum.map(args, fn a -> first_part(c, a, predicate, visited) end))
+        if in_args != "" do in_args else
+          case Map.get(c.types, head) do
+            none -> ""
+            some(d) ->
+              if t in visited or length(args) != length(d.params) do "" else
+                count = if d.kind == "struct" do 1 else length(d.variants) end
+                first_of(Enum.map(Enum.with_index(List.duplicate(0, count)), fn {_, i} ->
+                  case field_types(c, t, i) do
+                    some({_, fields}) -> first_of(Enum.map(fields, fn fd -> first_part(c, fd, predicate, visited ++ [t]) end))
+                    none -> ""
+                  end
+                end))
+              end
+          end
+        end
+      end
+    end
+  end
+
+  def blocking_heads(): list[string] do
+    ["stream", "regex", "port", "task", "agent", "server", "supervisor", "registry", "dynamic_supervisor", "socket", "http_server", "websocket", "generator", "file", "disk_store"]
+  end
+
+  # unwired: the first part of a type with no form on the wire between nodes.
+  def unwired(c: Ctx, t: string): string do
+    first_part(c, t, fn part ->
+      {head, _} = split(part)
+      fn_parts(part) != none or tvar?(part) or opaque?(c, part) or head in blocking_heads()
+    end, none_strings())
+  end
+
+  # unread: the first part of a type that cannot be read from JSON.
+  def unread(c: Ctx, t: string): string do
+    first_part(c, t, fn part ->
+      {head, args} = split(part)
+      fn_parts(part) != none or tvar?(part) or opaque?(c, part) or head in blocking_heads() or head == "pid" or (head == "map" and length(args) == 2 and String.starts_with?(Enum.at(args, 0, ""), "tuple["))
+    end, none_strings())
+  end
+
+  # readable: a type variable the function is not given by its parameters,
+  # or the part of the type that cannot be read from JSON.
+  def readable(c: Ctx, t: string): string do
+    given = case Map.get(c.functions, c.current) do
+      some(fun) -> generic(fun)
+      none -> none_strings()
+    end
+    names = tvars(t, none_strings())
+    case Enum.find(names, fn v -> not (v in given) end) do
+      some(v) -> v
+      none -> unread(c, subst(t, Map.new(Enum.map(names, fn v -> {v, "integer"} end))))
     end
   end
 
@@ -1810,7 +2080,8 @@ defmodule AlchemTyping do
           end
         end
       else
-        if String.starts_with?(n, "Server.") or String.starts_with?(n, "Process.") or String.starts_with?(n, "Supervisor.") do error(skip("process call " <> n)) else
+        if String.starts_with?(n, "Server.") do server(c, e, scope, f) else
+        if String.starts_with?(n, "Process.") or String.starts_with?(n, "Supervisor.") do actor(c, e, scope, want, f) else
           case Map.get(c.t.simple, n) do
             some({ps, result}) ->
               if length(args) != length(ps) do fail(e, n <> " requires " <> Integer.to_string(length(ps)) <> " argument" <> (if length(ps) == 1 do "" else "s" end)) else
@@ -1833,6 +2104,278 @@ defmodule AlchemTyping do
                       end
                   end
                 else program_call(c, e, scope, want, f) end
+              end
+          end
+        end
+        end
+      end
+    end
+  end
+
+  def capability(t: string, kind: string): option[string] do
+    case parts_of(t, kind) do
+      some([m]) -> some(m)
+      _ -> none
+    end
+  end
+
+  def counts(n: string): option[integer] do
+    case n do
+      "Process.self" -> some(1)
+      "Process.loop" -> some(2)
+      "Process.spawn" -> some(2)
+      "Process.send" -> some(3)
+      "Process.receive" -> some(2)
+      "Process.await" -> some(2)
+      "Process.stop" -> some(1)
+      "Process.alive" -> some(1)
+      "Process.id" -> some(1)
+      "Process.monitor" -> some(1)
+      "Process.demonitor" -> some(2)
+      "Process.link" -> some(1)
+      "Process.unlink" -> some(1)
+      "Process.trap_exits" -> some(1)
+      "Process.event" -> some(1)
+      "Process.sleep" -> some(1)
+      "Process.crash" -> some(1)
+      "Process.report" -> some(1)
+      "Supervisor.start" -> some(5)
+      "Supervisor.start_link" -> some(5)
+      "Supervisor.child" -> some(2)
+      "Supervisor.stop" -> some(2)
+      "Supervisor.await" -> some(2)
+      "Supervisor.alive" -> some(1)
+      "Supervisor.restarts" -> some(1)
+      "Supervisor.children" -> some(1)
+      _ -> none
+    end
+  end
+
+  # actorBuiltin: the operations of processes and supervisors.
+  def actor(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    n = tx(e, "Name")
+    args = its(e, "Args")
+    case counts(n) do
+      none -> fail(e, "unknown runtime operation " <> n)
+      some(count) ->
+        if length(args) != count do fail(e, n <> " requires " <> Integer.to_string(count) <> " arguments") else
+          if n == "Process.loop" do
+            case one(c, Enum.at(args, 1, nojson()), scope, "", f) do
+              error(s) -> error(s)
+              ok({callback, f1}) ->
+                case fn_parts(callback) do
+                  some({[state], result}) ->
+                    case tuple_elems(result) do
+                      some(["boolean", s]) ->
+                        if s != state do fail(e, "loop callback must return tuple[boolean,State]") else
+                          case one(c, Enum.at(args, 0, nojson()), scope, state, f1) do
+                            error(stop) -> error(stop)
+                            ok({_, f2}) -> typed(state, f2)
+                          end
+                        end
+                      _ -> fail(e, "loop callback must return tuple[boolean,State]")
+                    end
+                  _ -> fail(e, "loop callback must accept one state argument")
+                end
+            end
+          else
+            if n == "Process.self" do
+              case capability(want, "pid") do
+                none -> fail(e, "Process.self requires an expected pid[T] type")
+                some(m) ->
+                  if not sendable?(c, m) do fail(e, "mailbox messages cannot contain functions") else
+                    case one(c, Enum.at(args, 0, nojson()), scope, "integer", f) do
+                      error(s) -> error(s)
+                      ok({_, f1}) -> typed(want, f1)
+                    end
+                  end
+              end
+            else
+              if n == "Process.spawn" do
+                case one(c, Enum.at(args, 0, nojson()), scope, "", f) do
+                  error(s) -> error(s)
+                  ok({t, f1}) ->
+                    case fn_parts(t) do
+                      some({[param], "integer"}) ->
+                        case capability(param, "pid") do
+                          some(m) ->
+                            if not sendable?(c, m) do fail(e, "spawn requires a sendable pid[T] callback argument") else
+                              case one(c, Enum.at(args, 1, nojson()), scope, "integer", f1) do
+                                error(s) -> error(s)
+                                ok({_, f2}) -> typed("pid[" <> m <> "]", f2)
+                              end
+                            end
+                          none -> fail(e, "spawn requires a sendable pid[T] callback argument")
+                        end
+                      _ -> fail(e, "spawn callback must be fn[pid[T],integer]")
+                    end
+                end
+              else
+                simple = case n do
+                  "Process.sleep" -> some({"integer", "integer"})
+                  "Process.event" -> some({"integer", "tuple[boolean,integer,integer,string]"})
+                  "Process.crash" -> some({"string", "integer"})
+                  "Process.trap_exits" -> some({"boolean", "boolean"})
+                  _ -> none
+                end
+                case simple do
+                  some({given, result}) ->
+                    case one(c, Enum.at(args, 0, nojson()), scope, given, f) do
+                      error(s) -> error(s)
+                      ok({_, f1}) -> typed(result, f1)
+                    end
+                  none ->
+                    if n == "Supervisor.start" or n == "Supervisor.start_link" do supervisor_start(c, e, args, scope, f) else
+                      case one(c, Enum.at(args, 0, nojson()), scope, "", f) do
+                        error(s) -> error(s)
+                        ok({target, f1}) ->
+                          if String.starts_with?(n, "Supervisor.") do
+                            case capability(target, "supervisor") do
+                              none -> fail(e, "operation requires supervisor[T]")
+                              some(m) ->
+                                if n == "Supervisor.child" do
+                                  case one(c, Enum.at(args, 1, nojson()), scope, "string", f1) do
+                                    error(s) -> error(s)
+                                    ok({_, f2}) -> typed("pid[" <> m <> "]", f2)
+                                  end
+                                else
+                                  if n == "Supervisor.stop" or n == "Supervisor.await" do
+                                    case one(c, Enum.at(args, 1, nojson()), scope, "integer", f1) do
+                                      error(s) -> error(s)
+                                      ok({_, f2}) -> typed(if n == "Supervisor.await" do "tuple[boolean,string]" else "boolean" end, f2)
+                                    end
+                                  else
+                                    typed(if n == "Supervisor.alive" do "boolean" else if n == "Supervisor.restarts" do "integer" else "list[tuple[string,integer]]" end end, f1)
+                                  end
+                                end
+                            end
+                          else
+                            case capability(target, "pid") do
+                              none -> fail(e, "operation requires pid[T]")
+                              some(m) ->
+                                if n == "Process.send" do
+                                  case one(c, Enum.at(args, 1, nojson()), scope, m, f1) do
+                                    error(s) -> error(s)
+                                    ok({_, f2}) ->
+                                      case one(c, Enum.at(args, 2, nojson()), scope, "integer", f2) do
+                                        error(s) -> error(s)
+                                        ok({_, f3}) -> typed("boolean", f3)
+                                      end
+                                  end
+                                else
+                                  if n == "Process.receive" or n == "Process.await" or n == "Process.demonitor" do
+                                    case one(c, Enum.at(args, 1, nojson()), scope, "integer", f1) do
+                                      error(s) -> error(s)
+                                      ok({_, f2}) -> typed(if n == "Process.receive" do "tuple[boolean," <> m <> "]" else if n == "Process.await" do "tuple[boolean,string]" else "boolean" end end, f2)
+                                    end
+                                  else
+                                    typed(if n == "Process.id" or n == "Process.monitor" do "integer" else if n == "Process.report" do "string" else "boolean" end end, f1)
+                                  end
+                                end
+                            end
+                          end
+                      end
+                    end
+                end
+              end
+            end
+          end
+        end
+    end
+  end
+
+  def supervisor_start(c: Ctx, e: AlchemJson.J, args: list[AlchemJson.J], scope: map[string, string], f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    case each(c, [Enum.at(args, 0, nojson()), Enum.at(args, 1, nojson()), Enum.at(args, 2, nojson()), Enum.at(args, 4, nojson())], scope, ["string", "integer", "integer", "integer"], f) do
+      error(s) -> error(s)
+      ok({_, f1}) ->
+        case one(c, Enum.at(args, 3, nojson()), scope, "", f1) do
+          error(s) -> error(s)
+          ok({specs, f2}) ->
+            case list_elem(specs) do
+              none -> fail(e, "supervisor requires a nonempty typed child-spec list")
+              some(element) ->
+                case tuple_elems(element) do
+                  some(["string", "string", callback]) ->
+                    case fn_parts(callback) do
+                      some({[param], "integer"}) ->
+                        case capability(param, "pid") do
+                          some(m) -> typed("supervisor[" <> m <> "]", f2)
+                          none -> fail(e, "child callback requires pid[T]")
+                        end
+                      _ -> fail(e, "invalid child callback")
+                    end
+                  _ -> fail(e, "child spec is tuple[string,string,fn[pid[T],integer]]")
+                end
+            end
+        end
+    end
+  end
+
+  # serverBuiltin: the operations of a server.
+  def server(c: Ctx, e: AlchemJson.J, scope: map[string, string], f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    n = tx(e, "Name")
+    args = its(e, "Args")
+    count = case n do
+      "Server.start" -> 2
+      "Server.start_supervised" -> 4
+      "Server.call" -> 3
+      "Server.cast" -> 2
+      "Server.stop" -> 1
+      "Server.alive" -> 1
+      "Server.await" -> 2
+      "Server.restarts" -> 1
+      _ -> -1
+    end
+    if count < 0 do fail(e, "unknown runtime operation " <> n) else
+      if length(args) != count do fail(e, n <> " requires " <> plural(count, "argument")) else
+        if n == "Server.start" or n == "Server.start_supervised" do
+          limits = Enum.drop(args, 2)
+          case each(c, limits, scope, Enum.map(limits, fn _ -> "integer" end), f) do
+            error(s) -> error(s)
+            ok({_, f1}) ->
+              case one(c, Enum.at(args, 1, nojson()), scope, "", f1) do
+                error(s) -> error(s)
+                ok({handler, f2}) ->
+                  shape = case fn_parts(handler) do
+                    some({[state, request], result}) ->
+                      case tuple_elems(result) do
+                        some([s, reply]) -> if s == state do some({state, request, reply}) else none end
+                        _ -> none
+                      end
+                    _ -> none
+                  end
+                  case shape do
+                    none -> fail(e, "server handler must be fn[State,Request,tuple[State,Reply]]")
+                    some({state, request, reply}) ->
+                      if not sendable?(c, request) or not sendable?(c, reply) do fail(e, "server requests and replies cannot contain functions") else
+                        case one(c, hd(args), scope, state, f2) do
+                          error(s) -> error(s)
+                          ok({_, f3}) -> typed("server[" <> request <> "," <> reply <> "]", f3)
+                        end
+                      end
+                  end
+              end
+          end
+        else
+          case one(c, hd(args), scope, "", f) do
+            error(s) -> error(s)
+            ok({target, f1}) ->
+              {head, parts} = split(target)
+              if head != "server" do fail(e, n <> " requires a server, found " <> target) else
+                request = Enum.at(parts, 0, "")
+                if n == "Server.call" do
+                  case each(c, [Enum.at(args, 1, nojson()), Enum.at(args, 2, nojson())], scope, [request, "integer"], f1) do
+                    error(s) -> error(s)
+                    ok({_, f2}) -> typed("result[" <> Enum.at(parts, 1, "") <> ",string]", f2)
+                  end
+                else
+                  if n == "Server.cast" or n == "Server.await" do
+                    case one(c, Enum.at(args, 1, nojson()), scope, if n == "Server.cast" do request else "integer" end, f1) do
+                      error(s) -> error(s)
+                      ok({_, f2}) -> typed(if n == "Server.await" do "tuple[boolean,string]" else "boolean" end, f2)
+                    end
+                  else typed(if n == "Server.restarts" do "integer" else "boolean" end, f1) end
+                end
               end
           end
         end
@@ -2153,8 +2696,114 @@ defmodule AlchemTyping do
   end
 
   # form: the form of a function of several the call's arguments fit.
+  # A trial typing: the type, "" where it fails, or the stop where the walk
+  # does not follow it.
+  def trial(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, f: Flow): result[string, tuple[string, string]] do
+    case ex(c, e, scope, want, false, f) do
+      ok({t, _}) -> ok(t)
+      error({"skip", why}) -> error({"skip", why})
+      error(_) -> ok("")
+    end
+  end
+
   def form(c: Ctx, e: AlchemJson.J, scope: map[string, string], f: Flow): result[AlchemJson.J, tuple[string, string]] do
-    error(skip("a function of several forms"))
+    n = tx(e, "Name")
+    all = forms(c, n)
+    args = its(e, "Args")
+    blank: list[string] = Enum.map(args, fn _ -> "" end)
+    start: result[tuple[option[AlchemJson.J], list[string]], tuple[string, string]] = ok({none, blank})
+    picked = Enum.reduce(all, start, fn form, sofar ->
+      case sofar do
+        error(s) -> error(s)
+        ok({some(done), found}) -> ok({some(done), found})
+        ok({none, found}) ->
+          params = its(form, "Params")
+          required = length(Enum.filter(params, fn p -> null?(p, "Default") end))
+          if length(args) < required or length(args) > length(params) do ok({none, found}) else
+            vars = generic(form)
+            begun: result[tuple[boolean, boolean, map[string, string], list[string]], tuple[string, string]] = ok({true, false, none_map(), found})
+            tried = Enum.reduce(Enum.with_index(args), begun, fn {arg, i}, inner ->
+              case inner do
+                error(s) -> error(s)
+                ok({fits, stopped, b, known}) ->
+                  if stopped do ok({fits, stopped, b, known}) else
+                    param = tx(Enum.at(params, i, nojson()), "Type")
+                    case function_arity(arg) do
+                      some(arity) ->
+                        {head, parts} = split(param)
+                        if head != "fn" or length(parts) - 1 != arity do ok({false, true, b, known}) else ok({fits, false, b, known}) end
+                      none ->
+                        expected = if resolved?(param, vars, b) do instantiate(param, vars, b) else "" end
+                        case trial(c, arg, scope, expected, f) do
+                          error(s) -> error(s)
+                          ok("") ->
+                            case trial(c, arg, scope, "", f) do
+                              error(s) -> error(s)
+                              ok(plain) -> ok({false, true, b, if plain == "" do known else List.replace_at(known, i, plain) end})
+                            end
+                          ok(typ) ->
+                            case unify(param, typ, vars, b) do
+                              some(b1) -> ok({fits, false, b1, List.replace_at(known, i, typ)})
+                              none -> ok({false, true, b, List.replace_at(known, i, typ)})
+                            end
+                        end
+                    end
+                  end
+              end
+            end)
+            case tried do
+              error(s) -> error(s)
+              ok({true, _, _, known}) -> ok({some(form), known})
+              ok({false, _, _, known}) -> ok({none, known})
+            end
+          end
+      end
+    end)
+    case picked do
+      error(s) -> error(s)
+      ok({some(form), _}) -> ok(form)
+      ok({none, found}) ->
+        # An argument that is wrong whatever the form is said as itself.
+        begun: result[integer, tuple[string, string]] = ok(0)
+        own = Enum.reduce(Enum.with_index(args), begun, fn {arg, i}, sofar ->
+          case sofar do
+            error(s) -> error(s)
+            ok(_) ->
+              if function_arity(arg) != none do ok(0) else
+                case ex(c, arg, scope, "", false, f) do
+                  error({"skip", why}) -> error({"skip", why})
+                  ok(_) -> ok(0)
+                  error(stop) ->
+                    unrescued: result[boolean, tuple[string, string]] = ok(false)
+                    rescued = Enum.reduce(all, unrescued, fn form, r ->
+                      case r do
+                        error(s) -> error(s)
+                        ok(true) -> ok(true)
+                        ok(false) ->
+                          if length(its(form, "Params")) != length(args) do ok(false) else
+                            case trial(c, arg, scope, tx(Enum.at(its(form, "Params"), i, nojson()), "Type"), f) do
+                              error(s) -> error(s)
+                              ok(typ) -> ok(typ != "")
+                            end
+                          end
+                      end
+                    end)
+                    case rescued do
+                      error(s) -> error(s)
+                      ok(true) -> ok(0)
+                      ok(false) -> error(stop)
+                    end
+                end
+              end
+          end
+        end)
+        case own do
+          error(s) -> error(s)
+          ok(_) ->
+            shown = Enum.map(Enum.with_index(found), fn {typ, i} -> if typ != "" do typ else if function_arity(Enum.at(args, i, nojson())) != none do "a function" else "?" end end end)
+            error(at(e, local_name(hd(all)) <> " takes " <> form_list(c, n) <> ", not (" <> Enum.join(shown, ", ") <> ")"))
+        end
+    end
   end
 
   # ---- Statements ----

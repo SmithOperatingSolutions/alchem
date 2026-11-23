@@ -128,12 +128,16 @@ functions written in place. The tables the pinned checker types library
 calls with (`syntax.Libraries`, `Overloads`, `SimpleBuiltins`,
 `BuiltinTypes`) are `tools/alchem-check-data.alc`, which
 `scripts/generate-check-data.py` writes from the pinned module
-(`scripts/pinned-checkdata`). The walk stops, and says nothing, at what it
-does not follow yet: protocols, setup blocks, the calls of `Process`,
-`Server` and `Supervisor`, `try`, `for`, sigils, `put_elem`, a function of
-several forms called, a library function that reads JSON or sends between
-nodes, a builtin struct's default, and a branch whose type a later branch
-settles (`checker.undetermined`). `scripts/typing-dump.alc` prints where
+(`scripts/pinned-checkdata`). The calls of `Process`, `Server` and
+`Supervisor`, `for` (with `uniq:`, `into:` and `reduce:`), a `with` clause
+that does not match, `put_elem`, a function of several forms called, the
+constraints of library functions that read JSON or send between nodes,
+and the sigils `~s`, `~w` and `~r` (whose pattern the native `Regex` must
+compile) are followed too. The walk stops, and says nothing, at what it
+does not follow yet: protocols, setup blocks, `try`, the calendar sigils
+and the others, a builtin struct's default, an inferred function whose
+every path raises, and a branch whose type a later branch settles
+(`checker.undetermined`). `scripts/typing-dump.alc` prints where
 the walk ends for each file it is given.
 
 ## The check
