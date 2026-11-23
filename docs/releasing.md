@@ -12,7 +12,7 @@ Releases are GitHub releases built by `.github/workflows/release.yml`.
    git push origin v0.1.0
    ```
 
-3. The workflow builds `alchem` for linux, darwin and windows on amd64 and arm64 with `-X main.version=<tag>`, packs each with the README and LICENSE into `alchem_<tag>_<os>_<arch>.tar.gz` (`.zip` on Windows), and writes `checksums.txt`.
+3. The workflow builds `alchem` for linux, darwin and windows on amd64 and arm64 with `-X main.version=<tag>`, packs each with the README and LICENSE into `alchem_<tag>_<os>_<arch>.tar.gz` (`.zip` on Windows), and writes `checksums.txt`. It also builds the native `alchem` (`native/`), from the released compiler `native/pinned-compiler.json` names and with no Go, for linux on amd64 and arm64, darwin on arm64 and windows on amd64; runs each on its own target, where it must say its version, build and run a program and refuse a wrong one with the place and the reason; and packs each as `alchem-native_<tag>_<os>_<arch>` the same way, into the same `checksums.txt`. The install scripts take these when `ALCHEM_NATIVE=1` is set; the workflow installs both kinds with `install.sh` from the archives it made. The native archives are not signed with the release's certificates yet: a macOS one carries the ad-hoc signature its compiler gives it.
 4. It runs the Linux binary with no Go on `PATH`, so the binary downloads the pinned Go release and builds `examples/hello.alc`, and checks the result.
 5. It publishes the release with generated notes. A tag with a hyphen (`v0.2.0-rc.1`) becomes a prerelease.
 

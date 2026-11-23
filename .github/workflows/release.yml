@@ -13,8 +13,112 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The alchem written in Alchem (native/), for each target its compiler
+  # builds itself on: built from the released compiler native/ pins, with
+  # neither Go nor Rust. It is in the release beside the Go alchem, as
+  # alchem-native_VERSION_OS_ARCH, and the installers take it when asked
+  # (ALCHEM_NATIVE=1) until it is the one they install (#94).
+  native:
+    name: Native alchem
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: native
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          working_directory: native
+          cache: false
+          install_args: python
+      - name: Build for every target
+        env:
+          # One build at a time: no memory ceiling.
+          ALCHEM_VERIFY_LIMITED: '1'
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            version="$GITHUB_REF_NAME"
+          else
+            version="v0.0.0-$(git rev-parse --short HEAD)"
+          fi
+          python3 scripts/verify-quick.py --build-only
+          python3 scripts/build-arm64.py --compiler build/dev/A2 --output build/dev/alchem-compiler-arm64
+          python3 scripts/build-arm64.py --darwin --compiler build/dev/A2 --output build/dev/alchem-compiler-darwin
+          python3 scripts/build-windows.py --compiler build/dev/A2 --cross build/dev/alchem-compiler-windows-cross --output build/dev/alchem-compiler-windows.exe
+          made() {  # OS ARCH FILE COMPILER [FLAG]
+            local name="alchem-native_${version}_$1_$2"
+            mkdir -p "build/native-alchem/$name"
+            python3 scripts/build-alchem.py --version "$version" --compiler "$4" --output "build/native-alchem/$name/$3" ${5:-}
+            cp ../README.md ../LICENSE "build/native-alchem/$name/"
+          }
+          made linux amd64 alchem build/dev/A2
+          made linux arm64 alchem build/dev/alchem-compiler-arm64 --arm64
+          made darwin arm64 alchem build/dev/alchem-compiler-darwin --darwin
+          made windows amd64 alchem.exe build/dev/alchem-compiler-windows-cross --windows
+          # One file: an artifact does not keep which files are programs.
+          tar -C build/native-alchem -cf build/native-alchem.tar .
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-alchem
+          path: native/build/native-alchem.tar
+          if-no-files-found: error
+          retention-days: 7
+
+  # Each native alchem on its own target, on a machine with no Go: it says
+  # its version and target, builds and runs a program, and says where and
+  # why it refuses another.
+  native-check:
+    name: Native alchem on ${{ matrix.system }}/${{ matrix.arch }}
+    needs: native
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: linux
+            arch: amd64
+            runner: ubuntu-24.04
+          - system: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - system: darwin
+            arch: arm64
+            runner: macos-15
+          - system: windows
+            arch: amd64
+            runner: windows-2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-alchem
+      - name: Version, a program, a refusal
+        run: |
+          tar -xf native-alchem.tar
+          alchem="$(echo "$PWD"/alchem-native_*_${{ matrix.system }}_${{ matrix.arch }}/alchem*)"
+          "$alchem" version | tee version.txt
+          grep -q "^alchem v.* ${{ matrix.system }}/${{ matrix.arch }}" version.txt
+          mkdir work && cd work
+          printf 'defmodule Hello do\n  def main() do\n    IO.puts("Hello from native alchem!")\n  end\nend\n' > hello.alc
+          printf 'defmodule Wrong do\n  def main() do\n    IO.puts(1 <> 2)\n  end\nend\n' > wrong.alc
+          # No Go on PATH, and nothing of it is downloaded.
+          clean() { env -u GOROOT -u GOPATH PATH=/usr/bin:/bin "$@"; }
+          test "$(clean "$alchem" run hello.alc)" = 'Hello from native alchem!'
+          built=hello; if [[ "${{ matrix.system }}" == windows ]]; then built=hello.exe; fi
+          clean "$alchem" build -o "$built" hello.alc
+          test "$(./"$built")" = 'Hello from native alchem!'
+          if clean "$alchem" check wrong.alc 2> said.txt; then echo 'a wrong program was accepted' >&2; exit 1; fi
+          cat said.txt
+          grep -q 'wrong.alc:3:15: <> requires strings' said.txt
+
   release:
     name: Build and publish
+    needs: native-check
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -99,12 +203,21 @@ jobs:
             osslsigncode verify -in "$binary" | grep -q "Signature verification: ok"
           done
           rm -f "$RUNNER_TEMP/signing.pfx"
+      # The native alchem's archives go in beside the Go one's, after the
+      # signing above, which is the Go binaries': the native ones carry the
+      # ad-hoc signature their compiler gives a macOS program and are not
+      # signed with the release's certificates yet (#94).
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-alchem
+          path: ${{ runner.temp }}/native-alchem
       - name: Archive every target
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           mkdir -p dist
-          for dir in build/alchem_*; do
+          tar -C build -xf "$RUNNER_TEMP/native-alchem/native-alchem.tar"
+          for dir in build/alchem_* build/alchem-native_*; do
             name=$(basename "$dir")
             if [[ "$name" == *_windows_* ]]; then
               (cd build && zip -qr "../dist/$name.zip" "$name")
@@ -112,6 +225,7 @@ jobs:
               tar -C build -czf "dist/$name.tar.gz" "$name"
             fi
           done
+          test "$(ls dist | grep -c '^alchem-native_')" = 4
           (cd dist && sha256sum * > checksums.txt)
           cat dist/checksums.txt
       # The released binary, on a machine without Go on PATH, downloads the
@@ -125,6 +239,26 @@ jobs:
           env -u GOROOT PATH=/usr/bin:/bin ALCHEM_CACHE="$RUNNER_TEMP/alchem" "$bin" build -o "$RUNNER_TEMP/hello" examples/hello.alc
           test "$("$RUNNER_TEMP/hello")" = "Hello from Alchem!"
           env PATH=/usr/bin:/bin ALCHEM_CACHE="$RUNNER_TEMP/alchem" "$bin" version | grep -q "(downloaded)"
+      # install.sh against these archives, served from this machine: the Go
+      # alchem as always, and the native one when asked.
+      - name: The install script installs either
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/site/download/$VERSION"
+          cp dist/* "$RUNNER_TEMP/site/download/$VERSION/"
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory "$RUNNER_TEMP/site" > /dev/null 2>&1 &
+          server=$!
+          for _ in $(seq 20); do curl -fsS -o /dev/null "http://127.0.0.1:8765/download/$VERSION/checksums.txt" && break; sleep 0.5; done
+          for native in 0 1; do
+            ALCHEM_NATIVE=$native ALCHEM_VERSION="$VERSION" ALCHEM_RELEASES_URL=http://127.0.0.1:8765 \
+              ALCHEM_INSTALL_DIR="$RUNNER_TEMP/installed-$native" sh install.sh
+          done
+          kill "$server"
+          "$RUNNER_TEMP/installed-0/alchem" version | grep -q "alchem $VERSION linux/amd64"
+          "$RUNNER_TEMP/installed-1/alchem" version | grep -q "alchem $VERSION linux/amd64"
+          cmp "$RUNNER_TEMP/installed-1/alchem" "build/alchem-native_${VERSION}_linux_amd64/alchem"
+          test "$(env -u GOROOT PATH=/usr/bin:/bin "$RUNNER_TEMP/installed-1/alchem" run examples/hello.alc)" = "Hello from Alchem!"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-archives

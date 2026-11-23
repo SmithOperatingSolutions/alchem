@@ -7,6 +7,10 @@
 # the directory for the alchem binary (~/.local/bin by default). The download
 # is checked against the release's checksums.txt before anything is installed.
 # Go is not needed: alchem downloads the Go release it builds with on first use.
+#
+# ALCHEM_NATIVE=1 installs the alchem written in Alchem instead, which
+# compiles programs itself and downloads nothing: for Linux and for macOS on
+# Apple silicon, from the releases that have it.
 set -eu
 
 repository="SmithOperatingSolutions/alchem"
@@ -54,12 +58,21 @@ v*) ;;
 *) version="v$version" ;;
 esac
 
-name="alchem_${version}_${os}_${arch}"
+kind=alchem
+case "${ALCHEM_NATIVE:-}" in
+"" | 0) ;;
+*)
+	kind=alchem-native
+	[ "$os/$arch" != darwin/amd64 ] || fail "the native alchem has no release for macOS on Intel; install without ALCHEM_NATIVE"
+	;;
+esac
+
+name="${kind}_${version}_${os}_${arch}"
 archive="$name.tar.gz"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 
-echo "Downloading alchem $version for $os/$arch"
+echo "Downloading $kind $version for $os/$arch"
 curl -fsSL -o "$work/$archive" "$base/download/$version/$archive" || fail "could not download $archive"
 curl -fsSL -o "$work/checksums.txt" "$base/download/$version/checksums.txt" || fail "could not download checksums.txt"
 
