@@ -232,6 +232,9 @@ defmodule AlchemLsp do
   def windows?(): boolean do AlchemGuide.platform() == "windows/amd64" end
 
   # pathOf: the path of a file address; another address is its own path.
+  # On Windows the path is kept with /, as the checker keeps paths
+  # (AlchemCheck.kept), so that a document is found by the path the
+  # checker reads it by; the pinned server's has \, which no reply shows.
   def path_of(uri: string): string do
     if not String.starts_with?(uri, "file://") do uri else
       rest = binary_part(uri, 7, byte_size(uri) - 7)
@@ -245,7 +248,7 @@ defmodule AlchemLsp do
         ok(p) -> p
         error(_) -> plain
       end
-      if windows?() do String.replace(String.trim_leading(decoded, "/"), "/", "\\") else decoded end
+      if windows?() do String.trim_leading(decoded, "/") else decoded end
     end
   end
 
@@ -426,7 +429,7 @@ defmodule AlchemLsp do
     diagnostics = case found_in(held, path, full) do
       none -> none_json()
       some({file, line, column, message}) ->
-        here = file == "" or Path.expand(file) == Path.expand(path)
+        here = file == "" or AlchemCheck.clean(AlchemCheck.kept(Path.expand(file))) == AlchemCheck.clean(AlchemCheck.kept(Path.expand(path)))
         {at_line, at_column} = if here do {line, column} else {1, 1} end
         said = if here do message else base_of(file) <> ":" <> Integer.to_string(line) <> ":" <> Integer.to_string(column) <> ": " <> message end
         first = max(at_line - 1, 0)
