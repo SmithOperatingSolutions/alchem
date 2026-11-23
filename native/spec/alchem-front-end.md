@@ -133,6 +133,76 @@ calls with (`syntax.Libraries`, `Overloads`, `SimpleBuiltins`,
 that does not match, `put_elem`, a function of several forms called, the
 constraints of library functions that read JSON or send between nodes,
 `try` with its `rescue`, `catch`, `else` and `after`, a builtin struct's
+defaults, a `with` and its `else`, and the sigils are followed too: `~s`,
+`~w`, `~c`, `~h`, those the program defines, `~r` (whose pattern the
+native `Regex` must compile) and the calendar's `~D`, `~T`, `~N` and `~U`,
+whose text is read as Go's `time.Parse` reads the layouts of `ParseClock`.
+
+Before the bodies come the program's protocols (`checker.protocols`: each
+`defimpl` against what its protocol declares, and each implementation
+whole), and a call through a protocol is the call of the function that
+implements it for the type of its first argument (`dispatch`). In a test
+file the setup blocks are typed first (`checker.contexts`): `setup_all`,
+then the setup blocks from the outermost `describe` inwards, each given
+the context in effect where it stands and giving the type of its last
+expression to the setup blocks and tests beneath it.
+
+The pinned checker comes back to a branch whose type another settles
+(`checker.undetermined`): an `if`, a `case` arm or the body of a `try`
+that fails to infer a type while the type of its context is still open,
+and a function written in place whose every path raises. It asks the
+context after the failure, and a constructor that shows only part of its
+type (`none`, `ok(1)`) leaves that part as a hint for the other branches
+of the value it ends a branch of (`recordHint`). Here a failure carries
+out of each block whether the block's type was open then, its value type
+and the hint (`mark`, `remark`), and the branch is walked again from
+there once the others have settled it. A `catch` arm that names no type
+takes the type of the values its `try` throws (`thrownTypes`), which the
+walk keeps for each `throw` it types; a failure carries those typed
+before it out too, since the pinned checker reads them from the tree
+after a body that failed.
+
+The walk stops, and says nothing, at what it does not follow: a program
+with an `extern` function or one that defines a retiring library module
+of its own, a `catch` arm that names no type in a `try` whose body is
+come back to with a `throw` among the arguments of a call tried against
+several forms, and a program where several implementations of a protocol
+each lack a function (the pinned checker names one of them, in no
+order). `scripts/typing-dump.alc` prints where the walk ends for each
+file it is given.
+
+## The checker: `tools/alchem-analyze.alc`
+
+`AlchemAnalyze.problem` follows the pinned compiler's checker
+(`syntax.Analyze`) on the program as the loader leaves it: each function as
+`mergeClauses` makes it (one for each form, named `name`, `name/2` or
+`name#2`, with the form's return type), named `Module.name` or `main`. It
+is followed in pieces, each finding what the pinned one finds in its order;
+where it reaches a check that is not here yet it finds nothing, so that
+what it finds is always the pinned compiler's first problem. Now: the pass
+over every function before any body (a function defined twice, a name no
+function may have, `main`'s form, a return type that is not a type, such
+as none at all) and a module with both tests and `main`. A program with an
+`extern` function is not followed.
+
+The bodies of functions are walked by `tools/alchem-typing.alc`
+(`AlchemTyping`), which follows `syntax.Analyze` after that pass: the
+program's types declared and checked, a test that takes a context with no
+setup block to give one, and then each function in order, its type
+variables, return type and parameters, and its body statement by
+statement and expression by expression as `checker.block` and
+`checker.expr` type them, with the patterns, the exhaustiveness of a case,
+calls of library functions (with their overloads and constraints), the
+oldest builtins, the program's own functions, constructors, structs and
+functions written in place. The tables the pinned checker types library
+calls with (`syntax.Libraries`, `Overloads`, `SimpleBuiltins`,
+`BuiltinTypes`) are `tools/alchem-check-data.alc`, which
+`scripts/generate-check-data.py` writes from the pinned module
+(`scripts/pinned-checkdata`). The calls of `Process`, `Server` and
+`Supervisor`, `for` (with `uniq:`, `into:` and `reduce:`), a `with` clause
+that does not match, `put_elem`, a function of several forms called, the
+constraints of library functions that read JSON or send between nodes,
+`try` with its `rescue`, `catch`, `else` and `after`, a builtin struct's
 defaults, and the sigils are followed too: `~s`, `~w`, `~c`, `~h`, those
 the program defines, `~r` (whose pattern the native `Regex` must compile)
 and the calendar's `~D`, `~T`, `~N` and `~U`, whose text is read as Go's
@@ -181,17 +251,20 @@ all 2,005 texts the pinned compiler refuses; the gate holds that count as
 the least it may give (`EXPLAINED`). `scripts/generate-front-end-cases.py` makes
 the file; `scripts/compare-lexer.py` compares the lexers on any files.
 
-`harness/front-end-probes.json` holds 276 programs written for what the
+`harness/front-end-probes.json` holds 428 programs written for what the
 walk follows that the repository's files reach seldom: `try` and its
 arms, the calendar sigils in the forms `time.Parse` takes and refuses,
-the other sigils, branches that settle each other's types, functions
-that only raise, and a builtin struct's defaults; each with a mistake
-after the construct, which only following the construct reaches, and
-without it. `scripts/generate-front-end-probes.py` writes them with what
-the pinned `check` says of each. `alchem check` must say the same or
-give its own message; it says the same for 268, which the gate holds as
-the least (`PROBED`). The others are the `catch` arms and the hinted
-branches above, and one program the native compiler does not take.
+the other sigils, branches that settle each other's types and the hints
+between them, functions that only raise, a builtin struct's defaults,
+`with` and its `else`, setup blocks and their contexts, and protocols;
+most with a mistake after the construct, which only following the
+construct reaches, and without it. `scripts/generate-front-end-probes.py`
+writes them with what the pinned `check` says of each. `alchem check`
+must say the same or give its own message; it says the same for 427,
+which the gate holds as the least (`PROBED`). The other is
+`~N[2026-01-05  13:04:05]`, with two spaces: the pinned compiler takes
+it because Go's `time.Parse` takes any run of spaces for one, and the
+native compiler, as Elixir, takes exactly one space or a `T`.
 
 ## Not as the pinned front end
 
