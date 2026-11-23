@@ -6,12 +6,12 @@
 # $env:ALCHEM_INSTALL_DIR the directory for alchem.exe
 # (%LOCALAPPDATA%\Programs\alchem by default), which is added to the user's
 # PATH. The download is checked against the release's checksums.txt before
-# anything is installed. Go is not needed: alchem downloads the Go release it
-# builds with on first use.
+# anything is installed. alchem compiles programs itself: it needs no Go and
+# downloads nothing.
 #
-# $env:ALCHEM_NATIVE = '1' installs the alchem written in Alchem instead,
-# which compiles programs itself and downloads nothing: for Windows on x64,
-# from the releases that have it.
+# A release is for Windows on x64. On ARM64 the x64 program is installed,
+# which Windows runs there, unless the release has one for ARM64 (those up
+# to v0.3.11, of the alchem written in Go, have).
 $ErrorActionPreference = 'Stop'
 
 $repository = 'SmithOperatingSolutions/alchem'
@@ -35,23 +35,23 @@ if (-not $version) {
 }
 if (-not $version.StartsWith('v')) { $version = "v$version" }
 
-$kind = 'alchem'
-if ($env:ALCHEM_NATIVE -and $env:ALCHEM_NATIVE -ne '0') {
-    $kind = 'alchem-native'
-    if ($arch -ne 'amd64') { throw 'alchem install: the native alchem has no release for Windows on ARM64; install without ALCHEM_NATIVE' }
-}
-
-$name = "${kind}_${version}_windows_$arch"
-$archive = "$name.zip"
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ("alchem-install-" + [System.Guid]::NewGuid())
 New-Item -ItemType Directory -Path $work | Out-Null
 try {
-    Write-Host "Downloading $kind $version for windows/$arch"
-    Invoke-WebRequest -UseBasicParsing -Uri "$base/download/$version/$archive" -OutFile (Join-Path $work $archive)
     Invoke-WebRequest -UseBasicParsing -Uri "$base/download/$version/checksums.txt" -OutFile (Join-Path $work 'checksums.txt')
-
-    $line = Get-Content (Join-Path $work 'checksums.txt') | Where-Object { $_ -match " $([regex]::Escape($archive))$" } | Select-Object -First 1
+    $sums = Get-Content (Join-Path $work 'checksums.txt')
+    $name = "alchem_${version}_windows_$arch"
+    $line = $sums | Where-Object { $_ -match " $([regex]::Escape("$name.zip"))$" } | Select-Object -First 1
+    if (-not $line -and $arch -eq 'arm64') {
+        # No program for ARM64 in this release: the x64 one runs there.
+        $arch = 'amd64'
+        $name = "alchem_${version}_windows_$arch"
+        $line = $sums | Where-Object { $_ -match " $([regex]::Escape("$name.zip"))$" } | Select-Object -First 1
+    }
+    $archive = "$name.zip"
     if (-not $line) { throw "alchem install: checksums.txt has no entry for $archive" }
+    Write-Host "Downloading alchem $version for windows/$arch"
+    Invoke-WebRequest -UseBasicParsing -Uri "$base/download/$version/$archive" -OutFile (Join-Path $work $archive)
     $expected = ($line -split '\s+')[0].ToLowerInvariant()
     $actual = (Get-FileHash -Algorithm SHA256 (Join-Path $work $archive)).Hash.ToLowerInvariant()
     if ($actual -ne $expected) { throw "alchem install: checksum mismatch for ${archive}: expected $expected, got $actual" }

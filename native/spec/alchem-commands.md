@@ -215,7 +215,9 @@ declares no module and directories with `.git` and `artifacts`.
   pinned server's own tests and more, as recorded sessions). Not as the
   pinned server: a document's diagnostics are what the front end finds
   in it and in what it imports, with the open documents in place of
-  their files (`spec/alchem-front-end.md`); the program is not compiled,
-  so one only the compiler refuses has no diagnostic. And the modules a
+  their files (`spec/alchem-front-end.md`). The program is compiled too,
+  as `check` compiles it, where every open document is as its file is
+  (opened and not changed, or saved): the compiler reads files, so what
+  only the compiler refuses shows once the documents are saved. And the modules a
   document imports are offered for completion in the order it imports
   them, where the pinned server offers them in no order.

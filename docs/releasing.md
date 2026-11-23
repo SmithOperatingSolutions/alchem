@@ -12,14 +12,18 @@ Releases are GitHub releases built by `.github/workflows/release.yml`.
    git push origin v0.1.0
    ```
 
-3. The workflow builds `alchem` for linux, darwin and windows on amd64 and arm64 with `-X main.version=<tag>`, packs each with the README and LICENSE into `alchem_<tag>_<os>_<arch>.tar.gz` (`.zip` on Windows), and writes `checksums.txt`. It also builds the native `alchem` (`native/`), from the released compiler `native/pinned-compiler.json` names and with no Go, for linux on amd64 and arm64, darwin on arm64 and windows on amd64; runs each on its own target, where it must say its version, build and run a program and refuse a wrong one with the place and the reason; and packs each as `alchem-native_<tag>_<os>_<arch>` the same way, into the same `checksums.txt`. The install scripts take these when `ALCHEM_NATIVE=1` is set; the workflow installs both kinds with `install.sh` from the archives it made. The native archives are not signed with the release's certificates yet: a macOS one carries the ad-hoc signature its compiler gives it.
-4. It runs the Linux binary with no Go on `PATH`, so the binary downloads the pinned Go release and builds `examples/hello.alc`, and checks the result.
-5. It publishes the release with generated notes. A tag with a hyphen (`v0.2.0-rc.1`) becomes a prerelease.
+3. The workflow builds the `alchem` written in Alchem (`native/`) from the released compiler `native/pinned-compiler.json` names, with neither Go nor Rust, for linux on amd64 and arm64, darwin on arm64 and windows on amd64, each saying the tag as its version.
+4. It signs the macOS and the Windows binary where the signing secrets are set (below).
+5. It runs each binary, as signed, on a machine of its own target with no Go there: it must say its version and target, build and run a program, refuse a wrong one with the place and the reason, and serve an editor's session (`.github/scripts/lsp-session.py`).
+6. It packs each with the README and LICENSE into `alchem_<tag>_<os>_<arch>.tar.gz` (`.zip` on Windows) and writes `checksums.txt`.
+7. It installs from those archives with `install.sh` on Linux (amd64 and arm64) and macOS and with `install.ps1` on Windows, served from the machine itself; what is installed must say the tag and build and run a program.
+8. It publishes the release with generated notes. A tag with a hyphen (`v0.2.0-rc.1`) becomes a prerelease.
+9. It attaches the Homebrew formula and Scoop manifest for the release (`alchem.rb`, `alchem.json`), made by `tools/packaging` from `checksums.txt`.
+10. The Packaging workflow then installs the release through the install scripts, the tap and the bucket.
 
-6. It attaches the Homebrew formula and Scoop manifest for the release (`alchem.rb`, `alchem.json`), made by `tools/packaging` from `checksums.txt`.
-7. The Packaging workflow then installs the release through the install scripts, the tap and the bucket.
+Running the workflow by hand (`workflow_dispatch`) does steps 3 to 7 and uploads the archives as a workflow artifact without publishing anything. With no signing secrets it signs with certificates it makes for the run, so that steps 5 and 7 run the binaries as a release signs them.
 
-Running the workflow by hand (`workflow_dispatch`) does steps 3 and 4 and uploads the archives as a workflow artifact without publishing anything.
+The Go `alchem` (`cmd/alchem`) is not released any more. It stays in the repository as the reference the checks of `native/` compare against. The releases up to v0.3.11 are of it, for six targets; there is no native release for macOS on Intel, and none for Windows on ARM64 until the native compiler has that target, where the x64 program is installed and runs.
 
 ## After a release
 

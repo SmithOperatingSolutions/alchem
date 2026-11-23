@@ -49,6 +49,17 @@ func TestFormulaNamesEveryUnixArchive(t *testing.T) {
 	if _, err := Formula("v1.2.3", missing); err == nil || !strings.Contains(err.Error(), "linux_arm64") {
 		t.Fatalf("a missing archive: %v", err)
 	}
+	// A release of the native alchem has no archive for macOS on Intel:
+	// the formula is then for Apple silicon alone.
+	native := fakeSums("v1.2.3")
+	delete(native, "alchem_v1.2.3_darwin_amd64.tar.gz")
+	formula, err = Formula("v1.2.3", native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(formula, "depends_on arch: :arm64") || strings.Contains(formula, "darwin_amd64") || !strings.Contains(formula, "alchem_v1.2.3_darwin_arm64.tar.gz") || strings.Count(formula, "on_intel") != 1 {
+		t.Fatalf("the formula of a release without macOS on Intel:\n%s", formula)
+	}
 }
 
 func TestManifestNamesBothWindowsArchives(t *testing.T) {
@@ -78,9 +89,23 @@ func TestManifestNamesBothWindowsArchives(t *testing.T) {
 		t.Fatalf("manifest:\n%s", text)
 	}
 	missing := fakeSums("v1.2.3")
-	delete(missing, "alchem_v1.2.3_windows_arm64.zip")
+	delete(missing, "alchem_v1.2.3_windows_amd64.zip")
 	if _, err := Manifest("v1.2.3", missing); err == nil {
 		t.Fatal("a missing Windows archive was accepted")
+	}
+	// A release of the native alchem has no archive for Windows on ARM64
+	// yet: the amd64 program is installed there.
+	native := fakeSums("v1.2.3")
+	delete(native, "alchem_v1.2.3_windows_arm64.zip")
+	text, err = Manifest("v1.2.3", native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(text), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if arm := manifest.Architecture["arm64"]; arm.Hash != strings.Repeat("5", 64) || arm.ExtractDir != "alchem_v1.2.3_windows_amd64" || strings.Contains(text, "windows_arm64") {
+		t.Fatalf("the manifest of a release without Windows on ARM64:\n%s", text)
 	}
 }
 

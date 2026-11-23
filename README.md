@@ -1,8 +1,8 @@
 # Alchem
 
-**An experimental Elixir-inspired language compiled to native executables through Go.**
+**An experimental Elixir-inspired language compiled to native executables.**
 
-Alchem explores expressive functional syntax, message-passing concurrency and OTP-inspired supervision while leveraging Go's compiler and goroutine runtime. It is not Elixir or a BEAM implementation.
+Alchem explores expressive functional syntax, message-passing concurrency and OTP-inspired supervision. Its compiler is written in Alchem and makes executables itself, with no other toolchain ([native/](native/README.md)); the first compiler, written in Go, stays in this repository as the reference the native one is checked against. It is not Elixir or a BEAM implementation.
 
 **Status:** Experimental working compiler. Supports typed functions and closures, collections, immutable bindings, arithmetic/booleans, conditionals and guarded pattern matching, list operations and maps, pipes, output, assertions, multi-file modules, typed processes with bounded mailboxes, supervision trees, pin patterns, `List`/`Map`/`String` operations, integer conversion, a clock, and formatting/diagnostic tooling. See [benchmarks](docs/benchmarks.md) for measurements against Go.
 
@@ -22,7 +22,7 @@ irm https://raw.githubusercontent.com/SmithOperatingSolutions/alchem/main/instal
 
 The scripts install the latest release, after checking it against the release's checksums, into `~/.local/bin` or `%LOCALAPPDATA%\Programs\alchem`; `ALCHEM_VERSION` and `ALCHEM_INSTALL_DIR` choose another release or place.
 
-`ALCHEM_NATIVE=1` installs the `alchem` written in Alchem instead (`$env:ALCHEM_NATIVE = '1'` before the PowerShell line), from the releases that have it. It compiles programs itself, with no Go and nothing downloaded on first use, for Linux, macOS on Apple silicon and Windows on x64. It is offered beside the Go `alchem` until that one is retired. `extern`, which bound a function to a Go function, is out of the language: the native `alchem` refuses it and says what to write instead ([what replaces extern](docs/interop.md)). [native/](native/README.md) is its source.
+A release is for Linux on x64 and ARM64, macOS on Apple silicon and Windows on x64 (on ARM64 the x64 program is installed, which Windows runs). The installed `alchem` compiles programs itself: it needs no Go and downloads nothing. The releases up to v0.3.11 are of the `alchem` written in Go, which also ran on macOS on Intel; `ALCHEM_VERSION=v0.3.11` installs the last of them. `extern`, which bound a function to a Go function, is out of the language ([what replaces it](docs/interop.md)).
 
 With Homebrew, this repository is a tap:
 
@@ -37,7 +37,7 @@ With Scoop:
 scoop install https://raw.githubusercontent.com/SmithOperatingSolutions/alchem/main/bucket/alchem.json
 ```
 
-Or download the archive for your platform from [Releases](https://github.com/SmithOperatingSolutions/alchem/releases), unpack it, and put `alchem` on your `PATH`. With Go installed you can instead run `go install github.com/SmithOperatingSolutions/alchem/cmd/alchem@latest`.
+Or download the archive for your platform from [Releases](https://github.com/SmithOperatingSolutions/alchem/releases), unpack it, and put `alchem` on your `PATH`.
 
 Alchem compiles through Go, but you do not need to install Go: when no `go` command is on `PATH`, the first build downloads the pinned Go release into the user cache, checks its SHA-256 and uses it from then on. `alchem version` shows which Go builds use; see [toolchain](docs/tooling.md#the-go-toolchain).
 
