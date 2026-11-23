@@ -96,7 +96,7 @@ UNEXPLAINED = ('E_COMPILE: ', 'E_BUNDLE: ')
 # does, at the least: the count may only grow.
 EXPLAINED = 2005
 # And of the probes, how many check answers as the pinned command does.
-PROBED = 268
+PROBED = 427
 
 
 def verify(compiler):

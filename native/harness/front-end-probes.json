@@ -1930,5 +1930,1069 @@
 1,
 "D/x.alc:4:17: expected string, found option[stream[string]]\n"
 ]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      error(\"x\")\n    else\n      ok(1)\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found result[integer,string]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      error(\"x\")\n    else\n      ok(1)\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found result[integer,string]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> none\n      2 -> some(1)\n      _ -> none\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found option[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> none\n      2 -> some(1)\n      _ -> none\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found option[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> error(\"a\")\n      2 -> error(2)\n      _ -> ok(1)\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:18: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> error(\"a\")\n      2 -> error(2)\n      _ -> ok(1)\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:18: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> error(\"a\")\n      2 -> ok(1)\n      _ -> error(\"b\")\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found result[integer,string]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> error(\"a\")\n      2 -> ok(1)\n      _ -> error(\"b\")\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found result[integer,string]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> ok(1)\n      2 -> ok(2)\n      _ -> error(\"b\")\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found result[integer,string]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> ok(1)\n      2 -> ok(2)\n      _ -> error(\"b\")\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found result[integer,string]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> ok(1)\n      2 -> ok(\"two\")\n      _ -> error(\"b\")\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:15: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = case a do\n      1 -> ok(1)\n      2 -> ok(\"two\")\n      _ -> error(\"b\")\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:15: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      ok(1)\n    else\n      ok(2)\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:7: cannot infer the type of ok here; annotate the binding it is assigned to\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      ok(1)\n    else\n      ok(2)\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:7: cannot infer the type of ok here; annotate the binding it is assigned to\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      none\n    else\n      none\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:7: cannot infer the type of none here; annotate the binding it is assigned to\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      none\n    else\n      none\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:7: cannot infer the type of none here; annotate the binding it is assigned to\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      ok(1)\n    else\n      [1]\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:7: expected result[integer,?], found list[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      ok(1)\n    else\n      [1]\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:7: expected result[integer,?], found list[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      ok(1)\n    else\n      none\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:7: cannot infer the type of none here; annotate the binding it is assigned to\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      ok(1)\n    else\n      none\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:7: cannot infer the type of none here; annotate the binding it is assigned to\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      none\n    else\n      error(\"x\")\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:7: cannot infer the type of error here; annotate the binding it is assigned to\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      none\n    else\n      error(\"x\")\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:7: cannot infer the type of error here; annotate the binding it is assigned to\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      if a > 1 do\n        none\n      else\n        none\n      end\n    else\n      some(1)\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:13:17: expected string, found option[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      if a > 1 do\n        none\n      else\n        none\n      end\n    else\n      some(1)\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:13:17: expected string, found option[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      if a > 1 do\n        ok(1)\n      else\n        error(\"x\")\n      end\n    else\n      ok(3)\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:13:17: expected string, found result[integer,string]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      if a > 1 do\n        ok(1)\n      else\n        error(\"x\")\n      end\n    else\n      ok(3)\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:13:17: expected string, found result[integer,string]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      some(none)\n    else\n      some(some(1))\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found option[option[integer]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      some(none)\n    else\n      some(some(1))\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found option[option[integer]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      {none, 1}\n    else\n      {some(1), 2}\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      {none, 1}\n    else\n      {some(1), 2}\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      ok(none)\n    else\n      error(\"x\")\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:7: cannot infer the type of error here; annotate the binding it is assigned to\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      ok(none)\n    else\n      error(\"x\")\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:7: cannot infer the type of error here; annotate the binding it is assigned to\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = try do\n      none\n    rescue\n      _ -> some(1)\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found option[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = try do\n      none\n    rescue\n      _ -> some(1)\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found option[integer]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = try do\n      ok(a)\n    rescue\n      m -> error(m)\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:12: cannot infer the type of error here; annotate the binding it is assigned to\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = try do\n      ok(a)\n    rescue\n      m -> error(m)\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:12: cannot infer the type of error here; annotate the binding it is assigned to\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      try do\n        ok(a)\n      rescue\n        _ -> ok(2)\n      end\n    else\n      error(\"x\")\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:13:17: expected string, found result[integer,string]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = if a > 0 do\n      try do\n        ok(a)\n      rescue\n        _ -> ok(2)\n      end\n    else\n      error(\"x\")\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:13:17: expected string, found result[integer,string]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      w = if x > 1 do\n        none\n      else\n        some(x)\n      end\n      w\n    end)\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:11:17: expected string, found list[option[integer]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      w = if x > 1 do\n        none\n      else\n        some(x)\n      end\n      w\n    end)\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:11:17: expected string, found list[option[integer]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      if x > 1 do\n        none\n      else\n        some(x)\n      end\n    end)\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:10:17: expected string, found list[option[integer]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      if x > 1 do\n        none\n      else\n        some(x)\n      end\n    end)\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:10:17: expected string, found list[option[integer]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      if x > 1 do\n        ok(x)\n      else\n        error(\"small\")\n      end\n    end)\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:9: cannot infer the type of error here; annotate the binding it is assigned to\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      if x > 1 do\n        ok(x)\n      else\n        error(\"small\")\n      end\n    end)\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:9: cannot infer the type of error here; annotate the binding it is assigned to\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      w = if x > 1 do\n        ok(x)\n      else\n        error(\"small\")\n      end\n      w\n    end)\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:11:17: expected string, found list[result[integer,string]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    v = Enum.map([1, 2], fn x ->\n      w = if x > 1 do\n        ok(x)\n      else\n        error(\"small\")\n      end\n      w\n    end)\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:11:17: expected string, found list[result[integer,string]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    if a > 0 do\n      none\n    else\n      some(1)\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    if a > 0 do\n      none\n    else\n      some(1)\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = for x <- [1, 2] do\n      if x > a do\n        none\n      else\n        some(x)\n      end\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:11:17: expected string, found list[option[integer]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    a = 1\n    v = for x <- [1, 2] do\n      if x > a do\n        none\n      else\n        some(x)\n      end\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:11:17: expected string, found list[option[integer]]\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw(5)\n      throw(\"s\")\n      1\n    catch\n      v -> 2\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:7: this try throws both integer and string; give each catch arm its type, as in value: integer ->\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw(5)\n      throw(\"s\")\n      1\n    catch\n      v -> 2\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:7: this try throws both integer and string; give each catch arm its type, as in value: integer ->\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    catch\n      v -> 2\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:7: the type of the thrown value is unknown here; write the arm as value: Type ->\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    catch\n      v -> 2\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:7: the type of the thrown value is unknown here; write the arm as value: Type ->\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    catch\n      :done -> 2\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    catch\n      :done -> 2\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    catch\n      7 -> 2\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      1\n    catch\n      7 -> 2\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw(:stop)\n      1\n    catch\n      :stop -> 2\n      _ -> 3\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:10:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw(:stop)\n      1\n    catch\n      :stop -> 2\n      _ -> 3\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw({1, \"a\"})\n      1\n    catch\n      {a, b} -> a\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw({1, \"a\"})\n      1\n    catch\n      {a, b} -> a\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw({1, \"a\"})\n      1\n    catch\n      {a, b} -> b\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:17: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw({1, \"a\"})\n      1\n    catch\n      {a, b} -> b\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:7:17: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      Enum.each([1, 2], fn n -> throw(n) end)\n      1\n    catch\n      v -> v\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:33: cannot infer the type this throw stands in for\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      Enum.each([1, 2], fn n -> throw(n) end)\n      1\n    catch\n      v -> v\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:4:33: cannot infer the type this throw stands in for\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      try do\n        throw(\"inner\")\n        1\n      catch\n        s -> String.length(s)\n      end\n    catch\n      v -> 2\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:11:7: the type of the thrown value is unknown here; write the arm as value: Type ->\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      try do\n        throw(\"inner\")\n        1\n      catch\n        s -> String.length(s)\n      end\n    catch\n      v -> 2\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:11:7: the type of the thrown value is unknown here; write the arm as value: Type ->\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      try do\n        throw(\"inner\")\n        1\n      rescue\n        _ -> 3\n      end\n    catch\n      v -> String.length(v)\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:13:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      try do\n        throw(\"inner\")\n        1\n      rescue\n        _ -> 3\n      end\n    catch\n      v -> String.length(v)\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      if 1 > 2 do\n        throw(1.5)\n      end\n      throw(2.5)\n      1\n    catch\n      v -> round(v)\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:12:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      if 1 > 2 do\n        throw(1.5)\n      end\n      throw(2.5)\n      1\n    catch\n      v -> round(v)\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw(elem({1, \"a\"}, 0))\n      1\n    catch\n      v -> v\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw(elem({1, \"a\"}, 0))\n      1\n    catch\n      v -> v\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw(5)\n      1\n    catch\n      v -> v\n    rescue\n      _ -> 3\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:5: unsupported syntax: expected identifier \"end\", found identifier \"rescue\"\n"
+]
+},
+{
+"text": "defmodule Main do\n  def main() do\n    x = try do\n      throw(5)\n      1\n    catch\n      v -> v\n    rescue\n      _ -> 3\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:8:5: unsupported syntax: expected identifier \"end\", found identifier \"rescue\"\n"
+]
+},
+{
+"text": "defmodule Main do\n  defexception Oops do\n    message: string\n    code: integer\n  end\n  struct Plain do\n    n: integer\n  end\n  def main() do\n    x = try do\n      throw(%Plain{n: 1})\n      1\n    catch\n      %Plain{n: n} -> n\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:16:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  defexception Oops do\n    message: string\n    code: integer\n  end\n  struct Plain do\n    n: integer\n  end\n  def main() do\n    x = try do\n      throw(%Plain{n: 1})\n      1\n    catch\n      %Plain{n: n} -> n\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  defexception Oops do\n    message: string\n    code: integer\n  end\n  struct Plain do\n    n: integer\n  end\n  def main() do\n    x = try do\n      1\n    catch\n      %Plain{n: n} -> n\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:15:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  defexception Oops do\n    message: string\n    code: integer\n  end\n  struct Plain do\n    n: integer\n  end\n  def main() do\n    x = try do\n      1\n    catch\n      %Plain{n: n} -> n\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      error(_) -> 0\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:14:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      error(_) -> 0\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      error(m) -> String.length(m)\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:14:17: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      error(m) -> String.length(m)\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:14:17: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      ok(b) -> b\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:14:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      ok(b) -> b\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      ok(b) -> b\n      error(_) -> 0\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:15:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      ok(b) -> b\n      error(_) -> 0\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      none -> 0\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:14:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      none -> 0\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      error(_) -> nope(1)\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:12:19: undefined function nope\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      error(_) -> nope(1)\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:12:19: undefined function nope\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      error(_) -> \"zero\"\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:12:19: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      error(_) -> \"zero\"\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:12:19: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      error(\"bad\") -> 0\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:14:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      error(\"bad\") -> 0\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      error(\"bad\") -> 0\n      error(_) -> 1\n      error(m) -> 2\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:16:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      error(\"bad\") -> 0\n      error(_) -> 1\n      error(m) -> 2\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      error(m) when String.length(m) > 2 -> 0\n      error(_) -> 1\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:15:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      error(m) when String.length(m) > 2 -> 0\n      error(_) -> 1\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      error(m) when String.length(m) > 2 -> 0\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:14:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\") do\n      a\n    else\n      error(m) when String.length(m) > 2 -> 0\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\"),\n             some(b) <- find(a) do\n      a + b\n    else\n      error(_) -> 0\n      none -> 1\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:16:17: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\"),\n             some(b) <- find(a) do\n      a + b\n    else\n      error(_) -> 0\n      none -> 1\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:16:17: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\"),\n             some(b) <- find(a) do\n      a + b\n    else\n      error(_) -> 0\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:9: no else arm of this with handles a option[integer] that does not match its clause\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\"),\n             some(b) <- find(a) do\n      a + b\n    else\n      error(_) -> 0\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:9: no else arm of this with handles a option[integer] that does not match its clause\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\"),\n             some(b) <- find(a) do\n      a + b\n    else\n      _ -> 0\n    end\n    n: string = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:15:17: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with ok(a) <- parse(\"1\"),\n             some(b) <- find(a) do\n      a + b\n    else\n      _ -> 0\n    end\n    n: string = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:15:17: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with [a, b] <- String.split(\"a:b\", \":\") do\n      a <> b\n    else\n      parts -> Integer.to_string(length(parts))\n    end\n    n: integer = v\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:14:18: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    v = with [a, b] <- String.split(\"a:b\", \":\") do\n      a <> b\n    else\n      parts -> Integer.to_string(length(parts))\n    end\n    n: integer = v\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:14:18: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    with ok(a) <- parse(\"1\") do\n      IO.puts(Integer.to_string(a))\n    else\n      error(m) -> IO.puts(m)\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:14:20: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    with ok(a) <- parse(\"1\") do\n      IO.puts(Integer.to_string(a))\n    else\n      error(m) -> IO.puts(m)\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    with ok(a) <- parse(\"1\") do\n      IO.puts(Integer.to_string(a))\n    else\n      error(m) -> IO.puts(a)\n    end\n    bad: integer = \"s\"\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:12:27: undefined binding a\n"
+]
+},
+{
+"text": "defmodule Main do\n  def parse(text: string): result[integer, string] do\n    Integer.parse(text)\n  end\n  def find(n: integer): option[integer] do\n    if n > 0 do some(n) else none end\n  end\n  def main() do\n    with ok(a) <- parse(\"1\") do\n      IO.puts(Integer.to_string(a))\n    else\n      error(m) -> IO.puts(a)\n    end\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:12:27: undefined binding a\n"
+]
+},
+{
+"text": "defmodule ProbeTest do\n  setup do\n    5\n  end\n  test \"uses it\", given do\n    assert(given == 5)\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule ProbeTest do\n  setup do\n    5\n  end\n  test \"uses it\", given do\n    assert(given == \"five\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:21: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule ProbeTest do\n  setup do\n    IO.puts(\"ready\")\n  end\n  test \"uses it\", given do\n    assert(given == 5)\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:3: this takes a context, but no setup block above it ends in a value\n"
+]
+},
+{
+"text": "defmodule ProbeTest do\n  test \"uses it\", given do\n    assert(given == 5)\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:2:3: this takes a context, but no setup block above it ends in a value\n"
+]
+},
+{
+"text": "defmodule ProbeTest do\n  setup do\n    nope(1)\n  end\n  test \"plain\" do\n    assert(1 == 1)\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:5: undefined function nope\n"
+]
+},
+{
+"text": "defmodule ProbeTest do\n  setup do\n    {1, \"a\"}\n  end\n  test \"takes both\", {n, text} do\n    assert(n == 1 and text == \"a\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule ProbeTest do\n  setup do\n    {1, \"a\"}\n  end\n  test \"takes both\", {n, text} do\n    assert(n == text)\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:17: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule ProbeTest do\n  setup do\n    {1, \"a\"}\n  end\n  test \"takes three\", {n, text, more} do\n    assert(n == 1)\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:23: tuple pattern arity/type mismatch\n"
+]
+},
+{
+"text": "defmodule ProbeTest do\n  setup_all do\n    1\n  end\n  setup n do\n    n + 1\n  end\n  test \"second\", m do\n    assert(m == 2)\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule ProbeTest do\n  setup_all do\n    1\n  end\n  setup n do\n    Integer.to_string(n)\n  end\n  test \"second\", m do\n    assert(m == 2)\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule ProbeTest do\n  setup n do\n    n + 1\n  end\n  test \"none above\" do\n    assert(1 == 1)\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:2:3: this takes a context, but no setup block above it ends in a value\n"
+]
+},
+{
+"text": "defmodule ProbeTest do\n  setup do\n    1\n  end\n  describe \"inner\" do\n    setup n do\n      [n]\n    end\n    test \"list\", items do\n      assert(items == [1])\n    end\n  end\n  test \"outer\", n do\n    assert(n == [1])\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:14:17: expected integer, found list[integer]\n"
+]
+},
+{
+"text": "defmodule ProbeTest do\n  describe \"inner\" do\n    setup do\n      \"inner\"\n    end\n    test \"has it\", text do\n      assert(text == \"inner\")\n    end\n  end\n  test \"outside\", text do\n    assert(text == \"inner\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:10:3: this takes a context, but no setup block above it ends in a value\n"
+]
+},
+{
+"text": "defmodule ProbeTest do\n  setup do\n    1\n  end\n  setup n do\n    IO.puts(Integer.to_string(n))\n  end\n  test \"keeps the first\", n do\n    assert(n == \"one\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:9:17: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule ProbeTest do\n  setup do\n    if 1 > 2 do\n      1\n    else\n      \"two\"\n    end\n  end\n  test \"plain\" do\n    assert(1 == 1)\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:6:7: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule ProbeTest do\n  setup do\n    raise(\"no\")\n  end\n  test \"takes it\", n do\n    assert(n == 1)\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:5: cannot infer the type this raise stands in for\n"
+]
+},
+{
+"text": "defmodule ProbeTest do\n  setup do\n    {}\n  end\n  test \"takes it\", n do\n    assert(n == {})\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:5:3: this takes a context, but no setup block above it ends in a value\n"
+]
+},
+{
+"text": "defmodule ProbeTest do\n  setup do\n    none\n  end\n  test \"plain\" do\n    assert(1 == 1)\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:3:5: cannot infer the type of none here; annotate the binding it is assigned to\n"
+]
+},
+{
+"text": "defmodule Main do\n  struct Circle do\n    radius: float\n  end\n  struct Rect do\n    width: float\n    height: float\n  end\n  defprotocol Shape do\n    def area(shape): float\n    def describe(shape, unit): string\n  end\n  defimpl Shape, for: Circle do\n    def area(circle: Circle): float do\n      3.0 * circle.radius\n    end\n    def describe(circle: Circle, unit: string): string do\n      \"circle\" <> unit\n    end\n  end\n  def size(): float do\n    Shape.area(%Circle{radius: 1.0})\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  struct Circle do\n    radius: float\n  end\n  struct Rect do\n    width: float\n    height: float\n  end\n  defprotocol Shape do\n    def area(shape): float\n    def describe(shape, unit): string\n  end\n  defimpl Shape, for: Circle do\n    def area(circle: Circle): float do\n      3.0 * circle.radius\n    end\n    def describe(circle: Circle, unit: string): string do\n      \"circle\" <> unit\n    end\n  end\n  def size(): string do\n    Shape.area(%Circle{radius: 1.0})\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:22:5: expected string, found float\n"
+]
+},
+{
+"text": "defmodule Main do\n  struct Circle do\n    radius: float\n  end\n  struct Rect do\n    width: float\n    height: float\n  end\n  defprotocol Shape do\n    def area(shape): float\n    def describe(shape, unit): string\n  end\n  defimpl Shape, for: Circle do\n    def area(circle: Circle): float do\n      3.0 * circle.radius\n    end\n    def describe(circle: Circle, unit: string): string do\n      \"circle\" <> unit\n    end\n  end\n  def size(): float do\n    Shape.area(%Rect{width: 1.0, height: 2.0})\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:22:5: Shape is not implemented for Main.Rect\n"
+]
+},
+{
+"text": "defmodule Main do\n  struct Circle do\n    radius: float\n  end\n  struct Rect do\n    width: float\n    height: float\n  end\n  defprotocol Shape do\n    def area(shape): float\n    def describe(shape, unit): string\n  end\n  defimpl Shape, for: Circle do\n    def area(circle: Circle): float do\n      3.0 * circle.radius\n    end\n    def describe(circle: Circle, unit: string): string do\n      \"circle\" <> unit\n    end\n  end\n  def size(): float do\n    Shape.area()\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:22:5: Shape.area needs the value it is called on\n"
+]
+},
+{
+"text": "defmodule Main do\n  struct Circle do\n    radius: float\n  end\n  struct Rect do\n    width: float\n    height: float\n  end\n  defprotocol Shape do\n    def area(shape): float\n    def describe(shape, unit): string\n  end\n  defimpl Shape, for: Circle do\n    def area(circle: Circle): float do\n      3.0 * circle.radius\n    end\n    def describe(circle: Circle, unit: string): string do\n      \"circle\" <> unit\n    end\n  end\n  def size(): float do\n    Shape.area(nope)\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:22:16: undefined binding nope\n"
+]
+},
+{
+"text": "defmodule Main do\n  struct Circle do\n    radius: float\n  end\n  struct Rect do\n    width: float\n    height: float\n  end\n  defprotocol Shape do\n    def area(shape): float\n    def describe(shape, unit): string\n  end\n  defimpl Shape, for: Circle do\n    def area(circle: Circle): float do\n      3.0 * circle.radius\n    end\n    def describe(circle: Circle, unit: string): string do\n      \"circle\" <> unit\n    end\n  end\n  def size(): string do\n    Shape.describe(%Circle{radius: 1.0}, 2)\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:22:42: expected string, found integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  struct Circle do\n    radius: float\n  end\n  struct Rect do\n    width: float\n    height: float\n  end\n  defprotocol Shape do\n    def area(shape): float\n    def describe(shape, unit): string\n  end\n  defimpl Shape, for: Circle do\n    def area(circle: Circle): float do\n      3.0 * circle.radius\n    end\n    def describe(circle: Circle, unit: string): string do\n      \"circle\" <> unit\n    end\n  end\n  def size(): string do\n    Shape.describe(%Circle{radius: 1.0})\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:22:5: wrong argument count for Main.describe$Shape$0\n"
+]
+},
+{
+"text": "defmodule Main do\n  struct Circle do\n    radius: float\n  end\n  struct Rect do\n    width: float\n    height: float\n  end\n  defprotocol Shape do\n    def area(shape): float\n    def describe(shape, unit): string\n  end\n  defimpl Shape, for: Circle do\n    def area(circle: Circle): float do\n      3.0 * circle.radius\n    end\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:14:9: the implementation of Shape for Circle lacks describe\n"
+]
+},
+{
+"text": "defmodule Main do\n  struct Circle do\n    radius: float\n  end\n  struct Rect do\n    width: float\n    height: float\n  end\n  defprotocol Shape do\n    def area(shape): float\n    def describe(shape, unit): string\n  end\n  defimpl Shape, for: Circle do\n    def area(circle: Circle): float do\n      3.0 * circle.radius\n    end\n    def describe(circle: Circle, unit: string): string do\n      \"circle\" <> unit\n    end\n  end\n  defimpl Shape, for: Circle do\n    def area(circle: Circle): float do\n      3.0 * circle.radius\n    end\n    def describe(circle: Circle, unit: string): string do\n      \"circle\" <> unit\n    end\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:22:9: Shape is already implemented for Circle\n"
+]
+},
+{
+"text": "defmodule Main do\n  struct Circle do\n    radius: float\n  end\n  struct Rect do\n    width: float\n    height: float\n  end\n  defprotocol Shape do\n    def area(shape): float\n    def describe(shape, unit): string\n  end\n  defimpl Solid, for: Circle do\n    def area(circle: Circle): float do\n      3.0 * circle.radius\n    end\n    def describe(circle: Circle, unit: string): string do\n      \"circle\" <> unit\n    end\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:14:9: defimpl of Solid, which no module declares with defprotocol\n"
+]
+},
+{
+"text": "defmodule Main do\n  struct Circle do\n    radius: float\n  end\n  struct Rect do\n    width: float\n    height: float\n  end\n  defprotocol Shape do\n    def area(shape): float\n    def describe(shape, unit): string\n  end\n  defimpl Shape, for: Circle do\n    def area(circle: Circle): float do\n      3.0 * circle.radius\n    end\n    def describe(circle: Circle, unit: string): string do\n      \"circle\" <> unit\n    end\n  end\n  defimpl Shape, for: Rect do\n    def area(rect: Rect): float do\n      rect.width\n    end\n    def describe(rect: Rect, unit: string): string do\n      unit\n    end\n    def corners(rect: Rect): integer do\n      4\n    end\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:28:9: Shape has no function corners\n"
+]
+},
+{
+"text": "defmodule Main do\n  struct Circle do\n    radius: float\n  end\n  struct Rect do\n    width: float\n    height: float\n  end\n  defprotocol Shape do\n    def area(shape): float\n    def describe(shape, unit): string\n  end\n  defimpl Shape, for: Circle do\n    def area(circle: Circle): integer do\n      3\n    end\n    def describe(circle: Circle, unit: string): string do\n      \"circle\" <> unit\n    end\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:14:9: Shape.area returns float, not integer\n"
+]
+},
+{
+"text": "defmodule Main do\n  struct Circle do\n    radius: float\n  end\n  struct Rect do\n    width: float\n    height: float\n  end\n  defprotocol Shape do\n    def area(shape): float\n    def describe(shape, unit): string\n  end\n  defimpl Shape, for: Circle do\n    def area(circle: Circle): float do\n      3.0 * circle.radius\n    end\n    def describe(circle: Circle): string do\n      \"circle\"\n    end\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:17:9: Shape.describe takes 2 arguments, not 1\n"
+]
+},
+{
+"text": "defmodule Main do\n  struct Circle do\n    radius: float\n  end\n  struct Rect do\n    width: float\n    height: float\n  end\n  defprotocol Shape do\n    def area(shape): float\n    def describe(shape, unit): string\n  end\n  defimpl Shape, for: Circle do\n    def area(circle: Circle): float do\n      circle.side\n    end\n    def describe(circle: Circle, unit: string): string do\n      \"circle\" <> unit\n    end\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:15:7: Circle has no field side\n"
+]
+},
+{
+"text": "defmodule Main do\n  defprotocol Show do\n    def show(value): string\n  end\n  defimpl Show, for: integer do\n    def show(n: integer): string do\n      \"int #{n}\"\n    end\n  end\n  defimpl Show, for: list[a] do\n    def show(items: list[a]): string do\n      \"#{length(items)} items\"\n    end\n  end\n  def all(): string do\n    Show.show(1) <> Show.show([1, 2]) <> Show.show([\"a\"])\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  defprotocol Show do\n    def show(value): string\n  end\n  defimpl Show, for: integer do\n    def show(n: integer): string do\n      \"int #{n}\"\n    end\n  end\n  defimpl Show, for: list[a] do\n    def show(items: list[a]): string do\n      \"#{length(items)} items\"\n    end\n  end\n  def all(): string do\n    Show.show(1.5)\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:16:5: Show is not implemented for float\n"
+]
+},
+{
+"text": "defmodule Main do\n  defprotocol Show do\n    def show(value): string\n  end\n  defimpl Show, for: integer do\n    def show(n: integer): string do\n      \"int #{n}\"\n    end\n  end\n  defimpl Show, for: list[a] do\n    def show(items: list[a]): string do\n      \"#{length(items)} items\"\n    end\n  end\n  def all(items: list[b], one: b): string do\n    Show.show(items) <> Show.show(one)\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:16:25: Show.show cannot be called on a value of the type variable b: the implementation is chosen when the program is compiled, so the type must be known here\n"
+]
+},
+{
+"text": "defmodule Main do\n  defprotocol Show do\n    def show(value): string\n  end\n  defimpl Show, for: integer do\n    def show(n: integer): string do\n      \"int #{n}\"\n    end\n  end\n  defimpl Show, for: list[a] do\n    def show(items: list[a]): string do\n      \"#{length(items)} items\"\n    end\n  end\n  def all(): integer do\n    Show.show(1)\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:16:5: expected integer, found string\n"
+]
+},
+{
+"text": "defmodule Main do\n  defprotocol Show do\n    def show(value): string\n  end\n  defimpl Show, for: integer do\n    def show(n: integer): string do\n      \"int #{n}\"\n    end\n  end\n  defimpl Show, for: list[a] do\n    def show(items: list[a]): string do\n      \"#{length(items)} items\"\n    end\n  end\n  def all(): list[string] do\n    Enum.map([1, 2], fn n -> Show.show(n) end)\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+0,
+""
+]
+},
+{
+"text": "defmodule Main do\n  defprotocol Show do\n    def show(value): string\n  end\n  defimpl Show, for: integer do\n    def show(n: integer): string do\n      \"int #{n}\"\n    end\n  end\n  defimpl Show, for: list[a] do\n    def show(items: list[a]): string do\n      \"#{length(items)} items\"\n    end\n  end\n  def all(): list[string] do\n    Enum.map([\"a\"], fn n -> Show.show(n) end)\n  end\n  def main() do\n    IO.puts(\"done\")\n  end\nend\n",
+"check": [
+1,
+"D/x.alc:16:29: Show is not implemented for string\n"
+]
 }
 ]
