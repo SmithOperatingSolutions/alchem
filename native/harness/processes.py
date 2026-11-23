@@ -1899,6 +1899,19 @@ REJECTS=['defmodule Example do\n'
  'end\n']
 
 
+ONE_STEP=('defmodule Example do\n'
+ '  def main() do\n'
+ '    worker: pid[integer] = Process.spawn(fn(self: pid[integer]): integer do\n'
+ '      div(1, 0)\n'
+ '    end, 4)\n'
+ '    Process.sleep(0)\n'
+ '    IO.puts(inspect(Process.alive(worker)))\n'
+ '    Process.sleep(20)\n'
+ '    IO.puts(inspect(Process.alive(worker)))\n'
+ '  end\n'
+ 'end\n')
+
+
 def verify(compiler):
     limited=[str(ROOT/'scripts/limited')]
     bounds=dict(PATH=os.environ.get('PATH','/usr/bin:/bin'),ALCHEM_SECONDS='30',ALCHEM_MEMORY='2G')
@@ -1915,7 +1928,18 @@ def verify(compiler):
         for source in REJECTS:
             result=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=120)
             assert (result.returncode,result.stdout)==(65,b''),(source,result.returncode)
-    print(f'PASS processes: {len(RUNS)} programs run as the pinned compiler runs them, {len(REJECTS)} rejected; spawn, send, receive, links, monitors, exits and their traces, timers, names, tasks, agents, servers, supervisors, registries, ports, receive assertions')
+        # A failure and its trace are one step: no other process runs while
+        # the trace is written, so no wait of another runs out over it and a
+        # supervisor learns of the failure before a sleeper beside it wakes
+        # (spec/alchem-processes.md). Once the process that failed has run
+        # it is over; the pinned runtime, whose goroutine has not run yet,
+        # says true first.
+        result=subprocess.run([str(compiler)],input=ONE_STEP.encode(),capture_output=True,env={'PATH':''},timeout=120)
+        assert (result.returncode,result.stderr)==(0,b''),(result.returncode,result.stderr)
+        out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
+        run=subprocess.run(limited+[str(out)],capture_output=True,env=bounds,cwd=d,timeout=120)
+        assert (run.returncode,run.stdout,run.stderr)==(0,b'false\nfalse\n',b''),run
+    print(f'PASS processes: {len(RUNS)} programs run as the pinned compiler runs them, {len(REJECTS)} rejected; a failure and its trace in one step; spawn, send, receive, links, monitors, exits and their traces, timers, names, tasks, agents, servers, supervisors, registries, ports, receive assertions')
 
 
 if __name__=='__main__':verify(Path(sys.argv[1]).resolve())

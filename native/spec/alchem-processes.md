@@ -116,7 +116,15 @@ points standard error at a pipe and lets the failure pass on, which writes
 the place, the reason and the calls exactly as for a program that failed
 (`spec/trace-x86_64.s`, untouched), and the process keeps the text: it is
 what `Process.report` gives and what a main process stopped through a link
-writes. A request to stop is a `throw` of `Process.Exit`, raised where the
+writes. The program waits for the copy and no other process runs
+meanwhile (`Sys.take`, a read that does not give way), and the time the
+copy takes is taken off the clock every wait is measured by
+(`Process._now`): a failure and its trace are one step, as in the pinned
+runtime, where the trace is taken in the failing goroutine. Otherwise a
+copy the system ran late let a sleeper's time come before the failure was
+over: a program that slept 50 ms for a supervisor to restart a server
+found it not yet restarted (seen once in the `processes` gate; with the
+copy held up 60 ms, every time). A request to stop is a `throw` of `Process.Exit`, raised where the
 stopped process next looks (`Process._check`: every function of these
 modules, every wait): rescue arms let it pass, `after` blocks run, nothing
 of the program catches it.
