@@ -22,7 +22,7 @@ irm https://raw.githubusercontent.com/SmithOperatingSolutions/alchem/main/instal
 
 The scripts install the latest release, after checking it against the release's checksums, into `~/.local/bin` or `%LOCALAPPDATA%\Programs\alchem`; `ALCHEM_VERSION` and `ALCHEM_INSTALL_DIR` choose another release or place.
 
-`ALCHEM_NATIVE=1` installs the `alchem` written in Alchem instead (`$env:ALCHEM_NATIVE = '1'` before the PowerShell line), from the releases that have it. It compiles programs itself, with no Go and nothing downloaded on first use, for Linux, macOS on Apple silicon and Windows on x64. It is offered beside the Go `alchem` until it does everything that one does: it has no `lsp` yet, and it does not take `extern`. [native/](native/README.md) is its source.
+`ALCHEM_NATIVE=1` installs the `alchem` written in Alchem instead (`$env:ALCHEM_NATIVE = '1'` before the PowerShell line), from the releases that have it. It compiles programs itself, with no Go and nothing downloaded on first use, for Linux, macOS on Apple silicon and Windows on x64. It is offered beside the Go `alchem` until it does everything that one does: it does not take `extern`. [native/](native/README.md) is its source.
 
 With Homebrew, this repository is a tap:
 

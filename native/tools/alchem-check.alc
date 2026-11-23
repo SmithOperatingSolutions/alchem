@@ -39,6 +39,9 @@ defmodule AlchemCheck do
     remote: boolean
     # The files read, each after those it imports.
     order: list[Unit]
+    # Texts that stand in for files, by path: the documents an editor has
+    # open (tools/alchem-lsp.alc).
+    overlay: map[string, string]
   end
 
   # Paths are kept with / and a drive's letter (C:/...) where there is one,
@@ -105,10 +108,28 @@ defmodule AlchemCheck do
     elem(program(entry, directory, true), 0)
   end
 
+  # As load, with the texts of overlay in place of the files they name.
+  def load_over(entry: string, directory: string, overlay: map[string, string]): option[Problem] do
+    elem(program_over(entry, directory, true, overlay), 0)
+  end
+
+  def program(entry: string, directory: string, analyzing: boolean): tuple[option[Problem], option[AlchemJson.J]] do
+    nothing: map[string, string] = %{}
+    program_over(entry, directory, analyzing, nothing)
+  end
+
+  # A file's text: the overlay's, or the file's.
+  def source(path: string, overlay: map[string, string]): result[string, string] do
+    case Map.get(overlay, path) do
+      some(text) -> ok(text)
+      none -> File.read_binary(path)
+    end
+  end
+
   # The problem, and the program as the loader gives it to the checker
   # where there is none and the loader is followed to its end here; with
   # analyzing, the checker's problem too (AlchemAnalyze).
-  def program(entry: string, directory: string, analyzing: boolean): tuple[option[Problem], option[AlchemJson.J]] do
+  def program_over(entry: string, directory: string, analyzing: boolean, overlay: map[string, string]): tuple[option[Problem], option[AlchemJson.J]] do
     absolute = clean(if rooted?(kept(entry)) do kept(entry) else kept(directory) <> "/" <> kept(entry) end)
     path = case File.stat(absolute) do
       ok(info) -> if info.type == :directory do clean(absolute <> "/main.alc") else absolute end
@@ -118,7 +139,7 @@ defmodule AlchemCheck do
     nothing: list[string] = []
     none_read: list[Unit] = []
     nothing_made: option[AlchemJson.J] = none
-    case visit(path, %Loaded{names: names, active: nothing, done: nothing, remote: false, order: none_read}) do
+    case visit(path, %Loaded{names: names, active: nothing, done: nothing, remote: false, order: none_read, overlay: overlay}) do
       ok(loaded) ->
         if loaded.remote do {none, nothing_made} else
           case merged(loaded, path) do
@@ -237,7 +258,7 @@ defmodule AlchemCheck do
     if given.remote or path in given.done do ok(given) else
       if path in given.active do error(plain(shown(path) <> ": import cycle")) else
         if not String.ends_with?(path, ".alc") do error(plain(shown(path) <> ": source must have .alc extension")) else
-          case File.read_binary(path) do
+          case source(path, given.overlay) do
             error(why) -> error(plain(shown(path) <> ": read source: open " <> shown(path) <> ": " <> unopened(why)))
             ok(text) ->
               if byte_size(text) > 1048576 do error(plain(path <> ": read source: source exceeds 1048576 bytes")) else

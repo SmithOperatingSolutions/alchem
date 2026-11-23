@@ -206,5 +206,16 @@ declares no module and directories with `.git` and `artifacts`.
   `alx` reads no input with the front end. It decides what a statement
   binds from its text: a statement that binds after other statements in
   one input is run and not shown, and a comment alone runs nothing.
-- `lsp` is in the list of commands and not in `alchem` yet: it says so and
-  ends with status 2.
+- `lsp` is the pinned command's language server
+  (`tools/alchem-lsp.alc`, after `lsp/server.go` of the pinned tree), over
+  standard input and output: initialize, shutdown and exit; a document
+  opened, changed, saved and closed, each followed by its diagnostics;
+  hover, definition, completion, formatting and the document's symbols.
+  Its replies are the pinned server's byte for byte (`harness/lsp.py`: the
+  pinned server's own tests and more, as recorded sessions). Not as the
+  pinned server: a document's diagnostics are what the front end finds
+  in it and in what it imports, with the open documents in place of
+  their files (`spec/alchem-front-end.md`); the program is not compiled,
+  so one only the compiler refuses has no diagnostic. And the modules a
+  document imports are offered for completion in the order it imports
+  them, where the pinned server offers them in no order.
