@@ -8,6 +8,10 @@
 # PATH. The download is checked against the release's checksums.txt before
 # anything is installed. Go is not needed: alchem downloads the Go release it
 # builds with on first use.
+#
+# $env:ALCHEM_NATIVE = '1' installs the alchem written in Alchem instead,
+# which compiles programs itself and downloads nothing: for Windows on x64,
+# from the releases that have it.
 $ErrorActionPreference = 'Stop'
 
 $repository = 'SmithOperatingSolutions/alchem'
@@ -31,12 +35,18 @@ if (-not $version) {
 }
 if (-not $version.StartsWith('v')) { $version = "v$version" }
 
-$name = "alchem_${version}_windows_$arch"
+$kind = 'alchem'
+if ($env:ALCHEM_NATIVE -and $env:ALCHEM_NATIVE -ne '0') {
+    $kind = 'alchem-native'
+    if ($arch -ne 'amd64') { throw 'alchem install: the native alchem has no release for Windows on ARM64; install without ALCHEM_NATIVE' }
+}
+
+$name = "${kind}_${version}_windows_$arch"
 $archive = "$name.zip"
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ("alchem-install-" + [System.Guid]::NewGuid())
 New-Item -ItemType Directory -Path $work | Out-Null
 try {
-    Write-Host "Downloading alchem $version for windows/$arch"
+    Write-Host "Downloading $kind $version for windows/$arch"
     Invoke-WebRequest -UseBasicParsing -Uri "$base/download/$version/$archive" -OutFile (Join-Path $work $archive)
     Invoke-WebRequest -UseBasicParsing -Uri "$base/download/$version/checksums.txt" -OutFile (Join-Path $work 'checksums.txt')
 

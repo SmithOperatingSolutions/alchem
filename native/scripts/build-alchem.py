@@ -13,7 +13,9 @@ built by the compiler for macOS that runs on macOS, `alchem` is a macOS
 program whose test, run and build commands work there. With --windows it
 makes Windows programs (spec/windows.md): built by the Windows cross
 compiler (build-windows.py), `alchem.exe` is a Windows program whose
-commands work there.
+commands work there. With --arm64 it makes Linux ARM64 programs
+(spec/arm64.md): built by the compiler of build-arm64.py, `alchem` is a
+Linux ARM64 program.
 
 The program is three modules: tools/alchem.alc; the bundler without its
 main, as an imported module may not define one; and AlchemCompiler, the
@@ -47,7 +49,7 @@ def _load(name, path):
     return module
 
 
-def compiler_module(darwin=False, windows=False):
+def compiler_module(darwin=False, windows=False, arm64=False):
     """The compiler as the module AlchemCompiler, with no entry and no main."""
     bootstrap = _load('alchem_bootstrap', ROOT / 'scripts/bootstrap-alchem-compiler.py')
     text = bootstrap.source_text('functions', False)
@@ -56,11 +58,11 @@ def compiler_module(darwin=False, windows=False):
         if text.count(switch) != 1:
             raise ValueError('the compiler source has no single nc_win()')
         text = text.replace(switch, '  def nc_win(): integer do 1 end\n')
-    if darwin:
+    if darwin or arm64:
         switch = '  def nc_arm(): integer do 0 end\n'
         if text.count(switch) != 1:
             raise ValueError('the compiler source has no single nc_arm()')
-        text = text.replace(switch, '  def nc_arm(): integer do 3 end\n')
+        text = text.replace(switch, '  def nc_arm(): integer do %d end\n' % (3 if darwin else 1))
     text = bootstrap.compact_identifiers(bootstrap.compact_source(text))
     head, rest = text.split('\n', 1)
     if head != 'defmodule NativeSourceCompiler do':
@@ -123,14 +125,14 @@ def platform_of(compiler, darwin=False, windows=False):
     raise RuntimeError(f'{compiler} made no program of a known kind')
 
 
-def program(darwin=False, windows=False, version='devel', platform='linux/amd64'):
+def program(darwin=False, windows=False, version='devel', platform='linux/amd64', arm64=False):
     """The bundle of the three modules, with the paths it names those of the repository."""
     bundle = _load('alchem_bundle', ROOT / 'scripts/bundle-alchem.py')
     with tempfile.TemporaryDirectory(prefix='alchem-program-') as directory:
         work = Path(directory)
         (work / 'alchem.alc').write_text((ROOT / 'tools/alchem.alc').read_text())
         (work / 'alchem-bundle.alc').write_text(system_stamped(bundler_module(), platform))
-        (work / 'alchem-compiler.alc').write_text(compiler_module(darwin, windows))
+        (work / 'alchem-compiler.alc').write_text(compiler_module(darwin, windows, arm64))
         (work / 'alchem-guide.alc').write_text(guide_module(version, platform))
         (work / 'alchem-guide-data.alc').write_text((ROOT / 'tools/alchem-guide-data.alc').read_text())
         (work / 'alchem-sources.alc').write_text((ROOT / 'tools/alchem-sources.alc').read_text())
@@ -161,8 +163,12 @@ def program(darwin=False, windows=False, version='devel', platform='linux/amd64'
     return head + b'\n' + b'\n'.join(lines)
 
 
-def build(compiler, output, darwin=False, windows=False, version='devel'):
-    source = program(darwin, windows, version, platform_of(compiler, darwin, windows))
+def build(compiler, output, darwin=False, windows=False, version='devel', arm64=False):
+    platform = platform_of(compiler, darwin, windows)
+    if arm64 and platform != 'linux/arm64':
+        # As for Windows: the alchem would take itself for Linux ARM64's.
+        raise RuntimeError(f'--arm64 needs a compiler that makes Linux ARM64 programs: {compiler} makes those of {platform}')
+    source = program(darwin, windows, version, platform, arm64)
     made = subprocess.run([str(compiler)], input=source, capture_output=True, env={'PATH': ''}, timeout=600)
     if made.returncode or made.stderr or made.stdout[:4] not in (b'\x7fELF', b'\xcf\xfa\xed\xfe') and made.stdout[:2] != b'MZ':
         raise RuntimeError(f'the compiler did not build alchem: {made.returncode} {made.stderr.decode(errors="replace").strip()}')
@@ -184,10 +190,11 @@ def main():
     parser.add_argument('--output', type=Path, default=ROOT / 'build/dev/alchem')
     parser.add_argument('--darwin', action='store_true', help='the compiler inside makes macOS programs')
     parser.add_argument('--windows', action='store_true', help='the compiler inside makes Windows programs (build with the Windows cross compiler)')
+    parser.add_argument('--arm64', action='store_true', help='the compiler inside makes Linux ARM64 programs (build with the compiler of build-arm64.py)')
     parser.add_argument('--version', default='devel', help='the version `alchem version` prints')
     args = parser.parse_args()
     try:
-        source, image = build(args.compiler.resolve(), args.output, args.darwin, args.windows, args.version)
+        source, image = build(args.compiler.resolve(), args.output, args.darwin, args.windows, args.version, args.arm64)
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f'E_BUILD: {error}', file=sys.stderr)
         return 1
