@@ -14,6 +14,8 @@ defmodule AlchemTyping do
   # is not followed here it stops: the outcome is then skip, and nothing is
   # said, so that what is found is the pinned checker's first problem. A
   # problem is {"found", "line:column: message"}; a stop {"skip", why}.
+  # Inside a function a problem that has left a block is "open" or "shut"
+  # instead of "found" (mark), by whether that block's type was settled.
 
   def g(o: AlchemJson.J, name: string): AlchemJson.J do AlchemJson.get(o, name) end
   def tx(o: AlchemJson.J, name: string): string do AlchemJson.text_of(AlchemJson.get(o, name)) end
@@ -94,10 +96,15 @@ defmodule AlchemTyping do
   end
 
   # A builtin type's field: name:type, or name=:type for one with a default
-  # value, which is not followed here (its default stands as a string).
+  # value: the empty list for a list, and none for an option.
   def field_of(text: string): Field do
     case String.split(text, ":", [parts: 2]) do
-      [name, type] -> if String.ends_with?(name, "=") do %Field{name: String.trim_trailing(name, "="), type: type, line: 0, column: 0, default: AlchemJson.str("builtin default")} else %Field{name: name, type: type, line: 0, column: 0, default: nojson()} end
+      [name, type] ->
+        if String.ends_with?(name, "=") do
+          place = [{"Line", AlchemJson.int(0)}, {"Column", AlchemJson.int(0)}]
+          value = if String.starts_with?(type, "list[") do AlchemJson.J.object([{"Kind", AlchemJson.str("list")}] ++ place) else AlchemJson.J.object([{"Kind", AlchemJson.str("name")}, {"Name", AlchemJson.str("none")}] ++ place) end
+          %Field{name: String.trim_trailing(name, "="), type: type, line: 0, column: 0, default: value}
+        else %Field{name: name, type: type, line: 0, column: 0, default: nojson()} end
       _ -> %Field{name: text, type: "", line: 0, column: 0, default: nojson()}
     end
   end
@@ -310,13 +317,41 @@ defmodule AlchemTyping do
 
   def skip(why: string): tuple[string, string] do {"skip", why} end
 
-  # undetermined: a failure to infer a type in a branch whose type another
-  # branch may settle, which the pinned checker comes back to. Not
-  # followed here.
-  def undetermined?(stop: tuple[string, string], f: Flow): boolean do
+  # A context whose type is still open: the value an if, case, try or for
+  # is to produce, or the result of a function written in place.
+  def unsettled?(f: Flow): boolean do
+    (f.yielding and f.yield == "") or (f.inferring and f.infer == "")
+  end
+
+  # A problem as it leaves the block it was found in: "open" where the
+  # block's type was still open then, "shut" where it was settled. The
+  # pinned checker asks this of the context after a failure; here the
+  # failure carries it out.
+  def mark(stop: tuple[string, string], f: Flow): tuple[string, string] do
     {kind, message} = stop
-    open = (f.yielding and f.yield == "") or (f.inferring and f.infer == "")
-    kind == "found" and open and (String.contains?(message, "cannot infer") or String.contains?(message, "requires an expected"))
+    if kind == "found" do {if unsettled?(f) do "open" else "shut" end, message} else stop end
+  end
+
+  # A problem as it leaves a context for the one around it, whose own
+  # type is what counts from there on.
+  def remark(stop: tuple[string, string], f: Flow): tuple[string, string] do
+    {kind, message} = stop
+    if kind == "skip" do stop else {if unsettled?(f) do "open" else "shut" end, message} end
+  end
+
+  # undetermined: a failure to infer a type in a branch whose type another
+  # branch may settle, which the pinned checker comes back to.
+  def undetermined?(stop: tuple[string, string]): boolean do
+    {kind, message} = stop
+    kind == "open" and (String.contains?(message, "cannot infer") or String.contains?(message, "requires an expected"))
+  end
+
+  # Coming back to a branch is followed where the context holds one open
+  # type and the failure left no hint of it behind: the pinned checker
+  # keeps what a constructor showed of its type for the other branches.
+  def revisited?(stop: tuple[string, string], f: Flow): boolean do
+    {_, message} = stop
+    not (f.yielding and f.inferring) and not String.contains?(message, " here; annotate the binding it is assigned to")
   end
 
   # ---- Declared types ----
@@ -956,6 +991,7 @@ defmodule AlchemTyping do
       "for" -> comprehension(c, e, scope, want, st, f)
       "unmatched" -> unmatched(c, e, scope, want, st, f)
       "sigil" -> sigil(c, e, scope, want, f)
+      "try" -> attempt(c, e, scope, want, st, f)
       kind -> error(skip("expression " <> kind))
     end
   end
@@ -1132,7 +1168,7 @@ defmodule AlchemTyping do
     body = yields(its(e, "Body"))
     inner = %Flow{f | yielding: true, yield: want}
     case block(c, body, scope, "void", inner) do
-      error(s) -> error(s)
+      error(s) -> error(remark(s, f))
       ok({complete, after}) ->
         if not complete do
           first = hd(body)
@@ -1250,7 +1286,7 @@ defmodule AlchemTyping do
               if reduced != "" do
                 body = yields(its(statement, "Then"))
                 case block(c, body, Map.put(local, tx(e, "Name"), reduced), "void", %Flow{f1 | yielding: true, yield: reduced, inferring: false, infer: ""}) do
-                  error(s) -> error(s)
+                  error(s) -> error(remark(s, f1))
                   ok({complete, after}) ->
                     if not complete or after.yield != reduced do fail(e, "every arm of a for with reduce: must end in the next accumulator, of type " <> reduced) else typed(reduced, f1) end
                 end
@@ -1258,7 +1294,7 @@ defmodule AlchemTyping do
                 effect = st or ends_in_effect?(c, its(statement, "Then"))
                 body = if effect do unit_tail(its(statement, "Then")) else yields(its(statement, "Then")) end
                 case block(c, body, local, "void", %Flow{f1 | yielding: true, yield: if effect do "" else produced end, inferring: false, infer: ""}) do
-                  error(s) -> error(s)
+                  error(s) -> error(remark(s, f1))
                   ok({complete, after}) ->
                     if not complete or after.yield == "" do fail(e, "the body of for must end in a value") else typed("list[" <> after.yield <> "]", f1) end
                 end
@@ -1285,44 +1321,364 @@ defmodule AlchemTyping do
     end
   end
 
-  # The sigils that are plain values: ~s and ~w, with or without
-  # interpolation, and ~c's refusal of it.
+  def text_literal(e: AlchemJson.J, text: string): AlchemJson.J do
+    expression("literal", e, [{"Value", object([{"Kind", AlchemJson.str("string")}, {"Text", AlchemJson.str(text)}])}])
+  end
+
+  # sigilHandler: the function that gives a sigil of the program's its
+  # meaning: sigil_x, or the one function of that name in a module.
+  def sigil_handler(c: Ctx, letter: string): string do
+    name = "sigil_" <> letter
+    if Map.has_key?(c.functions, name) do name else
+      case Enum.filter(Map.keys(c.functions), fn qualified -> String.ends_with?(qualified, "." <> name) end) do
+        [one] -> one
+        _ -> ""
+      end
+    end
+  end
+
+  # Sigils: ~s, ~w, ~c, ~r, ~h, the calendar's ~D, ~T, ~N and ~U, and
+  # those the program defines, each as the expression it stands for.
   def sigil(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
     n = tx(e, "Name")
     text = tx(g(e, "Value"), "Text")
+    op = tx(e, "Op")
+    unknown = "unknown sigil ~" <> n <> ": define sigil_" <> n <> "(text: string, modifiers: string) to give it a meaning"
     if not null?(e, "Left") do
       template = g(e, "Left")
       case n do
+        "h" -> markup(c, e, its(template, "Args"), true, scope, want, f)
         "s" -> ex(c, template, scope, want, false, f)
         "w" -> ex(c, expression("call", e, [{"Name", AlchemJson.str("String.split")}, {"Args", AlchemJson.J.list([template])}]), scope, want, false, f)
         "c" -> fail(e, "~c does not interpolate")
-        _ -> error(skip("sigil ~" <> n))
+        "r" ->
+          case regex_source("", op) do
+            none -> fail(e, "~r accepts the modifiers i, m, s and u")
+            some(_) -> ex(c, expression("call", e, [{"Name", AlchemJson.str("Regex.compile!")}, {"Args", AlchemJson.J.list([template])}]), scope, want, false, f)
+          end
+        _ ->
+          handler = sigil_handler(c, n)
+          if handler == "" do fail(e, unknown) else ex(c, expression("call", e, [{"Name", AlchemJson.str(handler)}, {"Args", AlchemJson.J.list([template, text_literal(e, op)])}]), scope, want, false, f) end
       end
     else
-      if n == "r" do regex_literal(e, text, f) else
-      if n == "s" or n == "S" do typed(tx(g(e, "Value"), "Kind"), f) else
-        if n == "w" do
-          items = Enum.map(String.split(text), fn word -> expression("literal", e, [{"Value", object([{"Kind", AlchemJson.str("string")}, {"Text", AlchemJson.str(word)}])}]) end)
+      case n do
+        "r" -> regex_literal(e, text, f)
+        "s" -> typed(tx(g(e, "Value"), "Kind"), f)
+        "S" -> typed(tx(g(e, "Value"), "Kind"), f)
+        "w" ->
+          items = Enum.map(String.split(text), fn word -> text_literal(e, word) end)
           if items == [] do typed("list[string]", f) else ex(c, expression("list", e, [{"Args", AlchemJson.J.list(items)}]), scope, want, false, f) end
-        else error(skip("sigil ~" <> n)) end
-      end
+        "h" -> if op != "" do fail(e, "~h takes no modifiers") else markup(c, e, [text_part(e, text)], false, scope, want, f) end
+        "H" -> if op != "" do fail(e, "~H takes no modifiers") else markup(c, e, [text_part(e, text)], false, scope, want, f) end
+        "D" -> calendar(e, n, "Date", text, f)
+        "T" -> calendar(e, n, "Time", text, f)
+        "N" -> calendar(e, n, "NaiveDateTime", text, f)
+        "U" -> calendar(e, n, "DateTime", text, f)
+        "c" -> code_points(c, e, text, scope, want, f)
+        "C" -> code_points(c, e, text, scope, want, f)
+        _ ->
+          handler = sigil_handler(c, n)
+          if handler == "" do fail(e, unknown) else ex(c, expression("call", e, [{"Name", AlchemJson.str(handler)}, {"Args", AlchemJson.J.list([text_literal(e, text), text_literal(e, op)])}]), scope, want, false, f) end
       end
     end
+  end
+
+  # There are no charlists: ~c is the code points as integers.
+  def code_points(c: Ctx, e: AlchemJson.J, text: string, scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    items = Enum.map(String.codepoints(text), fn _ -> expression("literal", e, [{"Value", object([{"Kind", AlchemJson.str("integer")}, {"Integer", AlchemJson.int(0)}])}]) end)
+    if items == [] do typed("list[integer]", f) else ex(c, expression("list", e, [{"Args", AlchemJson.J.list(items)}]), scope, want, false, f) end
+  end
+
+  def text_part(e: AlchemJson.J, text: string): AlchemJson.J do
+    expression("literal", e, [{"Op", AlchemJson.str("text")}, {"Value", object([{"Kind", AlchemJson.str("string")}, {"Text", AlchemJson.str(text)}])}])
+  end
+
+  # markupTemplate: ~h as the call that builds its Markup, from the
+  # template's own text in pieces and each value through Markup.of.
+  def markup(c: Ctx, e: AlchemJson.J, parts: list[AlchemJson.J], interpolated: boolean, scope: map[string, string], want: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    values = Enum.map(Enum.filter(parts, fn part -> tx(part, "Op") != "text" end), fn part -> expression("call", e, [{"Name", AlchemJson.str("Markup.of")}, {"Args", AlchemJson.J.list([part])}]) end)
+    pieces = [text_literal(e, "") | Enum.map(values, fn _ -> text_literal(e, "") end)]
+    call = expression("call", e, [{"Name", AlchemJson.str("Markup.template")}, {"Args", AlchemJson.J.list([text_literal(e, ""), expression("list", e, [{"Args", AlchemJson.J.list(pieces)}]), expression("list", e, [{"Args", AlchemJson.J.list(values)}])])}])
+    case ex(c, call, scope, want, false, f) do
+      ok(done) -> ok(done)
+      error({kind, message}) ->
+        tail = List.last(String.split(message, "expected Markup, found "), "")
+        if interpolated and kind != "skip" and String.contains?(message, "expected Markup, found ") and tail != "" and String.split(tail) == [tail] do
+          fail(e, "~h cannot put a " <> tail <> " into HTML: a value in a template must be a string, integer, float, atom, Markup or list of Markup; convert it to a string first")
+        else error({kind, message}) end
+    end
+  end
+
+  # ---- The calendar sigils (calendar.go, and Go's time.Parse) ----
+
+  def digit?(ch: string): boolean do ch != "" and String.contains?("0123456789", ch) end
+
+  def digits(text: list[string]): integer do
+    Enum.reduce(text, 0, fn ch, n -> n * 10 + String.to_integer(ch) end)
+  end
+
+  # A number of one or two digits, or of two where the layout fixes it.
+  def clock_number(text: list[string], fixed: boolean): option[tuple[integer, list[string]]] do
+    a = Enum.at(text, 0, "")
+    b = Enum.at(text, 1, "")
+    if not digit?(a) do none else
+      if digit?(b) do some({digits([a, b]), Enum.drop(text, 2)}) else
+        if fixed do none else some({digits([a]), Enum.drop(text, 1)}) end
+      end
+    end
+  end
+
+  def days_in(month: integer, year: integer): integer do
+    leap = rem(year, 4) == 0 and (rem(year, 100) != 0 or rem(year, 400) == 0)
+    if month == 2 do (if leap do 29 else 28 end) else
+      if month in [4, 6, 9, 11] do 30 else 31 end
+    end
+  end
+
+  # One part of a layout read from the text: what is left, with the year,
+  # month and day so far; or none where the text does not have it.
+  def clock_part(part: string, rest: list[string], y: integer, m: integer, d: integer): option[tuple[list[string], integer, integer, integer]] do
+    case part do
+      "year" ->
+        four = Enum.take(rest, 4)
+        if length(four) == 4 and Enum.all?(four, &digit?/1) do some({Enum.drop(rest, 4), digits(four), m, d}) else none end
+      "month" ->
+        case clock_number(rest, true) do
+          some({n, left}) -> if n < 1 or n > 12 do none else some({left, y, n, d}) end
+          none -> none
+        end
+      "day" ->
+        case clock_number(rest, true) do
+          some({n, left}) -> some({left, y, m, n})
+          none -> none
+        end
+      "hour" ->
+        case clock_number(rest, false) do
+          some({n, left}) -> if n >= 24 do none else some({left, y, m, d}) end
+          none -> none
+        end
+      "minute" ->
+        case clock_number(rest, true) do
+          some({n, left}) -> if n >= 60 do none else some({left, y, m, d}) end
+          none -> none
+        end
+      "second" ->
+        case clock_number(rest, true) do
+          some({n, left}) ->
+            if n >= 60 do none else
+              # A fraction of a second may follow, though no layout names one.
+              if Enum.at(left, 0, "") in [".", ","] and digit?(Enum.at(left, 1, "")) do some({Enum.drop_while(Enum.drop(left, 1), &digit?/1), y, m, d}) else some({left, y, m, d}) end
+            end
+          none -> none
+        end
+      "zone" ->
+        if Enum.at(rest, 0, "") == "Z" do some({Enum.drop(rest, 1), y, m, d}) else
+          if length(rest) < 6 or Enum.at(rest, 3, "") != ":" or not (Enum.at(rest, 0, "") in ["+", "-"]) do none else
+            case {clock_number(Enum.slice(rest, 1, 2), true), clock_number(Enum.slice(rest, 4, 2), true)} do
+              {some({hours, _}), some({minutes, _})} -> if hours > 24 or minutes > 60 do none else some({Enum.drop(rest, 6), y, m, d}) end
+              _ -> none
+            end
+          end
+        end
+      " " ->
+        if rest != [] and Enum.at(rest, 0, "") != " " do none else some({Enum.drop_while(rest, fn ch -> ch == " " end), y, m, d}) end
+      _ ->
+        if Enum.at(rest, 0, "") == part do some({Enum.drop(rest, 1), y, m, d}) else none end
+    end
+  end
+
+  def clock_layout?(layout: list[string], text: string): boolean do
+    start: option[tuple[list[string], integer, integer, integer]] = some({String.codepoints(text), 0, 1, 1})
+    read = Enum.reduce(layout, start, fn part, sofar ->
+      case sofar do
+        none -> none
+        some({rest, y, m, d}) -> clock_part(part, rest, y, m, d)
+      end
+    end)
+    case read do
+      some({rest, y, m, d}) -> rest == [] and d >= 1 and d <= days_in(m, y)
+      none -> false
+    end
+  end
+
+  # ParseClock: whether the text is one of the ISO 8601 forms the sigil
+  # of this letter takes.
+  def clock?(letter: string, text: string): boolean do
+    date = ["year", "-", "month", "-", "day"]
+    time = ["hour", ":", "minute", ":", "second"]
+    layouts = case letter do
+      "D" -> [date]
+      "T" -> [time]
+      "N" -> [date ++ ["T"] ++ time, date ++ [" "] ++ time]
+      _ -> [date ++ ["T"] ++ time ++ ["zone"], date ++ [" "] ++ time ++ ["zone"]]
+    end
+    Enum.any?(layouts, fn layout -> clock_layout?(layout, text) end)
+  end
+
+  # A calendar sigil is checked here and is then a struct of integers.
+  def calendar(e: AlchemJson.J, letter: string, name: string, text: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    if clock?(letter, String.trim(text)) do typed(name, f) else fail(e, "~" <> letter <> " needs a valid ISO 8601 " <> name <> ", found " <> text) end
+  end
+
+  # RegexSource: the pattern a ~r stands for with its modifiers, or none
+  # for a modifier there is not.
+  def regex_source(text: string, modifiers: string): option[string] do
+    letters = String.codepoints(modifiers)
+    if not Enum.all?(letters, fn m -> m in ["i", "m", "s", "U", "u", "x"] end) do none else
+      flags = Enum.join(Enum.filter(letters, fn m -> m in ["i", "m", "s", "U"] end), "")
+      # Each x strips again, as the pinned checker does.
+      source = Enum.reduce(Enum.filter(letters, fn m -> m == "x" end), text, fn _, now -> extended(now) end)
+      some(if flags == "" do source else "(?" <> flags <> ")" <> source end)
+    end
+  end
+
+  # extended: without what the x modifier allows for readability:
+  # whitespace, and comments from # to the end of a line, outside
+  # character classes and escapes.
+  def extended(text: string): string do
+    start: tuple[list[string], string] = {none_strings(), "plain"}
+    {kept, _} = Enum.reduce(String.codepoints(text), start, fn ch, {out, state} ->
+      case state do
+        "comment" -> {out, if ch == "\n" do "plain" else "comment" end}
+        "escape" -> {[ch | out], "plain"}
+        "class" -> if ch == "\\" do {[ch | out], "class-escape"} else {[ch | out], if ch == "]" do "plain" else "class" end} end
+        "class-escape" -> {[ch | out], "class"}
+        _ ->
+          if ch == "\\" do {[ch | out], "escape"} else
+            if ch == "[" do {[ch | out], "class"} else
+              if ch == "#" do {out, "comment"} else
+                if ch in [" ", "\t", "\n", "\r"] do {out, "plain"} else {[ch | out], "plain"} end
+              end
+            end
+          end
+      end
+    end)
+    Enum.join(Enum.reverse(kept), "")
   end
 
   # ~r: the pattern RegexSource makes of the text and modifiers, which
   # must compile. One the native Regex refuses is not said here.
   def regex_literal(e: AlchemJson.J, text: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
-    modifiers = String.codepoints(tx(e, "Op"))
-    if not Enum.all?(modifiers, fn m -> m in ["i", "m", "s", "U", "u", "x"] end) do fail(e, "~r accepts the modifiers i, m, s and u") else
-      if "x" in modifiers do error(skip("~r with x")) else
-        flags = Enum.join(Enum.filter(modifiers, fn m -> m in ["i", "m", "s", "U"] end), "")
-        source = if flags == "" do text else "(?" <> flags <> ")" <> text end
+    case regex_source(text, tx(e, "Op")) do
+      none -> fail(e, "~r accepts the modifiers i, m, s and u")
+      some(source) ->
         case Regex.compile(source) do
           ok(_) -> typed("regex", f)
           error(_) -> error(skip("an invalid regular expression"))
         end
+    end
+  end
+
+  # ---- try (control.go) ----
+
+  def prepared(body: list[AlchemJson.J], discard: boolean): list[AlchemJson.J] do
+    if discard do unit_tail(body) else yields(body) end
+  end
+
+  def exception?(c: Ctx, name: string): boolean do
+    case Map.get(c.types, name) do
+      some(d) -> d.exception
+      none -> false
+    end
+  end
+
+  # armType: the type a try arm matches, and its pattern as an ordinary
+  # one: an else arm takes the body's value; a catch arm a thrown value of
+  # the type it names; a rescue arm an exception, for name in Exception or
+  # a pattern of an exception struct, and otherwise the failure's message.
+  def arm_type(c: Ctx, arm: AlchemJson.J, body: string): result[tuple[string, AlchemJson.J], tuple[string, string]] do
+    p = g(arm, "Pattern")
+    kind = tx(p, "Kind")
+    place = [{"Line", g(p, "Line")}, {"Column", g(p, "Column")}]
+    plain = if tx(p, "Name") == "_" do object([{"Kind", AlchemJson.str("wildcard")}] ++ place) else object([{"Kind", AlchemJson.str("name")}, {"Name", g(p, "Name")}] ++ place) end
+    case tx(arm, "Kind") do
+      "else" -> ok({body, p})
+      "catch" ->
+        if kind != "typed" do error(skip("a catch arm that names no type")) else
+          problem = well_formed(c, tx(p, "Type"), none_strings())
+          if problem != "" do error(at(p, problem)) else ok({tx(p, "Type"), plain}) end
+        end
+      _ ->
+        case kind do
+          "in" -> if exception?(c, tx(p, "Type")) do ok({tx(p, "Type"), plain}) else error(at(p, tx(p, "Type") <> " is not an exception; declare it with defexception")) end
+          "struct" -> if exception?(c, tx(p, "Name")) do ok({tx(p, "Name"), p}) else error(at(p, tx(p, "Name") <> " is not an exception; declare it with defexception")) end
+          "typed" -> error(at(p, "a rescue arm matches a message or an exception; name: type is for catch"))
+          _ -> ok({"string", p})
+        end
+    end
+  end
+
+  def attempt(c: Ctx, e: AlchemJson.J, scope: map[string, string], want: string, st: boolean, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
+    statement = hd(its(e, "Body"))
+    arms = its(statement, "Arms")
+    tried = its(statement, "Then")
+    inner = %Flow{f | yielding: true, yield: want, inferring: false, infer: ""}
+    # The body: complete, to come back to, the type an else arm takes,
+    # and the context after it.
+    first: result[tuple[boolean, boolean, string, Flow], tuple[string, string]] = if Enum.any?(arms, fn arm -> tx(arm, "Kind") == "else" end) do
+      case block(c, yields(tried), scope, "void", %Flow{inner | yield: ""}) do
+        error(stop) -> error(remark(stop, f))
+        ok({finished, after}) -> if not finished or after.yield == "" do error(at(e, "the body of a try with else must end in a value")) else ok({true, false, after.yield, inner}) end
       end
+    else
+      case block(c, prepared(tried, st), scope, "void", inner) do
+        error(stop) ->
+          if not undetermined?(stop) do error(remark(stop, f)) else
+            if not revisited?(stop, inner) do error(skip("a try whose type an arm settles")) else ok({false, true, "", inner}) end
+          end
+        ok({complete, after}) -> ok({complete, false, "", after})
+      end
+    end
+    case first do
+      error(stop) -> error(stop)
+      ok({complete0, retry, body_type, flow0}) ->
+        start: result[tuple[boolean, Flow], tuple[string, string]] = ok({complete0, flow0})
+        walked = Enum.reduce(arms, start, fn arm, sofar ->
+          case sofar do
+            error(stop) -> error(stop)
+            ok({complete, now}) ->
+              case arm_type(c, arm, body_type) do
+                error(stop) -> error(stop)
+                ok({matched, pj}) ->
+                  case pattern(c, pj, matched, scope, scope) do
+                    error(stop) -> error(stop)
+                    ok({_, branch}) ->
+                      guard = g(arm, "Guard")
+                      guarded: result[tuple[string, Flow], tuple[string, string]] = if AlchemJson.null?(guard) do ok({"boolean", f}) else ex(c, guard, branch, "boolean", false, f) end
+                      case guarded do
+                        error(stop) -> error(stop)
+                        ok(_) ->
+                          case block(c, prepared(its(arm, "Body"), st), branch, "void", now) do
+                            error(stop) -> error(remark(stop, f))
+                            ok({finished, next}) -> ok({complete and finished, next})
+                          end
+                      end
+                  end
+              end
+          end
+        end)
+        again: result[tuple[boolean, Flow], tuple[string, string]] = case walked do
+          error(stop) -> error(stop)
+          ok({complete, now}) ->
+            if not retry do ok({complete, now}) else
+              case block(c, prepared(tried, st), scope, "void", now) do
+                error(stop) -> error(remark(stop, f))
+                ok(done) -> ok(done)
+              end
+            end
+        end
+        case again do
+          error(stop) -> error(stop)
+          ok({complete, now}) ->
+            if not complete or now.yield == "" do fail(e, "the body of try and every rescue, catch and else arm must end in a value") else
+              cleanup = its(statement, "Else")
+              tidy: result[tuple[boolean, Flow], tuple[string, string]] = if cleanup == [] do ok({false, f}) else block(c, cleanup, scope, "void", %Flow{f | yielding: false, yield: "", inferring: false, infer: ""}) end
+              case tidy do
+                error(stop) -> error(remark(stop, f))
+                ok(_) -> typed(now.yield, f)
+              end
+            end
+        end
     end
   end
 
@@ -1350,7 +1706,7 @@ defmodule AlchemTyping do
         message = well_formed(c, result, c.vars)
         if message != "" do fail(e, message) else
           case block(c, returns_of(its(e, "Body")), local, result, %Flow{f | yielding: false, yield: ""}) do
-            error(s) -> error(s)
+            error(s) -> error(remark(s, f))
             ok({returns, _}) -> if not returns do fail(e, "closure must return on every path") else typed("fn[" <> Enum.join(parts ++ [result], ",") <> "]", f) end
           end
         end
@@ -1417,9 +1773,16 @@ defmodule AlchemTyping do
         error(s) -> error(s)
         ok({local, binds}) ->
           body = lambda_tail(c, binds ++ body0)
-          case block(c, body, local, "?", %Flow{f | yielding: false, yield: "", inferring: true, infer: result}) do
+          inner = %Flow{f | yielding: false, yield: "", inferring: true, infer: result}
+          # Where every way out of the function raises it never returns a
+          # value, and its result type does not matter.
+          walked = case block(c, body, local, "?", inner) do
             error({kind, message}) ->
-              if kind == "found" and String.contains?(message, "cannot infer the type this raise stands in for") do error(skip("a function that only raises")) else error({kind, message}) end
+              if kind == "open" and String.contains?(message, "cannot infer the type this raise stands in for") do block(c, body, local, "?", %Flow{inner | infer: "tuple[]"}) else error({kind, message}) end
+            ok(done) -> ok(done)
+          end
+          case walked do
+            error(s) -> error(remark(s, f))
             ok({returns, after}) ->
               if not returns or after.infer == "" do fail(e, "every path of this function must produce a value") else typed("fn[" <> Enum.join(params ++ [after.infer], ",") <> "]", f) end
           end
@@ -1630,10 +1993,9 @@ defmodule AlchemTyping do
               args0 = its(e, "Args")
               extra0: list[Field] = []
               extra = if null?(e, "Left") do Enum.filter(d.fields, fn fd -> not (fd.name in labels0) and not AlchemJson.null?(fd.default) end) else extra0 end
-              builtin_default = Enum.any?(extra, fn fd -> AlchemJson.text_of(fd.default) == "builtin default" end)
               labels = labels0 ++ Enum.map(extra, fn fd -> fd.name end)
               args = args0 ++ Enum.map(extra, fn fd -> fd.default end)
-              start: result[tuple[map[string, string], list[string], Flow], tuple[string, string]] = if builtin_default do error(skip("a builtin struct's default")) else ok({b0, none_strings(), f0}) end
+              start: result[tuple[map[string, string], list[string], Flow], tuple[string, string]] = ok({b0, none_strings(), f0})
               done = Enum.reduce(Enum.zip(labels, args), start, fn {label, arg}, sofar ->
                 case sofar do
                   error(s) -> error(s)
@@ -2837,7 +3199,11 @@ defmodule AlchemTyping do
       case sofar do
         error(stop) -> error(stop)
         ok({returned, now, flow}) ->
-          if returned do error(at(s, "unreachable statement after return")) else statement(c, s, i == count - 1, now, result, flow) end
+          step = if returned do error(at(s, "unreachable statement after return")) else statement(c, s, i == count - 1, now, result, flow) end
+          case step do
+            error(stop) -> error(mark(stop, flow))
+            ok(done) -> ok(done)
+          end
       end
     end)
     case walked do
@@ -2892,7 +3258,20 @@ defmodule AlchemTyping do
   def if_statement(c: Ctx, s: AlchemJson.J, typ: string, scope: map[string, string], result: string, f: Flow): result[tuple[boolean, map[string, string], Flow], tuple[string, string]] do
     if typ != "boolean" do error(at(s, "if requires boolean condition")) else
       case block(c, its(s, "Then"), scope, result, f) do
-        error(stop) -> if undetermined?(stop, f) do error(skip("an if whose type its else settles")) else error(stop) end
+        error(stop) ->
+          if not undetermined?(stop) do error(stop) else
+            if not revisited?(stop, f) do error(skip("an if whose type its else settles")) else
+              # The else branch settles the type the first one lacked.
+              case block(c, its(s, "Else"), scope, result, f) do
+                error(other) -> error(other)
+                ok({b, f1}) ->
+                  case block(c, its(s, "Then"), scope, result, f1) do
+                    error(again) -> error(again)
+                    ok({a, f2}) -> ok({a and b, scope, f2})
+                  end
+              end
+            end
+          end
         ok({a, f1}) ->
           case block(c, its(s, "Else"), scope, result, f1) do
             error(stop) -> error(stop)
@@ -2906,40 +3285,67 @@ defmodule AlchemTyping do
     if tx(s, "Name") == "with-else" do error(skip("with ... else")) else
       arms = its(s, "Arms")
       checked: list[tuple[Pat, boolean]] = []
-      start: result[tuple[list[tuple[Pat, boolean]], boolean, boolean, Flow], tuple[string, string]] = ok({checked, false, true, f})
+      start: result[tuple[list[tuple[Pat, boolean]], boolean, boolean, Flow, list[AlchemJson.J]], tuple[string, string]] = ok({checked, false, true, f, none_json()})
       walked = Enum.reduce(arms, start, fn arm, sofar ->
         case sofar do
           error(stop) -> error(stop)
-          ok({done, covered, all, flow}) ->
+          ok({done, covered, all, flow, deferred}) ->
             pj = g(arm, "Pattern")
             here = raw(pj)
             subsumed = Enum.any?(done, fn {previous, guarded} -> not guarded and subsumes?(previous, here) end)
-            if covered or subsumed do error(at(pj, "unreachable case branch")) else
+            if covered or subsumed do error(mark(at(pj, "unreachable case branch"), flow)) else
               case pattern(c, pj, typ, scope, scope) do
-                error(stop) -> error(stop)
+                error(stop) -> error(mark(stop, flow))
                 ok({p, branch}) ->
                   guard = g(arm, "Guard")
                   guarded = case (if AlchemJson.null?(guard) do ok({"boolean", flow}) else ex(c, guard, branch, "boolean", false, flow) end) do
-                    error(stop) -> error(stop)
+                    error(stop) -> error(mark(stop, flow))
                     ok({_, f1}) -> ok(f1)
                   end
                   case guarded do
                     error(stop) -> error(stop)
                     ok(f1) ->
+                      rows = done ++ [{p, not AlchemJson.null?(guard)}]
                       case block(c, its(arm, "Body"), branch, result, f1) do
-                        error(stop) -> if undetermined?(stop, f1) do error(skip("a case arm whose type a later arm settles")) else error(stop) end
-                        ok({r, f2}) ->
-                          rows = done ++ [{p, not AlchemJson.null?(guard)}]
-                          ok({rows, exhaustive?(c, rows, typ), all and r, f2})
+                        error(stop) ->
+                          if not undetermined?(stop) do error(stop) else
+                            # This arm's value has no type of its own; a
+                            # later arm may settle it.
+                            if not revisited?(stop, f1) do error(skip("a case arm whose type a later arm settles")) else ok({rows, exhaustive?(c, rows, typ), all, f1, deferred ++ [arm]}) end
+                          end
+                        ok({r, f2}) -> ok({rows, exhaustive?(c, rows, typ), all and r, f2, deferred})
                       end
                   end
               end
             end
         end
       end)
-      case walked do
+      again = case walked do
         error(stop) -> error(stop)
-        ok({rows, _, all, flow}) -> if not exhaustive?(c, rows, typ) do error(at(s, "non-exhaustive case: add a catch-all pattern")) else ok({all, scope, flow}) end
+        ok({rows, _, all, flow, deferred}) ->
+          first: result[tuple[boolean, Flow], tuple[string, string]] = ok({all, flow})
+          settled = Enum.reduce(deferred, first, fn arm, sofar ->
+            case sofar do
+              error(stop) -> error(stop)
+              ok({every, now}) ->
+                case pattern(c, g(arm, "Pattern"), typ, scope, scope) do
+                  error(stop) -> error(mark(stop, now))
+                  ok({_, branch}) ->
+                    case block(c, its(arm, "Body"), branch, result, now) do
+                      error(stop) -> error(stop)
+                      ok({r, next}) -> ok({every and r, next})
+                    end
+                end
+            end
+          end)
+          case settled do
+            error(stop) -> error(stop)
+            ok({every, now}) -> ok({rows, every, now})
+          end
+      end
+      case again do
+        error(stop) -> error(stop)
+        ok({rows, all, flow}) -> if not exhaustive?(c, rows, typ) do error(mark(at(s, "non-exhaustive case: add a catch-all pattern"), flow)) else ok({all, scope, flow}) end
       end
     end
   end
@@ -2948,7 +3354,7 @@ defmodule AlchemTyping do
 
   def located(path: string, stop: tuple[string, string]): tuple[string, string] do
     {kind, message} = stop
-    if kind == "found" do {kind, path <> ":" <> message} else stop end
+    if kind == "skip" do stop else {"found", path <> ":" <> message} end
   end
 
   # The program's types, its own after the builtin ones; or why they are

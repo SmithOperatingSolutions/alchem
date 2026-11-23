@@ -132,13 +132,27 @@ calls with (`syntax.Libraries`, `Overloads`, `SimpleBuiltins`,
 `Supervisor`, `for` (with `uniq:`, `into:` and `reduce:`), a `with` clause
 that does not match, `put_elem`, a function of several forms called, the
 constraints of library functions that read JSON or send between nodes,
-and the sigils `~s`, `~w` and `~r` (whose pattern the native `Regex` must
-compile) are followed too. The walk stops, and says nothing, at what it
-does not follow yet: protocols, setup blocks, `try`, the calendar sigils
-and the others, a builtin struct's default, an inferred function whose
-every path raises, and a branch whose type a later branch settles
-(`checker.undetermined`). `scripts/typing-dump.alc` prints where
-the walk ends for each file it is given.
+`try` with its `rescue`, `catch`, `else` and `after`, a builtin struct's
+defaults, and the sigils are followed too: `~s`, `~w`, `~c`, `~h`, those
+the program defines, `~r` (whose pattern the native `Regex` must compile)
+and the calendar's `~D`, `~T`, `~N` and `~U`, whose text is read as Go's
+`time.Parse` reads the layouts of `ParseClock`.
+
+The pinned checker comes back to a branch whose type another settles
+(`checker.undetermined`): an `if`, a `case` arm or the body of a `try`
+that fails to infer a type while the type of its context is still open,
+and a function written in place whose every path raises. It asks the
+context after the failure; here a failure carries out of each block
+whether that block's type was open then (`mark`, `remark`), and the
+branch is walked again once the others have settled it.
+
+The walk stops, and says nothing, at what it does not follow yet:
+protocols, setup blocks, a `with` that has an `else`, a `catch` arm that
+names no type (its type is that of the values the body throws), and a
+branch that ends in a constructor which shows only part of its type
+(`none`, `ok(1)`), where the pinned checker keeps what it showed as a
+hint for the other branches. `scripts/typing-dump.alc` prints where the
+walk ends for each file it is given.
 
 ## The check
 
@@ -163,9 +177,21 @@ loader is not followed to its end for. The cases also hold what the pinned comma
 says of each text as a file of its own; `alchem check` must say the same,
 or, where the front end does not reach the reason, the native compiler's
 or bundler's own message (`E_COMPILE`, `E_BUNDLE`). It says the same for
-1,893 of the 2,005 texts the pinned compiler refuses; the gate holds that
-count as the least it may give (`EXPLAINED`). `scripts/generate-front-end-cases.py` makes
+all 2,005 texts the pinned compiler refuses; the gate holds that count as
+the least it may give (`EXPLAINED`). `scripts/generate-front-end-cases.py` makes
 the file; `scripts/compare-lexer.py` compares the lexers on any files.
+
+`harness/front-end-probes.json` holds 276 programs written for what the
+walk follows that the repository's files reach seldom: `try` and its
+arms, the calendar sigils in the forms `time.Parse` takes and refuses,
+the other sigils, branches that settle each other's types, functions
+that only raise, and a builtin struct's defaults; each with a mistake
+after the construct, which only following the construct reaches, and
+without it. `scripts/generate-front-end-probes.py` writes them with what
+the pinned `check` says of each. `alchem check` must say the same or
+give its own message; it says the same for 268, which the gate holds as
+the least (`PROBED`). The others are the `catch` arms and the hinted
+branches above, and one program the native compiler does not take.
 
 ## Not as the pinned front end
 

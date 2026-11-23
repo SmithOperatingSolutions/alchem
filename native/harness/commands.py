@@ -301,12 +301,13 @@ def verify(compiler):
                 count+=1
             assert left==expected['left'],(expected['name'],{path:(left.get(path),expected['left'].get(path)) for path in set(left)|set(expected['left']) if left.get(path)!=expected['left'].get(path)})
         # A refusal the front end does not explain (here the checker's walk
-        # stops at a calendar sigil, which it does not follow yet) names the
+        # stops at an if whose branches show its type between them, which it
+        # does not follow yet) names the
         # function the compiler could not make and where it is: not the
         # pinned compiler's message, so not of the scenes.
-        refused={'lib/lib.alc':'defmodule Lib do\n  def ok(n: integer): integer do n end\n\n  def twice(n: integer): integer do\n    day = ~D[2026-01-01]\n    nope_here(n) * 2\n  end\nend\n',
+        refused={'lib/lib.alc':'defmodule Lib do\n  def ok(n: integer): integer do n end\n\n  def twice(n: integer): integer do\n    kept = if n > 0 do none else some(n) end\n    nope_here(n) * 2\n  end\nend\n',
                  'a.alc':'defmodule Main do\n  import "lib/lib.alc"\n  def main() do\n    IO.puts(Integer.to_string(Lib.twice(2)))\n  end\nend\n',
-                 'b.alc':'defmodule Main do\n  def helper(x: integer): string do\n    day = ~D[2026-01-01]\n    x <> "a"\n  end\n  def main() do\n    IO.puts(helper(1))\n  end\nend\n'}
+                 'b.alc':'defmodule Main do\n  def helper(x: integer): string do\n    kept = if x > 0 do none else some(x) end\n    x <> "a"\n  end\n  def main() do\n    IO.puts(helper(1))\n  end\nend\n'}
         runs,_=scene(alchem,refused,[['check','a.alc'],['build','b.alc'],['alx','<x = 1\nString.to_charlist("a")\ndef f(n: integer): string do\n  n <> "a"\nend\nx\n']])
         compiler='E_COMPILE: the native compiler does not take something in '
         assert runs[0]==[1,'',f'.{os.sep}lib{os.sep}lib.alc:4:3: {compiler}Lib.twice/1\n'],runs[0]
@@ -315,7 +316,7 @@ def verify(compiler):
         # says them.
         assert 'alx(2)> ** line 1: undefined function String.to_charlist\nalx(3)> ...(3)> ...(3)> ** line 2: expected integer, found string\nalx(4)> 1\n' in runs[2][1],runs[2]
         # One it does explain is said as the pinned compiler says it.
-        runs,_=scene(alchem,{'lib/lib.alc':refused['lib/lib.alc'].replace('    day = ~D[2026-01-01]\n',''),'a.alc':refused['a.alc']},[['check','a.alc']])
+        runs,_=scene(alchem,{'lib/lib.alc':refused['lib/lib.alc'].replace('    kept = if n > 0 do none else some(n) end\n',''),'a.alc':refused['a.alc']},[['check','a.alc']])
         assert runs[0]==[1,'',f'.{os.sep}lib{os.sep}lib.alc:5:5: undefined function nope_here\n'],runs[0]
         runs,_=scene(alchem,{},[['version'],['--version'],['version','--json'],['version','-json']])
         text=f'alchem v9.8.7-test {target}\n';data=json.dumps({'version':'v9.8.7-test','platform':target},indent=2)+'\n'
