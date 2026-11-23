@@ -6,6 +6,7 @@ defmodule AlchemCommand do
   import "alchem-alx.alc"
   import "alchem-format.alc"
   import "alchem-check.alc"
+  import "alchem-fetch.alc"
   # alchem COMMAND ...: the pinned command line's test, run, build, check
   # and new, with the bundler and the compiler in the same program
   # (scripts/build-alchem.py puts them together), and the commands that
@@ -525,11 +526,27 @@ defmodule AlchemCommand do
 
   def build(file: string, out: string, locked: boolean): string do build_from(file, out, locked, file) end
 
+  # The bundle of a file, each package the bundler finds in no cache
+  # fetched (AlchemFetch) and the file bundled again; a package that cannot
+  # be fetched is said where the bundler says it is missing.
+  def fetched_bundle(file: string, locked: boolean, tries: integer): tuple[integer, string] do
+    bundled = Bundler.bundle(file, locked)
+    missing = if elem(bundled, 0) == 0 or tries >= 64 do none else Regex.run(~r/: fetch ([^@ ]+)@([^ :]+): not in the package cache$/, String.trim_trailing(elem(bundled, 1), "\n")) end
+    case missing do
+      some([_, path, version]) ->
+        case AlchemFetch.package(path, version) do
+          ok(_) -> fetched_bundle(file, locked, tries + 1)
+          error(why) -> {elem(bundled, 0), String.replace(elem(bundled, 1), "not in the package cache", why)}
+        end
+      _ -> bundled
+    end
+  end
+
   # A program the compiler refuses is explained from origin, the file the
   # pinned compiler would read: the problem its front end finds there
   # (AlchemCheck), else the function the compiler could not make.
   def build_from(file: string, out: string, locked: boolean, origin: string): string do
-    bundled = Bundler.bundle(file, locked)
+    bundled = fetched_bundle(file, locked, 0)
     if elem(bundled, 0) != 0 do
       case AlchemCheck.load(origin, File.cwd!()) do
         some(problem) -> problem.text

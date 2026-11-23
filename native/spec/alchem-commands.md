@@ -196,8 +196,6 @@ declares no module and directories with `.git` and `artifacts`.
   go, where the pinned command prints the compiler's message, and a project
   file the pinned command leaves out because it does not compile is listed.
   A file that declares no module is refused in this command's own words.
-- `doc host/owner/repo@v1.2.3/lib/name.alc`, a package's file named as an
-  import names it, is not fetched.
 - `build`, `run`, `check` and `alx` give the pinned message for a mistake
   in a program's syntax, constants, arities and clauses, and for a file
   it cannot import. For a mistake the checks after those would find (an

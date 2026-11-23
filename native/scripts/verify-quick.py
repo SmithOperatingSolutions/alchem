@@ -52,6 +52,7 @@ GATES={
     'statements':'verify(compiler)',
     'traces':'verify(compiler)',
     'packages':'verify(compiler)',
+    'fetch':'verify(compiler)',
     'literals':'verify(compiler)',
     'wide':'verify(compiler)',
     'operators':'verify(compiler)',

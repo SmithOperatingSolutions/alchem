@@ -16,10 +16,11 @@ order, giving its length in the bundle and its absolute path, so a failing
 program names the file and line it failed in.
 
 A package is imported as the pinned compiler writes it,
-`import "host/owner/repo@v1.2.0/lib/file.alc"`, and read from the Go module
-cache (GOMODCACHE, else the first GOPATH entry's pkg/mod, else ~/go/pkg/mod).
-The bundler does not download: `go mod download host/owner/repo@v1.2.0`
-fetches a package that is missing. Files of a package import each other with
+`import "host/owner/repo@v1.2.0/lib/file.alc"`, and read from alchem's package
+cache (ALCHEM_CACHE, else alchem in the user's cache directory: the packages
+`alchem` fetches, tools/alchem-fetch.alc), else from the Go module cache
+(GOMODCACHE, else the first GOPATH entry's pkg/mod, else ~/go/pkg/mod). The
+bundler does not download. Files of a package import each other with
 relative paths that stay inside it, and a program uses one version of a
 package. `alchem.lock` beside the entry file records each package's content
 hash as the pinned compiler writes it; `--locked` fails instead of updating
@@ -52,6 +53,14 @@ def directory(lexical):
 def escaped(text):
     """A module path or version as the Go module cache spells it."""
     return ''.join('!'+c.lower() if 'A'<=c<='Z' else c for c in text)
+
+
+def package_cache():
+    """alchem's cache, as on Linux (tools/alchem-bundle.alc cache_root), or ''."""
+    if os.environ.get('ALCHEM_CACHE'):return os.environ['ALCHEM_CACHE']
+    xdg=os.environ.get('XDG_CACHE_HOME','')
+    if xdg.startswith('/'):return xdg+'/alchem'
+    return os.environ['HOME']+'/.cache/alchem' if os.environ.get('HOME') else ''
 
 
 def module_cache():
@@ -103,11 +112,17 @@ def bundle(entry,locked=False,limit=1048576):
         module,version,_=parts
         if versions.get(module,version)!=version:raise BundleError(f'{path}: conflicting versions of {module}: {versions[module]} and {version}')
         versions[module]=version
+        key=escaped(module)+'@'+escaped(version)
+        mine=package_cache()
+        if mine:
+            try:
+                packages[module+' '+version]=Path(mine+'/packages/'+key+'/h1').read_text().strip()
+                return os.path.normpath(mine+'/packages/'+key+'/files')
+            except OSError:pass
         cache=module_cache()
-        root=os.path.normpath(cache+'/'+escaped(module)+'@'+escaped(version))
         try:packages[module+' '+version]=Path(cache+'/cache/download/'+escaped(module)+'/@v/'+escaped(version)+'.ziphash').read_text().strip()
-        except OSError:raise BundleError(f'{path}: fetch {module}@{version}: not in the module cache {cache}; run go mod download {module}@{version}')
-        return root
+        except OSError:raise BundleError(f'{path}: fetch {module}@{version}: not in the package cache')
+        return os.path.normpath(cache+'/'+key)
     def load(path,lexical,root,stack,importer):
         real=path.resolve()
         if real in stack:raise BundleError(f'{importer}: import "{path}": import cycle')

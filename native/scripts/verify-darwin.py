@@ -43,7 +43,7 @@ HERE = ROOT / 'build/darwin'
 # megabytes take the compiler for macOS past their time (spec/darwin-arm64.md).
 GATES = ['atoms', 'boolean_library', 'clauses', 'closures', 'commands', 'comprehensions', 'core_modules', 'crypto',
          'described',
-         'diskstore', 'front_end', 'equality', 'exceptions', 'failures', 'floats', 'forms', 'gen', 'generics', 'graphemes',
+         'diskstore', 'front_end', 'equality', 'exceptions', 'failures', 'fetch', 'floats', 'forms', 'gen', 'generics', 'graphemes',
          'inference', 'inspection', 'json_library', 'library', 'lists', 'literals', 'long_bodies', 'macros', 'maps',
          'nil_forms', 'nodes', 'operators', 'options', 'ordering', 'packages', 'parsing', 'patterns', 'pipes', 'processes',
          'protocols', 'ranges', 'regex', 'sets', 'sigils', 'speed', 'statements', 'streams', 'string_case',

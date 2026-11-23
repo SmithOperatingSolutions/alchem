@@ -1,4 +1,5 @@
 defmodule AlchemSources do
+  import "alchem-fetch.alc"
   # The documentation written in a source file: its module, @moduledoc,
   # the types with their @typedoc and the public functions with their
   # @doc, as the pinned command's doc shows them for a file.
@@ -620,18 +621,6 @@ defmodule AlchemSources do
     end
   end
 
-  # Where packages are kept, as the bundler finds it.
-  def cache(): string do
-    case System.get_env("GOMODCACHE") do
-      some(path) -> path
-      none ->
-        case System.get_env("GOPATH") do
-          some(paths) -> Enum.at(String.split(paths, if Sys.windows() == 1 do ";" else ":" end), 0, "") <> "/pkg/mod"
-          none -> System.get_env(if Sys.windows() == 1 do "USERPROFILE" else "HOME" end, "") <> "/go/pkg/mod"
-        end
-    end
-  end
-
   # An import of a package's file, host/owner/repo@v1.2.3/lib/name.alc:
   # {package@version, file}, or none.
   def remote(target: string): option[tuple[string, string]] do
@@ -641,10 +630,16 @@ defmodule AlchemSources do
     end
   end
 
-  # The directory of a package in the cache, where an upper case letter of
-  # its name is written as ! and the lower case one.
+  # The directory of a package in a cache (AlchemFetch.cached), or "".
   def package_root(key: string): string do
-    cache() <> "/" <> Regex.replace(~r/[A-Z]/, key, fn letter -> "!" <> String.downcase(letter) end)
+    case String.split(key, "@") do
+      [path, version] ->
+        case AlchemFetch.cached(path, version) do
+          some({root, _}) -> root
+          none -> ""
+        end
+      _ -> ""
+    end
   end
 
   # A path with its . and .. parts taken out.
@@ -676,7 +671,7 @@ defmodule AlchemSources do
             case remote(target) do
               some({key, inside}) ->
                 base = String.replace(package_root(key), "\\", "/")
-                if directory?(base) do visited(base <> "/" <> inside, target, base, key <> "/", sofar) else sofar end
+                if base != "" and directory?(base) do visited(base <> "/" <> inside, target, base, key <> "/", sofar) else sofar end
               none ->
                 # Only the files of a package are followed here: those of
                 # the project itself are found by walking its directory.

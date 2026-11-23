@@ -1,0 +1,704 @@
+defmodule AlchemFetch do
+  # A package at a version, as the pinned compiler gets one with
+  # `go mod download`, without Go: from the module proxies GOPROXY names
+  # (https://proxy.golang.org, then direct, unless set), checked against the
+  # checksum database GOSUMDB names (sum.golang.org) unless GONOSUMDB,
+  # GOPRIVATE or ALCHEM_PRIVATE covers it, and kept in alchem's own cache
+  # (spec/alchem-modules.md, Packages). The Go settings are read as Go reads them:
+  # from the environment, else from the file `go env -w` writes.
+  #
+  # A package is looked for in alchem's cache, then in the Go module cache,
+  # where Go may have put it; only then is it fetched. A fetched package is
+  # kept in alchem's cache whatever the Go settings say.
+
+  # The system the program is for, as Go names it: build-alchem.py writes
+  # the one it builds for.
+  def system(): string do "linux" end
+
+  # ---- Settings ----
+
+  def home(): string do
+    System.get_env(if Sys.windows() == 1 do "USERPROFILE" else "HOME" end, "")
+  end
+
+  # os.UserCacheDir and os.UserConfigDir, or "" where there is none.
+  def user_dir(config: boolean): string do
+    if Sys.windows() == 1 do System.get_env(if config do "AppData" else "LocalAppData" end, "") else
+      if system() == "darwin" do
+        if home() == "" do "" else home() <> (if config do "/Library/Application Support" else "/Library/Caches" end) end
+      else
+        given = System.get_env(if config do "XDG_CONFIG_HOME" else "XDG_CACHE_HOME" end, "")
+        if String.starts_with?(given, "/") do given else
+          if home() == "" do "" else home() <> (if config do "/.config" else "/.cache" end) end
+        end
+      end
+    end
+  end
+
+  # Where alchem keeps what it fetches: ALCHEM_CACHE, else alchem in the
+  # user's cache directory; "" when neither is known.
+  def cache_root(): string do
+    given = System.get_env("ALCHEM_CACHE", "")
+    if given != "" do given else default_root() end
+  end
+
+  def default_root(): string do
+    base = user_dir(false)
+    if base == "" do "" else base <> "/alchem" end
+  end
+
+  # The settings `go env -w` keeps: $GOENV, else go/env in the user's
+  # configuration directory.
+  def go_env_file(): list[tuple[string, string]] do
+    path = case System.get_env("GOENV") do
+      some(given) -> if given == "off" do "" else given end
+      none -> if user_dir(true) == "" do "" else user_dir(true) <> "/go/env" end
+    end
+    nothing: list[tuple[string, string]] = []
+    if path == "" do nothing else
+      case File.read(path) do
+        error(_) -> nothing
+        ok(text) ->
+          Enum.flat_map(String.split(text, "\n"), fn line ->
+            case String.split(String.trim(line), "=", [parts: 2]) do
+              [key, value] -> [{String.trim(key), String.trim(value)}]
+              _ -> []
+            end
+          end)
+      end
+    end
+  end
+
+  # A Go setting: the environment's when it is set and not empty, else the
+  # file's, else "".
+  def setting(name: string, file: list[tuple[string, string]]): string do
+    case System.get_env(name) do
+      some(value) -> if value != "" do value else from_file(name, file) end
+      none -> from_file(name, file)
+    end
+  end
+
+  def from_file(name: string, file: list[tuple[string, string]]): string do
+    case Enum.filter(file, fn {key, _} -> key == name end) do
+      [] -> ""
+      found -> elem(List.last(found, {"", ""}), 1)
+    end
+  end
+
+  struct Settings do
+    proxy: string
+    noproxy: string
+    sumdb: string
+    nosumdb: string
+    private: string
+  end
+
+  def settings(): Settings do
+    file = go_env_file()
+    alchem = String.trim(System.get_env("ALCHEM_PRIVATE", ""))
+    go = setting("GOPRIVATE", file)
+    private = if alchem == "" do go else if go == "" do alchem else go <> "," <> alchem end end
+    proxy = setting("GOPROXY", file)
+    noproxy = setting("GONOPROXY", file)
+    sumdb = setting("GOSUMDB", file)
+    nosumdb = setting("GONOSUMDB", file)
+    %Settings{proxy: if proxy == "" do "https://proxy.golang.org,direct" else proxy end, noproxy: if noproxy == "" do private else noproxy end,
+              sumdb: if sumdb == "" do "sum.golang.org" else sumdb end, nosumdb: if nosumdb == "" do private else nosumdb end, private: private}
+  end
+
+  # path.Match: * and ? match within an element; [...] a set of bytes.
+  def glob?(pattern: string, name: string): boolean do
+    glob_at(pattern, 0, name, 0)
+  end
+
+  def glob_at(p: string, i: integer, s: string, j: integer): boolean do
+    if i >= byte_size(p) do j >= byte_size(s) else
+      c = binary_part(p, i, 1)
+      if c == "*" do
+        if glob_at(p, i + 1, s, j) do true else
+          if j < byte_size(s) and binary_part(s, j, 1) != "/" do glob_at(p, i, s, j + 1) else false end
+        end
+      else
+        if j >= byte_size(s) do false else
+          d = binary_part(s, j, 1)
+          if c == "?" do d != "/" and glob_at(p, i + 1, s, j + 1) else
+            if c == "[" do
+              {matched, after} = glob_set(p, i + 1, d)
+              after > 0 and matched and glob_at(p, after, s, j + 1)
+            else
+              next = if c == "\\" and i + 1 < byte_size(p) do i + 1 else i end
+              binary_part(p, next, 1) == d and glob_at(p, next + 1, s, j + 1)
+            end
+          end
+        end
+      end
+    end
+  end
+
+  # A set [...] from i (after the [): {whether d is in it, the index after
+  # the ]}, 0 when there is no ].
+  def glob_set(p: string, i: integer, d: string): tuple[boolean, integer] do
+    negated = i < byte_size(p) and binary_part(p, i, 1) == "^"
+    start = if negated do i + 1 else i end
+    {found, after} = glob_members(p, start, d, false, true)
+    {if negated do not found else found end, after}
+  end
+
+  def glob_members(p: string, i: integer, d: string, found: boolean, first: boolean): tuple[boolean, integer] do
+    if i >= byte_size(p) do {false, 0} else
+      c = binary_part(p, i, 1)
+      if c == "]" and not first do {found, i + 1} else
+        if i + 2 < byte_size(p) and binary_part(p, i + 1, 1) == "-" and binary_part(p, i + 2, 1) != "]" do
+          glob_members(p, i + 3, d, found or (d >= c and d <= binary_part(p, i + 2, 1)), false)
+        else
+          glob_members(p, i + 1, d, found or d == c, false)
+        end
+      end
+    end
+  end
+
+  # module.MatchPrefixPatterns: whether a pattern of the comma-separated
+  # list matches the path or a prefix of it of as many elements.
+  def matches?(patterns: string, path: string): boolean do
+    Enum.any?(String.split(patterns, ","), fn raw ->
+      pattern = String.trim(raw)
+      if pattern == "" do false else
+        count = length(String.split(pattern, "/"))
+        parts = String.split(path, "/")
+        length(parts) >= count and glob?(pattern, Enum.join(Enum.take(parts, count), "/"))
+      end
+    end)
+  end
+
+  # ---- Names ----
+
+  # A path or version as the module cache and proxies spell it: "!" and the
+  # lower case letter for an upper case one.
+  def escaped(text: string): string do
+    Regex.replace(~r/[A-Z]/, text, fn letter -> "!" <> String.downcase(letter) end)
+  end
+
+  # A package already here: {its directory, its hash}, as the bundler finds
+  # it (Bundler.cached, which this must agree with): in alchem's cache, then
+  # in the Go module cache (GOMODCACHE, else the first GOPATH entry's
+  # pkg/mod, else go/pkg/mod in the home directory).
+  def cached(path: string, version: string): option[tuple[string, string]] do
+    key = escaped(path) <> "@" <> escaped(version)
+    root = cache_root()
+    mine = if root == "" do error("") else File.read(root <> "/packages/" <> key <> "/h1") end
+    case mine do
+      ok(sum) -> some({root <> "/packages/" <> key <> "/files", String.trim(sum)})
+      error(_) ->
+        go = case System.get_env("GOMODCACHE") do
+          some(given) -> given
+          none ->
+            case System.get_env("GOPATH") do
+              some(paths) -> Enum.at(String.split(paths, if Sys.windows() == 1 do ";" else ":" end), 0, "") <> "/pkg/mod"
+              none -> home() <> "/go/pkg/mod"
+            end
+        end
+        case File.read(go <> "/cache/download/" <> escaped(path) <> "/@v/" <> escaped(version) <> ".ziphash") do
+          ok(sum) -> some({go <> "/" <> key, String.trim(sum)})
+          error(_) -> none
+        end
+    end
+  end
+
+  # ---- Getting files ----
+
+  # The body at an address, or {status, message}: 0 for a failure that is
+  # no answer at all.
+  def get(address: string): result[string, tuple[integer, string]] do
+    if String.starts_with?(address, "file://") do
+      named = binary_part(address, 7, byte_size(address) - 7)
+      file = if Sys.windows() == 1 and Regex.match?(~r/^\/[A-Za-z]:/, named) do binary_part(named, 1, byte_size(named) - 1) else named end
+      case File.read_binary(file) do
+        ok(body) -> ok(body)
+        error(reason) -> error({404, "reading " <> address <> ": " <> reason})
+      end
+    else
+      case HTTP.get(address) do
+        error(reason) -> error({0, "reading " <> address <> ": " <> reason})
+        ok(answer) ->
+          if answer.status == 200 do ok(HTTP.read(answer)) else
+            error({answer.status, "reading " <> address <> ": " <> Integer.to_string(answer.status) <> " " <> reason_phrase(answer.status)})
+          end
+      end
+    end
+  end
+
+  def reason_phrase(status: integer): string do
+    case status do
+      400 -> "Bad Request"
+      401 -> "Unauthorized"
+      403 -> "Forbidden"
+      404 -> "Not Found"
+      410 -> "Gone"
+      429 -> "Too Many Requests"
+      500 -> "Internal Server Error"
+      502 -> "Bad Gateway"
+      503 -> "Service Unavailable"
+      504 -> "Gateway Timeout"
+      _ -> ""
+    end
+  end
+
+  # GOPROXY: each proxy and whether a failure of any kind (|), not only "not
+  # there" (,), moves on to the next.
+  def proxies(list: string): list[tuple[string, boolean]] do
+    nothing: list[tuple[string, boolean]] = []
+    proxies_at(list, 0, 0, nothing)
+  end
+
+  # From start, the proxy that ends at the next , or | (or the end).
+  def proxies_at(list: string, start: integer, i: integer, found: list[tuple[string, boolean]]): list[tuple[string, boolean]] do
+    if i >= byte_size(list) do
+      last = String.trim(binary_part(list, start, i - start))
+      if last == "" do found else found ++ [{last, false}] end
+    else
+      c = binary_part(list, i, 1)
+      if c == "," or c == "|" do
+        piece = String.trim(binary_part(list, start, i - start))
+        proxies_at(list, i + 1, i + 1, if piece == "" do found else found ++ [{piece, c == "|"}] end)
+      else
+        proxies_at(list, start, i + 1, found)
+      end
+    end
+  end
+
+  # The archive of a package from the first proxy that has it.
+  def download(path: string, version: string, s: Settings): result[string, string] do
+    named = path <> "@" <> version
+    if matches?(s.noproxy, path) do error(named <> ": " <> direct_refusal(path)) else
+      none_yet: result[string, tuple[integer, string]] = error({404, named <> ": no module proxy in GOPROXY"})
+      tried = Enum.reduce(proxies(s.proxy), none_yet, fn {proxy, any}, sofar ->
+        case sofar do
+          ok(found) -> ok(found)
+          error({status, said}) ->
+            # Each proxy is asked only while the ones before it lack the
+            # package (or, after |, failed in any way).
+            if status != 404 and status != 410 and status != -1 do error({status, said}) else
+              if proxy == "off" do error({1, named <> ": module lookup disabled by GOPROXY=off"}) else
+                if proxy == "direct" do error({1, named <> ": " <> direct_refusal(path)}) else
+                  base = String.trim_trailing(proxy, "/") <> "/" <> escaped(path) <> "/@v/" <> escaped(version)
+                  case get(base <> ".info") do
+                    error({code, why}) -> error({if any do -1 else code end, named <> ": " <> why})
+                    ok(_) ->
+                      case get(base <> ".zip") do
+                        ok(archive) -> ok(archive)
+                        error({code, why}) -> error({if any do -1 else code end, named <> ": " <> why})
+                      end
+                  end
+                end
+              end
+            end
+        end
+      end)
+      case tried do
+        ok(archive) -> ok(archive)
+        error({_, said}) -> error(said)
+      end
+    end
+  end
+
+  def direct_refusal(path: string): string do
+    "fetching " <> path <> " from its own repository (GOPROXY direct, GOPRIVATE, ALCHEM_PRIVATE) is not supported yet"
+  end
+
+  # ---- Archives ----
+
+  def u16(a: integer, i: integer): integer do
+    Sys.byte(a + i) + Sys.byte(a + i + 1) * 256
+  end
+
+  def u32(a: integer, i: integer): integer do
+    u16(a, i) + u16(a, i + 2) * 65536
+  end
+
+  # The table of CRC-32 (IEEE).
+  def crc_table(): map[integer, integer] do
+    Map.new(Enum.map(0..255, fn n ->
+      {n, Enum.reduce(1..8, n, fn _, c -> if Bitwise.band(c, 1) == 1 do Bitwise.bxor(3988292384, Bitwise.bsr(c, 1)) else Bitwise.bsr(c, 1) end end)}
+    end))
+  end
+
+  def crc32(text: string, table: map[integer, integer]): integer do
+    Bitwise.bxor(crc_at(Sys.addr(text), 0, byte_size(text), 4294967295, table), 4294967295)
+  end
+
+  def crc_at(a: integer, i: integer, n: integer, c: integer, t: map[integer, integer]): integer do
+    if i >= n do c else
+      k = Bitwise.band(Bitwise.bxor(c, Sys.byte(a + i)), 255)
+      crc_at(a, i + 1, n, Bitwise.bxor(Map.get(t, k, 0), Bitwise.bsr(c, 8)), t)
+    end
+  end
+
+  # The end of the central directory: its place, or -1.
+  def directory_end(a: integer, n: integer, i: integer): integer do
+    if i < 0 or i < n - 65557 do -1 else
+      if u32(a, i) == 101010256 do i else directory_end(a, n, i - 1) end
+    end
+  end
+
+  # The files of a module archive, {name, content}, in its order, or why
+  # it is not one: each name begins with path@version/, no two are the same
+  # but for case, and each holds what its CRC says.
+  def unzip(archive: string, prefix: string): result[list[tuple[string, string]], string] do
+    a = Sys.addr(archive)
+    n = byte_size(archive)
+    e = if n < 22 do -1 else directory_end(a, n, n - 22) end
+    if e < 0 do error("not a valid zip file") else
+      count = u16(a, e + 10)
+      start = u32(a, e + 16)
+      if count == 65535 or start == 4294967295 or start > n do error("zip64 archives are not supported") else
+        nothing: list[tuple[string, string]] = []
+        table = crc_table()
+        begun: result[tuple[list[tuple[string, string]], integer, integer], string] = ok({nothing, start, 0})
+        found = Enum.reduce(List.duplicate(0, count), begun, fn _, sofar ->
+          case sofar do
+            error(why) -> error(why)
+            ok({files, at, total}) -> entry(archive, a, n, at, files, total, prefix, table)
+          end
+        end)
+        case found do
+          error(why) -> error(why)
+          ok({files, _, _}) ->
+            lower = Enum.map(files, fn {name, _} -> String.downcase(name) end)
+            if length(Enum.uniq(lower)) != length(lower) do error("zip has two files whose names differ only in case") else ok(files) end
+        end
+      end
+    end
+  end
+
+  def entry(archive: string, a: integer, n: integer, at: integer, files: list[tuple[string, string]], total: integer, prefix: string, table: map[integer, integer]): result[tuple[list[tuple[string, string]], integer, integer], string] do
+    if at + 46 > n or u32(a, at) != 33639248 do error("not a valid zip file") else
+      flags = u16(a, at + 8)
+      method = u16(a, at + 10)
+      crc = u32(a, at + 16)
+      packed = u32(a, at + 20)
+      size = u32(a, at + 24)
+      named = u16(a, at + 28)
+      next = at + 46 + named + u16(a, at + 30) + u16(a, at + 32)
+      local = u32(a, at + 42)
+      name = binary_part(archive, at + 46, named)
+      if Bitwise.band(flags, 1) == 1 or (method != 0 and method != 8) do error(name <> ": unsupported compression") else
+        if not String.starts_with?(name, prefix) or not good_name?(binary_part(name, byte_size(prefix), byte_size(name) - byte_size(prefix))) do error(name <> ": file is not inside " <> prefix) else
+          if total + size > 524288000 do error("module source tree too large (max size is 524288000 bytes)") else
+            if local + 30 > n or u32(a, local) != 67324752 do error("not a valid zip file") else
+              data = local + 30 + u16(a, local + 26) + u16(a, local + 28)
+              if data + packed > n do error("not a valid zip file") else
+                {content, bad} = if method == 0 do {binary_part(archive, data, packed), 0} else HTTP._inflate(a + data, packed, size) end
+                if bad != 0 or byte_size(content) != size or crc32(content, table) != crc do error(name <> ": zip: checksum error") else
+                  ok({files ++ [{name, content}], next, total + size})
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  # A file's path inside a module: no empty, . or .. part, no backslash,
+  # nothing absolute. A directory's entry ends in /.
+  def good_name?(inside: string): boolean do
+    plain = String.trim_trailing(inside, "/")
+    plain != "" and not String.contains?(plain, "\\") and not String.contains?(plain, ":") and not String.contains?(plain, "\x00") and
+      Enum.all?(String.split(plain, "/"), fn part -> part != "" and part != "." and part != ".." end)
+  end
+
+  def hex(bytes: string): string do
+    Base.encode16(bytes, [case: :lower])
+  end
+
+  # dirhash.Hash1 of the files: the SHA-256 of one line per file, in the
+  # order of their names, of the SHA-256 of its content and its name.
+  def hash1(files: list[tuple[string, string]]): string do
+    summary = files |> Enum.sort_by(fn {name, _} -> name end) |> Enum.map(fn {name, content} -> hex(Crypto.hash(:sha256, content)) <> "  " <> name <> "\n" end) |> Enum.join("")
+    "h1:" <> Base.encode64(Crypto.hash(:sha256, summary))
+  end
+
+  # ---- The checksum database ----
+
+  struct Database do
+    name: string
+    key: string
+    hash: string
+    url: string
+  end
+
+  def known_key(): string do "sum.golang.org+033de0ae+Ac4zctda0e5eza+HJyk9SxEdh+s3Ux18htTTAD8OuAn8" end
+
+  # GOSUMDB: none for off, else the database, or why it is not one.
+  def database(value: string): result[option[Database], string] do
+    fields = String.split(String.trim(value), " ") |> Enum.filter(fn f -> f != "" end)
+    case fields do
+      ["off"] -> ok(none)
+      [one | rest] ->
+        vkey = if one == "sum.golang.org" or one == "sum.golang.google.cn" do String.replace(known_key(), "sum.golang.org+", one <> "+") else one end
+        address = case rest do
+          [given] -> String.trim_trailing(given, "/")
+          _ -> "https://" <> hd(String.split(vkey, "+"))
+        end
+        case String.split(vkey, "+", [parts: 3]) do
+          [name, id, encoded] ->
+            case Base.decode64(encoded) do
+              some(raw) ->
+                expected = Base.encode16(binary_part(Crypto.hash(:sha256, name <> "\n" <> raw), 0, 4), [case: :lower])
+                if byte_size(raw) == 33 and binary_part(raw, 0, 1) == "\x01" and expected == id do ok(some(%Database{name: name, key: binary_part(raw, 1, 32), hash: binary_part(Crypto.hash(:sha256, name <> "\n" <> raw), 0, 4), url: address})) else error("invalid GOSUMDB: malformed verifier id") end
+              none -> error("invalid GOSUMDB: malformed verifier id")
+            end
+          _ -> if rest == [] and not String.contains?(vkey, "+") do error("invalid GOSUMDB: unknown database " <> inspect(vkey)) else error("invalid GOSUMDB: malformed verifier id") end
+        end
+      [] -> ok(none)
+    end
+  end
+
+  # The signed tree head of a note: {size, root}, or why not.
+  def signed_tree(note: string, db: Database): result[tuple[integer, string], string] do
+    case String.split(note, "\n\n", [parts: 2]) do
+      [text, signatures] ->
+        signed = text <> "\n"
+        mark = "\u{2014} " <> db.name <> " "
+        good = String.split(signatures, "\n") |> Enum.any?(fn line ->
+          if not String.starts_with?(line, mark) do false else
+            case Base.decode64(binary_part(line, byte_size(mark), byte_size(line) - byte_size(mark))) do
+              some(raw) -> byte_size(raw) == 68 and binary_part(raw, 0, 4) == db.hash and TLS._edverify(db.key, signed, binary_part(raw, 4, 64))
+              none -> false
+            end
+          end
+        end)
+        lines = String.split(text, "\n")
+        if not good do error("verifying tree: invalid signature") else
+          case lines do
+            ["go.sum database tree", size, root | _] ->
+              case {Integer.parse(size), Base.decode64(root)} do
+                {ok(n), some(hash)} -> if byte_size(hash) == 32 and n >= 0 do ok({n, hash}) else error("malformed tree note") end
+                _ -> error("malformed tree note")
+              end
+            _ -> error("malformed tree note")
+          end
+        end
+      _ -> error("malformed tree note")
+    end
+  end
+
+  def node(left: string, right: string): string do
+    Crypto.hash(:sha256, "\x01" <> left <> right)
+  end
+
+  # A tile's path: its level, then its index in groups of three digits, all
+  # but the last after x, then .p/W for a tile of W hashes that is not full.
+  def tile_path(level: integer, index: integer, width: integer): string do
+    digits = Integer.to_string(index)
+    padded = String.duplicate("0", rem(3 - rem(byte_size(digits), 3), 3)) <> digits
+    groups = Enum.map(0..(div(byte_size(padded), 3) - 1)//1, fn k -> binary_part(padded, k * 3, 3) end)
+    named = Enum.join(Enum.map(Enum.drop(groups, -1), fn g -> "x" <> g end) ++ [List.last(groups, "")], "/")
+    "tile/8/" <> Integer.to_string(level) <> "/" <> named <> (if width < 256 do ".p/" <> Integer.to_string(width) else "" end)
+  end
+
+  # The hash of the 2^level records from n * 2^level in a tree of size
+  # records, from its tiles; tiles holds those fetched so far.
+  def stored(level: integer, n: integer, size: integer, db: Database, tiles: map[string, string]): result[tuple[string, map[string, string]], string] do
+    l = div(level, 8)
+    r = rem(level, 8)
+    span = Bitwise.bsl(1, r)
+    first = n * span
+    index = div(first, 256)
+    width = min(256, Bitwise.bsr(size, 8 * l) - index * 256)
+    if width < rem(first, 256) + span do error("tree too small for this proof") else
+      path = tile_path(l, index, width)
+      loaded = case Map.get(tiles, path) do
+        some(body) -> ok(body)
+        none ->
+          case get(db.url <> "/" <> path) do
+            ok(body) -> ok(body)
+            error({_, why}) -> error(why)
+          end
+      end
+      case loaded do
+        error(why) -> error(why)
+        ok(body) ->
+          if byte_size(body) != width * 32 do error("reading " <> db.url <> "/" <> path <> ": malformed tile") else
+            hashes = Enum.map(0..(span - 1)//1, fn k -> binary_part(body, (rem(first, 256) + k) * 32, 32) end)
+            ok({combined(hashes), Map.put(tiles, path, body)})
+          end
+      end
+    end
+  end
+
+  def combined(hashes: list[string]): string do
+    case hashes do
+      [one] -> one
+      _ ->
+        pairs = Enum.chunk_every(hashes, 2)
+        combined(Enum.map(pairs, fn pair -> node(Enum.at(pair, 0, ""), Enum.at(pair, 1, "")) end))
+    end
+  end
+
+  def largest_power(n: integer, p: integer): integer do
+    if p * 2 >= n do p else largest_power(n, p * 2) end
+  end
+
+  def level_of(span: integer): integer do
+    if span <= 1 do 0 else 1 + level_of(div(span, 2)) end
+  end
+
+  # The hash of the records lo to hi of a tree of size records whose record
+  # id hashes to leaf, the rest from tiles (RFC 6962).
+  def subtree(lo: integer, hi: integer, id: integer, leaf: string, size: integer, db: Database, tiles: map[string, string]): result[tuple[string, map[string, string]], string] do
+    n = hi - lo
+    holds = id >= lo and id < hi
+    if n == 1 and holds do ok({leaf, tiles}) else
+      if not holds and Bitwise.band(n, n - 1) == 0 and rem(lo, n) == 0 do stored(level_of(n), div(lo, n), size, db, tiles) else
+        k = largest_power(n, 1)
+        case subtree(lo, lo + k, id, leaf, size, db, tiles) do
+          error(why) -> error(why)
+          ok({left, after}) ->
+            case subtree(lo + k, hi, id, leaf, size, db, after) do
+              error(why) -> error(why)
+              ok({right, last}) -> ok({node(left, right), last})
+            end
+        end
+      end
+    end
+  end
+
+  # What the database records for a package: its h1 hash, checked to be in
+  # the signed tree.
+  def recorded(path: string, version: string, db: Database): result[string, string] do
+    address = db.url <> "/lookup/" <> escaped(path) <> "@" <> escaped(version)
+    case get(address) do
+      error({_, why}) -> error(why)
+      ok(body) ->
+        case String.split(body, "\n", [parts: 2]) do
+          [first, rest] ->
+            case {Integer.parse(first), String.split(rest, "\n\n", [parts: 2])} do
+              {ok(id), [lines, note]} ->
+                data = lines <> "\n"
+                case signed_tree(note, db) do
+                  error(why) -> error(why)
+                  ok({size, root}) ->
+                    if id < 0 or id >= size do error("malformed lookup response") else
+                      case subtree(0, size, id, Crypto.hash(:sha256, "\x00" <> data), size, db, %{}) do
+                        error(why) -> error(why)
+                        ok({top, _}) ->
+                          if top != root do error("verifying tree: the record is not in the signed tree") else
+                            case Enum.filter(String.split(lines, "\n"), fn line -> String.starts_with?(line, path <> " " <> version <> " ") end) do
+                              [line | _] -> ok(List.last(String.split(line, " "), ""))
+                              [] -> error("malformed lookup response: no hash of " <> path <> " " <> version)
+                            end
+                          end
+                      end
+                    end
+                end
+              _ -> error("malformed lookup response")
+            end
+          _ -> error("malformed lookup response")
+        end
+    end
+  end
+
+  # ---- The cache ----
+
+  # Write the files where the cache keeps them, as one rename, so that a
+  # build at the same time sees all of them or none.
+  def keep(path: string, version: string, files: list[tuple[string, string]], sum: string, prefix: string): result[string, string] do
+    root = cache_root()
+    if root == "" do error("no cache directory: set ALCHEM_CACHE or HOME") else
+      packages = root <> "/packages"
+      final = packages <> "/" <> escaped(path) <> "@" <> escaped(version)
+      work = packages <> "/.fetching-" <> Integer.to_string(System.os_time(:nanosecond)) <> "-" <> hex(Crypto.strong_rand_bytes(4))
+      written = Enum.reduce(files, File.mkdir_p(work <> "/files"), fn {name, content}, sofar ->
+        case sofar do
+          error(why) -> error(why)
+          ok(_) ->
+            inside = binary_part(name, byte_size(prefix), byte_size(name) - byte_size(prefix))
+            if String.ends_with?(inside, "/") do File.mkdir_p(work <> "/files/" <> inside) else
+              target = work <> "/files/" <> inside
+              case File.mkdir_p(Path.dirname(target)) do
+                error(why) -> error(why)
+                ok(_) -> File.write(target, content)
+              end
+            end
+        end
+      end)
+      done = case written do
+        error(why) -> error(why)
+        ok(_) ->
+          case File.write(work <> "/h1", sum <> "\n") do
+            error(why) -> error(why)
+            ok(_) -> File.mkdir_p(Path.dirname(final))
+          end
+      end
+      case done do
+        error(why) ->
+          File.rm_rf(work)
+          error(why)
+        ok(_) ->
+          case File.rename(work, final) do
+            ok(_) -> ok(final <> "/files")
+            error(why) ->
+              File.rm_rf(work)
+              # Another build put it there first.
+              if File.exists?(final <> "/h1") do ok(final <> "/files") else error(why) end
+          end
+      end
+    end
+  end
+
+  # ---- A package ----
+
+  # The directory of a package at a version and its hash: from a cache, or
+  # fetched, checked against the checksum database and kept. The project's
+  # lock is checked after, by the bundler, as the pinned compiler does.
+  def package(path: string, version: string): result[tuple[string, string], string] do
+    case cached(path, version) do
+      some(found) -> ok(found)
+      none ->
+        s = settings()
+        prefix = path <> "@" <> version <> "/"
+        case download(path, version, s) do
+          error(why) -> error(why <> private_hint(path, why))
+          ok(archive) ->
+            case unzip(archive, prefix) do
+              error(why) -> error(path <> "@" <> version <> ": " <> why)
+              ok(files) ->
+                sum = hash1(files)
+                checked = if matches?(s.nosumdb, path) do ok(sum) else
+                  case database(s.sumdb) do
+                    error(why) -> error(why)
+                    ok(none) -> ok(sum)
+                    ok(some(db)) ->
+                      case recorded(path, version, db) do
+                        error(why) -> error("verifying " <> path <> "@" <> version <> ": " <> why)
+                        ok(known) -> if known == sum do ok(sum) else error("verifying " <> path <> "@" <> version <> ": checksum mismatch\n\tdownloaded: " <> sum <> "\n\t" <> db.name <> ":     " <> known <> "\n\nSECURITY ERROR\nThis download does NOT match the one reported by the checksum server.\nThe bits may have been replaced on the origin server, or an attacker may\nhave intercepted the download attempt.") end
+                      end
+                  end
+                end
+                case checked do
+                  error(why) -> error(why <> private_hint(path, why))
+                  ok(_) ->
+                    case keep(path, version, files, sum, prefix) do
+                      ok(directory) -> ok({directory, sum})
+                      error(why) -> error(why)
+                    end
+                end
+            end
+        end
+    end
+  end
+
+  # What the pinned compiler adds to a failure that looks like a private
+  # package asked of the public proxy or checksum database.
+  def private_hint(path: string, message: string): string do
+    lower = String.downcase(message)
+    public = String.contains?(lower, "sum.golang.org") or String.contains?(lower, "proxy.golang.org")
+    refused = Enum.any?(["terminal prompts disabled", "could not read username", "404 not found", "410 gone", "authentication"], fn word -> String.contains?(lower, word) end)
+    if not public and not refused do "" else
+      parts = String.split(path, "/")
+      pattern = if length(parts) >= 2 do Enum.at(parts, 0, "") <> "/" <> Enum.at(parts, 1, "") <> "/*" else path end
+      "\nIf " <> path <> " is a private repository, set ALCHEM_PRIVATE=" <> pattern <> " (comma-separated patterns): it is then fetched with git from its own host, and nothing about it is sent to the public Go proxy or checksum database. See alchem syntax packages."
+    end
+  end
+end

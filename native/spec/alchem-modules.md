@@ -165,24 +165,66 @@ compiler's rules:
   host/owner/repo@v1.2.0/tools/dev.alc`, runs a program the package carries;
   it keeps no lock file.
 
-A package is read from the Go module cache, where `go mod download
-host/owner/repo@v1.2.0` puts it: `GOMODCACHE`, else `pkg/mod` under the first
-`GOPATH` entry, else `~/go/pkg/mod`, in the directory
-`host/owner/repo@v1.2.0` with every upper-case letter written as `!` and its
-lower-case form. The hash is the cache's `.ziphash` for that version. The
-bundlers do not download: fetching verifies the archive against Go's checksum
-database over TLS, which a program built by this compiler cannot do, so a
-missing package is the error `fetch ...: not in the module cache ...; run go
-mod download ...`.
+A package is read from alchem's package cache, else from the Go module
+cache, where Go may have put it. alchem's cache is `ALCHEM_CACHE`, else
+`alchem` in the user's cache directory (`$XDG_CACHE_HOME` or `~/.cache` on
+Linux, `~/Library/Caches` on macOS, `%LocalAppData%` on Windows): a package is
+`packages/host/owner/repo@v1.2.0/files`, beside `h1`, its hash. The Go module
+cache is `GOMODCACHE`, else `pkg/mod` under the first `GOPATH` entry, else
+`~/go/pkg/mod`, with the hash in the cache's `.ziphash`. Paths and versions
+are written with every upper-case letter as `!` and its lower-case form.
+
+The bundlers read the caches and do not download: a package in neither is
+`fetch ...: not in the package cache`. `alchem` then fetches it
+(`tools/alchem-fetch.alc`) and bundles again, as the pinned compiler's
+`go mod download` does, without Go:
+
+- **Proxies.** `GOPROXY` (default `https://proxy.golang.org,direct`) is read
+  as Go reads it, from the environment, else from the file `go env -w`
+  writes (`$GOENV`, else `go/env` in the user's configuration directory). A
+  proxy is asked for `@v/VERSION.info` and then `.zip`, over HTTPS, HTTP or
+  from files (`file://`). A proxy that lacks the version (404, 410) passes to
+  the next after `,`; one that fails in any way passes to the next after
+  `|`. `off` refuses: `module lookup disabled by GOPROXY=off`.
+- **Private packages.** A path that `GONOPROXY` (default `GOPRIVATE` with
+  `ALCHEM_PRIVATE`) matches, or a `direct` entry reached, is to be fetched
+  from its own repository with git, which is not supported yet (#90): it is
+  refused, and nothing about it is asked of any server.
+- **The archive.** Every file's name begins with `path@version/` and is a
+  plain relative path; no two names differ only in case; each file's CRC is
+  right; the files come to at most 500 MB. The hash is Go's: `h1:` and the
+  base64 SHA-256 of one line per file, in the order of their names, of the
+  file's hex SHA-256, two spaces and its name.
+- **The checksum database.** Unless `GONOSUMDB` (default `GOPRIVATE` with
+  `ALCHEM_PRIVATE`) matches the path or `GOSUMDB` is `off`, the database
+  `GOSUMDB` names (`sum.golang.org` and its key by default; a verifier key
+  and an address otherwise) is asked for the package's record. The record's
+  tree is a note signed with the database's Ed25519 key, and the record is
+  proved to be in that tree from the database's tiles (RFC 6962 hashes,
+  tiles of height 8). A hash that differs from the record's is the pinned
+  compiler's `checksum mismatch` with its `SECURITY ERROR`. A tree is not
+  checked against those seen before, as Go checks it against the one it
+  keeps.
+- **The cache.** The files and the hash are written to a directory of their
+  own and renamed into place, so a build at the same time sees the whole
+  package or none of it; a package that fails a check is not kept.
+- A failure that looks like a private package asked of the public proxy or
+  database gets the pinned compiler's hint to set `ALCHEM_PRIVATE`.
+
+The project's lock is checked after the package is loaded, as the pinned
+compiler checks it: a recorded hash that differs is `... does not match
+alchem.lock`.
 
 The compiler skips what a package's files carry besides code: `@moduledoc`,
 `@doc` and other attributes with their string or heredoc value, and
 `require "name" "version"` lines. `extern` functions bind Go code and are not
 supported.
 
-`harness/packages.py` checks a program over a package in a module cache: the
-bundle from both bundlers, the lock file, `--locked`, a program run from a
-package and seven errors. The same files were run through the pinned compiler
+`harness/packages.py` checks a program over a package in a module cache and
+in alchem's cache: the bundle from both bundlers, the lock file, `--locked`, a
+program run from a package and seven errors. `harness/fetch.py` checks the
+fetching, offline, against a module proxy and a checksum database it serves
+itself. The same files were run through the pinned compiler
 with a local module proxy: the output, the failure trace into the package
 file, the lock file and every error agree.
 

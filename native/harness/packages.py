@@ -35,7 +35,7 @@ ERRORS=[
     ({'app.alc':'defmodule A do\n  import "example.com/Acme/mathkit@v1.2.0/lib/escape.alc"\n  def main() do\n    IO.puts("x")\n  end\nend\n'},'import "../../outside.alc" leaves the package'),
     ({'app.alc':'defmodule A do\n  import "example.com/Acme/mathkit@v1.2.0/../x.alc"\n  def main() do\n    IO.puts("x")\n  end\nend\n'},'remote imports are written "module/path@v1.2.3/file.alc"'),
     ({'app.alc':'defmodule A do\n  import "example.com/Acme/mathkit@1.2.0/lib/math.alc"\n  def main() do\n    IO.puts("x")\n  end\nend\n'},'remote imports are written "module/path@v1.2.3/file.alc"'),
-    ({'app.alc':'defmodule A do\n  import "example.com/none/pkg@v9.0.0/x.alc"\n  def main() do\n    IO.puts("x")\n  end\nend\n'},'fetch example.com/none/pkg@v9.0.0: not in the module cache'),
+    ({'app.alc':'defmodule A do\n  import "example.com/none/pkg@v9.0.0/x.alc"\n  def main() do\n    IO.puts("x")\n  end\nend\n'},'fetch example.com/none/pkg@v9.0.0: not in the package cache'),
     ({'app.alc':APP,'local.alc':LOCAL,'alchem.lock':HEADER+'package example.com/Acme/mathkit v1.2.0 h1:AAAA\n'},
      'example.com/Acme/mathkit@v1.2.0 does not match alchem.lock: locked h1:AAAA, fetched h1:yU/1gISiONnIaSrOPZLtNbOossb9MkwgDU7b9YnT+3M='),
     ({'app.alc':APP,'local.alc':LOCAL,'alchem.lock':'something else\n'},'alchem.lock:1: unrecognized line'),
@@ -57,7 +57,10 @@ def verify(compiler):
         built=subprocess.run([str(compiler)],input=(ROOT/'tools/alchem-bundle.alc').read_bytes(),capture_output=True,env={'PATH':''},timeout=120)
         assert (built.returncode,built.stderr)==(0,b''),('bundler build',built.returncode,built.stderr)
         tool=base/'alchem-bundle';tool.unlink(missing_ok=True);tool.write_bytes(built.stdout);tool.chmod(0o700)
-        env={'PATH':'','GOMODCACHE':str(cache)};previous=os.environ.get('GOMODCACHE');os.environ['GOMODCACHE']=str(cache)
+        mine=base/'alchem-cache'
+        env={'PATH':'','GOMODCACHE':str(cache),'ALCHEM_CACHE':str(mine)}
+        previous={name:os.environ.get(name) for name in env if name!='PATH'}
+        os.environ.update({name:env[name] for name in previous})
         try:
             def both(directory,arguments):
                 """The native bundler's result, which the Python bundler must equal."""
@@ -99,10 +102,18 @@ def verify(compiler):
             for index,(files,message) in enumerate(ERRORS):
                 done=both(write(base/f'bad{index}',files).parent,['app.alc'])
                 assert done.returncode==1 and message.encode() in done.stderr,(message,done.stderr)
+            # A package in alchem's own cache is read before the Go module cache's.
+            kept=mine/'packages'/(bundler.escaped('example.com/Acme/mathkit')+'@v1.2.0')
+            write(kept/'files',PACKAGES[('example.com/Acme/mathkit','v1.2.0','h1:yU/1gISiONnIaSrOPZLtNbOossb9MkwgDU7b9YnT+3M=')])
+            (kept/'h1').write_text('h1:FromAlchemCache=\n')
+            (project/'alchem.lock').unlink(missing_ok=True)
+            done=both(project,['app.alc'])
+            assert f'{kept}/files/lib/math.alc'.encode() in done.stdout and (project/'alchem.lock').read_text()==HEADER+'package example.com/Acme/mathkit v1.2.0 h1:FromAlchemCache=\n',done.stdout[:300]
         finally:
-            if previous is None:del os.environ['GOMODCACHE']
-            else:os.environ['GOMODCACHE']=previous
-    print(f'PASS packages: a program importing a package from the module cache, its lock file, --locked, a program run from a package, {len(ERRORS)} errors; both bundlers agree')
+            for name,value in previous.items():
+                if value is None:os.environ.pop(name,None)
+                else:os.environ[name]=value
+    print(f'PASS packages: a program importing a package from the module cache and from alchem\'s cache, its lock file, --locked, a program run from a package, {len(ERRORS)} errors; both bundlers agree')
 
 
 if __name__=='__main__':verify(Path(sys.argv[1]).resolve())

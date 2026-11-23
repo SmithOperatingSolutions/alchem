@@ -1,6 +1,7 @@
 defmodule AlchemGuide do
   import "alchem-guide-data.alc"
   import "alchem-sources.alc"
+  import "alchem-fetch.alc"
   # The commands of alchem that print documentation: version, help, syntax,
   # doc, docs, agent-guide and agent-install, as the pinned command line
   # prints them, from the tables of AlchemGuideData
@@ -11,8 +12,7 @@ defmodule AlchemGuide do
   # read (commands, topics, modules, functions, targets).
   #
   # Not as the pinned command: version says nothing of a Go toolchain, as
-  # no build uses one; a file of a package named as an import names it is
-  # read from the cache and not fetched.
+  # no build uses one.
 
   # A value as JSON is written: the pinned command writes two spaces a
   # level, a missing list as null, and <, > and & as \u00XX.
@@ -347,6 +347,18 @@ defmodule AlchemGuide do
   end
 
   def file_doc(path: string, as_json: boolean): result[string, string] do
+    case AlchemSources.remote(path) do
+      some({key, inside}) ->
+        [package, version] = String.split(key, "@")
+        case AlchemFetch.package(package, version) do
+          ok({root, _}) -> local_doc(root <> "/" <> inside, as_json)
+          error(why) -> error("fetch " <> key <> ": " <> why)
+        end
+      none -> local_doc(path, as_json)
+    end
+  end
+
+  def local_doc(path: string, as_json: boolean): result[string, string] do
     case source(path) do
       error(problem) -> error(problem)
       ok(m) -> if as_json do ok(encode(source_data(m))) else ok(source_text(m)) end
