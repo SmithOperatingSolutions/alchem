@@ -78,7 +78,10 @@ previous publication.
 ## Other research tools
 
 The original Rust driver/prebuilt pinned frontend remain for IR/source oracle
-work, with some broader source features such as literal IO.puts:
+work, with some broader source features such as literal IO.puts. `mise run
+build` no longer makes them (it starts from the pinned release and needs
+neither Go nor Rust); `cargo build --release` in `implementations/rust` and
+`go build` in `adapters/alchem` do:
 
 ```sh
 build/native/alchem-native --source examples/invoice.alc --output /tmp/invoice

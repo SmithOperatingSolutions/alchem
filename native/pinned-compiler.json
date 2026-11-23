@@ -1,0 +1,10 @@
+{
+  "release": "native-compiler-1",
+  "repository": "SmithOperatingSolutions/alchem",
+  "sha256": {
+    "alchem-compiler-linux-x86_64.tar": "89284a5d42c0ada4e8eba879a2f6ab10f8a547003584a7ff3e8525d812e69a02",
+    "alchem-compiler-linux-arm64.tar": "e1c01dffc88a582842bf50c08a5e078aca4723fa728ef36fe205b180243cdbe1",
+    "alchem-compiler-macos-arm64.tar": "7870f9e895a9ca2a0066832d5e90d96fb8cfd07ffc2ccf07fe110dabad3a7722",
+    "alchem-compiler-windows-x86_64.zip": "f175ab5eaf3fa66743c9ab721c625255921bc779970febc750edf1e35bd9f1c8"
+  }
+}

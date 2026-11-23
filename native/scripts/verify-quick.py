@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Fast incremental check: one fixpoint compiler, stage gates run in parallel.
 
-Builds A0 from the seed, then A1 and A2 from the current source and requires
-A1==A2. Every self-hosted stage gate then runs once against A2 instead of once
+A0 is the released compiler pinned-compiler.json names (downloaded once and
+checked against its sum; scripts/pinned-compiler.py), which builds A1 from
+the current source, and A1 builds A2: A1==A2 is required. Neither Go nor
+Rust is needed for that. With --seed, A0 is instead the seed the Go frontend
+and the Rust backend make of the source, and the gates that take those two
+run as well. Every self-hosted stage gate then runs once against A2 instead of once
 per A1/A2/A3. This is an iteration aid, not a substitute for the full suite:
 it skips the second seed backend, Go/Rust backend comparison, legacy component
 gates, publication preservation and core tools. Run `mise run verify` before
@@ -118,20 +122,36 @@ def step(label,command,**options):
     return result
 
 
-def build():
+def load(name):
+    spec=importlib.util.spec_from_file_location(name.replace('-','_'),ROOT/'scripts'/(name+'.py'))
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    return module
+
+
+def build(from_source=False):
+    """A0, then A1 and A2 from the current source. A0 is the pinned release
+    of the compiler (pinned-compiler.json); with from_source it is the seed
+    the Go frontend and the Rust backend make of the source, as it was
+    before there was a release to start from."""
     WORK.mkdir(parents=True,exist_ok=True)
-    env=dict(os.environ,GOTOOLCHAIN='local',GOPROXY='off',GOSUMDB='off',GOWORK='off')
-    frontend=WORK/'alchem-source-probe'
-    target=Path(env.setdefault('CARGO_TARGET_DIR',str(ROOT/'implementations/rust/target')))
-    backend=target/'debug/alchem-native-rust'
-    step('frontend (go build)',['go','build','-mod=readonly','-trimpath','-o',str(frontend),'.'],cwd=ROOT/'adapters/alchem',env=env)
-    step('backend (cargo build)',['cargo','build','--locked','--offline','--quiet','--manifest-path',str(ROOT/'implementations/rust/Cargo.toml'),'--bin','alchem-native-rust'],env=env)
-    spec=importlib.util.spec_from_file_location('alchem_bootstrap',ROOT/'scripts/bootstrap-alchem-compiler.py')
-    bootstrap=importlib.util.module_from_spec(spec);spec.loader.exec_module(bootstrap)
-    source=bootstrap.source_text('functions').encode()
+    source=load('bootstrap-alchem-compiler').source_text('functions').encode()
     (WORK/'compiler-source.alc').write_bytes(source)
     seed=WORK/'A0'
-    step('A0 (seed)',[sys.executable,str(ROOT/'scripts/bootstrap-alchem-compiler.py'),'--language','functions','--frontend',str(frontend),'--backend',str(backend),'--output',str(seed)])
+    frontend=backend=None
+    if from_source:
+        env=dict(os.environ,GOTOOLCHAIN='local',GOPROXY='off',GOSUMDB='off',GOWORK='off')
+        frontend=WORK/'alchem-source-probe'
+        target=Path(env.setdefault('CARGO_TARGET_DIR',str(ROOT/'implementations/rust/target')))
+        backend=target/'debug/alchem-native-rust'
+        step('frontend (go build)',['go','build','-mod=readonly','-trimpath','-o',str(frontend),'.'],cwd=ROOT/'adapters/alchem',env=env)
+        step('backend (cargo build)',['cargo','build','--locked','--offline','--quiet','--manifest-path',str(ROOT/'implementations/rust/Cargo.toml'),'--bin','alchem-native-rust'],env=env)
+        step('A0 (seed)',[sys.executable,str(ROOT/'scripts/bootstrap-alchem-compiler.py'),'--language','functions','--frontend',str(frontend),'--backend',str(backend),'--output',str(seed)])
+    else:
+        started=time.monotonic()
+        try:pinned=load('pinned-compiler').fetch('linux-x86_64')
+        except (OSError,ValueError,RuntimeError,KeyError) as error:sys.exit(f'FAIL A0 (pinned release): {error}')
+        seed.unlink(missing_ok=True);seed.write_bytes(pinned.read_bytes());seed.chmod(0o700)
+        print(f'{time.monotonic()-started:6.2f}s A0 (pinned release, {pinned.parent.name})',flush=True)
     previous=seed
     for stage in (1,2):
         image=WORK/f'A{stage}'
@@ -166,6 +186,7 @@ def main():
     parser.add_argument('--list',action='store_true',help='list gate names and exit')
     parser.add_argument('--jobs',type=int,default=os.cpu_count(),help='parallel gates (default: CPU count)')
     parser.add_argument('--build-only',action='store_true',help='stop after the A1==A2 fixpoint')
+    parser.add_argument('--seed',action='store_true',help='start from the seed the Go frontend and the Rust backend make, not from the pinned release; the gates that take the two run only so')
     args=parser.parse_args()
     if args.list:print('\n'.join(GATES));return
     # The seed and the compiler are x86-64 executables. An ARM64 host runs
@@ -174,9 +195,14 @@ def main():
     x86=os.uname().machine=='x86_64' or Path('/proc/sys/fs/binfmt_misc/qemu-x86_64').exists()
     if sys.platform!='linux' or not x86:sys.exit('Requires Linux x86-64, or ARM64 with qemu-user-static; use mise run linux:quick')
     selected=[name for name in GATES if not args.gates or any(f in name for f in args.gates)]
-    if not selected:sys.exit(f'No gate matches {args.gates}; see --list')
+    # The gates that compare with the seed's frontend and backend need them.
+    seeded=[name for name in selected if 'frontend' in GATES[name] or 'backend' in GATES[name]]
+    if not args.seed:
+        selected=[name for name in selected if name not in seeded]
+        if seeded:print(f'not run without --seed (they take the Go frontend and the Rust backend): {", ".join(seeded)}',flush=True)
+    if not selected and not args.build_only:sys.exit(f'No gate matches {args.gates}; see --list')
     started=time.monotonic()
-    frontend,backend,compiler=build()
+    frontend,backend,compiler=build(args.seed)
     if args.build_only:return
     failed=[];skipped=[]
     with ThreadPoolExecutor(max_workers=max(1,args.jobs)) as pool:

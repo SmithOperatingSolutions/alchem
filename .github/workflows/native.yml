@@ -1,9 +1,15 @@
 name: Native compiler
-# The compiler written in Alchem (native/): it builds itself to a fixpoint
-# (A1 = A2) and every gate compares its programs with those of the Go
-# compiler this native/ is pinned to. On x86-64 the ARM64 programs run under
-# QEMU; the ARM64 job runs them on an ARM64 machine, and the x86-64 seed and
-# compiler stages under QEMU instead. A job of its own builds the compiler
+# The compiler written in Alchem (native/): the released compiler
+# native/pinned-compiler.json names builds it, it builds itself to a fixpoint
+# (A1 = A2), and every gate compares its programs with those of the Go
+# compiler this native/ is pinned to. A build needs neither Go nor Rust; Go
+# is installed as that reference. The nightly and requested runs also make
+# the first stage from the source with the Go frontend and the Rust backend
+# (the seed), run the gates that take those two, and require the compiler
+# made from the seed to be the one made from the pinned release, byte for
+# byte. On x86-64 the ARM64 programs run under QEMU; the ARM64 job runs
+# them on an ARM64 machine, and the x86-64 compiler stages under QEMU
+# instead. A job of its own builds the compiler
 # for macOS as a macOS program, which four macOS jobs check side by side
 # (scripts/verify-darwin.py --shard). The complete suite
 # (scripts/verify-local.sh --with-source) runs nightly and on request. The
@@ -87,11 +93,13 @@ jobs:
         with:
           working_directory: native
           cache: false
+          # Rust only where the seed is made: the nightly and requested runs.
+          install_args: ${{ github.event_name == 'pull_request' && 'go python' || '' }}
       - name: Tools
         # strace for the fault-injection gates; QEMU and an ARM64 assembler
         # unpacked into build/arm64-tools for the ARM64 gates. On ARM64,
         # qemu-user-static also registers x86-64 with binfmt_misc, so the
-        # x86-64 seed and compiler stages run as they are.
+        # x86-64 compiler stages run as they are.
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q strace
@@ -116,7 +124,9 @@ jobs:
           echo 'no systemd user manager' >&2
           exit 1
       - name: Dependencies
-        run: mise run fetch
+        run: |
+          mise run fetch
+          if [[ "$GITHUB_EVENT_NAME" != pull_request ]]; then mise run fetch:seed; fi
       - name: Go compiler reference
         # build/dev/alchem-upstream, the Go compiler native/ is pinned to:
         # the tls gate also compares with the programs it builds.
@@ -135,6 +145,17 @@ jobs:
         env:
           ALCHEM_VERIFY_MEMORY: 14G
         run: bash scripts/verify-local.sh --with-source
+      - name: The seed gives the compiler the pinned release gives
+        # The first stage can still be made from the source, without a
+        # released compiler, and it comes to the same compiler.
+        if: github.event_name != 'pull_request' && matrix.gates == ''
+        env:
+          ALCHEM_VERIFY_LIMITED: '1'
+        run: |
+          python3 scripts/verify-quick.py --build-only
+          cp build/dev/A2 build/dev/A2-pinned
+          python3 scripts/verify-quick.py --seed --build-only
+          cmp build/dev/A2 build/dev/A2-pinned
 
   windows-compiler:
     # spec/windows.md: the Windows compiler, the programs it is checked with
@@ -155,6 +176,7 @@ jobs:
         with:
           working_directory: native
           cache: false
+          install_args: go python
       - name: Dependencies
         run: mise run fetch
       - name: Build
@@ -202,6 +224,7 @@ jobs:
         with:
           working_directory: native
           cache: false
+          install_args: go python
       - name: Dependencies
         run: mise run fetch
       - name: Build
@@ -238,6 +261,7 @@ jobs:
         with:
           working_directory: native
           cache: false
+          install_args: go python
       - name: Dependencies
         run: mise run fetch
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
