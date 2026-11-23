@@ -1,0 +1,649 @@
+defmodule AlchemLsp do
+  import "alchem-lexer.alc"
+  import "alchem-json.alc"
+  import "alchem-parse.alc"
+  import "alchem-check.alc"
+  import "alchem-format.alc"
+  import "alchem-guide.alc"
+  import "alchem-typing.alc"
+  # alchem lsp: the language server of the pinned command (lsp/server.go of
+  # the pinned tree), speaking the Language Server Protocol over standard
+  # input and output. It answers what that one answers, with its replies
+  # byte for byte: initialize, shutdown and exit; a document opened,
+  # changed, saved and closed, each followed by its diagnostics; hover,
+  # definition, completion, formatting and the document's symbols.
+  #
+  # Not as the pinned server:
+  #
+  # - A document's diagnostics are what the front end finds in it and in
+  #   what it imports (AlchemCheck, with the open documents in place of
+  #   their files); the program is not compiled, so a program only the
+  #   compiler refuses has none.
+  # - The modules a document imports are offered for completion in the
+  #   order it imports them; the pinned server offers them in no order.
+
+  # ---- JSON read (the messages of the client) ----
+
+  def space?(c: integer): boolean do c == 32 or c == 9 or c == 10 or c == 13 end
+
+  def blank(s: string, i: integer): integer do
+    if space?(AlchemLexer.byte(s, i)) do blank(s, i + 1) else i end
+  end
+
+  def hex?(text: string): boolean do
+    byte_size(text) == 4 and Enum.all?(AlchemLexer.bytes_of(text), fn c -> (c >= 48 and c <= 57) or (c >= 65 and c <= 70) or (c >= 97 and c <= 102) end)
+  end
+
+  def hex2(n: integer): string do
+    digits = "0123456789ABCDEF"
+    binary_part(digits, div(n, 16), 1) <> binary_part(digits, rem(n, 16), 1)
+  end
+
+  # The UTF-8 of a code point.
+  def rune(c: integer): string do
+    hex = if c < 128 do hex2(c) else
+      if c < 2048 do hex2(192 + div(c, 64)) <> hex2(128 + rem(c, 64)) else
+        if c < 65536 do hex2(224 + div(c, 4096)) <> hex2(128 + rem(div(c, 64), 64)) <> hex2(128 + rem(c, 64)) else
+          hex2(240 + div(c, 262144)) <> hex2(128 + rem(div(c, 4096), 64)) <> hex2(128 + rem(div(c, 64), 64)) <> hex2(128 + rem(c, 64))
+        end
+      end
+    end
+    case Base.decode16(hex) do
+      some(text) -> text
+      none -> "\u{FFFD}"
+    end
+  end
+
+  # The text of a JSON string whose opening quote is before i: its parts,
+  # last first, and the index after its closing quote; or none.
+  def string_parts(s: string, i: integer, start: integer, done: list[string]): option[tuple[list[string], integer]] do
+    c = AlchemLexer.byte(s, i)
+    if c < 0 do none else
+      if c == 34 do some({[AlchemLexer.part(s, start, i) | done], i + 1}) else
+        if c != 92 do string_parts(s, i + 1, start, done) else
+          before = [AlchemLexer.part(s, start, i) | done]
+          e = AlchemLexer.byte(s, i + 1)
+          plain = case e do
+            34 -> "\""
+            92 -> "\\"
+            47 -> "/"
+            98 -> "\b"
+            102 -> "\f"
+            110 -> "\n"
+            114 -> "\r"
+            116 -> "\t"
+            _ -> ""
+          end
+          if plain != "" do string_parts(s, i + 2, i + 2, [plain | before]) else
+            first = AlchemLexer.part(s, i + 2, i + 6)
+            if e != 117 or not hex?(first) do none else
+              high = AlchemLexer.hex_value(first)
+              second = AlchemLexer.part(s, i + 8, i + 12)
+              paired = high >= 55296 and high < 56320 and AlchemLexer.part(s, i + 6, i + 8) == "\\u" and hex?(second) and AlchemLexer.hex_value(second) >= 56320 and AlchemLexer.hex_value(second) < 57344
+              if paired do string_parts(s, i + 12, i + 12, [rune(65536 + (high - 55296) * 1024 + AlchemLexer.hex_value(second) - 56320) | before]) else
+                # Half a pair stands for no character.
+                string_parts(s, i + 6, i + 6, [(if high >= 55296 and high < 57344 do "\u{FFFD}" else rune(high) end) | before])
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  def number_end(s: string, i: integer): integer do
+    c = AlchemLexer.byte(s, i)
+    if (c >= 48 and c <= 57) or c == 45 or c == 43 or c == 46 or c == 101 or c == 69 do number_end(s, i + 1) else i end
+  end
+
+  def items(s: string, i: integer, done: list[AlchemJson.J]): option[tuple[AlchemJson.J, integer]] do
+    case value(s, i) do
+      none -> none
+      some({item, next}) ->
+        after = blank(s, next)
+        c = AlchemLexer.byte(s, after)
+        if c == 44 do items(s, after + 1, [item | done]) else
+          if c == 93 do some({AlchemJson.J.list(Enum.reverse([item | done])), after + 1}) else none end
+        end
+    end
+  end
+
+  def fields(s: string, i: integer, done: list[tuple[string, AlchemJson.J]]): option[tuple[AlchemJson.J, integer]] do
+    at = blank(s, i)
+    if AlchemLexer.byte(s, at) != 34 do none else
+      case string_parts(s, at + 1, at + 1, []) do
+        none -> none
+        some({parts, next}) ->
+          colon = blank(s, next)
+          if AlchemLexer.byte(s, colon) != 58 do none else
+            case value(s, colon + 1) do
+              none -> none
+              some({item, more}) ->
+                after = blank(s, more)
+                c = AlchemLexer.byte(s, after)
+                name = Enum.join(Enum.reverse(parts), "")
+                # An id goes back as it came: a string or a number is kept
+                # as its bytes, which a number of AlchemJson is written as.
+                first = AlchemLexer.byte(s, blank(s, colon + 1))
+                kept = if name == "id" and first != 123 and first != 91 and first != 110 do AlchemJson.J.number(AlchemLexer.part(s, blank(s, colon + 1), more)) else item end
+                field = {name, kept}
+                if c == 44 do fields(s, after + 1, [field | done]) else
+                  if c == 125 do some({AlchemJson.J.object(last_of_each([field | done])), after + 1}) else none end
+                end
+            end
+          end
+      end
+    end
+  end
+
+  # The fields of an object, given last first, in their order: of a name
+  # written twice the last stands, as Go reads it.
+  def last_of_each(fields: list[tuple[string, AlchemJson.J]]): list[tuple[string, AlchemJson.J]] do
+    nothing: list[string] = []
+    none_kept: list[tuple[string, AlchemJson.J]] = []
+    {_, kept} = Enum.reduce(fields, {nothing, none_kept}, fn {name, item}, {seen, out} ->
+      if name in seen do {seen, out} else {[name | seen], [{name, item} | out]} end
+    end)
+    kept
+  end
+
+  # The JSON value at i and the index after it, or none.
+  def value(s: string, i: integer): option[tuple[AlchemJson.J, integer]] do
+    at = blank(s, i)
+    c = AlchemLexer.byte(s, at)
+    nothing: list[AlchemJson.J] = []
+    no_fields: list[tuple[string, AlchemJson.J]] = []
+    if c == 123 do
+      if AlchemLexer.byte(s, blank(s, at + 1)) == 125 do some({AlchemJson.J.object(no_fields), blank(s, at + 1) + 1}) else fields(s, at + 1, no_fields) end
+    else
+      if c == 91 do
+        if AlchemLexer.byte(s, blank(s, at + 1)) == 93 do some({AlchemJson.J.list(nothing), blank(s, at + 1) + 1}) else items(s, at + 1, nothing) end
+      else
+        if c == 34 do
+          case string_parts(s, at + 1, at + 1, []) do
+            none -> none
+            some({parts, next}) -> some({AlchemJson.J.text(Enum.join(Enum.reverse(parts), "")), next})
+          end
+        else
+          if AlchemLexer.starts?(s, at, "true") do some({AlchemJson.J.truth(true), at + 4}) else
+            if AlchemLexer.starts?(s, at, "false") do some({AlchemJson.J.truth(false), at + 5}) else
+              if AlchemLexer.starts?(s, at, "null") do some({AlchemJson.J.null, at + 4}) else
+                stop = number_end(s, at)
+                if stop == at do none else some({AlchemJson.J.number(AlchemLexer.part(s, at, stop)), stop}) end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  # A whole message, or none for what is no JSON.
+  def decoded(body: string): option[AlchemJson.J] do
+    case value(body, 0) do
+      none -> none
+      some({message, next}) -> if blank(body, next) == byte_size(body) do some(message) else none end
+    end
+  end
+
+  # ---- Messages out ----
+
+  def g(o: AlchemJson.J, name: string): AlchemJson.J do AlchemJson.get(o, name) end
+  def tx(o: AlchemJson.J, name: string): string do AlchemJson.text_of(AlchemJson.get(o, name)) end
+  def its(o: AlchemJson.J, name: string): list[AlchemJson.J] do AlchemJson.items_of(AlchemJson.get(o, name)) end
+  def num(o: AlchemJson.J, name: string): integer do AlchemJson.int_of(AlchemJson.get(o, name)) end
+  def truth(o: AlchemJson.J, name: string): boolean do AlchemJson.truth_of(AlchemJson.get(o, name)) end
+  def object(fields: list[tuple[string, AlchemJson.J]]): AlchemJson.J do AlchemJson.J.object(fields) end
+  def text(s: string): AlchemJson.J do AlchemJson.J.text(s) end
+  def none_json(): list[AlchemJson.J] do
+    nothing: list[AlchemJson.J] = []
+    nothing
+  end
+
+  def send(message: AlchemJson.J): integer do
+    data = AlchemJson.encode(message)
+    IO.write("Content-Length: " <> Integer.to_string(byte_size(data)) <> "\r\n\r\n" <> data)
+    0
+  end
+
+  # A reply: with nothing to say the pinned server writes a map, whose
+  # keys are in order, and otherwise its message, whose fields are in
+  # theirs.
+  def reply(id: AlchemJson.J, result: AlchemJson.J): integer do
+    if AlchemJson.null?(result) do send(object([{"id", id}, {"jsonrpc", text("2.0")}, {"result", AlchemJson.J.null}])) else
+      if AlchemJson.null?(id) do send(object([{"jsonrpc", text("2.0")}, {"result", result}])) else send(object([{"jsonrpc", text("2.0")}, {"id", id}, {"result", result}])) end
+    end
+  end
+
+  def notify(method: string, params: AlchemJson.J): integer do
+    send(object([{"jsonrpc", text("2.0")}, {"method", text(method)}, {"params", params}]))
+  end
+
+  def position(line: integer, character: integer): AlchemJson.J do
+    object([{"line", AlchemJson.int(line)}, {"character", AlchemJson.int(character)}])
+  end
+
+  def span(start: AlchemJson.J, stop: AlchemJson.J): AlchemJson.J do object([{"start", start}, {"end", stop}]) end
+
+  # ---- Paths and addresses ----
+
+  def windows?(): boolean do AlchemGuide.platform() == "windows/amd64" end
+
+  # pathOf: the path of a file address; another address is its own path.
+  def path_of(uri: string): string do
+    if not String.starts_with?(uri, "file://") do uri else
+      rest = binary_part(uri, 7, byte_size(uri) - 7)
+      # After the host, which a file address leaves empty.
+      path = case String.split(rest, "/", [parts: 2]) do
+        [_, after] -> "/" <> after
+        _ -> ""
+      end
+      plain = hd(String.split(hd(String.split(path, "#", [parts: 2])), "?", [parts: 2]))
+      decoded = case URI.decode(plain) do
+        ok(p) -> p
+        error(_) -> plain
+      end
+      if windows?() do String.replace(String.trim_leading(decoded, "/"), "/", "\\") else decoded end
+    end
+  end
+
+  # uriOf: the file address of a path, written as Go's url.URL writes one.
+  def uri_of(path: string): string do
+    slashed = if windows?() do String.replace(path, "\\", "/") else path end
+    rooted = if String.starts_with?(slashed, "/") do slashed else "/" <> slashed end
+    kept = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~$&+,/:;=@"
+    "file://" <> Enum.join(Enum.map(Enum.with_index(AlchemLexer.bytes_of(rooted)), fn {c, k} ->
+      if c < 128 and String.contains?(kept, binary_part(rooted, k, 1)) do binary_part(rooted, k, 1) else "%" <> hex2(c) end
+    end), "")
+  end
+
+  def directory_of(path: string): string do
+    case Enum.drop(String.split(String.replace(path, "\\", "/"), "/"), -1) do
+      [] -> "."
+      parts -> if Enum.join(parts, "/") == "" do "/" else Enum.join(parts, "/") end
+    end
+  end
+
+  def base_of(path: string): string do List.last(String.split(String.replace(path, "\\", "/"), "/"), "") end
+
+  # ---- The text of a document ----
+
+  def line_of(document: string, n: integer): string do
+    lines = String.split(document, "\n")
+    if n < 0 or n >= length(lines) do "" else String.trim_trailing(Enum.at(lines, n, ""), "\r") end
+  end
+
+  # A letter, a digit, _, ? or !.
+  def name_rune?(r: string): boolean do r =~ ~r/^[\p{L}\p{Nd}_?!]$/ end
+
+  # wordLength: the length of the name that starts at a column, at least 1.
+  def word_length(line: string, column: integer): integer do
+    rest = Enum.drop(String.codepoints(line), column)
+    max(length(Enum.take_while(rest, fn r -> name_rune?(r) or r == "." end)), 1)
+  end
+
+  # nameAt: the name under a position, qualified where it is written so,
+  # and the part of it before the position.
+  def name_at(document: string, line: integer, character: integer): tuple[string, string] do
+    runes = String.codepoints(line_of(document, line))
+    column = min(character, length(runes))
+    before = Enum.reverse(Enum.take_while(Enum.reverse(Enum.take(runes, column)), fn r -> name_rune?(r) or r == "." end))
+    after = Enum.take_while(Enum.drop(runes, column), &name_rune?/1)
+    {Enum.join(before ++ after, ""), Enum.join(before, "")}
+  end
+
+  # ---- A document and what it imports ----
+
+  struct Project do
+    path: string
+    program: AlchemJson.J
+    # The modules it imports, as it imports them: name, file, program.
+    imported: list[tuple[string, string, AlchemJson.J]]
+  end
+
+  def source_of(documents: map[string, string], file: string): option[string] do
+    case Map.get(documents, file) do
+      some(held) -> some(held)
+      none ->
+        case File.read_binary(file) do
+          ok(read) -> some(read)
+          error(_) -> none
+        end
+    end
+  end
+
+  # The document as written and the modules it imports; documents are the
+  # open ones by their paths.
+  def load(documents: map[string, string], uri: string): option[Project] do
+    path = path_of(uri)
+    case AlchemParse.parse(Map.get(documents, path, "")) do
+      error(_) -> none
+      ok(program) ->
+        nothing: list[tuple[string, string, AlchemJson.J]] = []
+        imported = Enum.reduce(Enum.map(its(program, "Imports"), fn t -> AlchemJson.text_of(t) end), nothing, fn target, sofar ->
+          if String.contains?(target, "@") do sofar else
+            file = AlchemCheck.clean(directory_of(path) <> "/" <> target)
+            case source_of(documents, file) do
+              none -> sofar
+              some(read) ->
+                case AlchemParse.parse(read) do
+                  error(_) -> sofar
+                  ok(other) -> Enum.filter(sofar, fn {name, _, _} -> name != tx(other, "Module") end) ++ [{tx(other, "Module"), file, other}]
+                end
+            end
+          end
+        end)
+        some(%Project{path: path, program: program, imported: imported})
+    end
+  end
+
+  def declared?(f: AlchemJson.J): boolean do tx(f, "Test") == "" and not truth(f, "Setup") end
+
+  # find: the declaration of a function by its name as written, and its file.
+  def find(p: Project, name: string): option[tuple[AlchemJson.J, string]] do
+    parts = String.split(name, ".")
+    module = Enum.join(Enum.drop(parts, -1), ".")
+    local = List.last(parts, "")
+    {program, path} = if module == "" or module == tx(p.program, "Module") do {p.program, p.path} else
+      case Enum.find(p.imported, fn {n, _, _} -> n == module end) do
+        some({_, file, other}) -> {other, file}
+        none -> {AlchemJson.J.null, ""}
+      end
+    end
+    case Enum.find(its(program, "Functions"), fn f -> tx(f, "Name") == local and declared?(f) end) do
+      some(f) -> some({f, path})
+      none -> none
+    end
+  end
+
+  def signature(f: AlchemJson.J): string do
+    params = Enum.map(its(f, "Params"), fn param -> tx(param, "Name") <> (if tx(param, "Type") != "" do ": " <> tx(param, "Type") else "" end) end)
+    (if truth(f, "Private") do "defp " else "def " end) <> tx(f, "Name") <> "(" <> Enum.join(params, ", ") <> ")" <>
+      (if tx(f, "Type") != "" and tx(f, "Type") != "void" do ": " <> tx(f, "Type") else "" end)
+  end
+
+  # ---- The requests ----
+
+  def capabilities(): AlchemJson.J do
+    object([
+      {"capabilities", object([
+        {"completionProvider", object([{"triggerCharacters", AlchemJson.strings(["."])}])},
+        {"definitionProvider", AlchemJson.bool(true)},
+        {"documentFormattingProvider", AlchemJson.bool(true)},
+        {"documentSymbolProvider", AlchemJson.bool(true)},
+        {"hoverProvider", AlchemJson.bool(true)},
+        {"textDocumentSync", object([{"change", AlchemJson.int(1)}, {"openClose", AlchemJson.bool(true)}, {"save", object([{"includeText", AlchemJson.bool(true)}])}])}])},
+      {"serverInfo", object([{"name", text("alchem")}])}])
+  end
+
+  # The problem check finds in a document as its file, line, column and
+  # message; the file is "" where the problem names none.
+  def problem_of(documents: map[string, string], path: string): option[tuple[string, integer, integer, string]] do
+    case AlchemCheck.load_over(path, File.cwd!(), documents) do
+      none -> none
+      some(found) ->
+        if found.file != "" or found.message != "" do some({found.file, found.line, found.column, found.message}) else
+          case Regex.run(~r/^(.*):([0-9]+):([0-9]+): (.*)$/, found.text) do
+            some([_, file, line, column, message]) -> some({file, String.to_integer(line), String.to_integer(column), message})
+            _ -> some({"", 1, 1, found.text})
+          end
+        end
+    end
+  end
+
+  # update: a document's text is kept and its diagnostics published.
+  def update(documents: map[string, string], uri: string, document: string): map[string, string] do
+    path = path_of(uri)
+    held = Map.put(documents, path, document)
+    diagnostics = case problem_of(held, path) do
+      none -> none_json()
+      some({file, line, column, message}) ->
+        here = file == "" or Path.expand(file) == Path.expand(path)
+        {at_line, at_column} = if here do {line, column} else {1, 1} end
+        said = if here do message else base_of(file) <> ":" <> Integer.to_string(line) <> ":" <> Integer.to_string(column) <> ": " <> message end
+        first = max(at_line - 1, 0)
+        from = max(at_column - 1, 0)
+        [object([{"message", text(said)}, {"range", span(position(first, from), position(first, from + word_length(line_of(document, first), from)))}, {"severity", AlchemJson.int(1)}, {"source", text("alchem")}])]
+    end
+    notify("textDocument/publishDiagnostics", object([{"diagnostics", AlchemJson.J.list(diagnostics)}, {"uri", text(uri)}]))
+    held
+  end
+
+  def hover(documents: map[string, string], uri: string, line: integer, character: integer): AlchemJson.J do
+    {name, _} = name_at(Map.get(documents, path_of(uri), ""), line, character)
+    if name == "" do AlchemJson.J.null else
+      own = case load(documents, uri) do
+        none -> ""
+        some(p) ->
+          case find(p, name) do
+            some({f, _}) -> "```elixir\n" <> signature(f) <> "\n```" <> (if tx(f, "Doc") != "" do "\n\n" <> String.trim(tx(f, "Doc")) else "" end)
+            none -> ""
+          end
+      end
+      markdown = if own != "" do own else
+        case AlchemGuide.doc(name, false, false) do
+          ok(said) -> if String.trim(said) != "" do "```\n" <> String.trim(said) <> "\n```" else "" end
+          error(_) -> ""
+        end
+      end
+      if markdown == "" do AlchemJson.J.null else object([{"contents", object([{"kind", text("markdown")}, {"value", text(markdown)}])}]) end
+    end
+  end
+
+  def definition(documents: map[string, string], uri: string, line: integer, character: integer): AlchemJson.J do
+    {name, _} = name_at(Map.get(documents, path_of(uri), ""), line, character)
+    case load(documents, uri) do
+      none -> AlchemJson.J.null
+      some(p) ->
+        if name == "" do AlchemJson.J.null else
+          case find(p, name) do
+            none -> AlchemJson.J.null
+            some({f, path}) ->
+              start = position(max(num(f, "Line") - 1, 0), max(num(f, "Column") - 1, 0))
+              object([{"uri", text(uri_of(path))}, {"range", span(start, start)}])
+          end
+        end
+    end
+  end
+
+  def item(label: string, kind: integer, detail: string): tuple[string, AlchemJson.J] do
+    {label, object([{"detail", text(detail)}, {"kind", AlchemJson.int(kind)}, {"label", text(label)}])}
+  end
+
+  def no_items(): list[tuple[string, AlchemJson.J]] do
+    nothing: list[tuple[string, AlchemJson.J]] = []
+    nothing
+  end
+
+  # The first of each label, in the order offered.
+  def offered(items: list[tuple[string, AlchemJson.J]]): AlchemJson.J do
+    nothing: list[string] = []
+    {_, kept} = Enum.reduce(items, {nothing, none_json()}, fn {label, made}, {seen, out} ->
+      if label in seen do {seen, out} else {[label | seen], [made | out]} end
+    end)
+    AlchemJson.J.list(Enum.reverse(kept))
+  end
+
+  def keywords(): list[string] do
+    ["def", "defp", "defmodule", "defexception", "struct", "type", "case", "cond", "if", "else", "unless", "with", "for", "try", "rescue", "catch", "after", "fn", "end", "do", "import", "raise", "throw", "test", "describe", "assert", "refute"]
+  end
+
+  # complete: the functions of a module after "Module.", and otherwise the
+  # document's functions, the modules and the keywords.
+  def complete(documents: map[string, string], uri: string, line: integer, character: integer): AlchemJson.J do
+    {_, before} = name_at(Map.get(documents, path_of(uri), ""), line, character)
+    loaded = load(documents, uri)
+    parts = String.split(before, ".")
+    if length(parts) > 1 do
+      module = Enum.join(Enum.drop(parts, -1), ".")
+      prefix = module <> "."
+      within = fn(name: string): boolean do String.starts_with?(name, prefix) and not String.contains?(binary_part(name, byte_size(prefix), byte_size(name) - byte_size(prefix)), ".") end
+      documented = AlchemGuide.functions()
+      typed = Enum.map(Map.keys(AlchemTyping.tables().libs), fn key -> Enum.join(Enum.drop(String.split(key, "/"), -1), "/") end)
+      names = Enum.sort(Enum.filter(typed ++ Enum.map(documented, fn f -> AlchemGuide.col(f, 0) end), within))
+      library = Enum.map(names, fn name ->
+        summary = case Enum.find(documented, fn f -> AlchemGuide.col(f, 0) == name end) do
+          some(f) -> AlchemGuide.col(f, 4)
+          none -> ""
+        end
+        item(binary_part(name, byte_size(prefix), byte_size(name) - byte_size(prefix)), 3, summary)
+      end)
+      own = case loaded do
+        none -> no_items()
+        some(p) ->
+          case Enum.find(p.imported, fn {n, _, _} -> n == module end) do
+            some({_, _, other}) -> Enum.map(Enum.filter(its(other, "Functions"), fn f -> not truth(f, "Private") and declared?(f) end), fn f -> item(tx(f, "Name"), 3, signature(f)) end)
+            none -> no_items()
+          end
+      end
+      offered(library ++ own)
+    else
+      own = case loaded do
+        none -> no_items()
+        some(p) ->
+          Enum.map(Enum.filter(its(p.program, "Functions"), fn f -> declared?(f) and tx(f, "Name") != "main" end), fn f -> item(tx(f, "Name"), 3, signature(f)) end) ++
+            Enum.map(p.imported, fn {name, _, _} -> item(name, 9, "imported module") end)
+      end
+      offered(own ++ Enum.map(AlchemGuide.modules(), fn m -> item(AlchemGuide.col(m, 0), 9, AlchemGuide.col(m, 2)) end) ++ Enum.map(keywords(), fn k -> item(k, 14, "") end))
+    end
+  end
+
+  def format(documents: map[string, string], uri: string): AlchemJson.J do
+    document = Map.get(documents, path_of(uri), "")
+    case AlchemFormat.format(document) do
+      error(_) -> AlchemJson.J.list(none_json())
+      ok(formatted) ->
+        if formatted == document do AlchemJson.J.list(none_json()) else
+          AlchemJson.J.list([object([{"newText", text(formatted)}, {"range", span(position(0, 0), position(length(String.split(document, "\n")), 0))}])])
+        end
+    end
+  end
+
+  def symbol(name: string, kind: integer, line: integer, column: integer, detail: string): AlchemJson.J do
+    at = position(max(line - 1, 0), max(column - 1, 0))
+    object([{"detail", text(detail)}, {"kind", AlchemJson.int(kind)}, {"name", text(name)}, {"range", span(at, at)}, {"selectionRange", span(at, at)}])
+  end
+
+  def symbols(documents: map[string, string], uri: string): AlchemJson.J do
+    case load(documents, uri) do
+      none -> AlchemJson.J.list(none_json())
+      some(p) ->
+        types = Enum.map(its(p.program, "Types"), fn d -> symbol(tx(d, "Local"), if tx(d, "Kind") == "sum" do 10 else 23 end, num(d, "Line"), num(d, "Column"), tx(d, "Kind")) end)
+        functions = Enum.flat_map(its(p.program, "Functions"), fn f ->
+          if tx(f, "Test") != "" do [symbol("test " <> AlchemLexer.go_quote(tx(f, "Test")), 12, num(f, "Line"), num(f, "Column"), tx(f, "Group"))] else
+            if truth(f, "Setup") do [] else [symbol(tx(f, "Name"), 12, num(f, "Line"), num(f, "Column"), signature(f))] end
+          end
+        end)
+        AlchemJson.J.list(types ++ functions)
+    end
+  end
+
+  # handle: one message answered; the documents after it.
+  def handle(documents: map[string, string], message: AlchemJson.J): map[string, string] do
+    id = g(message, "id")
+    method = tx(message, "method")
+    params = g(message, "params")
+    uri = tx(g(params, "textDocument"), "uri")
+    line = num(g(params, "position"), "line")
+    character = num(g(params, "position"), "character")
+    case method do
+      "initialize" ->
+        reply(id, capabilities())
+        documents
+      "shutdown" ->
+        reply(id, AlchemJson.J.null)
+        documents
+      "textDocument/didOpen" -> update(documents, uri, tx(g(params, "textDocument"), "text"))
+      "textDocument/didChange" ->
+        changes = its(params, "contentChanges")
+        if changes == [] do documents else update(documents, uri, tx(List.last(changes, AlchemJson.J.null), "text")) end
+      "textDocument/didSave" ->
+        saved = tx(g(params, "textDocument"), "text")
+        update(documents, uri, if saved != "" do saved else Map.get(documents, path_of(uri), "") end)
+      "textDocument/didClose" ->
+        notify("textDocument/publishDiagnostics", object([{"diagnostics", AlchemJson.J.list(none_json())}, {"uri", text(uri)}]))
+        Map.delete(documents, path_of(uri))
+      "textDocument/hover" ->
+        reply(id, hover(documents, uri, line, character))
+        documents
+      "textDocument/definition" ->
+        reply(id, definition(documents, uri, line, character))
+        documents
+      "textDocument/completion" ->
+        reply(id, complete(documents, uri, line, character))
+        documents
+      "textDocument/formatting" ->
+        reply(id, format(documents, uri))
+        documents
+      "textDocument/documentSymbol" ->
+        reply(id, symbols(documents, uri))
+        documents
+      _ ->
+        if not AlchemJson.null?(id) do
+          send(object([{"jsonrpc", text("2.0")}, {"id", id}, {"error", object([{"code", AlchemJson.int(-32601)}, {"message", text("method not found: " <> method)}])}]))
+        end
+        documents
+    end
+  end
+
+  # ---- Messages in ----
+
+  # The length a message's headers give, -1 where they give none, or -2
+  # at the end of the input.
+  def headers(size: integer): integer do
+    case IO.read(:line) do
+      none -> -2
+      some(read) ->
+        line = String.trim_trailing(String.trim_trailing(read, "\n"), "\r")
+        if not String.ends_with?(read, "\n") do -2 else
+          if line == "" do size else
+            case String.split(line, ":", [parts: 2]) do
+              [name, given] ->
+                if String.downcase(name) != "content-length" do headers(size) else
+                  headers(case Integer.parse(String.trim(given)) do
+                    ok(n) -> n
+                    error(_) -> 0
+                  end)
+                end
+              _ -> headers(size)
+            end
+          end
+        end
+    end
+  end
+
+  # Serve: requests answered until the client leaves; the status.
+  def serve(documents: map[string, string]): integer do
+    size = headers(-1)
+    if size == -2 do 0 else
+      if size < 0 do
+        IO.puts(:stderr, "message without Content-Length")
+        1
+      else
+        body = if size == 0 do "" else
+          case IO.binread(size) do
+            some(read) -> read
+            none -> ""
+          end
+        end
+        if byte_size(body) < size do
+          # The input ended inside a message, or before any of it.
+          if body == "" do 0 else
+            IO.puts(:stderr, "unexpected EOF")
+            1
+          end
+        else
+          case decoded(body) do
+            none -> serve(documents)
+            some(message) -> if tx(message, "method") == "exit" do 0 else serve(handle(documents, message)) end
+          end
+        end
+      end
+    end
+  end
+
+  def run(): integer do
+    nothing: map[string, string] = %{}
+    serve(nothing)
+  end
+end

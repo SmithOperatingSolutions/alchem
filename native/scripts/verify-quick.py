@@ -96,6 +96,7 @@ GATES={
     'nil_forms':'verify(compiler)',
     'test_driver':'verify(compiler)',
     'commands':'verify(compiler)',
+    'lsp':'verify(compiler)',
     'front_end':'verify(compiler)',
     'testing':'verify(compiler)',
     'clauses':'verify(compiler)',
