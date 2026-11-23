@@ -15,8 +15,10 @@ defmodule Bundler do
   # program names the file and line it failed in.
   #
   # A package is imported as "host/owner/repo@v1.2.0/lib/file.alc" and read
-  # from the Go module cache (GOMODCACHE, else the first GOPATH entry's
-  # pkg/mod, else ~/go/pkg/mod); the bundler does not download. Its files
+  # from alchem's package cache (tools/alchem-fetch.alc), else the Go module
+  # cache (GOMODCACHE, else the first GOPATH entry's pkg/mod, else
+  # ~/go/pkg/mod). The bundler does not download: alchem fetches a package
+  # it reports missing and bundles again. Its files
   # import each other with relative paths that stay inside it, and a program
   # uses one version of a package. alchem.lock beside the entry file records
   # each package's content hash, as the pinned compiler writes it; with
@@ -169,13 +171,49 @@ defmodule Bundler do
     if index >= String.length(text) do "" else piece <> escaped(text, index + 1) end
   end
 
-  def cache(): string do
+  # Where packages are kept, as AlchemFetch keeps them; system() is the
+  # one the program is for, which build-alchem.py writes.
+  def system(): string do "linux" end
+
+  def home(): string do
+    System.get_env(if system() == "windows" do "USERPROFILE" else "HOME" end, "")
+  end
+
+  def cache_root(): string do
+    given = System.get_env("ALCHEM_CACHE", "")
+    if given != "" do given else
+      base = if system() == "windows" do System.get_env("LocalAppData", "") else
+        if system() == "darwin" do (if home() == "" do "" else home() <> "/Library/Caches" end) else
+          xdg = System.get_env("XDG_CACHE_HOME", "")
+          if String.starts_with?(xdg, "/") do xdg else if home() == "" do "" else home() <> "/.cache" end end
+        end
+      end
+      if base == "" do "" else base <> "/alchem" end
+    end
+  end
+
+  def go_cache(): string do
     case System.get_env("GOMODCACHE") do
       some(path) -> path
       none ->
         case System.get_env("GOPATH") do
-          some(paths) -> Enum.at(String.split(paths, ":"), 0, "") <> "/pkg/mod"
-          none -> System.get_env("HOME", "") <> "/go/pkg/mod"
+          some(paths) -> Enum.at(String.split(paths, if system() == "windows" do ";" else ":" end), 0, "") <> "/pkg/mod"
+          none -> home() <> "/go/pkg/mod"
+        end
+    end
+  end
+
+  # A package in a cache: {its directory, its hash}, or {"", ""}.
+  def cached(name: string, version: string): tuple[string, string] do
+    key = escaped(name, 0) <> "@" <> escaped(version, 0)
+    root = cache_root()
+    case File.read(if root == "" do "" else root <> "/packages/" <> key <> "/h1" end) do
+      ok(sum) -> if root == "" do {"", ""} else {clean(root <> "/packages/" <> key <> "/files"), String.trim(sum)} end
+      error(_) ->
+        go = go_cache()
+        case File.read(go <> "/cache/download/" <> escaped(name, 0) <> "/@v/" <> escaped(version, 0) <> ".ziphash") do
+          ok(sum) -> {clean(go <> "/" <> key), String.trim(sum)}
+          error(_) -> {"", ""}
         end
     end
   end
@@ -203,13 +241,12 @@ defmodule Bundler do
     name = elem(parts, 0)
     version = elem(parts, 1)
     known = Map.get(elem(state, 4), name, version)
-    base = cache()
     if name == "" do error(real <> ": remote imports are written \"module/path@v1.2.3/file.alc\"") else
       if known != version do error(real <> ": conflicting versions of " <> name <> ": " <> known <> " and " <> version) else
-        case File.read(base <> "/cache/download/" <> escaped(name, 0) <> "/@v/" <> escaped(version, 0) <> ".ziphash") do
-          error(_) -> error(real <> ": fetch " <> name <> "@" <> version <> ": not in the module cache " <> base <> "; run go mod download " <> name <> "@" <> version)
-          ok(sum) ->
-            ok({{elem(state, 0), elem(state, 1), elem(state, 2), elem(state, 3), Map.put(elem(state, 4), name, version), Map.put(elem(state, 5), name <> " " <> version, String.trim(sum))}, clean(base <> "/" <> escaped(name, 0) <> "@" <> escaped(version, 0))})
+        found = cached(name, version)
+        root = elem(found, 0)
+        if root == "" do error(real <> ": fetch " <> name <> "@" <> version <> ": not in the package cache") else
+          ok({{elem(state, 0), elem(state, 1), elem(state, 2), elem(state, 3), Map.put(elem(state, 4), name, version), Map.put(elem(state, 5), name <> " " <> version, elem(found, 1))}, root})
         end
       end
     end

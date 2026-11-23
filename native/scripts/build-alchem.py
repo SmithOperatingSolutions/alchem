@@ -80,6 +80,15 @@ def bundler_module():
     return text[:-len(BUNDLER_MAIN)] + 'end\n'
 
 
+def system_stamped(text, platform):
+    """A module whose system() says the system of platform, as Go names it
+    (tools/alchem-fetch.alc, tools/alchem-bundle.alc: where the cache is)."""
+    line = '  def system(): string do "linux" end\n'
+    if text.count(line) != 1:
+        raise ValueError('a module has no single system()')
+    return text.replace(line, '  def system(): string do "%s" end\n' % platform.split('/')[0])
+
+
 def guide_module(version, platform):
     """tools/alchem-guide.alc saying the version it is and the system and
     machine its programs are for."""
@@ -120,12 +129,13 @@ def program(darwin=False, windows=False, version='devel', platform='linux/amd64'
     with tempfile.TemporaryDirectory(prefix='alchem-program-') as directory:
         work = Path(directory)
         (work / 'alchem.alc').write_text((ROOT / 'tools/alchem.alc').read_text())
-        (work / 'alchem-bundle.alc').write_text(bundler_module())
+        (work / 'alchem-bundle.alc').write_text(system_stamped(bundler_module(), platform))
         (work / 'alchem-compiler.alc').write_text(compiler_module(darwin, windows))
         (work / 'alchem-guide.alc').write_text(guide_module(version, platform))
         (work / 'alchem-guide-data.alc').write_text((ROOT / 'tools/alchem-guide-data.alc').read_text())
         (work / 'alchem-sources.alc').write_text((ROOT / 'tools/alchem-sources.alc').read_text())
         (work / 'alchem-alx.alc').write_text((ROOT / 'tools/alchem-alx.alc').read_text())
+        (work / 'alchem-fetch.alc').write_text(system_stamped((ROOT / 'tools/alchem-fetch.alc').read_text(), platform))
         for name in FRONT_END:
             (work / name).write_text((ROOT / 'tools' / name).read_text())
         before = os.getcwd()
@@ -140,6 +150,7 @@ def program(darwin=False, windows=False, version='devel', platform='linux/amd64'
                  here + '/alchem-compiler.alc': 'implementations/alchem/native-*.alc',
                  here + '/alchem-guide.alc': 'tools/alchem-guide.alc', here + '/alchem-guide-data.alc': 'tools/alchem-guide-data.alc',
                  here + '/alchem-sources.alc': 'tools/alchem-sources.alc', here + '/alchem-alx.alc': 'tools/alchem-alx.alc',
+                 here + '/alchem-fetch.alc': 'tools/alchem-fetch.alc',
                  **{here + '/' + name: 'tools/' + name for name in FRONT_END}}
     head, _, body = text.partition(b'\n')
     count = int(head.split()[1])
