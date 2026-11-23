@@ -11,6 +11,12 @@ name: Native compiler release
 # native/ builds from the release its pin names (native/README.md), so a
 # release is made before a change the pinned compiler cannot compile.
 on:
+  # A change to how a release is made builds and checks the archives
+  # without publishing them.
+  pull_request:
+    paths:
+      - 'native/scripts/release-compilers.py'
+      - '.github/workflows/native-release.yml'
   workflow_dispatch:
     inputs:
       tag:
@@ -27,7 +33,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: native-release-${{ inputs.tag }}
+  group: native-release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -106,7 +112,7 @@ jobs:
   publish:
     name: Publish
     needs: check
-    if: inputs.publish
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
