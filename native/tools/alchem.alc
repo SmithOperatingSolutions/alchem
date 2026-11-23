@@ -1024,6 +1024,12 @@ defmodule AlchemCommand do
   end
 
   def check_file(entry: string, locked: boolean, as_json: boolean): integer do
+    problem = check_problem(entry, locked)
+    if problem == "" do 0 else complain(if as_json do described(problem) else problem end, 1) end
+  end
+
+  # What check says of a file, or "" where it finds nothing.
+  def check_problem(entry: string, locked: boolean): string do
     work = fresh("alchem-check-")
     # A module without main is checked as what a program imports.
     text = case File.read(entry) do
@@ -1043,13 +1049,12 @@ defmodule AlchemCommand do
     File.rm_rf(work)
     # The compiler takes some programs the pinned compiler refuses: what
     # the front end finds in one is said too.
-    problem = if built != "" do built else
+    if built != "" do built else
       case AlchemCheck.load(entry, File.cwd!()) do
         some(found) -> found.text
         none -> ""
       end
     end
-    if problem == "" do 0 else complain(if as_json do described(problem) else problem end, 1) end
   end
 
   # my_app is the module MyApp.
@@ -1270,7 +1275,7 @@ defmodule AlchemCommand do
       ["new" | rest] -> flagged("new", rest)
       ["alx" | rest] -> alx_command(rest)
       ["fmt" | rest] -> fmt_command(rest)
-      ["lsp" | _] -> AlchemLsp.run()
+      ["lsp" | _] -> AlchemLsp.run(fn(path: string): string do check_problem(path, false) end)
       [] -> complain(String.trim_trailing(AlchemGuide.usage(), "\n"), 2)
       ["--version" | _] -> AlchemGuide.run("version", [])
       [command | rest] ->

@@ -6,11 +6,11 @@
 # ALCHEM_VERSION picks a release (the latest by default) and ALCHEM_INSTALL_DIR
 # the directory for the alchem binary (~/.local/bin by default). The download
 # is checked against the release's checksums.txt before anything is installed.
-# Go is not needed: alchem downloads the Go release it builds with on first use.
+# alchem compiles programs itself: it needs no Go and downloads nothing.
 #
-# ALCHEM_NATIVE=1 installs the alchem written in Alchem instead, which
-# compiles programs itself and downloads nothing: for Linux and for macOS on
-# Apple silicon, from the releases that have it.
+# A release is for Linux on x64 and ARM64 and for macOS on Apple silicon.
+# The releases up to v0.3.11, of the alchem written in Go, are also for macOS
+# on Intel: ALCHEM_VERSION=v0.3.11 installs the last of them.
 set -eu
 
 repository="SmithOperatingSolutions/alchem"
@@ -58,26 +58,20 @@ v*) ;;
 *) version="v$version" ;;
 esac
 
-kind=alchem
-case "${ALCHEM_NATIVE:-}" in
-"" | 0) ;;
-*)
-	kind=alchem-native
-	[ "$os/$arch" != darwin/amd64 ] || fail "the native alchem has no release for macOS on Intel; install without ALCHEM_NATIVE"
-	;;
-esac
-
-name="${kind}_${version}_${os}_${arch}"
+name="alchem_${version}_${os}_${arch}"
 archive="$name.tar.gz"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 
-echo "Downloading $kind $version for $os/$arch"
-curl -fsSL -o "$work/$archive" "$base/download/$version/$archive" || fail "could not download $archive"
+echo "Downloading alchem $version for $os/$arch"
 curl -fsSL -o "$work/checksums.txt" "$base/download/$version/checksums.txt" || fail "could not download checksums.txt"
 
 expected=$(grep " $archive\$" "$work/checksums.txt" | cut -d' ' -f1)
-[ -n "$expected" ] || fail "checksums.txt has no entry for $archive"
+if [ -z "$expected" ]; then
+	[ "$os/$arch" != darwin/amd64 ] || fail "$version has no release for macOS on Intel; ALCHEM_VERSION=v0.3.11 installs the last one that has"
+	fail "checksums.txt has no entry for $archive"
+fi
+curl -fsSL -o "$work/$archive" "$base/download/$version/$archive" || fail "could not download $archive"
 if command -v sha256sum >/dev/null 2>&1; then
 	actual=$(sha256sum "$work/$archive" | cut -d' ' -f1)
 elif command -v shasum >/dev/null 2>&1; then

@@ -138,6 +138,8 @@ Library entry points are `Check`/`CheckContext`, `Format`, `BuildWithOptions`/`B
 
 ## The Go toolchain
 
+The released `alchem` is the one written in Alchem: it compiles programs itself, needs no Go and downloads nothing, and nothing of this section applies to it. This is how the `alchem` written in Go (`cmd/alchem`, released up to v0.3.11 and kept as the reference) finds the Go it builds with.
+
 The Go `alchem` (not the native one, which compiles programs itself) runs a `go` command for builds, tests, `run` and `alx`, found in this order:
 
 1. `ALCHEM_GO`, the path of a go executable.

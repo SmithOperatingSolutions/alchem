@@ -38,6 +38,9 @@ TWO = 'defmodule Two do\n  import "lib/greet.alc"\n  import "lib/other.alc"\n\n 
 OTHER = 'defmodule Other do\n  def name(): string do\n    "other"\n  end\n\n  def count(items: list[a]): integer do\n    length(items)\n  end\nend\n'
 
 
+LATE = 'defmodule Late do\n  def main() do\n    day = ~N[2026-01-05  13:04:05]\n    IO.puts("late")\n  end\nend\n'
+
+
 def sized(body, header='Content-Length: %d'):
     """A message as its bytes, under a header of its length."""
     return {'body': body, 'header': header}
@@ -258,7 +261,22 @@ def verify(compiler):
                 assert mine == pinned, (name, k, mine, pinned)
             assert len(seen[2]) == len(answers), (name, len(seen[2]), len(answers), seen[2][len(answers):], answers[len(seen[2]):])
             count += len(answers)
-    print(f'PASS lsp: {len(held)} sessions with the language server, {count} messages answered as the pinned server answers them, byte for byte: diagnostics, hover, definition, completion, formatting and symbols')
+        # What only the compiler refuses (here a calendar sigil with two
+        # spaces, which the pinned compiler takes) is a diagnostic once the
+        # document is as its file is, and none while it is not: the
+        # compiler reads files (spec/alchem-commands.md).
+        status, said, answers = session(alchem, {'late.alc': LATE}, [
+            {'id': 1, 'method': 'initialize', 'params': {}},
+            opened('late.alc', LATE),
+            changed('late.alc', LATE + '\n'),
+            {'method': 'textDocument/didSave', 'params': {'textDocument': {'uri': uri('late.alc'), 'text': LATE}}},
+            *closing(2)])
+        assert (status, said) == (0, ''), (status, said)
+        found = [json.loads(answer)['params']['diagnostics'] for answer in answers if 'publishDiagnostics' in answer]
+        assert [len(d) for d in found] == [1, 0, 1], found
+        for diagnostics in (found[0], found[2]):
+            assert diagnostics[0]['message'] == 'E_COMPILE: the native compiler does not take something in Late.main/0' and diagnostics[0]['range']['start'] == {'line': 1, 'character': 2}, diagnostics
+    print(f'PASS lsp: {len(held)} sessions with the language server, {count} messages answered as the pinned server answers them, byte for byte: diagnostics, hover, definition, completion, formatting and symbols; what only the compiler refuses is a diagnostic of a saved document')
 
 
 if __name__ == '__main__':

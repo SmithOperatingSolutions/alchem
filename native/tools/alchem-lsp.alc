@@ -17,8 +17,10 @@ defmodule AlchemLsp do
   #
   # - A document's diagnostics are what the front end finds in it and in
   #   what it imports (AlchemCheck, with the open documents in place of
-  #   their files); the program is not compiled, so a program only the
-  #   compiler refuses has none.
+  #   their files). The program is compiled too, as check compiles it,
+  #   where every open document is as its file is (after a save, or opened
+  #   and not yet changed): the compiler reads files. So what only the
+  #   compiler refuses shows once the documents are saved.
   # - The modules a document imports are offered for completion in the
   #   order it imports them; the pinned server offers them in no order.
 
@@ -230,6 +232,9 @@ defmodule AlchemLsp do
   def windows?(): boolean do AlchemGuide.platform() == "windows/amd64" end
 
   # pathOf: the path of a file address; another address is its own path.
+  # On Windows the path is kept with /, as the checker keeps paths
+  # (AlchemCheck.kept), so that a document is found by the path the
+  # checker reads it by; the pinned server's has \, which no reply shows.
   def path_of(uri: string): string do
     if not String.starts_with?(uri, "file://") do uri else
       rest = binary_part(uri, 7, byte_size(uri) - 7)
@@ -243,7 +248,7 @@ defmodule AlchemLsp do
         ok(p) -> p
         error(_) -> plain
       end
-      if windows?() do String.replace(String.trim_leading(decoded, "/"), "/", "\\") else decoded end
+      if windows?() do String.trim_leading(decoded, "/") else decoded end
     end
   end
 
@@ -391,14 +396,40 @@ defmodule AlchemLsp do
     end
   end
 
+  # Every open document is as its file is.
+  def saved?(documents: map[string, string]): boolean do
+    Enum.all?(Map.keys(documents), fn path ->
+      case File.read_binary(path) do
+        ok(read) -> read == Map.get(documents, path, "")
+        error(_) -> false
+      end
+    end)
+  end
+
+  # What the front end finds, and then, of saved documents, what check
+  # finds by compiling (full).
+  def found_in(documents: map[string, string], path: string, full: fn[string, string]): option[tuple[string, integer, integer, string]] do
+    case problem_of(documents, path) do
+      some(found) -> some(found)
+      none ->
+        said = if saved?(documents) do full(path) else "" end
+        if said == "" do none else
+          case Regex.run(~r/^(.*):([0-9]+):([0-9]+): (.*)$/, said) do
+            some([_, file, line, column, message]) -> some({file, String.to_integer(line), String.to_integer(column), message})
+            _ -> some({"", 1, 1, said})
+          end
+        end
+    end
+  end
+
   # update: a document's text is kept and its diagnostics published.
-  def update(documents: map[string, string], uri: string, document: string): map[string, string] do
+  def update(documents: map[string, string], uri: string, document: string, full: fn[string, string]): map[string, string] do
     path = path_of(uri)
     held = Map.put(documents, path, document)
-    diagnostics = case problem_of(held, path) do
+    diagnostics = case found_in(held, path, full) do
       none -> none_json()
       some({file, line, column, message}) ->
-        here = file == "" or Path.expand(file) == Path.expand(path)
+        here = file == "" or AlchemCheck.clean(AlchemCheck.kept(Path.expand(file))) == AlchemCheck.clean(AlchemCheck.kept(Path.expand(path)))
         {at_line, at_column} = if here do {line, column} else {1, 1} end
         said = if here do message else base_of(file) <> ":" <> Integer.to_string(line) <> ":" <> Integer.to_string(column) <> ": " <> message end
         first = max(at_line - 1, 0)
@@ -539,7 +570,7 @@ defmodule AlchemLsp do
   end
 
   # handle: one message answered; the documents after it.
-  def handle(documents: map[string, string], message: AlchemJson.J): map[string, string] do
+  def handle(documents: map[string, string], message: AlchemJson.J, full: fn[string, string]): map[string, string] do
     id = g(message, "id")
     method = tx(message, "method")
     params = g(message, "params")
@@ -553,13 +584,13 @@ defmodule AlchemLsp do
       "shutdown" ->
         reply(id, AlchemJson.J.null)
         documents
-      "textDocument/didOpen" -> update(documents, uri, tx(g(params, "textDocument"), "text"))
+      "textDocument/didOpen" -> update(documents, uri, tx(g(params, "textDocument"), "text"), full)
       "textDocument/didChange" ->
         changes = its(params, "contentChanges")
-        if changes == [] do documents else update(documents, uri, tx(List.last(changes, AlchemJson.J.null), "text")) end
+        if changes == [] do documents else update(documents, uri, tx(List.last(changes, AlchemJson.J.null), "text"), full) end
       "textDocument/didSave" ->
         saved = tx(g(params, "textDocument"), "text")
-        update(documents, uri, if saved != "" do saved else Map.get(documents, path_of(uri), "") end)
+        update(documents, uri, if saved != "" do saved else Map.get(documents, path_of(uri), "") end, full)
       "textDocument/didClose" ->
         notify("textDocument/publishDiagnostics", object([{"diagnostics", AlchemJson.J.list(none_json())}, {"uri", text(uri)}]))
         Map.delete(documents, path_of(uri))
@@ -613,7 +644,7 @@ defmodule AlchemLsp do
   end
 
   # Serve: requests answered until the client leaves; the status.
-  def serve(documents: map[string, string]): integer do
+  def serve(documents: map[string, string], full: fn[string, string]): integer do
     size = headers(-1)
     if size == -2 do 0 else
       if size < 0 do
@@ -634,16 +665,17 @@ defmodule AlchemLsp do
           end
         else
           case decoded(body) do
-            none -> serve(documents)
-            some(message) -> if tx(message, "method") == "exit" do 0 else serve(handle(documents, message)) end
+            none -> serve(documents, full)
+            some(message) -> if tx(message, "method") == "exit" do 0 else serve(handle(documents, message, full), full) end
           end
         end
       end
     end
   end
 
-  def run(): integer do
+  # full is check as the command runs it: what it says of a file, or "".
+  def run(full: fn[string, string]): integer do
     nothing: map[string, string] = %{}
-    serve(nothing)
+    serve(nothing, full)
   end
 end
