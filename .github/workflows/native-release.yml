@@ -1,0 +1,139 @@
+name: Native compiler release
+# A release of the compiler written in Alchem (native/): the compiler as a
+# program of each target it builds itself on, each in an archive of its
+# own with its checksum (native/scripts/release-compilers.py). The archives
+# are built once, on Linux; a job on each target then takes its compiler out
+# of its archive and has it compile its own source, which must give the
+# archive's compiler again, byte for byte. Only then, and only when asked,
+# are they published, as a prerelease under the tag given: the latest
+# release, which the installers take, stays the one of release.yml.
+#
+# native/ builds from the release its pin names (native/README.md), so a
+# release is made before a change the pinned compiler cannot compile.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'The tag of the release, such as native-compiler-1'
+        required: true
+        type: string
+      publish:
+        description: 'Publish the archives (otherwise they are built and checked only)'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Archives
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: native
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          working_directory: native
+          cache: false
+      - name: Dependencies
+        run: mise run fetch
+      - name: Build
+        # One build at a time: no memory ceiling (scripts/limited would cap
+        # address space here, with no systemd user manager).
+        env:
+          ALCHEM_VERIFY_LIMITED: '1'
+        run: |
+          python3 scripts/verify-quick.py --build-only
+          python3 scripts/release-compilers.py build --compiler build/dev/A2 --output build/release
+          cat build/release/SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-compiler-release
+          path: native/build/release
+          retention-days: 7
+
+  check:
+    name: ${{ matrix.target }} makes itself
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            runner: ubuntu-24.04
+            python: python3
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            python: python3
+          - target: macos-arm64
+            runner: macos-15
+            python: python3
+          - target: windows-x86_64
+            runner: windows-2025
+            python: python
+    defaults:
+      run:
+        shell: bash
+        working-directory: native
+    steps:
+      - name: Line endings as they are
+        # The compiler's source is compiled as the repository holds it.
+        working-directory: .
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-compiler-release
+          path: native/build/release
+      - name: The compiler makes itself
+        env:
+          # The source is read as UTF-8 on Windows too.
+          PYTHONUTF8: '1'
+        run: ${{ matrix.python }} scripts/release-compilers.py check ${{ matrix.target }} build/release
+
+  publish:
+    name: Publish
+    needs: check
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-compiler-release
+          path: release
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          case "$TAG" in
+            native-compiler-*) ;;
+            *) echo "the tag of a compiler release starts with native-compiler-, not $TAG" >&2; exit 1 ;;
+          esac
+          {
+            echo "The compiler written in Alchem, built from $GITHUB_SHA: one archive for each target it builds itself on, holding the compiler as a program of that target. Each made itself again, byte for byte, on its target before this was published."
+            echo
+            echo "\`native/\` builds from the release its pin names; this is not the \`alchem\` people install."
+            echo
+            echo '```'
+            cat release/SHA256SUMS
+            echo '```'
+          } > notes.md
+          gh release create "$TAG" --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "Alchem native compiler ${TAG#native-compiler-}" --notes-file notes.md release/*
