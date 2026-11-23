@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Publish an Alchem-built compiler only after reproducible A1/A2/A3 rebuilds."""
+"""Publish an Alchem-built compiler only after reproducible A1/A2/A3 rebuilds.
+
+The first stage is the released compiler pinned-compiler.json names
+(scripts/pinned-compiler.py); with --frontend and --backend it is the seed
+those two make of the source."""
 import argparse
 import hashlib
 import importlib.util
@@ -30,13 +34,16 @@ def atomic_text(path,text):
 
 
 def build(frontend,backend,output):
+    """frontend and backend None: start from the pinned release."""
     bootstrap=load_script('alchem_bootstrap',ROOT/'scripts/bootstrap-alchem-compiler.py')
     exporter=load_script('alchem_export',ROOT/'scripts/emit-alchem-executable.py')
     output.mkdir(parents=True,exist_ok=True)
     source=bootstrap.source_text('functions').encode()
     with tempfile.TemporaryDirectory(prefix='.alchem-self-build-',dir=output) as directory:
         root=Path(directory);seed=root/'A0'
-        bootstrap.bootstrap(seed,frontend,backend,'functions')
+        if frontend is None or backend is None:
+            seed.write_bytes(load_script('pinned_compiler',ROOT/'scripts/pinned-compiler.py').fetch('linux-x86_64').read_bytes());seed.chmod(0o700)
+        else:bootstrap.bootstrap(seed,frontend,backend,'functions')
         previous=seed;stages=[]
         for stage in range(1,4):
             result=subprocess.run([str(previous)],input=source,capture_output=True,env={'PATH':''},timeout=120)
@@ -64,11 +71,12 @@ def build(frontend,backend,output):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--frontend',type=Path,default=ROOT/'build/native/alchem-source-probe')
-    parser.add_argument('--backend',type=Path,default=ROOT/'build/native/alchem-native')
+    parser.add_argument('--frontend',type=Path,help='the Go frontend, to start from the seed (with --backend)')
+    parser.add_argument('--backend',type=Path,help='the seed backend, to start from the seed (with --frontend)')
     parser.add_argument('--output-directory',type=Path,default=ROOT/'build/native')
     args=parser.parse_args()
-    try:manifest=build(args.frontend.resolve(),args.backend.resolve(),args.output_directory.resolve())
+    if (args.frontend is None)!=(args.backend is None):parser.error('--frontend and --backend go together')
+    try:manifest=build(args.frontend and args.frontend.resolve(),args.backend and args.backend.resolve(),args.output_directory.resolve())
     except (OSError,ValueError,RuntimeError,subprocess.TimeoutExpired) as error:
         print(f'E_SELF_HOST: {error}',file=sys.stderr);return 1
     print(f'Built self-hosted Alchem compiler ({manifest["compiler_bytes"]} bytes); A1/A2/A3 match')

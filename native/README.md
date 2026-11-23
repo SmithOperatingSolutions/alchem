@@ -12,12 +12,11 @@ repository. Where the two still differ, `spec/` says so and why.
 
 ## Build and run
 
-Requires Linux x86-64 and [mise](https://mise.jdx.dev), which installs the
-Go, Rust and Python of `mise.toml`. From this directory:
+Requires Linux x86-64 and Python 3 ([mise](https://mise.jdx.dev) installs
+the one of `mise.toml`), and neither Go nor Rust. From this directory:
 
 ```sh
-mise install
-mise run fetch
+mise install python
 mise run build
 build/native/alchem-compiler < examples/alchem-byte-compiler-demo.alc > /tmp/demo
 chmod 700 /tmp/demo
@@ -26,13 +25,48 @@ echo "$?"  # 42
 ```
 
 On other hosts run the same steps in the linux/amd64 container
-(`mise run linux:fetch`, `mise run linux:build`). See
-[the quickstart](docs/quickstart.md).
+(`mise run linux:build`). See [the quickstart](docs/quickstart.md).
 
-Go and Rust build only the seed: the Go compiler's frontend
-(`adapters/alchem`) and a Rust backend (`implementations/rust`) build the
-compiler written in Alchem (`implementations/alchem`) once, and every later
-stage is built by the one before it.
+## The pinned release
+
+The build starts from a released compiler: `pinned-compiler.json` names
+the release and the SHA-256 of the archive of each target, and
+`scripts/pinned-compiler.py` downloads the one for the machine into
+`build/pinned`, refuses it unless its sum is the pinned one, and takes the
+compiler out. That compiler builds the source (A1), A1 builds it again
+(A2), and the two must be the same bytes. `ALCHEM_PINNED_COMPILER=PATH`
+uses a compiler already at hand instead, with no network.
+
+A release is the compiler as a program of each target it builds itself on
+(Linux x86-64, Linux ARM64, macOS ARM64, Windows x64), each alone in an
+archive whose bytes depend on the compiler only
+(`scripts/release-compilers.py`). The workflow *Native compiler release*
+builds them, has each compile its own source on its target, which must
+give it again byte for byte, and publishes them as a prerelease under a
+`native-compiler-` tag.
+
+**Moving the pin.** The pinned compiler must be able to compile the
+source. A change it cannot compile (the compiler's source using something
+of the language the pinned compiler does not have yet) is made in two
+steps:
+
+1. Merge what gives the compiler the new thing, in source the pinned
+   compiler still compiles. Run *Native compiler release* on `main` with
+   the next tag (`native-compiler-2`) and `publish` set.
+2. In the change that uses the new thing, set `release` in
+   `pinned-compiler.json` to that tag and `sha256` to the sums of the
+   release's `SHA256SUMS`.
+
+Nothing else needs a new release: a pin may stay behind the source for as
+long as it compiles it.
+
+**The seed.** Before there was a release the first stage was made from the
+source by the Go compiler's frontend (`adapters/alchem`) and a Rust backend
+(`implementations/rust`). `scripts/verify-quick.py --seed` and the complete
+suite still start so (`mise install`, `mise run fetch`, `mise run
+fetch:seed`), and the nightly run of CI checks that the compiler made from
+the seed is, byte for byte, the one made from the pinned release: the
+first stage can still be made without a released compiler.
 
 ## Linux ARM64
 
@@ -68,13 +102,15 @@ compiler print there (`scripts/windows-examples.py`).
 ## Verification
 
 ```sh
-python3 scripts/verify-quick.py             # the fixpoint and every gate, in parallel
-bash scripts/verify-local.sh --with-source  # the complete suite
+python3 scripts/verify-quick.py             # the fixpoint and the gates, in parallel, from the pinned release
+python3 scripts/verify-quick.py --seed      # the same from the seed, with the gates that take the seed's parts
+bash scripts/verify-local.sh --with-source  # the complete suite, from the seed
 ```
 
 The complete suite needs ptrace permission for fault injection and register
 measurements; a skip is not a pass. The Go compiler of this repository is the
-reference the gates compare against.
+reference the gates compare against: they need Go (`mise install go`, `mise
+run fetch`), a build does not.
 
 ## Documents
 
