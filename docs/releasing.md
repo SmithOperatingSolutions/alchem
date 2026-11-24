@@ -19,7 +19,7 @@ Releases are GitHub releases built by `.github/workflows/release.yml`.
 7. It installs from those archives with `install.sh` on Linux (amd64 and arm64) and macOS and with `install.ps1` on Windows, served from the machine itself; what is installed must say the tag and build and run a program.
 8. It publishes the release with generated notes. A tag with a hyphen (`v0.2.0-rc.1`) becomes a prerelease.
 9. It attaches the Homebrew formula and Scoop manifest for the release (`alchem.rb`, `alchem.json`), made by `tools/packaging` from `checksums.txt`.
-10. The Packaging workflow then installs the release through the install scripts, the tap and the bucket.
+10. The release does not start the Packaging workflow by itself, since it is published with the workflow's own token: the pull request that moves the tap and the bucket (below) runs it, and it installs the release through the install scripts, the tap and the bucket.
 
 Running the workflow by hand (`workflow_dispatch`) does steps 3 to 7 and uploads the archives as a workflow artifact without publishing anything. With no signing secrets it signs with certificates it makes for the run, so that steps 5 and 7 run the binaries as a release signs them. With its `unsigned` input set it signs nothing, which is what a tag does while no signing secret is set (`gh workflow run release.yml -f unsigned=true`).
 
@@ -30,7 +30,7 @@ The Go `alchem` (`cmd/alchem`) is not released any more. It stays in the reposit
 The tap and the bucket are `Formula/alchem.rb` and `bucket/alchem.json` in this repository, so they move to a new release by pull request:
 
 ```bash
-go run ./tools/packaging -version v0.3.11
+go run ./tools/packaging -version v0.4.0
 ```
 
 The tool downloads the release's `checksums.txt` and rewrites both files. The Packaging workflow checks the pull request by installing from them. Scoop can also find a newer release on its own through the manifest's `checkver` and `autoupdate`.
