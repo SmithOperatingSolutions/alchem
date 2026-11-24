@@ -21,7 +21,7 @@ Releases are GitHub releases built by `.github/workflows/release.yml`.
 9. It attaches the Homebrew formula and Scoop manifest for the release (`alchem.rb`, `alchem.json`), made by `tools/packaging` from `checksums.txt`.
 10. The Packaging workflow then installs the release through the install scripts, the tap and the bucket.
 
-Running the workflow by hand (`workflow_dispatch`) does steps 3 to 7 and uploads the archives as a workflow artifact without publishing anything. With no signing secrets it signs with certificates it makes for the run, so that steps 5 and 7 run the binaries as a release signs them.
+Running the workflow by hand (`workflow_dispatch`) does steps 3 to 7 and uploads the archives as a workflow artifact without publishing anything. With no signing secrets it signs with certificates it makes for the run, so that steps 5 and 7 run the binaries as a release signs them. With its `unsigned` input set it signs nothing, which is what a tag does while no signing secret is set (`gh workflow run release.yml -f unsigned=true`).
 
 The Go `alchem` (`cmd/alchem`) is not released any more. It stays in the repository as the reference the checks of `native/` compare against. The releases up to v0.3.11 are of it, for six targets; there is no native release for macOS on Intel, and none for Windows on ARM64 until the native compiler has that target, where the x64 program is installed and runs.
 
