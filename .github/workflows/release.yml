@@ -3,8 +3,15 @@ on:
   push:
     tags: ['v*']
   # A manual run builds, signs with certificates made for the run, checks
-  # and packs the archives without publishing them.
+  # and packs the archives without publishing them. Asked to leave them
+  # unsigned, it signs nothing, as a tag does while no signing secret is set.
   workflow_dispatch:
+    inputs:
+      unsigned:
+        description: 'Leave the binaries unsigned, as a tag does with no signing secrets'
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -77,9 +84,10 @@ jobs:
       # notarized with rcodesign, which runs on Linux; the Windows binary is
       # signed with osslsigncode. A manual run signs with certificates it
       # makes for itself, so that the jobs after it run the binaries as a
-      # release signs them; nothing of such a run is published.
+      # release signs them; nothing of such a run is published. Asked to
+      # leave them unsigned, it runs none of these steps.
       - name: rcodesign
-        if: env.APPLE_SIGNING == 'true' || github.ref_type != 'tag'
+        if: (env.APPLE_SIGNING == 'true' || github.ref_type != 'tag') && !inputs.unsigned
         run: |
           archive=apple-codesign-0.29.0-x86_64-unknown-linux-musl.tar.gz
           curl -fsSLO "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign/0.29.0/$archive"
@@ -91,7 +99,7 @@ jobs:
           P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
           P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
           NOTARY_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_JSON }}
-        if: env.APPLE_SIGNING == 'true'
+        if: env.APPLE_SIGNING == 'true' && !inputs.unsigned
         run: |
           printf '%s' "$P12" | base64 -d > "$RUNNER_TEMP/developer-id.p12"
           printf '%s' "$P12_PASSWORD" > "$RUNNER_TEMP/developer-id.password"
@@ -105,7 +113,7 @@ jobs:
           done
           rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/developer-id.password" "$RUNNER_TEMP/notary-key.json"
       - name: Sign the macOS binary with a certificate of this run
-        if: env.APPLE_SIGNING != 'true' && github.ref_type != 'tag'
+        if: env.APPLE_SIGNING != 'true' && github.ref_type != 'tag' && !inputs.unsigned
         run: |
           "$RCODESIGN" generate-self-signed-certificate --person-name 'Alchem release rehearsal' \
             --p12-file "$RUNNER_TEMP/rehearsal.p12" --p12-password rehearsal
@@ -118,7 +126,7 @@ jobs:
         env:
           PFX: ${{ secrets.WINDOWS_SIGNING_PFX }}
           PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
-        if: env.WINDOWS_SIGNING == 'true'
+        if: env.WINDOWS_SIGNING == 'true' && !inputs.unsigned
         run: |
           sudo apt-get install -y -qq osslsigncode
           printf '%s' "$PFX" | base64 -d > "$RUNNER_TEMP/signing.pfx"
@@ -131,7 +139,7 @@ jobs:
           done
           rm -f "$RUNNER_TEMP/signing.pfx"
       - name: Sign the Windows binary with a certificate of this run
-        if: env.WINDOWS_SIGNING != 'true' && github.ref_type != 'tag'
+        if: env.WINDOWS_SIGNING != 'true' && github.ref_type != 'tag' && !inputs.unsigned
         run: |
           sudo apt-get install -y -qq osslsigncode
           openssl req -x509 -newkey rsa:2048 -nodes -keyout "$RUNNER_TEMP/rehearsal.key" -out "$RUNNER_TEMP/rehearsal.crt" \
