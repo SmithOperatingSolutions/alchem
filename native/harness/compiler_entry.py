@@ -49,7 +49,7 @@ def verify(frontend,backends):
   # limit, the IR made in other parts).
   from importlib.util import spec_from_file_location,module_from_spec
   spec=spec_from_file_location('alchem_bootstrap',ROOT/'scripts/bootstrap-alchem-compiler.py');boot=module_from_spec(spec);spec.loader.exec_module(boot)
-  text=boot.source_text('functions');size=len(text.encode())
+  text=boot.source_text('functions',seed=True);size=len(text.encode())
   whole=boot.frontend_ir(text,frontend)
   for limit in [size//2+300000,size//3+300000]:
    assert limit<size and boot.frontend_ir(text,frontend,limit)==whole,('compiler source lowered in parts differs',limit)

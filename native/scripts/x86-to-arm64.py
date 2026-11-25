@@ -1478,7 +1478,7 @@ DARWIN_CALLS = [
     (4, '_fstatat', 'stat'), (5, '_fstat', 'fstat'), (6, '_fstatat', 'lstat'), (7, '_poll', 'plain'),
     (8, '_lseek', 'plain'), (9, '_mmap', 'mmap'), (10, '_mprotect', 'plain'), (11, '_munmap', 'plain'),
     (13, '_sigaction', 'sigaction'), (17, '_pread', 'plain'), (18, '_pwrite', 'plain'), (21, '_access', 'plain'),
-    (22, '_pipe', 'plain'), (25, '_mmap', 'mremap'), (32, '_dup', 'plain'), (33, '_dup2', 'plain'),
+    (22, '_pipe', 'plain'), (25, '_mmap', 'mremap'), (28, '_mmap', 'madvise'), (32, '_dup', 'plain'), (33, '_dup2', 'plain'),
     (35, '_nanosleep', 'plain'), (39, '_getpid', 'plain'), (41, '_socket', 'socket'), (42, '_connect', 'sain'),
     (43, '_accept', 'accept'), (44, '_sendto', 'sendto'), (45, '_recvfrom', 'recvfrom'), (48, '_shutdown', 'plain'),
     (49, '_bind', 'sain'), (50, '_listen', 'plain'), (51, '_getsockname', 'saout'), (52, '_getpeername', 'saout'),
@@ -1494,7 +1494,7 @@ DARWIN_CALLS = [
     (318, '_getentropy', 'random'), (319, '_mkstemp', 'memfd'), (439, '_faccessat', 'atflags'),
 ]
 DARWIN_KINDS = ['plain', 'mmap', 'open', 'openat', 'stat', 'lstat', 'fstat', 'fstatat', 'fcntl', 'getcwd', 'dents',
-                'clock', 'random', 'ppoll', 'pipe2', 'mremap', 'sigaction', 'memfd', 'kill', 'wait4', 'atfd',
+                'clock', 'random', 'ppoll', 'pipe2', 'mremap', 'madvise', 'sigaction', 'memfd', 'kill', 'wait4', 'atfd',
                 'atflags', 'unlinkat', 'utimensat', 'socket', 'sain', 'saout', 'accept', 'accept4', 'sendto',
                 'recvfrom', 'sockopt', 'getsockopt', 'fullsync']
 # What is done with a call's result once it is no -1 (X19 holds the index).
@@ -1780,6 +1780,55 @@ xd_k_mremap_2:
  mov x1,x21
 @call _munmap
  ldr x0,[sp,#440]
+ b xd_back
+// madvise(address, length, advice): MADV_DONTNEED (4) and MADV_FREE (8)
+// leave the pages zero, as Linux's do; macOS's leave what was there. The
+// whole pages of macOS's size (16 KiB) inside are mapped anew, which makes
+// them zero, and the bytes at either end are made zero; any other advice
+// is taken.
+xd_k_madvise:
+ cmp x2,#4
+ b.eq xd_k_madvise_1
+ cmp x2,#8
+ b.ne xd_k_madvise_0
+xd_k_madvise_1:
+ add x21,x0,x1
+ mov x7,#0x3fff
+ add x20,x0,x7
+ and x20,x20,#-0x4000
+ and x7,x21,#-0x4000
+ cmp x7,x20
+ b.hi xd_k_madvise_2
+ mov x20,x21
+ mov x7,x21
+xd_k_madvise_2:
+ mov x6,x0
+xd_k_madvise_3:
+ cmp x6,x20
+ b.hs xd_k_madvise_4
+ strb wzr,[x6],#1
+ b xd_k_madvise_3
+xd_k_madvise_4:
+ mov x6,x7
+xd_k_madvise_5:
+ cmp x6,x21
+ b.hs xd_k_madvise_6
+ strb wzr,[x6],#1
+ b xd_k_madvise_5
+xd_k_madvise_6:
+ cmp x7,x20
+ b.ls xd_k_madvise_0
+ mov x0,x20
+ sub x1,x7,x20
+ mov x2,#3
+ mov x3,#0x1012
+ mov x4,#-1
+ mov x5,#0
+@call _mmap
+ cmn x0,#1
+ b.eq xd_errno
+xd_k_madvise_0:
+ mov x0,#0
  b xd_back
 // rt_sigaction's handler and flags as macOS's struct sigaction.
 xd_k_sigaction:

@@ -1870,5 +1870,13 @@
    "parameter: 100000\nread binary_part: 159994\nread Binary.at: 11999880\nstruct field: 100000\ntuple: 100000\nfold struct: 100000\n",
    ""
   ]
+ },
+ {
+  "source": "defmodule Zero do\n  # Memory the collector gives back to the system must come back zero: each\n  # round fills megabytes with strings, lets them go, and makes maps of more\n  # than 32 entries, whose nodes are taken from the memory given back.\n  def junk(n: integer): list[string] do\n    Enum.map(Enum.to_list(1..n//1), fn i -> String.duplicate(Integer.to_string(rem(i * 7919, 1000)), 400) end)\n  end\n\n  def keys(round: integer): list[tuple[string, integer]] do\n    Enum.map(Enum.to_list(1..60//1), fn k -> {Enum.join(Enum.map(Enum.to_list(0..rem(k * 7 + round, 9)//1), fn j -> Integer.to_string(rem(k * 31 + j, 10)) end), \"\"), k} end)\n  end\n\n  def round(r: integer, sum: integer): integer do\n    if r == 0 do sum else\n      kept = junk(20000)\n      used = byte_size(Enum.at(kept, rem(r, 100), \"\"))\n      m = Map.new(keys(r))\n      round(r - 1, sum + used + map_size(m) + Enum.sum(Map.values(m)))\n    end\n  end\n\n  def main() do\n    IO.puts(Integer.to_string(round(40, 0)))\n  end\nend\n",
+  "result": [
+   0,
+   "121600\n",
+   ""
+  ]
  }
 ]

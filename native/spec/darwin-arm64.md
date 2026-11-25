@@ -88,6 +88,8 @@ table (`DARWIN_CALLS`: the number, the function, how it converts) and gives
   `__getdirentries64`);
 - the clocks, `getrandom` (`getentropy`, 256 bytes at a time), `ppoll`
   (`poll`), `pipe2` (`pipe` and fcntl), `mremap` (a new mapping and a copy),
+  `madvise` (the pages it frees are mapped anew, so that they come back zero
+  as Linux gives them),
   `memfd_create` (a file of `mkstemp` unlinked at once);
 - signals' numbers (kill, wait4's status, sigaction's record);
 - sockets: the families, addresses (a length byte, then the family), the

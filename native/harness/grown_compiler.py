@@ -42,7 +42,7 @@ def verify(frontend,backend,compiler):
     source=grown(text,LIMIT,functions)
     assert count+functions>4096
     assert len(source.encode())>4*boot.FRONTEND_LIMIT-2,'the grown source is past the pinned parser several times over'
-    boot.source_text=lambda language="arithmetic",compact=True:source
+    boot.source_text=lambda language="arithmetic",compact=True,seed=False:source
     with tempfile.TemporaryDirectory(prefix='alchem-grown-compiler-') as directory:
         root=Path(directory);seed=root/'A0'
         boot.bootstrap(seed,Path(frontend).resolve(),Path(backend).resolve(),'functions')
