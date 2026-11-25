@@ -36,6 +36,13 @@ def parts():
 
 if __name__=='__main__':
     held=re.sub(r'\s','',(ROOT/'implementations/alchem/native-processes.alc').read_text())
+    # As the Linux compiler has it: what only Windows adds is b[] there.
+    windows=(ROOT/'implementations/alchem/native-windows.alc').read_text()
+    for name in ('nw_stack_keep','nw_stack_teb'):
+        assert re.search(r'def '+name+r'\(\): bytes do\n    if nc_win\(\) == 0 do b\[\] else',windows),name
+        held=held.replace(f'+Enum.count({name}())','')
+        held=re.sub(r'\]\)?,'+name+r'\(\),b\[',',',held)
+    held=held.replace('nc_sc()','5')
     for name,text in parts():
         code=','.join(map(str,assemble(text)))
         if code not in held:sys.exit(f'{name}: the bytes {code} are not in native-processes.alc')

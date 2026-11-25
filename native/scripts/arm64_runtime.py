@@ -4,11 +4,14 @@ build/arm64-tools, and written as base64 byte literals for the compiler."""
 import base64
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-TOOLS = ROOT / 'build/arm64-tools/bin'
+# The system's when it has one (the container), else the one
+# scripts/fetch-arm64-tools.sh unpacks.
+TOOLS = Path(shutil.which('aarch64-linux-gnu-as') or ROOT / 'build/arm64-tools/bin/aarch64-linux-gnu-as').parent
 
 
 def translator():

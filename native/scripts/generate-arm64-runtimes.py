@@ -26,8 +26,13 @@ def sources(generator):
     real = subprocess.run
 
     def watching(command, *args, **kwargs):
+        # A generator assembles a source once more to find where it makes
+        # system calls (scripts/windows_sites.py): the same text, taken once.
+        # A source with WINDOWS set is the Windows compiler's alone.
         if isinstance(command, list) and command and command[0] == 'as':
-            seen.append(Path(command[-1]).read_text())
+            text = Path(command[-1]).read_text()
+            if text not in seen and not text.startswith('.set WINDOWS,1\n'):
+                seen.append(text)
         return real(command, *args, **kwargs)
     subprocess.run = watching
     try:
