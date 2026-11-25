@@ -1231,7 +1231,7 @@ defmodule NativeSourceCompiler do
   def nc_list(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
     literal = if nc_word(source,pos,b[93]) == 1 do nc_u24(nc_end(source,pos)) else nc_literal_items(source,pos,0) end
     if nc_pos(literal) >= 0 do
-      nc_value(nc_pos(literal),nc_literal_emit(nc_slice(literal,3,Enum.count(literal))),b[1])
+      nc_value(nc_pos(literal),nc_text_emit(nc_slice(literal,3,Enum.count(literal))),b[1])
     else
       state = nc_list_collect(source,pos,b[],0,93)
       if nc_pos(state) < 0 do b[] else

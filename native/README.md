@@ -57,6 +57,17 @@ steps:
    `pinned-compiler.json` to that tag and `sha256` to the sums of the
    release's `SHA256SUMS`.
 
+A change of what the compiler makes of its own code (a runtime it
+embeds, such as the collector, or the code it emits for the compiler's
+source) makes A1, which the pinned compiler made, differ from A2, though
+both compile alike. It is made in one change, before it is merged:
+
+1. Run *Native compiler release* on the change's branch with the next tag,
+   `publish` and `converge` set: A2 must make itself again (A2 == A3), A3
+   is released, and each target must make itself from its archive.
+2. In the same change, set `release` and `sha256` to that release. A1 is
+   then A2 again, which is what CI requires.
+
 Nothing else needs a new release: a pin may stay behind the source for as
 long as it compiles it.
 

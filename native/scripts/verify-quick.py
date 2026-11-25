@@ -136,7 +136,7 @@ def load(name):
     return module
 
 
-def build(from_source=False):
+def build(from_source=False,converge=False):
     """A0, then A1 and A2 from the current source. A0 is the pinned release
     of the compiler (pinned-compiler.json); with from_source it is the seed
     the Go frontend and the Rust backend make of the source, as it was
@@ -161,11 +161,20 @@ def build(from_source=False):
         seed.unlink(missing_ok=True);seed.write_bytes(pinned.read_bytes());seed.chmod(0o700)
         print(f'{time.monotonic()-started:6.2f}s A0 (pinned release, {pinned.parent.name})',flush=True)
     previous=seed
-    for stage in (1,2):
+    # A change of what the compiler makes of its own code (its runtimes, the
+    # code it emits) makes A1, made by the pinned compiler, differ from A2:
+    # with converge, A2 must make itself again, and A3 is the compiler, which
+    # becomes the next pinned release (README.md, "Moving the pin").
+    for stage in (1,2,3) if converge else (1,2):
         image=WORK/f'A{stage}'
         result=step(f'A{stage} (self-build, empty PATH)',[str(previous)],input=source,env={'PATH':''},timeout=120)
         if result.stderr:sys.exit(f'FAIL A{stage}: unexpected stderr {result.stderr!r}')
         image.write_bytes(result.stdout);image.chmod(0o700);previous=image
+    if converge:
+        if (WORK/'A2').read_bytes()!=(WORK/'A3').read_bytes():sys.exit('FAIL A2/A3 fixpoint mismatch')
+        print(f'A2==A3: {len(source):,} source bytes -> {(WORK/"A3").stat().st_size:,} compiler bytes (A1 {"==" if (WORK/"A1").read_bytes()==(WORK/"A2").read_bytes() else "!="} A2)',flush=True)
+        (WORK/'A2').write_bytes((WORK/'A3').read_bytes())
+        return frontend,backend,WORK/'A2'
     if (WORK/'A1').read_bytes()!=(WORK/'A2').read_bytes():sys.exit('FAIL A1/A2 fixpoint mismatch')
     print(f'A1==A2: {len(source):,} source bytes -> {(WORK/"A2").stat().st_size:,} compiler bytes',flush=True)
     return frontend,backend,WORK/'A2'
@@ -199,6 +208,7 @@ def main():
     parser.add_argument('--list',action='store_true',help='list gate names and exit')
     parser.add_argument('--jobs',type=int,default=os.cpu_count(),help='parallel gates (default: CPU count)')
     parser.add_argument('--build-only',action='store_true',help='stop after the A1==A2 fixpoint')
+    parser.add_argument('--converge',action='store_true',help='with --build-only: A2==A3 instead, for the release that moves the pin past a change of what the compiler makes of its own code')
     parser.add_argument('--seed',action='store_true',help='start from the seed the Go frontend and the Rust backend make, not from the pinned release; the gates that take the two run only so')
     args=parser.parse_args()
     if args.list:print('\n'.join(GATES));return
@@ -215,7 +225,8 @@ def main():
         if seeded:print(f'not run without --seed (they take the Go frontend and the Rust backend): {", ".join(seeded)}',flush=True)
     if not selected and not args.build_only:sys.exit(f'No gate matches {args.gates}; see --list')
     started=time.monotonic()
-    frontend,backend,compiler=build(args.seed)
+    if args.converge and not args.build_only:sys.exit('--converge makes a compiler for a release: it goes with --build-only')
+    frontend,backend,compiler=build(args.seed,args.converge)
     if args.build_only:return
     failed=[];skipped=[]
     with ThreadPoolExecutor(max_workers=max(1,args.jobs)) as pool:
