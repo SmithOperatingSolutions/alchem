@@ -548,6 +548,13 @@ defmodule AlchemCommand do
   # A program the compiler refuses is explained from origin, the file the
   # pinned compiler would read: the problem its front end finds there
   # (AlchemCheck), else the function the compiler could not make.
+  def said(found: option[AlchemCheck.Problem]): string do
+    case found do
+      some(problem) -> problem.text
+      none -> ""
+    end
+  end
+
   def build_from(file: string, out: string, locked: boolean, origin: string): string do
     bundled = fetched_bundle(file, locked, 0)
     if elem(bundled, 0) != 0 do
@@ -557,13 +564,14 @@ defmodule AlchemCommand do
       end
     else
       source = rx_ab(elem(bundled, 1))
+      # The front end says what is a program: what it refuses is not given
+      # to the compiler, which may take it.
+      found = AlchemCheck.load(origin, File.cwd!())
+      if found != none do said(found) else
       if Enum.count(source) > 16776191 do "E_RUNTIME_INPUT: input exceeds byte limit" else
         image = AlchemCompiler.nc_compile(source)
         if Enum.count(image) == 0 do
-          case AlchemCheck.load(origin, File.cwd!()) do
-            some(problem) -> problem.text
-            none -> refusal(elem(bundled, 1), rx_as(AlchemCompiler.nc_explain(source)))
-          end
+          refusal(elem(bundled, 1), rx_as(AlchemCompiler.nc_explain(source)))
         else
           written = case File.write(out, rx_as(image)) do
             ok(_) -> File.chmod(out, 448)
@@ -574,7 +582,7 @@ defmodule AlchemCommand do
             error(message) -> message
           end
         end
-      end
+      end end
     end
   end
 

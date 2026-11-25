@@ -27,6 +27,8 @@ def source(pic=False, darwin=False):
     if text.count(SWITCH) != 1:
         raise ValueError('the compiler source has no single nc_arm()')
     text = text.replace(SWITCH, '  def nc_arm(): integer do %d end\n' % (3 if darwin else 2 if pic else 1))
+    if darwin:
+        text = bootstrap.darwin(text)
     return bootstrap.compact_identifiers(bootstrap.compact_source(text)).encode()
 
 

@@ -82,6 +82,28 @@ def source_text(language="arithmetic",compact=True):
     return compact_identifiers(compact_source(text)) if compact and language!='arithmetic' else text
 
 
+def darwin(text):
+    """The source (not compacted) of the compiler that makes macOS programs:
+    SHA-256 as native-sha.alc has it."""
+    fast=(ROOT/'implementations/alchem/native-sha.alc').read_text().split('  # Native smoke test;',1)[0].split('\n',1)[1]
+    parts=re.split(r'^(?=  def )',text,flags=re.M)
+    names=set(re.findall(r'^  def (\w+)\(',fast,re.M));replaced=set()
+    kept=[]
+    for part in parts:
+        name=re.match(r'  def (\w+)\(',part)
+        if name and name.group(1) in ('sh_tables','sh_blocks'):
+            replaced.add(name.group(1))
+            # What follows the function, a comment of the next one, stays.
+            end=part.index('\n  end\n')+len('\n  end\n') if '\n  end\n' in part else part.index('\n')+1
+            if name.group(1)=='sh_blocks':kept.append(fast)
+            kept.append(part[end:])
+        else:
+            if name and name.group(1) in names:raise ValueError('native-sha.alc defines '+name.group(1)+' again')
+            kept.append(part)
+    if replaced!={'sh_tables','sh_blocks'}:raise ValueError('the compiler source has no sh_tables and sh_blocks')
+    return ''.join(kept)
+
+
 def bridge(language="arithmetic"):
     entry="fn.compile_expression" if language=="arithmetic" else "fn.nc_compile"
     limit=128 if language=="arithmetic" else 16776191

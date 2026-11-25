@@ -16,6 +16,9 @@ seconds="${ALCHEM_SECONDS:-600}"
 if systemd-run --user --scope --quiet -p MemoryMax=1G true 2>/dev/null; then
   exec systemd-run --user --scope --quiet -p MemoryMax="$memory" -p MemorySwapMax=0 timeout --signal=KILL "$seconds" "$@"
 fi
+# In a container with a ceiling of its own (scripts/verify-arm64.sh) that one
+# holds: the time alone.
+if [[ -f /.dockerenv && -r /sys/fs/cgroup/memory.max && "$(cat /sys/fs/cgroup/memory.max)" != max ]]; then exec timeout --signal=KILL "$seconds" "$@"; fi
 if command -v prlimit >/dev/null && command -v numfmt >/dev/null; then
   bytes="$(numfmt --from=iec "$memory")"
   exec prlimit --as="$bytes" timeout --signal=KILL "$seconds" "$@"

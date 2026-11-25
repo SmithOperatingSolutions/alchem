@@ -9,7 +9,7 @@ DOCKER="${ALCHEM_DOCKER:-docker}"
 PLATFORM="${ALCHEM_CONTAINER_PLATFORM:-linux/amd64}"
 if command -v sha256sum >/dev/null 2>&1; then HASH=(sha256sum); else HASH=(shasum -a 256); fi
 TAG="$(cat mise.toml docker/Dockerfile | "${HASH[@]}" | cut -c1-12)"
-IMAGE="alchem-native-dev:$TAG"
+IMAGE="alchem-native-dev:$TAG-${PLATFORM##*/}"
 
 if [[ "${1:-}" == --build-image ]] || ! "$DOCKER" image inspect "$IMAGE" >/dev/null 2>&1; then
   "$DOCKER" build --platform "$PLATFORM" -f docker/Dockerfile -t "$IMAGE" .
@@ -21,8 +21,10 @@ if [[ -t 0 && -t 1 ]]; then TTY=(-it); fi
 # SYS_PTRACE/seccomp: the harness uses strace and ptrace for fault injection and
 # arena measurements. Named volumes keep build caches off the bind mount.
 exec "$DOCKER" run --rm "${TTY[@]}" --platform "$PLATFORM" \
+  ${ALCHEM_CONTAINER_MEMORY:+--memory "$ALCHEM_CONTAINER_MEMORY" --memory-swap "$ALCHEM_CONTAINER_MEMORY"} \
   --cap-add SYS_PTRACE --security-opt seccomp=unconfined \
   -v "$ROOT:/work" \
-  -v alchem-native-cache:/var/cache/alchem-native \
+  -v "$ROOT/../tests:/tests:ro" -v "$ROOT/../examples:/examples:ro" -v "$ROOT/../benchmarks:/benchmarks:ro" \
+  -v "alchem-native-cache-${PLATFORM##*/}:/var/cache/alchem-native" \
   -v alchem-native-cargo-registry:/root/.cargo/registry \
   "$IMAGE" "${@:-bash}"

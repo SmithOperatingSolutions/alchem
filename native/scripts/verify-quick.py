@@ -170,9 +170,14 @@ def build(from_source=False):
     return frontend,backend,WORK/'A2'
 
 
+# Gates that measure time or memory, or wait for one another's programs.
+TIMED={'speed','long_bodies','nodes','memory_reclaim','collection_memory','compiler_memory','tls','network','processes'}
+
+
 def run_gate(name,frontend,backend,compiler):
     code=(f'import sys;from pathlib import Path;sys.path.insert(0,{str(ROOT/"harness")!r});import {name} as m;'
-          f'frontend,backend,compiler=Path({str(frontend)!r}),Path({str(backend)!r}),Path({str(compiler)!r});m.{GATES[name]}')
+          f'frontend,backend,compiler=Path({str(frontend)!r}),Path({str(backend)!r}),Path({str(compiler)!r});'
+          f'import ahead;passed=ahead.install(compiler,{name!r},m) if {name!r} not in {sorted(TIMED)!r} else None;m.{GATES[name]};passed and passed()')
     started=time.monotonic()
     result=subprocess.run([sys.executable,'-c',code],capture_output=True,cwd=ROOT/'harness')
     output=result.stdout.decode(errors='replace')+result.stderr.decode(errors='replace')
