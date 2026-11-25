@@ -218,7 +218,7 @@ defmodule NativeDescribed do
     name = nc_start(source,nc_end(source,pos))
     kinds = nc_join(nt_cell(if op == 3 do nt_item(words,0) else b[0] end),if count == 2 do nt_cell(nt_item(words,1)) else b[] end,Enum.concat(b[1,0],nt_cell(nc_zeros(count+1))))
     packet = nc_arg_packet(0,count+1,kinds,nc_join(nf_pushes(count,0),jd_placed(node,nu_vars(scope,2)),b[80]))
-    home = Enum.concat(b[65,108,99,104,101,109,74,83,79,78],ny_digits(count+1))
+    home = Enum.concat(b[65,108,99,104,127,109,74,83,79,78],ny_digits(count+1))
     made = nn_passes(source,name,sg_referred(source,pos),scope,table,nc_join(b[Enum.at(plan,0,0),1,0,Enum.count(home)],home,packet))
     if nc_pos(made) < 0 do b[] else nh_placed(table,if op == 3 do nc_join(nc_slice(made,0,4),nt_cell(wanted),nc_code(made)) else made end,nc_start(source,pos)) end
   end

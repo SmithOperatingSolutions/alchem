@@ -289,7 +289,13 @@ the name, uses that module and not the library's (issue #129).
   front end with the pinned message, `type name Registry is reserved for
   the builtin Registry functions`, at its place.
 
-`harness/replaced.py` holds ten programs with what the pinned command gives.
+The modules the library is appended as (`AlchemEnum2`, `AlchemTypes` and
+the rest, as this file writes them) are named in a program's image with the
+byte 127 in place of the `e` of `Alchem`: neither front end takes that byte
+in a source file, so no module of a program is one of them, and a program's
+module named `AlchemTypes` is its own (issue #102, `nc_ours`).
+
+`harness/replaced.py` holds eleven programs with what the pinned command gives.
 
 ## Ordering and sets (state after the float-forms merge)
 

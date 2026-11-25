@@ -89,7 +89,7 @@ defmodule NativeProcesses do
   # Process._close/1 when the program holds the process library: what its
   # entry calls as the program ends.
   def ac_close(source: bytes, table: bytes): integer do
-    ac_function(source,table,ny_module(source,table,b[65,108,99,104,101,109,80,114,111,99,101,115,115,49],Enum.concat(nc_u24(0),nc_u24(nc_records(Enum.count(table))))),b[95,99,108,111,115,101])
+    ac_function(source,table,ny_module(source,table,b[65,108,99,104,127,109,80,114,111,99,101,115,115,49],Enum.concat(nc_u24(0),nc_u24(nc_records(Enum.count(table))))),b[95,99,108,111,115,101])
   end
   # The entry of a program with processes. main runs under a handler of its
   # own, whose frame is 160 bytes of the stack, so that Process._close runs
@@ -167,7 +167,7 @@ defmodule NativeProcesses do
   # (Process._stopped), as the pinned runtime looks before each statement.
   def ac_statement(source: bytes, table: bytes, env: bytes): bytes do
     if Enum.at(table,nc_read(env,0)*27+16,0) != 1 do b[] else if nz_on(table) == 0 do b[] else
-      stopped = ac_function(source,table,ny_module(source,table,b[65,108,99,104,101,109,80,114,111,99,101,115,115,48],Enum.concat(nc_u24(0),nc_u24(nc_records(Enum.count(table))))),b[95,115,116,111,112,112,101,100])
+      stopped = ac_function(source,table,ny_module(source,table,b[65,108,99,104,127,109,80,114,111,99,101,115,115,48],Enum.concat(nc_u24(0),nc_u24(nc_records(Enum.count(table))))),b[95,115,116,111,112,112,101,100])
       if stopped < 0 do b[] else Enum.concat(b[73,131,126,200,0,116,9],nc_call(stopped)) end
     end end
   end
@@ -177,7 +177,7 @@ defmodule NativeProcesses do
   # function of the process library, whose arguments settle each other so.
   def ac_lenient(source: bytes, table: bytes, target: integer): integer do
     start = nc_meta(table,nc_owner(table,target),0)
-    ac_home(source,start+6,ac_homes(),0)*nc_word_at(source,start,b[65,108,99,104,101,109],0)
+    ac_home(source,start+6,ac_homes(),0)*nc_ours(source,start)
   end
   def ac_homes(): bytes do
     b[7,80,114,111,99,101,115,115,6,83,101,114,118,101,114,10,83,117,112,101,114,118,105,115,111,114,17,68,121,110,97,109,105,99,83,117,112,101,114,118,105,115,111,114,5,65,103,101,110,116,4,84,97,115,107,8,82,101,103,105,115,116,114,121,0]
@@ -345,7 +345,7 @@ defmodule NativeProcesses do
   # in a program without them, leave at once.
   def ac_exit(source: bytes, table: bytes, start: integer, dot: integer): bytes do
     code = nz_exit(table,start)
-    halted = if nc_word(source,dot,b[115,116,111,112]) == 0 do -1 else if nz_on(table) == 0 do -1 else ac_function(source,table,ny_module(source,table,b[65,108,99,104,101,109,80,114,111,99,101,115,115,49],Enum.concat(nc_u24(0),nc_u24(nc_records(Enum.count(table))))),b[95,104,97,108,116,101,100]) end end
+    halted = if nc_word(source,dot,b[115,116,111,112]) == 0 do -1 else if nz_on(table) == 0 do -1 else ac_function(source,table,ny_module(source,table,b[65,108,99,104,127,109,80,114,111,99,101,115,115,49],Enum.concat(nc_u24(0),nc_u24(nc_records(Enum.count(table))))),b[95,104,97,108,116,101,100]) end end
     if halted < 0 do code else Enum.concat(nc_slice(code,0,Enum.count(code)-7),nc_call(halted)) end
   end
   # Native smoke test; assembled with the compiler.

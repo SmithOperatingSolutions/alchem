@@ -5,7 +5,7 @@ defmodule NativeSystem do
   def nh_inside(source: bytes, start: integer, env: bytes, table: bytes): integer do
     owner = nc_owner(table,nc_read(env,0))
     if nc_word(source,start,b[83,121,115]) == 0 do 0 else if owner < 0 do 0 else
-      nt_same(nc_slice(source,nc_meta(table,owner,0),nc_meta(table,owner,0)+6),b[65,108,99,104,101,109])
+      nc_ours(source,nc_meta(table,owner,0))
     end end
   end
   def nh_name(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
@@ -136,12 +136,12 @@ defmodule NativeSystem do
     name = nc_cursor(declared,0)
     plain = if nc_cursor(declared,3) != nc_end(source,name) do 0 else if byte_at(source,name) > 90 do 0 else 1 end end
     if Enum.count(declared) != 27 do declared else if plain == 1 do declared else
-      if nt_same(nc_slice(source,nc_meta(table,owner,0),nc_meta(table,owner,3)),b[65,108,99,104,101,109,84,121,112,101,115]) == 1 do declared else b[] end
+      if nt_same(nc_slice(source,nc_meta(table,owner,0),nc_meta(table,owner,3)),b[65,108,99,104,127,109,84,121,112,101,115]) == 1 do declared else b[] end
     end end
   end
   # Module.Name at pos where the program has no such module: the library's type of that name.
   def nh_dotted(source: bytes, pos: integer, table: bytes): integer do
-    home = ny_module(source,table,b[65,108,99,104,101,109,84,121,112,101,115],Enum.concat(nc_u24(0),nc_u24(nc_records(Enum.count(table)))))
+    home = ny_module(source,table,b[65,108,99,104,127,109,84,121,112,101,115],Enum.concat(nc_u24(0),nc_u24(nc_records(Enum.count(table)))))
     if home < 0 do -1 else nh_find(source,pos,table,0,nc_records(Enum.count(table)),home) end
   end
   def nh_find(source: bytes, pos: integer, table: bytes, first: integer, stop: integer, owner: integer): integer do
@@ -193,7 +193,7 @@ defmodule NativeSystem do
   def nh_library(source: bytes, pos: integer, env: bytes, table: bytes): integer do
     owner = nc_owner(table,nc_read(env,0))
     if nc_word(source,pos,b[84,76,83]) == 0 do 0 else if owner < 0 do 0 else
-      nt_same(nc_slice(source,nc_meta(table,owner,0),nc_meta(table,owner,0)+6),b[65,108,99,104,101,109])
+      nc_ours(source,nc_meta(table,owner,0))
     end end
   end
   # The shared runtimes with the crypto runtime in the slot after the float

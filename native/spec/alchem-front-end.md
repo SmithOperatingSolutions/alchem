@@ -22,8 +22,7 @@ message. The tree is `AlchemJson` values (`tools/alchem-json.alc`) with the
 fields of the pinned `ast` types in their order, so that the tree written
 as JSON is the pinned one byte for byte, `null` where Go writes a nil
 slice. Type names are checked as the pinned `ast.ValidType` checks them
-(`tools/alchem-types.alc`, the module `AlchemTypeNames`: a module named
-`AlchemTypes` is refused, issue #102).
+(`tools/alchem-types.alc`, the module `AlchemTypeNames`).
 
 The parser is the pinned one function for function. The pinned parser
 changes its state in place and puts parts of it back when a function
