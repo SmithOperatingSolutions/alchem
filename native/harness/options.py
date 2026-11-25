@@ -52,8 +52,8 @@ def verify(compiler):
         for helpers,body in bad:
             result=subprocess.run([str(compiler)],input=native_bytes(('defmodule M do '+helpers+'def main() do '+body+' end end').encode()),capture_output=True,env={'PATH':''},timeout=15)
             assert result.returncode==65 and not result.stdout,('option rejection',helpers,body,result.returncode,result.stderr)
-        measured=0
-        for expression,charge in [(': option[integer] = none',0),('some(0)',16),('some(false)',16),(': option[list[integer]] = some([])',16),('Enum.at([7],0)',32),('Enum.at([7],1)',16),(': option[integer] = List.first([])',8),('String.first("")',0),('String.first("a")',32),('String.length("e\\xcc\\x81")',0),('String.slice("abc",0,0)',8)]:
+        measured=0;wrong=[]
+        for expression,charge in [(': option[integer] = none',0),('some(0)',16),('some(false)',16),(': option[list[integer]] = some([])',16),('Enum.at([7],0)',16),('Enum.at([7],1)',0),(': option[integer] = List.first([])',0),('String.first("")',0),('String.first("a")',32),('String.length("e\\xcc\\x81")',0),('String.slice("abc",0,0)',8)]:
             # A value of open type takes it from the binding's annotation.
             source=('defmodule M do def main() do value'+(expression if expression.startswith(':') else '='+expression)+'\nSystem.halt(0) end end').encode()
             built=subprocess.run([str(compiler)],input=native_bytes(source),capture_output=True,env={'PATH':''},timeout=120)
@@ -61,9 +61,11 @@ def verify(compiler):
             target=root/'arena';target.unlink(missing_ok=True);target.write_bytes(built.stdout);target.chmod(0o700)
             try:
                 status,data,errors,charged=profile(target,b'')
-                assert (status,data,errors,charged)==(0,b'',b'',charge),(expression,charged,charge)
+                # Every figure that differs is said, not only the first.
+                if (status,data,errors,charged)!=(0,b'',b'',charge):wrong.append((expression,status,charged,charge))
                 measured+=1
             except TraceUnavailable:print('SKIP option/grapheme arena: ptrace unavailable')
+        assert not wrong,wrong
     print(f'Option/grapheme arena measurements: {measured}/11')
     print(f'PASS {len(valid)} typed option programs and {len(bad)} rejections')
 
