@@ -8,7 +8,7 @@ Every library function with its signatures, a description and examples; `alchem 
 
 **Collections**: [Enum](#enum), [Stream](#stream), [List](#list), [Map](#map), [Keyword](#keyword), [MapSet](#mapset), [Range](#range)
 
-**Text**: [String](#string), [Regex](#regex), [Integer](#integer), [Float](#float), [Base](#base), [JSON](#json), [URI](#uri), [Version](#version), [Markup](#markup), [Crypto](#crypto)
+**Text**: [String](#string), [Regex](#regex), [Integer](#integer), [Float](#float), [Base](#base), [Binary](#binary), [JSON](#json), [URI](#uri), [Version](#version), [Markup](#markup), [Crypto](#crypto)
 
 **Dates and times**: [Date](#date), [Time](#time), [NaiveDateTime](#naivedatetime), [DateTime](#datetime), [Calendar](#calendar), [Duration](#duration)
 
@@ -4885,6 +4885,89 @@ alx> Base.url_encode64("hi")
 "aGk="
 ```
 
+## Binary
+
+The bytes of a string as numbers: one byte at a position, a string from a list of bytes, and a number written in or read from a fixed count of bytes, for file formats, protocols and checksums.
+
+### Binary.at
+
+```
+Binary.at(string, integer) -> integer
+```
+
+The byte at a position of a string, counted from 0, as a number from 0 to 255; fails when the position is outside the string.
+
+```elixir
+alx> Binary.at("abc", 1)
+98
+alx> Binary.at("\xff", 0)
+255
+```
+
+### Binary.decode
+
+```
+Binary.decode(string, integer, integer, atom) -> integer
+```
+
+The number that 1, 2, 4 or 8 bytes of a string hold from a position on, read with :big or :little; fails when the bytes are outside the string. Eight bytes give the integer whose bits they are.
+
+```elixir
+alx> Binary.decode(Binary.from_list([9, 1, 2]), 1, 2, :big)
+258
+alx> Binary.decode(Binary.from_list([1, 2]), 0, 2, :little)
+513
+alx> Binary.decode(Binary.encode(-5, 8, :little), 0, 8, :little)
+-5
+```
+
+### Binary.encode
+
+```
+Binary.encode(integer, integer, atom) -> string
+```
+
+A number written in 1, 2, 4 or 8 bytes, the highest byte first with :big and the lowest first with :little; fails when the number does not fit. Eight bytes hold every integer, a negative one as its bits.
+
+```elixir
+alx> Binary.to_list(Binary.encode(258, 2, :big))
+[1, 2]
+alx> Binary.to_list(Binary.encode(258, 4, :little))
+[2, 1, 0, 0]
+alx> Binary.to_list(Binary.encode(-1, 8, :big))
+[255, 255, 255, 255, 255, 255, 255, 255]
+```
+
+### Binary.from_list
+
+```
+Binary.from_list(enum[integer]) -> string
+```
+
+The string whose bytes are the numbers of a list, each from 0 to 255; fails on any other number.
+
+```elixir
+alx> Binary.from_list([104, 105])
+"hi"
+alx> byte_size(Binary.from_list([0, 255]))
+2
+```
+
+### Binary.to_list
+
+```
+Binary.to_list(string) -> list[integer]
+```
+
+The bytes of a string as a list of numbers from 0 to 255.
+
+```elixir
+alx> Binary.to_list("hi")
+[104, 105]
+alx> Binary.to_list("")
+[]
+```
+
 ## JSON
 
 Converts between JSON text, the builtin JSON type and declared types.
@@ -6794,6 +6877,25 @@ alx> File.stream!("doc_stream.txt") |> Stream.map(&String.trim(&1)) |> Enum.take
 ["one", "two"]
 alx> File.stream!("doc_stream.txt", 4) |> Enum.take(1)
 ["one\n"]
+```
+
+### File.sync
+
+```
+File.sync(file) -> result[tuple[],string]
+File.sync(string) -> result[tuple[],string]
+```
+
+Has the system write what it holds of a file, given its path or the open file, to the disk before returning, so that the contents survive a loss of power; given the path of a directory, the names in it, which makes a File.rename into it last. A write alone is kept by the system for a while.
+
+```elixir
+alx> File.write!("doc_sync.txt", "kept")
+alx> File.sync("doc_sync.txt")
+ok({})
+alx> File.sync(".")
+ok({})
+alx> File.open("doc_sync.txt", [:write], fn file -> File.sync(file) end)
+ok(ok({}))
 ```
 
 ### File.touch
@@ -12741,6 +12843,21 @@ alx> {plain.status, plain.body}
 ## Crypto
 
 Cryptographic building blocks: random bytes from the operating system's secure source, hashes, HMAC signatures, password storage and a comparison that takes the same time however much of its input matches. Results are raw bytes; Base.encode16 or Base.encode64 makes them printable.
+
+### Crypto.crc32
+
+```
+Crypto.crc32(string) -> integer
+```
+
+The CRC-32 checksum of some data (the IEEE polynomial, as zip, gzip and PNG use), from 0 to 4294967295. It catches accidental damage; it is not a signature.
+
+```elixir
+alx> Crypto.crc32("123456789")
+3421780262
+alx> Crypto.crc32("")
+0
+```
 
 ### Crypto.hash
 

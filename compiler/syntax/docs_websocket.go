@@ -57,4 +57,17 @@ func init() {
 		"alx> Base.encode16(Crypto.hmac(:sha256, \"Jefe\", \"what do ya want for nothing?\"), [case: :lower])", "\"5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843\"")
 	doc("Crypto.secure_compare", "Reports whether two strings are equal, taking a time that depends only on their lengths, so that checking a signature or token does not reveal how much of a guess was right.",
 		"alx> Crypto.secure_compare(\"token\", \"token\")", "true", "alx> Crypto.secure_compare(\"token\", \"tokem\")", "false")
+	doc("Crypto.crc32", "The CRC-32 checksum of some data (the IEEE polynomial, as zip, gzip and PNG use), from 0 to 4294967295. It catches accidental damage; it is not a signature.",
+		"alx> Crypto.crc32(\"123456789\")", "3421780262", "alx> Crypto.crc32(\"\")", "0")
+
+	doc("Binary.at", "The byte at a position of a string, counted from 0, as a number from 0 to 255; fails when the position is outside the string.",
+		"alx> Binary.at(\"abc\", 1)", "98", "alx> Binary.at(\"\\xff\", 0)", "255")
+	doc("Binary.from_list", "The string whose bytes are the numbers of a list, each from 0 to 255; fails on any other number.",
+		"alx> Binary.from_list([104, 105])", "\"hi\"", "alx> byte_size(Binary.from_list([0, 255]))", "2")
+	doc("Binary.to_list", "The bytes of a string as a list of numbers from 0 to 255.",
+		"alx> Binary.to_list(\"hi\")", "[104, 105]", "alx> Binary.to_list(\"\")", "[]")
+	doc("Binary.encode", "A number written in 1, 2, 4 or 8 bytes, the highest byte first with :big and the lowest first with :little; fails when the number does not fit. Eight bytes hold every integer, a negative one as its bits.",
+		"alx> Binary.to_list(Binary.encode(258, 2, :big))", "[1, 2]", "alx> Binary.to_list(Binary.encode(258, 4, :little))", "[2, 1, 0, 0]", "alx> Binary.to_list(Binary.encode(-1, 8, :big))", "[255, 255, 255, 255, 255, 255, 255, 255]")
+	doc("Binary.decode", "The number that 1, 2, 4 or 8 bytes of a string hold from a position on, read with :big or :little; fails when the bytes are outside the string. Eight bytes give the integer whose bits they are.",
+		"alx> Binary.decode(Binary.from_list([9, 1, 2]), 1, 2, :big)", "258", "alx> Binary.decode(Binary.from_list([1, 2]), 0, 2, :little)", "513", "alx> Binary.decode(Binary.encode(-5, 8, :little), 0, 8, :little)", "-5")
 }

@@ -4530,6 +4530,112 @@ func binaryPart(ctx *actor.Context, s string, start, length int64, where string)
 	return s[start : start+length]
 }
 
+// The bytes of a string as numbers (the module Binary).
+
+func binaryAt(ctx *actor.Context, s string, index int64, where string) int64 {
+	if index < 0 || index >= int64(len(s)) {
+		failAt(ctx, where, "Binary.at: the position is outside the string")
+	}
+	return int64(s[index])
+}
+
+func binaryFromList(ctx *actor.Context, values iter.Seq[int64], where string) string {
+	var out []byte
+	values(func(value int64) bool {
+		if value < 0 || value > 255 {
+			failAt(ctx, where, "Binary.from_list: a byte is a number from 0 to 255")
+		}
+		out = append(out, byte(value))
+		return true
+	})
+	return string(out)
+}
+
+func binaryToList(s string) L[int64] {
+	out := make([]int64, len(s))
+	for i := 0; i < len(s); i++ {
+		out[i] = int64(s[i])
+	}
+	return mk(out)
+}
+
+// binaryLayout checks the size and the byte order of an encoded number and
+// reports whether the order is little-endian.
+func binaryLayout(ctx *actor.Context, function string, size int64, order actor.Atom, where string) bool {
+	if size != 1 && size != 2 && size != 4 && size != 8 {
+		failAt(ctx, where, function+": the size is 1, 2, 4 or 8 bytes")
+	}
+	if order != "big" && order != "little" {
+		failAt(ctx, where, function+": the order is :big or :little")
+	}
+	return order == "little"
+}
+
+// binaryEncode is the number in size bytes. A number that does not fit is
+// refused; eight bytes hold every integer, a negative one as its bits.
+func binaryEncode(ctx *actor.Context, value, size int64, order actor.Atom, where string) string {
+	little := binaryLayout(ctx, "Binary.encode", size, order, where)
+	if size < 8 && (value < 0 || value >= int64(1)<<(8*uint(size))) {
+		failAt(ctx, where, "Binary.encode: the number does not fit in the size")
+	}
+	out := make([]byte, size)
+	for i := int64(0); i < size; i++ {
+		at := size - 1 - i
+		if little {
+			at = i
+		}
+		out[at] = byte(uint64(value) >> (8 * uint(i)))
+	}
+	return string(out)
+}
+
+// binaryDecode is the number size bytes hold from index on; eight bytes
+// give the integer whose bits they are.
+func binaryDecode(ctx *actor.Context, s string, index, size int64, order actor.Atom, where string) int64 {
+	little := binaryLayout(ctx, "Binary.decode", size, order, where)
+	if index < 0 || index > int64(len(s))-size {
+		failAt(ctx, where, "Binary.decode: the bytes are outside the string")
+	}
+	var value uint64
+	for i := int64(0); i < size; i++ {
+		at := index + i
+		if little {
+			at = index + size - 1 - i
+		}
+		value = value<<8 | uint64(s[at])
+	}
+	return int64(value)
+}
+
+func cryptoCrc32(s string) int64 { return int64(crc32.ChecksumIEEE([]byte(s))) }
+
+// fileSync has the system write what it holds of a file, or of a directory
+// (the names in it, after a rename), to the disk before it returns. Windows
+// flushes a file opened for writing only and has no such call for a
+// directory, whose changes it writes itself.
+func fileSync(path string) Tresult[struct{}, string] {
+	flag := os.O_RDONLY
+	if os.PathSeparator == '\\' {
+		info, err := os.Stat(path)
+		if err != nil {
+			return done(err)
+		}
+		if info.IsDir() {
+			return done(nil)
+		}
+		flag = os.O_RDWR
+	}
+	f, err := os.OpenFile(path, flag, 0)
+	if err != nil {
+		return done(err)
+	}
+	err = f.Sync()
+	if closed := f.Close(); err == nil {
+		err = closed
+	}
+	return done(err)
+}
+
 func baseEncode32(s string) string { return base32.StdEncoding.EncodeToString([]byte(s)) }
 func baseDecode32(s string) Toption[string] {
 	text, err := base32.StdEncoding.DecodeString(s)
@@ -10487,6 +10593,19 @@ func fileHandleWrite(ctx *actor.Context, h *fileHandle, text string) Tresult[str
 		return errOf[struct{}]("closed")
 	}
 	if _, err := h.file.WriteString(text); err != nil {
+		return errOf[struct{}](fileProblem(err))
+	}
+	return okOf(struct{}{})
+}
+
+// fileHandleSync is File.sync of an open file.
+func fileHandleSync(h *fileHandle) Tresult[struct{}, string] {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return errOf[struct{}]("closed")
+	}
+	if err := h.file.Sync(); err != nil {
 		return errOf[struct{}](fileProblem(err))
 	}
 	return okOf(struct{}{})

@@ -1,0 +1,69 @@
+defmodule BinaryTest do
+  test "bytes as numbers" do
+    assert(Binary.at("abc", 1) == 98)
+    assert(Binary.at("\xff", 0) == 255)
+    assert(Binary.from_list([104, 105]) == "hi")
+    assert(Binary.from_list([]) == "")
+    assert(Binary.to_list("h\xffi") == [104, 255, 105])
+    assert(Binary.to_list("") == [])
+    every = Enum.to_list(0..255)
+    assert(Binary.to_list(Binary.from_list(every)) == every)
+    assert(Binary.from_list(Stream.map(65..67, fn n -> n end)) == "ABC")
+  end
+
+  test "numbers as bytes" do
+    assert(Binary.to_list(Binary.encode(258, 2, :big)) == [1, 2])
+    assert(Binary.to_list(Binary.encode(258, 2, :little)) == [2, 1])
+    assert(Binary.to_list(Binary.encode(0, 1, :big)) == [0])
+    Enum.each([1, 2, 4, 8], fn size ->
+      Enum.each([:big, :little], fn order ->
+        Enum.each([0, 1, 127, 128, 255], fn n ->
+          assert(Binary.decode("x" <> Binary.encode(n, size, order) <> "y", 1, size, order) == n)
+        end)
+      end)
+    end)
+    assert(Binary.decode(Binary.encode(4294967295, 4, :little), 0, 4, :little) == 4294967295)
+    Enum.each([9223372036854775807, -9223372036854775807 - 1, -1, -5], fn n ->
+      assert(Binary.decode(Binary.encode(n, 8, :big), 0, 8, :big) == n)
+      assert(Binary.decode(Binary.encode(n, 8, :little), 0, 8, :little) == n)
+    end)
+  end
+
+  test "what does not fit fails" do
+    assert_raise("Binary.at: the position is outside the string", fn -> Binary.at("abc", 3) end)
+    assert_raise("Binary.at: the position is outside the string", fn -> Binary.at("abc", -1) end)
+    assert_raise("Binary.from_list: a byte is a number from 0 to 255", fn -> Binary.from_list([256]) end)
+    assert_raise("Binary.from_list: a byte is a number from 0 to 255", fn -> Binary.from_list([-1]) end)
+    assert_raise("Binary.encode: the number does not fit in the size", fn -> Binary.encode(256, 1, :big) end)
+    assert_raise("Binary.encode: the number does not fit in the size", fn -> Binary.encode(4294967296, 4, :big) end)
+    assert_raise("Binary.encode: the number does not fit in the size", fn -> Binary.encode(-1, 4, :big) end)
+    assert_raise("Binary.encode: the size is 1, 2, 4 or 8 bytes", fn -> Binary.encode(1, 3, :big) end)
+    assert_raise("Binary.encode: the order is :big or :little", fn -> Binary.encode(1, 2, :middle) end)
+    assert_raise("Binary.decode: the bytes are outside the string", fn -> Binary.decode("abc", 2, 2, :big) end)
+    assert_raise("Binary.decode: the bytes are outside the string", fn -> Binary.decode("abc", -1, 2, :big) end)
+    assert_raise("Binary.decode: the bytes are outside the string", fn -> Binary.decode("abc", 9223372036854775807, 8, :big) end)
+    assert_raise("Binary.decode: the size is 1, 2, 4 or 8 bytes", fn -> Binary.decode("abc", 0, 0, :big) end)
+  end
+
+  test "crc32" do
+    assert(Crypto.crc32("") == 0)
+    assert(Crypto.crc32("123456789") == 3421780262)
+    assert(Crypto.crc32("\x00\xff") == 1826356594)
+  end
+
+  test "sync" do
+    File.write!("binary_sync.txt", "kept")
+    assert(File.sync("binary_sync.txt") == ok({}))
+    assert(File.sync(".") == ok({}))
+    case File.sync("binary_missing.txt") do
+      ok(_) -> flunk("there is no such file")
+      error(reason) ->
+        assert(String.contains?(reason, "binary_missing.txt"))
+    end
+    ok(file) = File.open("binary_sync.txt", [:write])
+    assert(File.sync(file) == ok({}))
+    File.close(file)
+    assert(File.sync(file) == error("closed"))
+    File.rm!("binary_sync.txt")
+  end
+end
