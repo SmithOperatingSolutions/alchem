@@ -293,7 +293,8 @@ defmodule NativeProtocols do
   # or a function of the library.
   def mp_or(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
     name = nc_start(source,nc_end(source,nc_end(source,pos)))
-    ours = if nc_library_module(source,pos) == 1 do -1 else if byte_at(source,nc_end(source,name)) != 40 do -1 else mp_next(source,table,pos,0,nc_records(Enum.count(table))) end end
+    # The library calls no protocol, and each such call looks at every record.
+    ours = if nn_library(source,env,table)+nc_library_module(source,pos) > 0 do -1 else if byte_at(source,nc_end(source,name)) != 40 do -1 else mp_next(source,table,pos,0,nc_records(Enum.count(table))) end end
     if ours >= 0 do mp_call(source,pos,env,table,depth) else ny_call(source,pos,env,table,depth) end
   end
   # &Protocol.function/2 is &Protocol.function(&1, &2).

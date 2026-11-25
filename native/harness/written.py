@@ -27,7 +27,7 @@ def verify(compiler):
     made = load('written_cases', ROOT / 'scripts/generate-written-cases.py')
     builder = load('build_alchem', ROOT / 'scripts/build-alchem.py')
     cases = json.loads(made.CASES.read_text())
-    assert len(cases) >= 234, len(cases)
+    assert len(cases) >= 235, len(cases)
     with tempfile.TemporaryDirectory(prefix='alchem-written-') as top:
         alchem = Path(top) / 'alchem'
         builder.build(compiler, alchem, builder.platform_of(compiler).startswith('darwin/'))

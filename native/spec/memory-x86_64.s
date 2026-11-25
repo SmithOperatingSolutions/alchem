@@ -1254,15 +1254,22 @@ gm_swept:
  jbe 1f
  cmp rdi,4194304
  jb 1f
- cmp rcx,[rbx+DTOP]
- jne 12f
- mov [rbx+DTOP],rax                # they come back zero
-12:
  mov rsi,rdi
  mov rdi,rax
+ push rcx
+ push rax
  mov edx,4
  mov eax,28
  syscall
+ pop rdi
+ pop rcx
+# They come back zero, where the system took them: a system that does not
+# leaves them as they were, and they are made zero when they are taken.
+ test rax,rax
+ jnz 1f
+ cmp rcx,[rbx+DTOP]
+ jne 1f
+ mov [rbx+DTOP],rdi
 1:
  mov rax,[rbx+LIVE]
  cmp rax,FLOOR

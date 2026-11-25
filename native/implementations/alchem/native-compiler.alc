@@ -1231,7 +1231,7 @@ defmodule NativeSourceCompiler do
   def nc_list(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
     literal = if nc_word(source,pos,b[93]) == 1 do nc_u24(nc_end(source,pos)) else nc_literal_items(source,pos,0) end
     if nc_pos(literal) >= 0 do
-      nc_value(nc_pos(literal),nc_literal_emit(nc_slice(literal,3,Enum.count(literal))),b[1])
+      nc_value(nc_pos(literal),nc_text_emit(nc_slice(literal,3,Enum.count(literal))),b[1])
     else
       state = nc_list_collect(source,pos,b[],0,93)
       if nc_pos(state) < 0 do b[] else
@@ -1793,6 +1793,13 @@ defmodule NativeSourceCompiler do
   def nc_explain(given: bytes): bytes do
     if Enum.count(given) > nc_limit() do b[] else ac_compiled(given,1) end
   end
+  # What a check asks: the byte 1 when the code of every function of the
+  # program itself is made (the library's functions, which every program
+  # shares, are left out, and no image is made); anything else says that
+  # it is to be compiled to know.
+  def nc_checked(given: bytes): bytes do
+    if Enum.count(given) > nc_limit() do b[] else ac_compiled(given,2) end
+  end
   # Macros, protocols and templates are rewritten (native-macros.alc), after
   # the receive assertions (ac_receives), whose rewriting keeps every line:
   # the places of the rewritten text are turned back to that text. The
@@ -1821,9 +1828,31 @@ defmodule NativeSourceCompiler do
     # library's functions, which says nothing of why it was refused.
     if explain == 1 do
       nc_explain_all(nc_join(given,library,tail))
+    else if explain == 2 do
+      nc_check_all(nc_join(given,library,tail),Enum.count(given),Enum.count(given)+Enum.count(library))
     else
       image = nc_compile_all(nc_join(given,library,tail))
       if Enum.count(image) > 0 do image else if Enum.count(library) == 0 do image else nc_compile_all(Enum.concat(given,tail)) end end
+    end end
+  end
+  # nc_checked of source, whose library stands from first up to stop.
+  def nc_check_all(source: bytes, first: integer, stop: integer): bytes do
+    if mx_stop(source) > nc_limit() do b[] else
+      listed = nc_module(source)
+      table = if Enum.count(listed) == 0 do b[] else if nc_native_index(source,listed,0,nc_records(Enum.count(listed))) < 0 do zf_covered(source,jd_settle(source,listed)) else nz_off(listed) end end
+      if Enum.count(table) == 0 do b[] else if Enum.count(nc_check_run(source,table,0,nc_records(Enum.count(table)),Enum.concat(nc_u24(first),nc_u24(stop)))) == 0 do b[1] else b[] end end
+    end
+  end
+  def nc_check_run(source: bytes, table: bytes, first: integer, stop: integer, span: bytes): bytes do
+    if first >= stop do b[] else
+      if stop-first == 1 do
+        place = nc_meta(table,first,0)
+        if place >= nc_cursor(span,0) do if place < nc_cursor(span,3) do b[] else nc_refused(source,table,first,stop) end else nc_refused(source,table,first,stop) end
+      else
+        middle = first+nc_half(stop-first)
+        left = nc_check_run(source,table,first,middle,span)
+        if Enum.count(left) > 0 do left else nc_check_run(source,table,middle,stop,span) end
+      end
     end
   end
   # The function of a program whose code nc_build could not make.

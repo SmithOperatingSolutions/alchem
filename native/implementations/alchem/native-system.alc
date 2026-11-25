@@ -145,17 +145,16 @@ defmodule NativeSystem do
     if home < 0 do -1 else nh_find(source,pos,table,0,nc_records(Enum.count(table)),home) end
   end
   def nh_find(source: bytes, pos: integer, table: bytes, first: integer, stop: integer, owner: integer): integer do
-    if first >= stop do -1 else
-      middle = first+nc_half(stop-first)
-      start = nc_meta(table,middle,0)
-      size = nc_meta(table,middle,3)-start
-      wanted = if Enum.at(table,middle*27+16,0) < 64 do 0 else if nc_owner(table,middle) == owner do 1 else 0 end end
-      match = if wanted == 0 do 0 else if nd_name_end(source,pos)-pos == size do nc_equal(source,pos,start,size) else 0 end end
-      if match == 1 do middle else
-        left = nh_find(source,pos,table,first,middle,owner)
-        if left >= 0 do left else nh_find(source,pos,table,middle+1,stop,owner) end
-      end
-    end
+    nh_within(source,pos,nd_name_end(source,pos)-pos,table,owner+1,owner)
+  end
+  # A module's records follow its header: those of owner from record at on.
+  def nh_within(source: bytes, pos: integer, size: integer, table: bytes, at: integer, owner: integer): integer do
+    flags = if at*27+16 >= Enum.count(table) do 32 else Enum.at(table,at*27+16,0) end
+    start = if flags < 64 do 0 else nc_meta(table,at,0) end
+    if at >= nc_records(Enum.count(table)) do -1 else if flags == 32 do -1 else
+      match = if flags < 64 do 0 else if nc_meta(table,at,3)-start != size do 0 else nc_equal(source,pos,start,size) end end
+      if match == 1 do at else nh_within(source,pos,size,table,at+1,owner) end
+    end end
   end
   # Whether the source may call Module.name with count arguments, a piped
   # value among them; a reference to it without arguments counts. For the

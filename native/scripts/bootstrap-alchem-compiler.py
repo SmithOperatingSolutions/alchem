@@ -48,7 +48,7 @@ def compact_identifiers(text):
     # Simultaneous injective alpha-renaming, only for the assembled distribution.
     token=re.compile(r'"(?:\\.|[^"\\])*"|[A-Za-z_][A-Za-z_0-9]*')
     words=Counter(m[0] for m in token.finditer(text) if not m[0].startswith('"'))
-    reserved=set('bytes b defmodule def defp do end if else case integer list string boolean option some none true false not and or main native_compile nc_compile nc_explain fn in as is on of when with for receive after rescue try catch raise throw use alias import require quote unquote cond unless struct enum protocol impl extern type return void float atom map tuple stream result ok error nil module super self while reduce async await spawn send'.split())
+    reserved=set('div bytes b defmodule def defp do end if else case integer list string boolean option some none true false not and or main native_compile nc_compile nc_explain nc_checked fn in as is on of when with for receive after rescue try catch raise throw use alias import require quote unquote cond unless struct enum protocol impl extern type return void float atom map tuple stream result ok error nil module super self while reduce async await spawn send'.split())
     reserved.update(re.findall(r'\.([A-Za-z_][A-Za-z_0-9]*)',text))
     reserved.update(word for word in words if word[0].isupper())
     names=sorted(set(words)-reserved,key=lambda word:(-words[word],word))
@@ -57,7 +57,7 @@ def compact_identifiers(text):
     return token.sub(lambda match:mapping.get(match[0],match[0]),text)
 
 
-def source_text(language="arithmetic",compact=True):
+def source_text(language="arithmetic",compact=True,seed=False):
     # Local component assembly only: discard module envelopes and smoke mains.
     # Parsing, validation, evaluation and ELF writing remain in the Alchem bodies.
     bodies=[]
@@ -79,29 +79,43 @@ def source_text(language="arithmetic",compact=True):
     module="NativeArithmeticCompiler" if language=="arithmetic" else "NativeSourceCompiler"
     entry='' if language=='arithmetic' else '  def native_compile(source: bytes): bytes do nc_compile(source) end\n'
     text=f'defmodule {module} do\n'+''.join(bodies)+entry+'  def main() do System.halt(0) end\nend\n'
+    if language!='arithmetic' and not seed:text=fast(text)
     return compact_identifiers(compact_source(text)) if compact and language!='arithmetic' else text
+
+
+def swapped(text,component,wanted):
+    """The source (not compacted) with the functions wanted as component has
+    them, and what else it defines; a function of the source it does not
+    name stays."""
+    body=(ROOT/'implementations/alchem'/component).read_text().split('  # Native smoke test;',1)[0].split('\n',1)[1]
+    names=set(re.findall(r'^  def (\w+)\(',body,re.M));replaced=set();kept=[]
+    for part in re.split(r'^(?=  def )',text,flags=re.M):
+        name=re.match(r'  def (\w+)\(',part)
+        if name and name.group(1) in wanted:
+            replaced.add(name.group(1))
+            # What follows the function, a comment of the next one, stays.
+            line=part.split('\n',1)[0]
+            end=len(line)+1 if line.endswith(' end') else part.index('\n  end\n')+len('\n  end\n')
+            if len(replaced)==1:kept.append(body)
+            kept.append(part[end:])
+        else:
+            if name and name.group(1) in names:raise ValueError(component+' defines '+name.group(1)+' again')
+            kept.append(part)
+    if replaced!=set(wanted):raise ValueError('the compiler source has no '+' '.join(sorted(set(wanted)-replaced)))
+    return ''.join(kept)
 
 
 def darwin(text):
     """The source (not compacted) of the compiler that makes macOS programs:
     SHA-256 as native-sha.alc has it."""
-    fast=(ROOT/'implementations/alchem/native-sha.alc').read_text().split('  # Native smoke test;',1)[0].split('\n',1)[1]
-    parts=re.split(r'^(?=  def )',text,flags=re.M)
-    names=set(re.findall(r'^  def (\w+)\(',fast,re.M));replaced=set()
-    kept=[]
-    for part in parts:
-        name=re.match(r'  def (\w+)\(',part)
-        if name and name.group(1) in ('sh_tables','sh_blocks'):
-            replaced.add(name.group(1))
-            # What follows the function, a comment of the next one, stays.
-            end=part.index('\n  end\n')+len('\n  end\n') if '\n  end\n' in part else part.index('\n')+1
-            if name.group(1)=='sh_blocks':kept.append(fast)
-            kept.append(part[end:])
-        else:
-            if name and name.group(1) in names:raise ValueError('native-sha.alc defines '+name.group(1)+' again')
-            kept.append(part)
-    if replaced!={'sh_tables','sh_blocks'}:raise ValueError('the compiler source has no sh_tables and sh_blocks')
-    return ''.join(kept)
+    return swapped(text,'native-sha.alc',{'sh_tables','sh_blocks'})
+
+
+def fast(text):
+    """The source (not compacted) for a compiler of this repository: the
+    arithmetic of native-fast.alc, which the seed frontend does not take."""
+    body=(ROOT/'implementations/alchem/native-fast.alc').read_text().split('  # Native smoke test;',1)[0]
+    return swapped(text,'native-fast.alc',set(re.findall(r'^  def (\w+)\(',body,re.M))&set(re.findall(r'^  def (\w+)\(',text,re.M)))
 
 
 def bridge(language="arithmetic"):
@@ -186,7 +200,7 @@ def bootstrap(output,frontend,backend,language="arithmetic"):
     if any(output.resolve()==p.resolve() for p in protected):raise ValueError('output must not overwrite source or bootstrap tools')
     with tempfile.TemporaryDirectory(prefix='alchem-compiler-bootstrap-') as directory:
         root=Path(directory)
-        ir=frontend_ir(source_text(language),frontend)
+        ir=frontend_ir(source_text(language,seed=True),frontend)
         target=next(f for f in ir['functions'] if f['name']==('fn.compile_expression' if language=='arithmetic' else 'fn.nc_compile'))
         if target['return_type']!='bytes' or target['params']!=[{'name':'p0','type':'bytes'}]:raise ValueError('compiler entry must take and return bytes')
         ir['version']=10 if language=='arithmetic' else 11

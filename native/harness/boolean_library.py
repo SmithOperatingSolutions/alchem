@@ -45,7 +45,7 @@ def verify(compiler):
             result=subprocess.run([str(compiler)],input=native_bytes(('defmodule M do def main() do '+body+' end end').encode()),capture_output=True,env={'PATH':''},timeout=120)
             assert result.returncode==65 and not result.stdout,('boolean rejection',body,result.returncode,result.stderr)
         measured=0
-        for expression,charge in [('true',0),('1 < 2',0),('Enum.empty?([])',8),('String.contains?("abc","b")',0)]:
+        for expression,charge in [('true',0),('1 < 2',0),('Enum.empty?([])',0),('String.contains?("abc","b")',0)]:
             source=('defmodule M do def main() do p='+expression+'\nSystem.halt(0) end end').encode()
             built=subprocess.run([str(compiler)],input=native_bytes(source),capture_output=True,env={'PATH':''},timeout=120)
             assert built.returncode==0,built.stderr

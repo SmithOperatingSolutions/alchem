@@ -323,7 +323,8 @@ defmodule NativeProcesses do
   end
   # A program is compiled: its receive statements as calls, then with the
   # library functions it mentions.
-  # explain: 1 for why a program is refused (nc_explain), 0 for its image.
+  # explain: 1 for why a program is refused (nc_explain), 2 for a check
+  # (nc_checked), 0 for its image.
   def ac_compiled(given: bytes, explain: integer): bytes do
     ac_compiled_with(ac_receives(given),explain)
   end
