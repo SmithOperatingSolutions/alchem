@@ -2,9 +2,9 @@
 # container and a native Linux host use exactly the same pins.
 FROM debian:trixie-slim
 
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      ca-certificates curl git build-essential binutils strace \
+RUN apt-get -o Acquire::Retries=5 update \
+ && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+      ca-certificates curl git build-essential binutils binutils-aarch64-linux-gnu strace \
  && rm -rf /var/lib/apt/lists/*
 
 ARG MISE_VERSION=2026.7.3
