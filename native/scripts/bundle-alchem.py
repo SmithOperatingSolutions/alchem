@@ -176,6 +176,18 @@ def bundle(entry,locked=False,limit=1048576):
     return manifest+b''.join(texts)
 
 
+
+def marked(text):
+    """A bundle, or the text of one file, marked as of the build: its modules
+    whose names start with Alchem may call what only the library may
+    (nc_ours). alchem marks no program."""
+    if not text.startswith(b'#alchem-bundle '):
+        text = text if text.endswith(b'\n') else text + b'\n'
+        text = b'#alchem-bundle 1\n# %d <stdin>\n' % len(text) + text
+    head, _, rest = text.partition(b'\n')
+    return head + b'\x7f\n' + rest
+
+
 def main():
     arguments=sys.argv[1:];locked=arguments[:1]==['--locked']
     if len(arguments)!=1+locked:

@@ -295,7 +295,7 @@ byte 127 in place of the `e` of `Alchem`: neither front end takes that byte
 in a source file, so no module of a program is one of them, and a program's
 module named `AlchemTypes` is its own (issue #102, `nc_ours`).
 
-`harness/replaced.py` holds eleven programs with what the pinned command gives.
+`harness/replaced.py` holds sixteen programs with what the pinned command gives.
 
 ## Ordering and sets (state after the float-forms merge)
 

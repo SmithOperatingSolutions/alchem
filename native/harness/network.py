@@ -12,7 +12,7 @@ without a clock that could cut it short.
 SIX are the programs that need IPv6 on the loopback interface; they are
 skipped, and said to be, where ::1 cannot be bound. OWN are programs only
 the self-hosted compiler takes: they call the library's own functions (the
-module is named AlchemProbe, which lets it) to put the name-server client
+module is named AlchemProbe in a marked source, which lets it) to put the name-server client
 against a name server of the program's own on 127.0.0.1, since the client
 otherwise asks the servers of /etc/resolv.conf.
 
@@ -21,6 +21,7 @@ which is killed whole when the program is done or out of time: a server
 that never stops is exactly what hangs."""
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import importlib.util
 import os
 import signal
 import socket
@@ -29,6 +30,15 @@ import sys
 import tempfile
 
 ROOT=Path(__file__).resolve().parents[1]
+
+
+def marked(text):
+    """The source with the build's mark: its module may call what only the
+    library may (scripts/bundle-alchem.py)."""
+    spec=importlib.util.spec_from_file_location('alchem_bundle',ROOT/'scripts/bundle-alchem.py')
+    bundler=importlib.util.module_from_spec(spec);spec.loader.exec_module(bundler)
+    return bundler.marked(text.encode()).decode()
+
 # (program, status, standard output, standard error) as the pinned compiler runs it
 RUNS=[('defmodule Main do\n'
   '  def show(a: string): integer do\n'
@@ -2674,6 +2684,8 @@ REJECTS=['defmodule Main do\n'
  '  end\n'
  'end\n',
  'defmodule Main do\n  def main() do\n    IO.puts(inspect(WebSocket.Event.closed("x", "y")))\n  end\nend\n']
+
+OWN=[(marked(source),*gives) for source,*gives in OWN]
 
 
 def loopback6():

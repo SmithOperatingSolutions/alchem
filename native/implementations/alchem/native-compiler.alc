@@ -745,12 +745,16 @@ defmodule NativeSourceCompiler do
   # by its name, and a program's module named as one of them was (issue
   # #102) is a module of the program.
   # 1 when the module named at pos may do what only the library may (Sys):
-  # one of those, or a module whose name starts with Alchem, as the modules
-  # of `alchem` itself do (tools/), which are built as programs are. The
-  # second is still open to any program; it closes when tools/ is written
-  # on the public byte functions of issue #130.
+  # one of those, or a module whose name starts with Alchem in a bundle that
+  # is marked: alchem's own modules (tools/) and the gates' probes. The mark
+  # is the byte 127 after the count of the bundle's first line, which the
+  # build writes (scripts/bundle-alchem.py, marked) and alchem never does for
+  # a program.
   def nc_ours(source: bytes, pos: integer): integer do
-    if nc_word_at(source,pos,b[65,108,99,104,127,109],0) == 1 do 1 else nc_word_at(source,pos,b[65,108,99,104,101,109],0) end
+    if nc_word_at(source,pos,b[65,108,99,104,127,109],0) == 1 do 1 else if nc_word_at(source,pos,b[65,108,99,104,101,109],0) == 0 do 0 else nc_marked(source) end end
+  end
+  def nc_marked(source: bytes): integer do
+    if nz_bundled(source) == 0 do 0 else if byte_at(source,nz_digits_end(source,15)) == 127 do 1 else 0 end end
   end
   # Namespaces the pinned language reserves for its library (ReservedModule).
   def nc_library_module(source: bytes, pos: integer): integer do

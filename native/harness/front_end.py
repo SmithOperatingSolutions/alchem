@@ -118,7 +118,7 @@ def verify(compiler):
         alchem = base / 'alchem'
         builder.build(compiler, alchem, builder.platform_of(compiler).startswith('darwin/'))
         for name in ('lexer-dump', 'parser-dump', 'format-dump', 'module-dump', 'loaded-dump'):
-            subprocess.run([str(alchem), 'build', '-o', str(base / name), name + '.alc'], cwd=ROOT / 'scripts', check=True, timeout=1800)
+            builder.build_tool(compiler, ROOT / 'scripts' / (name + '.alc'), base / name)
         paths = []
         for k, case in enumerate(held):
             path = base / 'texts' / f'{k:05d}.alc'

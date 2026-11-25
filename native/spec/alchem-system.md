@@ -15,8 +15,11 @@ output and failure trace frozen in, each in an empty directory of its own.
 ## The primitives: `Sys`
 
 `Sys.name(...)` is compiled by `native-system.alc` only inside the appended
-library modules (their names start with `Alchem`); in a program `Sys` is an
-ordinary name, and the pinned library has no such module. All arguments
+library modules and, in a bundle the build has marked
+(`scripts/bundle-alchem.py`, `marked`), the modules whose names start with
+`Alchem`: `alchem`'s own (`tools/`) and the gates' probes. `alchem` marks no
+program, so in a program `Sys` is an ordinary name whatever its modules are
+called, and the pinned library has no such module. All arguments
 and results are integers except where said.
 
 | Primitive | What it does |
