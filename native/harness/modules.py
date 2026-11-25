@@ -81,7 +81,7 @@ INVALID=[
     'defmodule App do\nimport "util.alc"\n def main() do System.halt(1) end end',
     'defmodule App do def main() do System.halt(1) end\nimport "module:Util"\n end '+ONE,
     'defmodule App do def main() do System.halt(1) end end defmodule String do def f(n: integer): integer do n end end',
-    'defmodule App do def main() do System.halt(1) end end defmodule DiskStore do def f(n: integer): integer do n end end',
+    'defmodule App do def main() do System.halt(1) end end defmodule Registry do def f(n: integer): integer do n end end',
     'defmodule Path do def main() do System.halt(1) end end',
     'defmodule App do def main() do System.halt(1) end end junk',
     'defmodule App do def main() do System.halt(App.main()) end end',

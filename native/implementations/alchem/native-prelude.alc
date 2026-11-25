@@ -289,11 +289,61 @@ defmodule NativePrelude do
       end
     end
   end
+  # A program's module with the name of a library module a package now
+  # provides (nc_retiring_module) takes that module's place: the library's
+  # functions of that name are not the program's, so the text the library is
+  # chosen from has the name unreadable wherever it stands. 1 when a line
+  # from first up to stop declares such a module.
+  def ny_replaces(source: bytes, first: integer, stop: integer): integer do
+    if stop-first > 64 do
+      middle = first+nc_half(stop-first)
+      if ny_replaces(source,first,middle) == 1 do 1 else ny_replaces(source,middle,stop) end
+    else ny_replaces_run(source,first,stop) end
+  end
+  def ny_replaces_run(source: bytes, pos: integer, stop: integer): integer do
+    if pos >= stop do 0 else if ny_declares(source,pos) == 1 do 1 else ny_replaces_run(source,pos+1,stop) end end
+  end
+  # 1 when the line that starts at pos is the defmodule of such a module.
+  def ny_declares(source: bytes, pos: integer): integer do
+    if Enum.at(source,pos,0) != 100 do 0 else if Enum.at(source,pos-1,10) != 10 do 0 else
+      if nc_word(source,pos,b[100,101,102,109,111,100,117,108,101]) == 0 do 0 else nc_retiring_module(source,nc_end(source,pos)) end
+    end end
+  end
+  # 1 when the name of module pos stands in is declared by the program:
+  # the word at pos is one of the four, and a line declares a module of it.
+  def ny_declared(source: bytes, pos: integer, first: integer, stop: integer): integer do
+    if stop-first > 64 do
+      middle = first+nc_half(stop-first)
+      if ny_declared(source,pos,first,middle) == 1 do 1 else ny_declared(source,pos,middle,stop) end
+    else ny_declared_run(source,pos,first,stop) end
+  end
+  def ny_declared_run(source: bytes, pos: integer, at: integer, stop: integer): integer do
+    if at >= stop do 0 else
+      same = if ny_declares(source,at) == 0 do 0 else nt_same(nc_slice(source,nc_start(source,nc_end(source,at)),nc_end(source,nc_start(source,nc_end(source,at)))),nc_slice(source,pos,nc_end(source,pos))) end
+      if same == 1 do 1 else ny_declared_run(source,pos,at+1,stop) end
+    end
+  end
+  # The text from first up to stop with the first letter of each such name
+  # as an underscore.
+  def ny_masked(source: bytes, first: integer, stop: integer): bytes do
+    if stop-first > 64 do
+      middle = first+nc_half(stop-first)
+      Enum.concat(ny_masked(source,first,middle),ny_masked(source,middle,stop))
+    else ny_masked_run(source,first,first,stop) end
+  end
+  def ny_masked_run(source: bytes, first: integer, pos: integer, stop: integer): bytes do
+    value = Enum.at(source,pos,0)
+    if pos >= stop do nc_slice(source,first,stop) else
+      named = if value < 65 do 0 else if value > 90 do 0 else if nc_start(source,pos) != pos do 0 else if nc_retiring_module(source,pos) == 0 do 0 else ny_declared(source,pos,0,Enum.count(source)) end end end end
+      if named == 0 do ny_masked_run(source,first,pos+1,stop) else nc_join(nc_slice(source,first,pos),b[95],ny_masked_run(source,pos+1,pos+1,stop)) end
+    end
+  end
   def ny_prelude(source: bytes): bytes do
     index = ny_index()
     count = nc_read(index,262)
+    read = if ny_replaces(source,0,Enum.count(source)) == 0 do source else ny_masked(source,0,Enum.count(source)) end
     # Calendar sigils name their structs without writing them.
-    hinted = nc_join(source,sg_hints(source),nn_hinted(source))
+    hinted = nc_join(read,sg_hints(source),nn_hinted(source))
     state = nc_slice(ny_pick(hinted,index,nc_zeros(count+nc_read(index,266)+3),0,Enum.count(hinted)),0,count+nc_read(index,266))
     # The first flag is native_compile: a compiler entry gets no library.
     modules = if Enum.at(state,count,0) == 1 do b[] else ny_groups(index,Enum.concat(ny_chosen(index,state,0,count),state),ny_tables(),0,nc_read(index,264)) end

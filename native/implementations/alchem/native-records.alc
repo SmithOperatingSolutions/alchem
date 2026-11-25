@@ -91,9 +91,14 @@ defmodule NativeRecords do
   end
   # A type no module of the program declares may be one a library file
   # declares: those live in the appended module AlchemTypes.
+  # The type of a program's module that takes a library module's place
+  # (nc_retiring_module) and has its name is written by that name alone in
+  # every module, as the library's type was.
   def nd_library(source: bytes, pos: integer, table: bytes, local: integer): integer do
-    home = if local >= 0 do -1 else ny_module(source,table,b[65,108,99,104,101,109,84,121,112,101,115],Enum.concat(nc_u24(0),nc_u24(nc_records(Enum.count(table))))) end
-    if local >= 0 do local else if home < 0 do -1 else nd_find(source,pos,table,home) end end
+    own = if local >= 0 do -1 else if nc_retiring_module(source,pos) == 0 do -1 else nc_find(source,pos,table,-1) end end
+    taken = if own < 0 do -1 else nd_find(source,pos,table,own) end
+    home = if local >= 0 do -1 else if taken >= 0 do -1 else ny_module(source,table,b[65,108,99,104,101,109,84,121,112,101,115],Enum.concat(nc_u24(0),nc_u24(nc_records(Enum.count(table))))) end end
+    if local >= 0 do local else if taken >= 0 do taken else if home < 0 do -1 else nd_find(source,pos,table,home) end end end
   end
   # The position after a type name at pos: Name or Module.Name.
   def nd_name_end(source: bytes, pos: integer): integer do
