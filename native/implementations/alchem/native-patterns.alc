@@ -550,7 +550,7 @@ defmodule NativePatterns do
     taken = Enum.concat(nc_code(body),Enum.concat(b[233],nc_u32(Enum.count(nc_code(rest)))))
     guarded = if Enum.count(check) == 0 do b[] else Enum.concat(check,nc_u32(Enum.count(taken))) end
     if nc_pos(rest) < 0 do b[] else if nt_tag(kind) < 0 do b[] else
-      nw_keep(nc_value(nc_pos(rest),nc_join(nc_join(match,nc_u32(Enum.count(guarded)+Enum.count(taken)),guarded),taken,nc_code(rest)),kind),body,rest)
+      nw_meet(nc_value(nc_pos(rest),nc_join(nc_join(match,nc_u32(Enum.count(guarded)+Enum.count(taken)),guarded),taken,nc_code(rest)),kind),body,rest)
     end end
   end
   # The position after the pattern at pos, by its brackets alone; -1 if there

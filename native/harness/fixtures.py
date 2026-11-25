@@ -75,6 +75,14 @@ def verify(compiler):
             (work / 'm.alc').write_text('defmodule M do\n  def main() do\n' + ''.join(f'    {line}\n' for line in body) + '  end\nend\n')
             done = subprocess.run([str(alchem), 'run', 'm.alc'], capture_output=True, text=True, cwd=work, env=env, timeout=600)
             assert (done.returncode, done.stdout, done.stderr) == (0, f'{shown}\n{shown}\n', ''), (name, done)
+        # A branch with a list that starts with none takes its type from the
+        # other branch.
+        held = ['a = if true do [none, some(1)] else [some(2)] end', 'b = case 1 do\n      1 -> [none]\n      _ -> [some(2)]\n    end',
+                'c = cond do\n      true -> [none, some(1.5)]\n      true -> [some(1.0)]\n    end', 'd = try do\n      [none]\n    rescue\n      _ -> [some("x")]\n    end',
+                'e = if false do [some(:a)] else [none] end', 'IO.inspect({a, b, c, d, e})']
+        (work / 'm.alc').write_text('defmodule M do\n  def main() do\n' + ''.join(f'    {line}\n' for line in held) + '  end\nend\n')
+        done = subprocess.run([str(alchem), 'run', 'm.alc'], capture_output=True, text=True, cwd=work, env=env, timeout=600)
+        assert (done.returncode, done.stdout, done.stderr) == (0, '{[none, some(1)], [none], [none, some(1.5)], [none], [none]}\n', ''), done
         (work / 'm.alc').write_text(REGEXES)
         done = subprocess.run([str(alchem), 'run', 'm.alc'], capture_output=True, text=True, cwd=work, env=env, timeout=600)
         assert (done.returncode, done.stdout, done.stderr) == (0, 'true\n"x+"\ntrue\n"y"\n"z"\n["a", "b"]\n', ''), done

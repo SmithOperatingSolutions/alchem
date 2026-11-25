@@ -412,6 +412,17 @@ defmodule NativeGenerics do
     kept = if nw_held(value,a)+nw_held(value,b) > 0 do nw_mark(value) else value end
     if nx_pure(a)+nx_pure(b) > 0 do nx_impure(kept) else kept end
   end
+  # nw_keep for the branches a and b of one value: a branch that is settled
+  # and of the value's type is what the other needed, as the pinned compiler
+  # types a branch it held back again with the type of the others.
+  def nw_meet(value: bytes, a: bytes, b: bytes): bytes do
+    if nw_gives(value,a)+nw_gives(value,b) == 0 do nw_keep(value,a,b) else
+      if nx_pure(a)+nx_pure(b) > 0 do nx_impure(value) else value end
+    end
+  end
+  def nw_gives(value: bytes, branch: bytes): integer do
+    if nc_pos(branch) < 0 do 0 else if nw_marked(branch) == 1 do 0 else if nc_tag(branch) == 9 do 0 else if nu_holes(nc_kind(value),0) == 1 do 0 else nt_same(nc_kind(branch),nc_kind(value)) end end end end
+  end
   def nw_when(value: bytes, order: integer): bytes do
     if order == 1 do nw_mark(value) else value end
   end

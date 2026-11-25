@@ -20,7 +20,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 CASES = ROOT / 'harness/programs.json.xz'
 # The most cases that may be refused.
-REFUSED = 30
+REFUSED = 22
 
 
 def load(name, path):

@@ -655,7 +655,7 @@ defmodule NativeRecords do
     kind = nx_join(body,rest)
     taken = Enum.concat(arm,Enum.concat(b[233],nc_u32(Enum.count(nc_code(rest)))))
     if nc_pos(rest) < 0 do b[] else if nt_tag(kind) < 0 do b[] else
-      nw_keep(nc_value(nc_pos(rest),nc_join(nc_join(test,b[15,133],nc_u32(Enum.count(taken))),taken,nc_code(rest)),kind),body,rest)
+      nw_meet(nc_value(nc_pos(rest),nc_join(nc_join(test,b[15,133],nc_u32(Enum.count(taken))),taken,nc_code(rest)),kind),body,rest)
     end end
   end
   # Native smoke test; structs and sum types.
