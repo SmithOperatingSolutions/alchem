@@ -870,12 +870,18 @@ defmodule AlchemCommand do
     end
   end
 
+  # Whether a source has a main, on a line of its own or after the do of
+  # its module.
+  def has_main?(text: string): boolean do
+    text =~ ~r/(^|\n)[ \t]*(defmodule[ \t]+[A-Za-z0-9_.]+[ \t]+do[ \t]+)?def[ \t]+main[ \t]*\(/
+  end
+
   # A file that can be read and has no main at all: refused as the pinned
   # compiler refuses it, where the compiler has one message for every
   # refusal.
   def mainless?(entry: string): boolean do
     case File.read(entry) do
-      ok(text) -> not (text =~ ~r/(^|\n)[ \t]*def[ \t]+main[ \t]*\(/)
+      ok(text) -> not has_main?(text)
       error(_) -> false
     end
   end
@@ -1039,7 +1045,7 @@ defmodule AlchemCommand do
       error(_) -> "def main("
     end
     # A test file is a program of its own, as the test command builds it.
-    whole = text =~ ~r/(^|\n)[ \t]*def[ \t]+main[ \t]*\(/ or text =~ ~r/(^|\n)[ \t]*(test|doctest|describe)[ \t]/
+    whole = has_main?(text) or text =~ ~r/(^|\n)[ \t]*(test|doctest|describe)[ \t]/
     used = if whole do entry else
       # An import is joined to the importing file's directory, so the
       # module is named from the work directory up to the root.
