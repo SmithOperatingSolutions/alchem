@@ -367,6 +367,24 @@ has to know that nothing else holds the string.
   is when it is owned and as a plain put when not; `Map.o_keep` and
   `Map.o_put` (an owned put into a map the library made itself:
   `Enum.uniq`) are the library's alone.
+- *A struct or a tuple that carries the string.* A struct parameter whose
+  function holds `{name |` and `name.field <>`, a tuple parameter the
+  function takes apart (`{a, b} = name`), and the accumulator of a fold of
+  either type (a tuple pattern in the `fn`'s parameters among them) are
+  accumulators too. `%W{w | out: w.out <> rest}` as the fn's result, or as
+  the parameter's own argument in the function's call to itself, appends
+  to the field's string where it is: the field is the one that is read,
+  and what follows the append names neither that field nor `w` whole. Of
+  a tuple accumulator the strings its pattern names are the loop's own
+  from there on, where nothing behind names the tuple again;
+  `{out <> rest, n + 1}` in the result appends where `out` is not named
+  again behind it, and `out` alone as a part goes on as it is. The old
+  struct or tuple is over with the turn, so its other strings go on in the
+  new one without a release. Reading the struct or tuple whole releases
+  every string in it, reading one string releases that one, with the
+  looks below excepted; a `fn` that names it releases them where it is
+  made, and the result of the fold is released part by part. A string
+  inside a struct's struct, list or map is never owned.
 - *Every other read gives the value away*: it is followed by the release
   (`gm_str_done`, `gm_map_done`), unless it only looks: `acc == x`,
   `acc != x`, `byte_size(acc)`, `String.length(acc)`, `binary_part(acc, ...)`,
@@ -494,8 +512,8 @@ compared; 26 functions of a program with tasks loop now.
   case over hidden parameters, and the names differ from clause to
   clause); `f(n - 1) <> piece`, where the string comes back from the call
   (it would have to be released wherever else the function returns); a
-  string inside a tuple accumulator (`{acc <> x, n}`: the tuple is made
-  anew each turn and what else reads its parts is not followed); a
+  struct or tuple that another function adds to (`f(push(w, x), n - 1)`),
+  or that is read whole between appends; `elem(acc, 0) <> x`; a
   binding rebound in a row of statements (`s = s <> a` then `s = s <> b`:
   each is one copy, there is no loop); an `Enum.reduce` given a named
   function or a `fn(...): type do`; `Enum.reduce_while`, `List.foldl` and

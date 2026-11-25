@@ -63,7 +63,7 @@
   end
 #: new/2
   def new(first: integer, last: integer): Range do
-    first..last
+    first..last//1
   end
 #: new/3
   def new(first: integer, last: integer, step: integer): Range do

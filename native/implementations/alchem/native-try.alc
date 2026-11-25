@@ -246,7 +246,15 @@ defmodule NativeTry do
   # A state is: the section (0 rescue, 1 catch, 2 else), 1 for its first arm,
   # the line the arm stands on (4 bytes), where the section ends (3 bytes),
   # the type the arms match after its length, and what follows the section.
+  # The arms, and where they did not compile the arms held to the type of
+  # the body, which is the try's where it has no else (nf_led).
   def ty_chain(source: bytes, table: bytes, plan: bytes, env: bytes, pair: bytes): bytes do
+    plain = ty_chained(source,table,plan,env,pair)
+    body = wc_second(pair)
+    led = if nc_pos(plain) >= 0 do b[] else if nc_cursor(plan,14) != 0 do b[] else if nc_pos(body) < 0 do b[] else nf_led(source,env,table,nc_value(ty_next(plan,0),b[],nc_kind(body)),ty_next(plan,0)) end end end
+    if Enum.count(led) == 0 do plain else ty_chained(source,table,plan,led,pair) end
+  end
+  def ty_chained(source: bytes, table: bytes, plan: bytes, env: bytes, pair: bytes): bytes do
     other = nc_cursor(plan,14)
     final = nc_cursor(plan,20)
     body = wc_second(pair)

@@ -90,7 +90,7 @@ defmodule NativeCollections do
     count = nc_units(Enum.count(spans),6)
     later = if count < 2 do 0 else ny_has(source,nc_cursor(spans,6),nc_cursor(spans,count*6-3),b[102,110])+ny_has(source,nc_cursor(spans,6),nc_cursor(spans,count*6-3),b[38]) end
     first = if later == 0 do b[] else nl_items(source,spans,env,table,depth,Enum.concat(nc_u24(0),nc_u24(1))) end
-    if nc_pos(first) < 0 do b[] else if nu_has(nc_kind(first),10,0,Enum.count(nc_kind(first))) == 0 do b[] else nw_expect(env,0,Enum.concat(b[7],nc_kind(first))) end end
+    if nc_pos(first) < 0 do b[] else if nf_worth(nc_kind(first)) == 0 do b[] else nw_expect(env,0,Enum.concat(b[7],nc_kind(first))) end end
   end
   # Elements first up to stop of a list literal: bounds holds both, 24 bits each.
   def nl_items(source: bytes, spans: bytes, env: bytes, table: bytes, depth: integer, bounds: bytes): bytes do

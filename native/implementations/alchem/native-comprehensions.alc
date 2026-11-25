@@ -751,7 +751,7 @@ defmodule NativeComprehensions do
   # its type from what the for is bound to, or else from what the arms give;
   # the value is then marked as one that needed a type.
   def wf_reduce(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
-    gm_reduced(wf_reduce_in(source,start,gm_arm(source,start,env),table,depth,state))
+    gm_reduced(source,table,wf_reduce_in(source,start,gm_arm(source,start,env),table,depth,state))
   end
   def wf_reduce_in(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
     slot = nc_cursor(state,1)

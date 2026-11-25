@@ -663,7 +663,7 @@ defmodule NativeClauses do
     wanted = if Enum.count(scope) > 0 do if Enum.at(scope,0,0) == 40 do b[] else nc_slice(scope,1,Enum.count(scope)) end else
       if Enum.at(table,id*27+16,0) == 1 do b[] else if nj_result(table,id) == 0 do b[] else nc_return_kind(source,table,id) end end
     end
-    value = if Enum.count(wanted) == 0 do b[] else nc_expression(source,nc_end(source,start),if nt_tag(wanted) == 9 do env else if nw_whole_call(source,nc_end(source,start)) == 1 do nw_expect(env,nf_pipe_target(source,nc_start(source,nc_end(source,start))),wanted) else nf_expecting(source,env,nc_end(source,start),wanted) end end,table,depth) end
+    value = if Enum.count(wanted) == 0 do b[] else nc_expression(source,nc_end(source,start),if nt_tag(wanted) == 9 do env else if nw_last_call(source,nc_end(source,start)) >= 0 do nw_expect(env,nw_last_call(source,nc_end(source,start)),wanted) else nf_expecting(source,env,nc_end(source,start),wanted) end end,table,depth) end
     stop = nc_pos(value)
     fits = if stop < 0 do 0 else if nc_tag(value) == 12 do 0 else if nt_tag(wanted) == 9 do 1 else no_compatible(wanted,nc_kind(value)) end end end
     if fits == 0 do b[] else if ty_ends(source,stop,env) == 0 do b[] else

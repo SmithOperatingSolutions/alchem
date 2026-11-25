@@ -70,7 +70,7 @@ defmodule NativeJson do
     count = nc_arg_count(args)
     direct = nw_expected(env,nc_start(source,nc_end(source,name)),2)
     piped = if op != 3 do b[] else if Enum.count(direct) > 0 do b[] else if nc_pos(nf_piped(source,paren,env)) < 0 do b[] else jn_annotated(source,pos,env,table) end end end
-    wanted = if op != 3 do b[] else if Enum.count(direct) > 0 do direct else if Enum.count(piped) > 0 do piped else jn_tail(source,name,env,table) end end end
+    wanted = if op != 3 do b[] else if Enum.count(direct) > 0 do direct else if Enum.count(piped) > 0 do piped else jn_tail(source,Enum.concat(nc_u24(name),nc_u24(nc_start(source,pos))),env,table) end end end
     # decode_as gives result[a, string] for the a its context expects.
     target = if op != 3 do nc_arg_kind(args,0) else if nt_tag(wanted) != 6 do b[] else if nt_tag(nt_child(wanted,1)) != 2 do b[] else nt_child(wanted,0) end end end
     fits = if nc_pos(args) < 0 do 0 else if op == 3 do if count != 1 do 0 else nq_comparable(source,table,target,b[])*(1-jd_poisoned(source,table,target)) end else if count == 1 do 1 else if op == 1 do if count == 2 do 1 else 0 end else 0 end end end end
@@ -142,13 +142,17 @@ defmodule NativeJson do
     declared = if start < 0 do b[] else if nc_identifier(source,start) == 0 do b[] else if nc_word(source,colon,b[58]) == 0 do b[] else nc_type(source,nc_end(source,colon)) end end end
     if nc_pos(declared) < 0 do b[] else if nc_start(source,nc_pos(declared)) != equal do b[] else nd_resolve(source,table,nc_owner(table,nc_read(env,0)),nc_kind(declared)) end end
   end
-  def jn_tail(source: bytes, name: integer, env: bytes, table: bytes): bytes do
+  def jn_tail(source: bytes, plan: bytes, env: bytes, table: bytes): bytes do
+    name = nc_cursor(plan,0)
     next = nc_start(source,np_close(source,nc_start(source,nc_end(source,name)),0,16777216))
     scope = nj_context(env,2,b[])
     id = nc_read(env,0)
-    if nc_word(source,next,b[101,110,100])+nc_word(source,next,b[101,108,115,101]) == 0 do b[] else
+    # What is expected of the call itself, or of the block it ends.
+    placed = nw_expected(env,nc_cursor(plan,3),2)
+    held = if Enum.count(placed) > 0 do placed else if ty_ends(source,next,env) == 0 do b[] else nf_ambient(source,env,table) end end
+    if nt_tag(held) == 6 do held else if nc_word(source,next,b[101,110,100])+nc_word(source,next,b[101,108,115,101]) == 0 do b[] else
       if Enum.at(scope,0,0) == 41 do nc_slice(scope,1,Enum.count(scope)) else if nj_result(table,id) == 0 do b[] else nc_return_kind(source,table,id) end end
-    end
+    end end
   end
   # Native smoke test; JSON by the type.
   def main() do System.halt(0) end

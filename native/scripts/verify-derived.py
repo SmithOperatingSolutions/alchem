@@ -85,6 +85,7 @@ RECORDED = {
     'ordering-cases': 'harness/ordering.py (chosen from random programs)',
     'program-cases': 'harness/programs.py (random programs)',
     'test-driver-cases': 'harness/test_driver.py',
+    'written-cases': 'harness/written.py (programs written by hand)',
 }
 
 

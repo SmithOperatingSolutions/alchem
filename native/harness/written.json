@@ -1,0 +1,1874 @@
+[
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    f = get(%{1 => fn(b: integer): boolean do true end}, 1, fn(b: integer): boolean do true end)\n    IO.inspect(f(1))\n  end\nend\n",
+  "result": [
+   0,
+   "true\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    f = get(%{1 => fn(b: integer): boolean do true end}, 1, fn c -> false end)\n    IO.inspect(f(1))\n  end\nend\n",
+  "result": [
+   0,
+   "true\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    m = %{1 => fn(b: integer): boolean do true end}\n    f = get(m, 1, fn c -> false end)\n    IO.inspect(f(1))\n  end\nend\n",
+  "result": [
+   0,
+   "true\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    x = get(%{1 => 5}, 1, 6)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "5\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    x = Enum.all?([])\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "true\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    x = [1] |> Enum.into([])\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    x: integer = [] |> Enum.min()\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:11:24: empty error\n  at C.main (m.alc:11)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    x: integer = [] |> Enum.sum()\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "0\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    x: list[integer] = [] |> Enum.sort()\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    x: list[integer] = [] |> Enum.reverse()\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    x = case 1 do\n      1 -> [1]\n      _ -> List.first!([])\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    x = cond do\n      false -> List.first!([])\n      true -> [1]\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    x = if true do some(1) else tap(none, fn v -> 1 end) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "some(1)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    x = case [true] do\n      [] -> :b\n      [v] -> Enum.fetch!([], 0)\n      _ -> :c\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:13:14: out of bounds error\n  at C.main <closure> (m.alc:13)\n  at C.main (m.alc:11)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    x = case 1 do\n      1 -> Enum.find([], 5, fn v -> false end)\n      _ -> 6\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "5\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    v: result[atom,string] = try do\n      JSON.decode_as(\"x\")\n    rescue\n      _ -> ok(:a)\n    end\n    IO.inspect(v)\n  end\nend\n",
+  "result": [
+   0,
+   "error(\"invalid JSON: invalid character 'x' looking for beginning of value\")\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    v: result[atom,string] = if true do JSON.decode_as(\"x\") else ok(:a) end\n    IO.inspect(v)\n  end\nend\n",
+  "result": [
+   0,
+   "error(\"invalid JSON: invalid character 'x' looking for beginning of value\")\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ug(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, b: v): v do\n    a\n  end\n\n  def main() do\n    v: result[integer,string] = case 1 do\n      1 -> JSON.decode_as(\"5\")\n      _ -> ok(2)\n    end\n    IO.inspect(v)\n  end\nend\n",
+  "result": [
+   0,
+   "ok(5)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ufirst(xs: list[a]): a do\n    hd(xs)\n  end\n\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def main() do\n    x: integer = List.first!([])\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:11:18: the list is empty\n  at C.main (m.alc:11)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ufirst(xs: list[a]): a do\n    hd(xs)\n  end\n\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def main() do\n    x: integer = ufirst([])\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:3:5: the list is empty\n  at C.ufirst (m.alc:3)\n  at C.main (m.alc:11)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ufirst(xs: list[a]): a do\n    hd(xs)\n  end\n\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def main() do\n    x = case 1 do\n      1 -> [1]\n      _ -> ufirst([])\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ufirst(xs: list[a]): a do\n    hd(xs)\n  end\n\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def main() do\n    x = case 1 do\n      1 -> [1]\n      _ -> hd([])\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ufirst(xs: list[a]): a do\n    hd(xs)\n  end\n\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def main() do\n    x = if true do [1] else List.first!([]) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ufirst(xs: list[a]): a do\n    hd(xs)\n  end\n\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def main() do\n    x = if true do 1 else Enum.min([]) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ufirst(xs: list[a]): a do\n    hd(xs)\n  end\n\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def main() do\n    x = if true do some(1) else tap(none, fn v -> 1 end) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "some(1)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ufirst(xs: list[a]): a do\n    hd(xs)\n  end\n\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def main() do\n    x = if true do some(1) else Function.identity(none) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "some(1)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ufirst(xs: list[a]): a do\n    hd(xs)\n  end\n\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def main() do\n    x = if true do 6 else Enum.find([], 5, fn v -> false end) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "6\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ufirst(xs: list[a]): a do\n    hd(xs)\n  end\n\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def main() do\n    f = mine(%{1 => fn(b: integer): boolean do true end}, 1, fn(b: integer): boolean do true end)\n    IO.inspect(f(1))\n  end\nend\n",
+  "result": [
+   0,
+   "true\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, d: v): v do\n    a\n  end\n\n  def main() do\n    f = get(%{1 => fn(b: integer): boolean do true end}, 1, fn c -> false end)\n    IO.inspect(f(1))\n  end\nend\n",
+  "result": [
+   0,
+   "true\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, d: v): v do\n    a\n  end\n\n  def main() do\n    f = Map.get(%{1 => fn(b: integer): boolean do true end}, 1, fn(b: integer): boolean do true end)\n    IO.inspect(f(1))\n  end\nend\n",
+  "result": [
+   0,
+   "true\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, d: v): v do\n    a\n  end\n\n  def main() do\n    f = get(%{1 => fn(b: integer): boolean do true end}, 1, fn(b: integer): boolean do true end)\n    IO.inspect(f(1))\n  end\nend\n",
+  "result": [
+   0,
+   "true\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, d: v): v do\n    a\n  end\n\n  def main() do\n    f = Enum.reduce([fn(b: integer): boolean do true end], fn(a: fn[integer,boolean], b: fn[integer,boolean]): fn[integer,boolean] do a end)\n    IO.inspect(f(1))\n  end\nend\n",
+  "result": [
+   0,
+   "true\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, d: v): v do\n    a\n  end\n\n  def main() do\n    f = reduce([1], fn(b: integer): boolean do true end, fn(a: fn[integer,boolean], b: integer): fn[integer,boolean] do a end)\n    IO.inspect(f(1))\n  end\nend\n",
+  "result": [
+   0,
+   "true\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, d: v): v do\n    a\n  end\n\n  def main() do\n    f = reduce([1], fn v -> true end, fn(a: fn[integer,boolean], b: integer): fn[integer,boolean] do a end)\n    IO.inspect(f(1))\n  end\nend\n",
+  "result": [
+   0,
+   "true\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, d: v): v do\n    a\n  end\n\n  def main() do\n    f = [1] |> reduce(fn v -> true end, fn(a: fn[integer,boolean], b: integer): fn[integer,boolean] do a end)\n    IO.inspect(f(1))\n  end\nend\n",
+  "result": [
+   0,
+   "true\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, d: v): v do\n    a\n  end\n\n  def main() do\n    x = Enum.map([1], reduce([1], fn v -> true end, fn(a: fn[integer,boolean], b: integer): fn[integer,boolean] do a end))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[true]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, d: v): v do\n    a\n  end\n\n  def main() do\n    x = if true do some(1) else tap(none, fn v -> 1 end) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "some(1)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, d: v): v do\n    a\n  end\n\n  def main() do\n    x: option[integer] = tap(none, fn v -> 1 end)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "none\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, d: v): v do\n    a\n  end\n\n  def main() do\n    x = if true do [1] else tap([], fn v -> 1 end) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(m: map[integer, v], key: integer, d: v): v do\n    Map.get(m, key, d)\n  end\n\n  def two(a: v, d: v): v do\n    a\n  end\n\n  def main() do\n    x = if true do [1] else Enum.filter([], fn v -> true end) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    f = put(%{1 => fn(b: integer): boolean do true end}, 1, fn c -> false end)\n    IO.inspect(map_size(f))\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    f = prepend([fn(b: integer): boolean do true end], fn c -> false end)\n    IO.inspect(length(f))\n  end\nend\n",
+  "result": [
+   0,
+   "2\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    f = concat([fn(b: integer): boolean do true end], [fn c -> false end])\n    IO.inspect(length(f))\n  end\nend\n",
+  "result": [
+   0,
+   "2\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    f = get(%{1 => fn(b: integer): boolean do true end}, 1, &(&1 > 2))\n    IO.inspect(f(1))\n  end\nend\n",
+  "result": [
+   0,
+   "true\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    f = %{1 => fn(b: integer): boolean do true end} |> get(1, fn c -> c > 4 end)\n    IO.inspect(f(1))\n  end\nend\n",
+  "result": [
+   0,
+   "true\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    f = reduce([1], &(&1 > 1), fn(a: fn[integer,boolean], b: integer): fn[integer,boolean] do a end)\n    IO.inspect(f(1))\n  end\nend\n",
+  "result": [
+   0,
+   "false\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    f = reduce([1], (if true do fn v -> true end else fn v -> false end end), fn(a: fn[integer,boolean], b: integer): fn[integer,boolean] do a end)\n    IO.inspect(f(1))\n  end\nend\n",
+  "result": [
+   0,
+   "true\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    f = map([fn v -> 1 end], fn(a: fn[integer,integer]): integer do a(1) end)\n    IO.inspect(f)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    f = filter([fn v -> 1 end], fn(a: fn[integer,integer]): boolean do a(1) == 1 end)\n    IO.inspect(length(f))\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    f = reduce([fn v -> 1 end], 0, fn(b: integer, a: fn[integer,integer]): integer do a(1) end)\n    IO.inspect(f)\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = if true do some(1) else none end |> tap(fn v -> 1 end)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "some(1)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case 1 do\n      1 -> some(1)\n      _ -> tap(none, fn v -> 1 end)\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "some(1)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case 1 do\n      1 -> tap(none, fn v -> 1 end)\n      _ -> some(1)\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "none\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = if true do tap(none, fn v -> 1 end) else some(1) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "none\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = if true do Enum.filter([], fn v -> v > 1 end) else [1] end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = cond do\n      false -> [1]\n      true -> Enum.filter([], fn v -> v > 1 end)\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = cond do\n      false -> Enum.sort_by([], fn v -> v end)\n      true -> [2]\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[2]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = try do\n      some(1)\n    rescue\n      _ -> tap(none, fn v -> 1 end)\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "some(1)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = if true do [1] else [] |> Enum.filter(fn v -> v > 1 end) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = if true do 1 else Enum.find([], 5, fn v -> v > 1 end) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = if true do some(1) else Enum.find([], fn v -> v > 1 end) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "some(1)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case 1 do\n      1 -> some(1)\n      _ ->\n        tap(none, fn v -> 1 end)\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "some(1)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case 1 do\n      1 -> [1]\n      2 -> Enum.filter([], fn v -> v > 1 end)\n      _ -> [2]\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case 1 do\n      1 -> [1]\n      _ -> Enum.filter([], fn v -> v > 1 end)\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = if true do\n      [1]\n    else\n      Enum.filter([], fn v -> v > 1 end)\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case 1 do\n      1 -> fn(a: integer): integer do a end\n      _ -> fn v -> v + 1 end\n    end\n    IO.inspect(x(1))\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case 1 do\n      1 -> [fn(a: integer): integer do a end]\n      _ -> Enum.filter([], fn v -> true end)\n    end\n    IO.inspect(length(x))\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case 1 do\n      1 -> [1]\n      _ -> Enum.filter([], fn v -> true end)\n    end\n    IO.inspect(x)\n    IO.inspect(1)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case 1 do\n      1 -> [1]\n      _ -> Enum.filter([], &(&1 > 1))\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case 1 do\n      1 -> [1]\n      2 -> [2]\n      _ -> [3]\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case 1 do\n      1 -> [1]\n      _ -> Enum.filter([], fn(v: integer): boolean do true end)\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: list[integer] = case 1 do\n      1 -> [1]\n      _ -> Enum.filter([], fn v -> v > 1 end)\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case true do\n      true -> [1]\n      false -> Enum.filter([], fn v -> v > 1 end)\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case 1 do\n      1 -> [1]\n      n -> Enum.filter([], fn v -> v > 1 end)\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case some(1) do\n      some(v) -> [v]\n      none -> Enum.filter([], fn v -> v > 1 end)\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(case 1 do\n      1 -> [1]\n      _ -> Enum.filter([], fn v -> v > 1 end)\n    end)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case 1 do\n      1 -> [1]\n      _ -> Enum.reverse([])\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case 1 do\n      1 -> [1]\n      2 -> Enum.filter([], fn v -> v > 1 end)\n      _ -> [5]\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case 1 do\n      1 -> [1]\n      2 -> [2]\n      _ -> Enum.filter([], fn v -> v > 1 end)\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case 1 do\n      1 -> [1]\n      _ -> if true do Enum.filter([], fn v -> v > 1 end) else [1] end\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = if false do [1] else Enum.filter([], fn v -> v > 1 end) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = cond do\n      false -> [1]\n      2 > 1 -> Enum.filter([], fn v -> v > 1 end)\n      true -> Enum.filter([], fn v -> v > 1 end)\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = if true do [1] else Enum.filter([], fn(v: integer): boolean do true end) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = if true do Enum.filter([], fn(v: integer): boolean do true end) else [1] end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = case 1 do\n      1 -> Enum.filter([], fn(v: integer): boolean do true end)\n      _ -> [1]\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: list[integer] = Enum.filter([], fn(v: integer): boolean do true end)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: result[integer,string] = if true do JSON.decode_as(\"5\") else ok(1) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "ok(5)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: result[integer,string] = case 1 do\n      1 -> ok(1)\n      _ -> JSON.decode_as(\"5\")\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "ok(1)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: result[integer,string] = cond do\n      true -> \"5\" |> JSON.decode_as()\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "ok(5)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: list[result[integer,string]] = [JSON.decode_as(\"5\")]\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[ok(5)]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: result[integer,string] = try do\n      JSON.decode_as(\"5\")\n    rescue\n      _ -> ok(1)\n    end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "ok(5)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(l: list[a], f: fn[a, boolean]): list[a] do\n    l\n  end\n\n  def main() do\n    x: list[integer] = Enum.reject([], fn(v: integer): boolean do true end)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(l: list[a], f: fn[a, boolean]): list[a] do\n    l\n  end\n\n  def main() do\n    x: list[integer] = mine([], fn(v: integer): boolean do true end)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(l: list[a], f: fn[a, boolean]): list[a] do\n    l\n  end\n\n  def main() do\n    x: list[integer] = Enum.sort_by([], fn(v: integer): boolean do true end)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(l: list[a], f: fn[a, boolean]): list[a] do\n    l\n  end\n\n  def main() do\n    x: list[integer] = [] |> Enum.filter(fn(v: integer): boolean do true end)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(l: list[a], f: fn[a, boolean]): list[a] do\n    l\n  end\n\n  def main() do\n    x: list[integer] = Enum.take_while([], fn(v: integer): boolean do true end)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(l: list[a], f: fn[a, boolean]): list[a] do\n    l\n  end\n\n  def main() do\n    x: list[integer] = filter([], fn(v: integer): boolean do true end)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def mine(l: list[a], f: fn[a, boolean]): list[a] do\n    l\n  end\n\n  def main() do\n    x: list[integer] = Enum.filter([], &Integer.is_even/1)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ap(x: integer, f: fn[integer,a]): a do\n    f(x)\n  end\n\n  def id(x: a): a do\n    x\n  end\n\n  def main() do\n    x: integer = Enum.reduce([], fn(a: integer, b: integer): integer do a end)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:11:18: empty error\n  at C.main (m.alc:11)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ap(x: integer, f: fn[integer,a]): a do\n    f(x)\n  end\n\n  def id(x: a): a do\n    x\n  end\n\n  def main() do\n    x = if true do 1 else Enum.reduce([], fn(a: integer, b: integer): integer do a end) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ap(x: integer, f: fn[integer,a]): a do\n    f(x)\n  end\n\n  def id(x: a): a do\n    x\n  end\n\n  def main() do\n    f: fn[integer,integer] = Enum.reduce([], fn(a: fn[integer,integer], b: fn[integer,integer]): fn[integer,integer] do a end)\n    IO.inspect(f(1))\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:11:30: empty error\n  at C.main (m.alc:11)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ap(x: integer, f: fn[integer,a]): a do\n    f(x)\n  end\n\n  def id(x: a): a do\n    x\n  end\n\n  def main() do\n    x = Enum.filter([1], Enum.reduce([], fn(a: fn[integer,boolean], b: fn[integer,boolean]): fn[integer,boolean] do a end))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:11:26: empty error\n  at C.main (m.alc:11)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ap(x: integer, f: fn[integer,a]): a do\n    f(x)\n  end\n\n  def id(x: a): a do\n    x\n  end\n\n  def main() do\n    x = Enum.reduce([1], 0, Enum.reduce([], fn(a: fn[integer,integer,integer], b: fn[integer,integer,integer]): fn[integer,integer,integer] do a end))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:11:29: empty error\n  at C.main (m.alc:11)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ap(x: integer, f: fn[integer,a]): a do\n    f(x)\n  end\n\n  def id(x: a): a do\n    x\n  end\n\n  def main() do\n    x = Enum.reduce_while([1], 0, Enum.reduce([], fn(a: fn[integer,integer,step[integer]], b: fn[integer,integer,step[integer]]): fn[integer,integer,step[integer]] do a end))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:11:35: empty error\n  at C.main (m.alc:11)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ap(x: integer, f: fn[integer,a]): a do\n    f(x)\n  end\n\n  def id(x: a): a do\n    x\n  end\n\n  def two(x: a, f: fn[a,b,step[b]], s: b): b do\n    s\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def opt(x: a, f: fn[a,option[a]]): a do\n    x\n  end\n\n  def main() do\n    f: fn[integer,integer,step[integer]] = Enum.reduce([], fn(a: fn[integer,integer,step[integer]], b: fn[integer,integer,step[integer]]): fn[integer,integer,step[integer]] do a end)\n    IO.puts(\"x\")\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:23:44: empty error\n  at C.main (m.alc:23)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ap(x: integer, f: fn[integer,a]): a do\n    f(x)\n  end\n\n  def id(x: a): a do\n    x\n  end\n\n  def two(x: a, f: fn[a,b,step[b]], s: b): b do\n    s\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def opt(x: a, f: fn[a,option[a]]): a do\n    x\n  end\n\n  def main() do\n    x = one(1, Enum.reduce([], fn(a: fn[integer,integer], b: fn[integer,integer]): fn[integer,integer] do a end))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:23:16: empty error\n  at C.main (m.alc:23)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ap(x: integer, f: fn[integer,a]): a do\n    f(x)\n  end\n\n  def id(x: a): a do\n    x\n  end\n\n  def two(x: a, f: fn[a,b,step[b]], s: b): b do\n    s\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def opt(x: a, f: fn[a,option[a]]): a do\n    x\n  end\n\n  def main() do\n    x = opt(1, Enum.reduce([], fn(a: fn[integer,option[integer]], b: fn[integer,option[integer]]): fn[integer,option[integer]] do a end))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:23:16: empty error\n  at C.main (m.alc:23)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ap(x: integer, f: fn[integer,a]): a do\n    f(x)\n  end\n\n  def id(x: a): a do\n    x\n  end\n\n  def two(x: a, f: fn[a,b,step[b]], s: b): b do\n    s\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def opt(x: a, f: fn[a,option[a]]): a do\n    x\n  end\n\n  def main() do\n    x = one(1, hd([]))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:23:16: the list is empty\n  at C.main (m.alc:23)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ap(x: integer, f: fn[integer,a]): a do\n    f(x)\n  end\n\n  def id(x: a): a do\n    x\n  end\n\n  def two(x: a, f: fn[a,b,step[b]], s: b): b do\n    s\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def opt(x: a, f: fn[a,option[a]]): a do\n    x\n  end\n\n  def main() do\n    x = Enum.reject([1], hd([]))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:23:26: the list is empty\n  at C.main (m.alc:23)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ap(x: integer, f: fn[integer,a]): a do\n    f(x)\n  end\n\n  def id(x: a): a do\n    x\n  end\n\n  def two(x: a, f: fn[a,b,step[b]], s: b): b do\n    s\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def opt(x: a, f: fn[a,option[a]]): a do\n    x\n  end\n\n  def main() do\n    x = Enum.reduce([1], 0, hd([]))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:23:29: the list is empty\n  at C.main (m.alc:23)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ap(x: integer, f: fn[integer,a]): a do\n    f(x)\n  end\n\n  def id(x: a): a do\n    x\n  end\n\n  def two(x: a, f: fn[a,b,step[b]], s: b): b do\n    s\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def opt(x: a, f: fn[a,option[a]]): a do\n    x\n  end\n\n  def main() do\n    x = Enum.reduce_while([1], 0, Enum.reduce([fn(a: integer, b: integer): step[integer] do cont(b) end], fn(a: fn[integer,integer,step[integer]], b: fn[integer,integer,step[integer]]): fn[integer,integer,step[integer]] do a end))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "0\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ap(x: integer, f: fn[integer,a]): a do\n    f(x)\n  end\n\n  def id(x: a): a do\n    x\n  end\n\n  def two(x: a, f: fn[a,b,step[b]], s: b): b do\n    s\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def opt(x: a, f: fn[a,option[a]]): a do\n    x\n  end\n\n  def main() do\n    x: integer = Enum.reduce_while([1], 0, Enum.reduce([], fn(a: fn[integer,integer,step[integer]], b: fn[integer,integer,step[integer]]): fn[integer,integer,step[integer]] do a end))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:23:44: empty error\n  at C.main (m.alc:23)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def id(x: a): a do\n    x\n  end\n\n  def mk(): fn[integer,integer] do\n    fn(a: integer): integer do a end\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def con(x: integer, f: fn[integer,integer]): integer do\n    x\n  end\n\n  def main() do\n    x = one(1, mk())\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def id(x: a): a do\n    x\n  end\n\n  def mk(): fn[integer,integer] do\n    fn(a: integer): integer do a end\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def con(x: integer, f: fn[integer,integer]): integer do\n    x\n  end\n\n  def main() do\n    x = one(1, id(fn(a: integer): integer do a end))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def id(x: a): a do\n    x\n  end\n\n  def mk(): fn[integer,integer] do\n    fn(a: integer): integer do a end\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def con(x: integer, f: fn[integer,integer]): integer do\n    x\n  end\n\n  def main() do\n    x = one(1, Enum.reduce([mk()], fn(a: fn[integer,integer], b: fn[integer,integer]): fn[integer,integer] do a end))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def id(x: a): a do\n    x\n  end\n\n  def mk(): fn[integer,integer] do\n    fn(a: integer): integer do a end\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def con(x: integer, f: fn[integer,integer]): integer do\n    x\n  end\n\n  def main() do\n    x = one(1, Enum.reduce([fn(a: integer): integer do a end], fn(a: fn[integer,integer], b: fn[integer,integer]): fn[integer,integer] do a end))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def id(x: a): a do\n    x\n  end\n\n  def mk(): fn[integer,integer] do\n    fn(a: integer): integer do a end\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def con(x: integer, f: fn[integer,integer]): integer do\n    x\n  end\n\n  def main() do\n    x = con(1, Enum.reduce([fn(a: integer): integer do a end], fn(a: fn[integer,integer], b: fn[integer,integer]): fn[integer,integer] do a end))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def id(x: a): a do\n    x\n  end\n\n  def mk(): fn[integer,integer] do\n    fn(a: integer): integer do a end\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def con(x: integer, f: fn[integer,integer]): integer do\n    x\n  end\n\n  def main() do\n    x = con(1, Enum.reduce([], fn(a: fn[integer,integer], b: fn[integer,integer]): fn[integer,integer] do a end))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:19:16: empty error\n  at C.main (m.alc:19)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def id(x: a): a do\n    x\n  end\n\n  def mk(): fn[integer,integer] do\n    fn(a: integer): integer do a end\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def con(x: integer, f: fn[integer,integer]): integer do\n    x\n  end\n\n  def main() do\n    x = con(1, hd([]))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:19:16: the list is empty\n  at C.main (m.alc:19)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def id(x: a): a do\n    x\n  end\n\n  def mk(): fn[integer,integer] do\n    fn(a: integer): integer do a end\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def con(x: integer, f: fn[integer,integer]): integer do\n    x\n  end\n\n  def main() do\n    h = Enum.reduce([mk()], fn(a: fn[integer,integer], b: fn[integer,integer]): fn[integer,integer] do a end)\n    x = one(1, h)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def id(x: a): a do\n    x\n  end\n\n  def mk(): fn[integer,integer] do\n    fn(a: integer): integer do a end\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def con(x: integer, f: fn[integer,integer]): integer do\n    x\n  end\n\n  def main() do\n    h = Enum.reduce([mk()], fn(a: fn[integer,integer], b: fn[integer,integer]): fn[integer,integer] do a end)\n    IO.inspect(h(1))\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def id(x: a): a do\n    x\n  end\n\n  def mk(): fn[integer,integer] do\n    fn(a: integer): integer do a end\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def con(x: integer, f: fn[integer,integer]): integer do\n    x\n  end\n\n  def main() do\n    h = Enum.find([mk()], fn(a: fn[integer,integer]): boolean do true end)\n    IO.inspect(1)\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def id(x: a): a do\n    x\n  end\n\n  def mk(): fn[integer,integer] do\n    fn(a: integer): integer do a end\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def con(x: integer, f: fn[integer,integer]): integer do\n    x\n  end\n\n  def main() do\n    h = Enum.max_by([mk()], fn(a: fn[integer,integer]): integer do 1 end)\n    IO.inspect(h(1))\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def id(x: a): a do\n    x\n  end\n\n  def mk(): fn[integer,integer] do\n    fn(a: integer): integer do a end\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def con(x: integer, f: fn[integer,integer]): integer do\n    x\n  end\n\n  def main() do\n    h = Enum.reduce([mk()], mk(), fn(a: fn[integer,integer], b: fn[integer,integer]): fn[integer,integer] do a end)\n    IO.inspect(h(1))\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def id(x: a): a do\n    x\n  end\n\n  def mk(): fn[integer,integer] do\n    fn(a: integer): integer do a end\n  end\n\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def con(x: integer, f: fn[integer,integer]): integer do\n    x\n  end\n\n  def main() do\n    x = one(1, Enum.reduce([mk()], mk(), fn(a: fn[integer,integer], b: fn[integer,integer]): fn[integer,integer] do a end))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def opt(x: a, f: fn[a,option[a]]): a do\n    x\n  end\n\n  def main() do\n    IO.puts(\"x\")\n  end\nend\n",
+  "result": [
+   0,
+   "x\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def two(x: a, f: fn[a,b,step[b]], s: b): b do\n    s\n  end\n\n  def main() do\n    IO.puts(\"x\")\n  end\nend\n",
+  "result": [
+   0,
+   "x\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def two(x: integer, f: fn[integer,integer,step[integer]]): integer do\n    x\n  end\n\n  def main() do\n    IO.puts(\"x\")\n  end\nend\n",
+  "result": [
+   0,
+   "x\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def two(x: step[integer]): integer do\n    1\n  end\n\n  def main() do\n    IO.puts(\"x\")\n  end\nend\n",
+  "result": [
+   0,
+   "x\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def two(x: a, f: fn[a,b], s: b): b do\n    s\n  end\n\n  def main() do\n    IO.puts(\"x\")\n  end\nend\n",
+  "result": [
+   0,
+   "x\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def two(): step[integer] do\n    cont(1)\n  end\n\n  def main() do\n    IO.puts(\"x\")\n  end\nend\n",
+  "result": [
+   0,
+   "x\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def ap(x: integer, f: fn[integer,a]): a do\n    f(x)\n  end\n\n  def main() do\n    IO.puts(\"x\")\n  end\nend\n",
+  "result": [
+   0,
+   "x\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def one(x: a, f: fn[a,a]): a do\n    x\n  end\n\n  def main() do\n    IO.puts(\"x\")\n  end\nend\n",
+  "result": [
+   0,
+   "x\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    f: fn[integer,integer,step[integer]] = Enum.reduce([], fn(a: fn[integer,integer,step[integer]], b: fn[integer,integer,step[integer]]): fn[integer,integer,step[integer]] do a end)\n    IO.puts(\"x\")\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:3:44: empty error\n  at C.main (m.alc:3)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = Enum.reduce_while([1], 0, Enum.reduce([fn(a: integer, b: integer): step[integer] do cont(b) end], fn(a: fn[integer,integer,step[integer]], b: fn[integer,integer,step[integer]]): fn[integer,integer,step[integer]] do a end))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "0\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    f = Enum.reduce([fn(a: integer, b: integer): step[integer] do cont(b) end], fn(a: fn[integer,integer,step[integer]], b: fn[integer,integer,step[integer]]): fn[integer,integer,step[integer]] do a end)\n    x = Enum.reduce_while([1], 0, f)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "0\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = Enum.reduce_while([1], 0, hd([]))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:3:35: the list is empty\n  at C.main (m.alc:3)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = Enum.reduce_while([1], 0, Enum.reduce([], fn(a: fn[integer,integer,step[integer]], b: fn[integer,integer,step[integer]]): fn[integer,integer,step[integer]] do a end))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:3:35: empty error\n  at C.main (m.alc:3)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(cont(1))\n  end\nend\n",
+  "result": [
+   0,
+   "cont(1)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(halt(1))\n  end\nend\n",
+  "result": [
+   0,
+   "halt(1)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = cont(1)\n    IO.puts(\"a\")\n  end\nend\n",
+  "result": [
+   0,
+   "a\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(cont(1) == cont(1))\n  end\nend\n",
+  "result": [
+   0,
+   "true\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = [cont(1), halt(2)]\n    IO.puts(\"a\")\n  end\nend\n",
+  "result": [
+   0,
+   "a\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    cont = 5\n    IO.inspect(cont)\n  end\nend\n",
+  "result": [
+   0,
+   "5\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: step[integer] = cont(1)\n    IO.puts(\"a\")\n  end\nend\n",
+  "result": [
+   0,
+   "a\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    case cont(1) do\n      cont(x) -> IO.inspect(x)\n      halt(x) -> IO.inspect(x)\n    end\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.puts(JSON.encode!(cont(1)))\n  end\nend\n",
+  "result": [
+   0,
+   "{\"cont\":[1]}\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = if true do cont(1) else halt(2) end\n    IO.inspect(Enum.reduce_while([1], 0, fn(a: integer, b: integer): step[integer] do x end))\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Enum.uniq([cont(1), cont(1)]))\n  end\nend\n",
+  "result": [
+   0,
+   "[cont(1)]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(halt(\"a\"))\n  end\nend\n",
+  "result": [
+   0,
+   "halt(\"a\")\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect([cont(1), halt(2)])\n  end\nend\n",
+  "result": [
+   0,
+   "[cont(1), halt(2)]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect({cont(1), some(halt([1]))})\n  end\nend\n",
+  "result": [
+   0,
+   "{cont(1), some(halt([1]))}\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(cont(1) == halt(1))\n  end\nend\n",
+  "result": [
+   0,
+   "false\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: step[integer] = cont(1)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "cont(1)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    case cont(1) do\n      cont(x) -> IO.inspect(x)\n      halt(x) -> IO.inspect(x + 1)\n    end\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    case halt(1) do\n      cont(_) -> IO.puts(\"c\")\n      other -> IO.inspect(other)\n    end\n  end\nend\n",
+  "result": [
+   0,
+   "halt(1)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    case halt(some(3)) do\n      cont(some(n)) -> IO.inspect(n)\n      halt(some(n)) when n > 2 -> IO.inspect(n * 10)\n      _ -> IO.puts(\"no\")\n    end\n  end\nend\n",
+  "result": [
+   0,
+   "30\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.puts(JSON.encode!([halt(\"x\")]))\n  end\nend\n",
+  "result": [
+   0,
+   "[{\"halt\":[\"x\"]}]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: result[step[integer], string] = JSON.decode_as(\"{\\\"cont\\\":[1]}\")\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "ok(cont(1))\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Enum.reduce_while([1, 2, 3], 0, fn x, a -> if x == 2 do halt(a) else cont(a + x) end end))\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Enum.reduce_while(1..10, 0, fn x, a -> if x == 4 do halt(a) else cont(a + x) end end))\n  end\nend\n",
+  "result": [
+   0,
+   "6\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Enum.reduce_while(%{1 => 2, 3 => 4}, 0, fn {k, v}, a -> if k == 3 do halt(a) else cont(a + v) end end))\n  end\nend\n",
+  "result": [
+   0,
+   "2\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    f = fn(a: integer, b: integer): step[integer] do if a > 2 do halt(b) else cont(a + b) end end\n    IO.inspect(Enum.reduce_while([1, 2, 3], 0, f))\n  end\nend\n",
+  "result": [
+   0,
+   "3\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Enum.uniq([cont(1), cont(1), halt(1)]))\n  end\nend\n",
+  "result": [
+   0,
+   "[cont(1), halt(1)]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Enum.map([1, 2], &cont(&1)))\n  end\nend\n",
+  "result": [
+   0,
+   "[cont(1), cont(2)]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    step = 5\n    IO.inspect(step + 1)\n  end\nend\n",
+  "result": [
+   0,
+   "6\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = if true do cont(1) else halt(2) end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "cont(1)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Enum.count([cont(1)], fn s -> case s do cont(_) -> true\n halt(_) -> false end end))\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: step[list[integer]] = cont([])\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "cont([])\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(inspect(cont(1.5)) <> \"!\")\n  end\nend\n",
+  "result": [
+   0,
+   "\"cont(1.5)!\"\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    m = %{1 => cont(2)}\n    IO.inspect(m)\n  end\nend\n",
+  "result": [
+   0,
+   "%{1 => cont(2)}\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    assert(cont(1) == halt(2))\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:3:5: assertion failed\n  at C.main (m.alc:3)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: step[integer] = halt(elem({1, 2}, 1))\n    case x do\n      halt(n) -> IO.inspect(n)\n      cont(n) -> IO.inspect(0 - n)\n    end\n  end\nend\n",
+  "result": [
+   0,
+   "2\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Range.size(Range.new(100, 5)))\n  end\nend\n",
+  "result": [
+   0,
+   "0\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Range.new(100, 5))\n  end\nend\n",
+  "result": [
+   0,
+   "100..5\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Range.size(100..5))\n  end\nend\n",
+  "result": [
+   0,
+   "96\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Enum.to_list(Range.new(3, 1)))\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Enum.to_list(3..1))\n  end\nend\n",
+  "result": [
+   0,
+   "[3, 2, 1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Range.size(Range.new(100, 5, -1)))\n  end\nend\n",
+  "result": [
+   0,
+   "96\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    r = Range.new(100, 5)\n    IO.inspect(r.step)\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Enum.count(Range.new(5, 1)))\n  end\nend\n",
+  "result": [
+   0,
+   "0\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Range.new(5, 5))\n  end\nend\n",
+  "result": [
+   0,
+   "5..5\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(5 in Range.new(9, 1))\n  end\nend\n",
+  "result": [
+   0,
+   "false\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Range.size(5..1))\n  end\nend\n",
+  "result": [
+   0,
+   "5\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Enum.sum(Range.new(4, 1)))\n  end\nend\n",
+  "result": [
+   0,
+   "0\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Range.disjoint?(Range.new(5, 1), 2..3))\n  end\nend\n",
+  "result": [
+   0,
+   "true\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    v: list[atom] = tl([])\n    IO.inspect(v)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:3:21: the list is empty\n  at C.main (m.alc:3)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Enum.max([1.5], fn a, b -> true end))\n  end\nend\n",
+  "result": [
+   0,
+   "1.5\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = Enum.max([1.5], fn a, b -> true end)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "1.5\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    f: list[atom] = tl([])\n    IO.inspect(1)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:3:21: the list is empty\n  at C.main (m.alc:3)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = [(if true do none else some(\"a\") end) | [none, some(\"\")]]\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[none, none, some(\"\")]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = [(case 1 do\n      1 -> none\n      _ -> some(\"a\")\n    end) | [none]]\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "[none, none]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect([[1]] |> Enum.min(fn a, b -> false end))\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Enum.min([[1]], fn a, b -> false end))\n  end\nend\n",
+  "result": [
+   0,
+   "[1]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Enum.min([1], fn a, b -> false end))\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Enum.max([%{1 => 2}], fn a, b -> false end))\n  end\nend\n",
+  "result": [
+   0,
+   "%{1 => 2}\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: result[float,string] = List.first!(tl([ok(0.0)]))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:3:31: the list is empty\n  at C.main (m.alc:3)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: result[float,string] = List.first!([ok(0.0)])\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "ok(0.0)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: result[float,string] = List.first([ok(1.0)], ok(0.0))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "ok(1.0)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: result[float,string] = Enum.reduce([-1, 3], ok(0.0), fn a, b -> b end)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "ok(0.0)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: result[float,string] = List.first((1 |> then(fn v -> [ok(100.0)] end)), ok(0.0))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "ok(100.0)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: option[integer] = hd(tl([none, some(10)]))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "some(10)\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: option[integer] = hd([none, some(10)])\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "none\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = if Version.match?(\"42\", \"abc\", [{:b, true}]) do 1 else 2 end\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:3:12: Version.match? takes allow_pre:\n  at C.main <closure> (m.alc:3)\n  at C.main (m.alc:3)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = then(\"a\", fn v -> ~D[1999-12-31] end)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "~D[1999-12-31]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x: integer = 5 |> then((if true do fn v -> v end else fn w -> w + 1 end end))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "5\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    IO.inspect(Base.encode32(\"ab\", List.update_at([{:lower, false}], 255, fn(v: tuple[atom,boolean]): tuple[atom,boolean] do v end)))\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:3:16: Base takes case: :upper, :lower or :mixed and padding: true or false\n  at C.main (m.alc:3)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = Float.ceil(List.first([], 1.5))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "2.0\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = String.upcase(List.first([], \"a\"))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "\"A\"\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = Integer.to_string(List.first([], 1))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "\"1\"\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = Float.round(List.first([], 1.5), 1)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "1.5\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = Integer.pow(List.first([], 2), 2)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "4\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = Float.floor(hd(tl([1.0, 2.0])))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "2.0\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = String.length(Enum.at([], 0, \"q\"))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = Atom.to_string(List.first([], :a))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "\"a\"\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = IO.ANSI.format([{:x_y, \"a\"}], false)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "\"\"\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = String.jaro_distance(\"a\", elem({10, \"\"}, 1))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "0.0\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = [{:x_y, \"a\"}, {:b, \"h\"}] |> IO.ANSI.format(false)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "\"\"\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = byte_size(List.first([], \"a\"))\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "1\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = div(List.first([], 4), 2)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "2\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    x = 1 + List.first([], 4)\n    IO.inspect(x)\n  end\nend\n",
+  "result": [
+   0,
+   "5\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    v7: tuple[float,boolean] = ([] |> Enum.max())\n    IO.inspect(v7)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:3:39: empty error\n  at C.main (m.alc:3)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    v7: integer = ([] |> Enum.max())\n    IO.inspect(v7)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:3:26: empty error\n  at C.main (m.alc:3)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    v7: integer = (Enum.max([]))\n    IO.inspect(v7)\n  end\nend\n",
+  "result": [
+   2,
+   "",
+   "m.alc:3:20: empty error\n  at C.main (m.alc:3)\n"
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    v: list[string] = Enum.sort([])\n    IO.inspect(v)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    v: list[string] = Enum.uniq([])\n    IO.inspect(v)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    v: list[float] = Enum.sort([])\n    IO.inspect(v)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    v: list[string] = [] |> Enum.sort()\n    IO.inspect(v)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    v: list[tuple[integer,string]] = Enum.sort([])\n    IO.inspect(v)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule C do\n  def main() do\n    v: list[atom] = Enum.uniq([])\n    IO.inspect(v)\n  end\nend\n",
+  "result": [
+   0,
+   "[]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule D do\n  struct W do\n    a: string\n    b: string\n    l: list[string]\n  end\n\n  def whole(p: tuple[string,integer,list[string]], k: integer): tuple[string,integer,list[string]] do\n    if k <= 0 do p else\n      keep = p\n      {a, n, l} = p\n      whole({a <> \"x\", n + 1, [elem(keep, 0) | l]}, k - 1)\n    end\n  end\n\n  def after(p: tuple[string,integer,list[string]], k: integer): tuple[string,integer,list[string]] do\n    if k <= 0 do p else\n      {a, n, l} = p\n      after({a <> \"x\", n + 1, [elem(p, 0) | l]}, k - 1)\n    end\n  end\n\n  def other(w: W, k: integer): W do\n    if k <= 0 do w else other(%W{w | a: w.b <> \"x\", b: w.b <> \"y\"}, k - 1) end\n  end\n\n  def swap(w: W, v: W, k: integer): W do\n    if k <= 0 do v else swap(%W{v | a: v.a <> \"x\"}, %W{w | l: [w.a | w.l]}, k - 1) end\n  end\n\n  def zero(): tuple[string,integer,list[string]] do\n    {\"\", 0, []}\n  end\n\n  def main() do\n    IO.inspect(whole(zero(), 4))\n    IO.inspect(after(zero(), 4))\n    IO.inspect(Enum.reduce(1..4, zero(), fn _, p ->\n      keep = p\n      {a, n, l} = p\n      {a <> \"x\", n + 1, [elem(keep, 0) | l]}\n    end))\n    IO.inspect(Enum.reduce(1..4, zero(), fn _, p ->\n      {a, n, l} = p\n      {a <> \"x\", n + 1, [elem(p, 0) | l]}\n    end))\n    IO.inspect(other(%W{a: \"\", b: \"\", l: []}, 4))\n    IO.inspect(swap(%W{a: \"\", b: \"\", l: []}, %W{a: \"\", b: \"\", l: []}, 6))\n  end\nend\n",
+  "result": [
+   0,
+   "{\"xxxx\", 4, [\"xxx\", \"xx\", \"x\", \"\"]}\n{\"xxxx\", 4, [\"xxx\", \"xx\", \"x\", \"\"]}\n{\"xxxx\", 4, [\"xxx\", \"xx\", \"x\", \"\"]}\n{\"xxxx\", 4, [\"xxx\", \"xx\", \"x\", \"\"]}\n%W{a: \"yyyx\", b: \"yyyy\", l: []}\n%W{a: \"xxx\", b: \"\", l: [\"xxx\", \"xx\", \"x\"]}\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule F do\n  struct W do\n    a: string\n    l: list[string]\n  end\n\n  def s1(w: W, k: integer): W do\n    if k <= 0 do w else\n      o = w.a\n      s1(%W{w | a: w.a <> \"x\", l: [o | w.l]}, k - 1)\n    end\n  end\n\n  def s2(w: W, k: integer, l: list[string]): list[string] do\n    if k <= 0 do l else\n      o = w.a\n      s2(%W{w | a: w.a <> \"x\"}, k - 1, [o | l])\n    end\n  end\n\n  def s3(w: W, k: integer, l: list[string]): list[string] do\n    if k <= 0 do l else\n      s2(%W{w | a: w.a <> \"x\"}, k - 1, [inspect(w) | l])\n    end\n  end\n\n  def s4(w: W, k: integer, l: list[W]): list[W] do\n    if k <= 0 do l else\n      s4(%W{w | a: w.a <> \"x\"}, k - 1, [w | l])\n    end\n  end\n\n  def main() do\n    IO.inspect(s1(%W{a: \"\", l: []}, 4).l)\n    IO.inspect(s2(%W{a: \"\", l: []}, 4, []))\n    IO.inspect(s4(%W{a: \"\", l: []}, 4, []))\n  end\nend\n",
+  "result": [
+   0,
+   "[\"xxx\", \"xx\", \"x\", \"\"]\n[\"xxx\", \"xx\", \"x\", \"\"]\n[%W{a: \"xxx\", l: []}, %W{a: \"xx\", l: []}, %W{a: \"x\", l: []}, %W{a: \"\", l: []}]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule F do\n  struct W do\n    a: string\n    l: list[string]\n  end\n\n  def s(w: W, k: integer): W do\n    if k <= 0 do w else\n      o = w.a\n      s(%W{w | a: w.a <> \"x\", l: [o | w.l]}, k - 1)\n    end\n  end\n\n  def t(w: W, k: integer): W do\n    if k <= 0 do w else\n      s(%W{w | a: w.a <> \"x\", l: [w.a | w.l]}, k - 1)\n    end\n  end\n\n  def main() do\n    IO.inspect(s(%W{a: \"\", l: []}, 5).l)\n    IO.inspect(t(%W{a: \"\", l: []}, 5).l)\n    IO.inspect(Enum.reduce(1..5, %W{a: \"\", l: []}, fn _, w ->\n      o = w.a\n      %W{w | a: w.a <> \"y\", l: [o | w.l]}\n    end).l)\n  end\nend\n",
+  "result": [
+   0,
+   "[\"xxxx\", \"xxx\", \"xx\", \"x\", \"\"]\n[\"xxxx\", \"xxx\", \"xx\", \"x\", \"\"]\n[\"yyyy\", \"yyy\", \"yy\", \"y\", \"\"]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule W do\n  struct W do\n    out: string\n    n: integer\n  end\n\n  def plain(out: string, k: integer): string do\n    if k == 0 do out else plain(out <> \"x\", k - 1) end\n  end\n\n  def part(out: string, k: integer): string do\n    if k == 0 do out else\n      piece = if rem(k, 5) == 0 and byte_size(out) > 8 do binary_part(out, byte_size(out) - 4, 4) else \"x\" end\n      part(out <> piece, k - 1)\n    end\n  end\n\n  def at(out: string, sum: integer, k: integer): integer do\n    if k == 0 do sum else at(out <> \"x\", sum + (if byte_size(out) > 0 do Binary.at(out, byte_size(out) - 1) else 0 end), k - 1) end\n  end\n\n  def field(w: W, k: integer): W do\n    if k == 0 do w else field(%W{w | out: w.out <> \"x\"}, k - 1) end\n  end\n\n  def pair(p: tuple[string, integer], k: integer): string do\n    {out, n} = p\n    if k == 0 do out else pair({out <> \"x\", n + 1}, k - 1) end\n  end\n\n  def timed(name: string, f: fn[integer]): tuple[] do\n    n = f()\n    IO.puts(\"#{name}: #{n}\")\n    {}\n  end\n\n  def main() do\n    n = 100000\n    timed(\"parameter\", fn -> byte_size(plain(\"\", n)) end)\n    timed(\"read binary_part\", fn -> byte_size(part(\"\", n)) end)\n    timed(\"read Binary.at\", fn -> at(\"\", 0, n) end)\n    timed(\"struct field\", fn -> byte_size(field(%W{out: \"\", n: 0}, n).out) end)\n    timed(\"tuple\", fn -> byte_size(pair({\"\", 0}, n)) end)\n    timed(\"fold struct\", fn -> byte_size(Enum.reduce(1..n, %W{out: \"\", n: 0}, fn _, w -> %W{w | out: w.out <> \"x\"} end).out) end)\n  end\nend\n",
+  "result": [
+   0,
+   "parameter: 100000\nread binary_part: 159994\nread Binary.at: 11999880\nstruct field: 100000\ntuple: 100000\nfold struct: 100000\n",
+   ""
+  ]
+ }
+]

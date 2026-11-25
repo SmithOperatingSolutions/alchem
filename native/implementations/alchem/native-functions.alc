@@ -36,7 +36,7 @@ defmodule NativeFunctions do
     begin = nc_start(source,nc_pos(spec))
     enter = if form == 0 do tl_fn_enter(source,env,table,begin) else nz_enter_plain(if nc_cursor(table,21) == 0 do begin else nc_cursor(table,21) end) end
     value = if nc_pos(inner) < 0 do b[] else nc_value(nc_pos(inner),nc_join(nc_join(enter,zf_cover_fn(source,table,env,nc_join(b[form],nc_u24(begin),nc_u24(if nc_tag(spec) != 9 do 0 else nc_cursor(nc_kind(spec),2) end)),Enum.count(np_tree(shaped))),np_tree(shaped)),nc_code(inner),Enum.concat(if unit == 1 do nc_join(nc_allocate_emit(0),b[72,199,2,0,0,0,0],b[72,137,208]) else b[] end,if form == 0 do tl_fn_leave(source,env,table) else b[] end)),if unit == 1 do b[5,0] else nc_kind(inner) end) end
-    gm_shed(source,env,if form != 0 do 0 else if nc_tag(spec) == 9 do nc_cursor(nc_kind(spec),2) else nc_pos(spec) end end,nf_seal(source,spec,if nw_marked(inner) == 1 do nw_mark(value) else value end,words,gm_held(env,2),form))
+    gm_shed(source,env,table,if form != 0 do 0 else if nc_tag(spec) == 9 do nc_cursor(nc_kind(spec),2) else nc_pos(spec) end end,nf_seal(source,spec,if nw_marked(inner) == 1 do nw_mark(value) else value end,words,gm_held(env,2),form))
   end
   def nf_seal(source: bytes, spec: bytes, value: bytes, words: bytes, captures: bytes, form: integer): bytes do
     count = nc_env_count(nc_code(spec),2)
@@ -305,10 +305,10 @@ defmodule NativeFunctions do
     if stop < 0 do b[] else if ny_has(source,pos,stop,b[102,110])+ny_has(source,pos,stop,b[38]) == 0 do b[] else nf_hinting(source,env,table) end end
   end
   # env for the branch held back, given what the others made; b[] when
-  # they give no type that holds a function.
+  # they give no settled type.
   def nf_settling(env: bytes, others: bytes): bytes do
     kind = nc_kind(others)
-    if nc_pos(others) < 0 do b[] else if nu_functional(kind,0) == 0 do b[] else if nu_holes(kind,0) == 1 do b[] else nw_expect(env,0,kind) end end end
+    if nc_pos(others) < 0 do b[] else if Enum.count(kind) == 0 do b[] else if (nt_tag(kind)-9)*(nt_tag(kind)-12) == 0 do b[] else if nu_holes(kind,0) == 1 do b[] else nw_expect(env,0,kind) end end end end
   end
   # name = value or name: type = value; the annotation types a lambda.
   def nf_binds(source: bytes, start: integer): integer do
@@ -324,7 +324,7 @@ defmodule NativeFunctions do
       begin = nc_expect(source,nc_pos(declared),b[61])
       value = if begin < 0 do b[] else
         # A value that is one call gets the declared type as what the call is expected to give.
-        if nf_deferred(source,begin,env,table) == 0 do nc_expression(source,begin,if nw_whole_call(source,begin) == 1 do nw_expect(env,nf_pipe_target(source,nc_start(source,begin)),kind) else if wf_keyword(source,begin,env) == 1 do nw_expect(env,nc_start(source,begin),kind) else nf_expecting(source,env,begin,kind) end end,table,depth) else nf_expected(source,begin,env,table,depth,kind) end
+        if nf_deferred(source,begin,env,table) == 0 do nc_expression(source,begin,if nw_last_call(source,begin) >= 0 do nw_expect(env,nw_last_call(source,begin),kind) else if wf_keyword(source,begin,env) == 1 do nw_expect(env,nc_start(source,begin),kind) else nf_expecting(source,env,begin,kind) end end,table,depth) else nf_expected(source,begin,env,table,depth,kind) end
       end
       given = nn_expected(value,kind,table)
       if nc_pos(given) < 0 do b[] else if no_compatible(kind,nc_kind(given)) == 0 do b[] else nc_value(nc_pos(given),nc_code(given),kind) end end
@@ -368,7 +368,7 @@ defmodule NativeFunctions do
       stop = nf_primary(source,nc_start(source,pos),env,table)
       piped = if stop < 0 do 0 else if byte_at(source,nc_start(source,stop))*256+byte_at(source,nc_start(source,stop)+1) == 31806 do 1 else 0 end end
       # A value held back by a pipe ends before the pipe.
-      if nf_general(source,pos) == 0 do nf_expected(source,pos,env,table,depth,kind) else if piped == 1 do nc_unary(source,pos,nf_expecting(source,env,pos,kind),table,depth+1) else nc_expression(source,pos,if nw_whole_call(source,pos) == 1 do nw_expect(env,nf_pipe_target(source,nc_start(source,pos)),kind) else nf_expecting(source,env,pos,kind) end,table,depth+1) end end
+      if nf_general(source,pos) == 0 do nf_expected(source,pos,env,table,depth,kind) else if piped == 1 do nc_unary(source,pos,nf_expecting(source,env,pos,kind),table,depth+1) else nc_expression(source,pos,if nw_last_call(source,pos) >= 0 do nw_expect(env,nw_last_call(source,pos),kind) else nf_expecting(source,env,pos,kind) end,table,depth+1) end end
     end
   end
   # An argument that did not compile and holds a lambda or capture: the
@@ -393,13 +393,16 @@ defmodule NativeFunctions do
     if tag == 7 do nt_child(kind,0) else if tag == 8 do nt_child(kind,1) else if tag != 5 do b[] else if index >= nt_count(kind) do b[] else nt_child(kind,index) end end end end
   end
   # env for the later branches of an if, case or cond whose first one gave
-  # a type that holds a function: they are expected to give it too. b[]
-  # when the first gives no such type, or it is expected already.
-  def nf_led(source: bytes, env: bytes, table: bytes, first: bytes): bytes do
+  # a type that holds a function, or where a lambda stands in what follows
+  # pos: they are expected to give it too. b[] when the first gives no such
+  # type, or it is expected already.
+  def nf_led(source: bytes, env: bytes, table: bytes, first: bytes, pos: integer): bytes do
     kind = nc_kind(first)
-    if nc_pos(first) < 0 do b[] else if nu_has(kind,10,0,Enum.count(kind)) == 0 do b[] else if nu_holes(kind,0) == 1 do b[] else
+    stop = if pos < 0 do -1 else if nc_pos(first) < 0 do -1 else wc_scan(source,pos,0) end end
+    held = if nc_pos(first) < 0 do 0 else if nu_has(kind,10,0,Enum.count(kind)) == 1 do 1 else if (nt_tag(kind)-9)*(nt_tag(kind)-12)*(nt_tag(kind)+1) == 0 do 0 else if stop < 0 do 0 else ny_has(source,pos,stop,b[102,110])+ny_has(source,pos,stop,b[38]) end end end end
+    if held == 0 do b[] else if nu_holes(kind,0) == 1 do b[] else
       if nt_same(nf_ambient(source,env,table),kind) == 1 do b[] else nw_expect(env,0,kind) end
-    end end end
+    end end
   end
   # value.(arguments) for any value that is a function.
   def nf_called(source: bytes, value: bytes, env: bytes, table: bytes, depth: integer): bytes do
@@ -427,12 +430,14 @@ defmodule NativeFunctions do
   # block: the block's value is expected to be what its function, or the
   # fn it is in, gives, and the call takes that as its own expected type.
   def nf_tail(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
-    paren = nf_pipe_target(source,start)
+    paren = nw_last_call(source,start)
     held = nf_ambient(source,env,table)
+    # In a trial (type 30) the call stands for a value of unknown type.
+    stop = if nt_tag(held) != 30 do -1 else if paren < 0 do -1 else np_close(source,paren,0,16777216) end end
     wanted = if Enum.count(held) > 0 do held else nc_return_kind(source,table,nc_read(env,0)) end
-    usable = if nw_whole_call(source,start) == 0 do 0 else if (nt_tag(wanted)-9)*(nt_tag(wanted)-30)*(nt_tag(wanted)+1) == 0 do 0 else if Enum.count(nw_expected(env,paren,2)) > 0 do 0 else 1 end end end
+    usable = if paren < 0 do 0 else if (nt_tag(wanted)-9)*(nt_tag(wanted)-30)*(nt_tag(wanted)+1) == 0 do 0 else if Enum.count(nw_expected(env,paren,2)) > 0 do 0 else 1 end end end
     value = if usable == 0 do b[] else nx_expression(source,start,nw_expect(env,paren,wanted),table,depth) end
-    if nc_pos(value) < 0 do b[] else if ty_ends(source,nc_pos(value),env) == 0 do b[] else value end end
+    if stop >= 0 do if ty_ends(source,stop,env) == 0 do b[] else nw_mark(nc_value(stop,b[],b[9])) end else if nc_pos(value) < 0 do b[] else if ty_ends(source,nc_pos(value),env) == 0 do b[] else value end end end
   end
   # 1 when two branches that end the body of a fn whose result type is
   # still to be found both lack a part of their type: one of them has to
@@ -490,7 +495,7 @@ defmodule NativeFunctions do
   # 1 when the parts of the literal being compiled are expected to hold functions.
   def nf_parted(source: bytes, env: bytes, table: bytes): integer do
     kind = nf_ambient(source,env,table)
-    if (nt_tag(kind)-7)*(nt_tag(kind)-8)*(nt_tag(kind)-5) != 0 do 0 else nu_has(kind,10,0,Enum.count(kind)) end
+    if (nt_tag(kind)-7)*(nt_tag(kind)-8)*(nt_tag(kind)-5) != 0 do 0 else nf_worth(kind) end
   end
   # The result type a lambda is held to: one with no part unknown. A longer
   # type than its record holds is left to the body, and checked where the
@@ -635,7 +640,7 @@ defmodule NativeFunctions do
   end
   def nf_bodied(source: bytes, table: bytes, id: integer, env: bytes): bytes do
     kind = nc_return_kind(source,table,id)
-    if Enum.count(env) == 0 do env else if nu_has(kind,10,0,Enum.count(kind)) == 0 do env else nw_expect(env,0,kind) end end
+    if Enum.count(env) == 0 do env else if nf_worth(kind) == 0 do env else nw_expect(env,0,kind) end end
   end
   def nf_ambient_from(env: bytes, offset: integer, found: bytes): bytes do
     kind = nt_read(env,offset+7)
@@ -643,20 +648,27 @@ defmodule NativeFunctions do
       nf_ambient_from(env,nc_env_next(env,offset),if nt_tag(kind) == 41 do kind else if nt_tag(kind) != 21 do found else if nc_cursor(env,offset) != 0 do found else kind end end end)
     end
   end
-  # env with kind expected of the expression at pos. Only a type that holds
-  # a function type is worth a record: every other value has its type
-  # without one. An if, case, cond, with or try gives the type to the ends
+  # 1 for a type worth a record: one that holds a function, which types a
+  # lambda, or a result, which JSON.decode_as gives.
+  def nf_worth(kind: bytes): integer do
+    if nu_has(kind,10,0,Enum.count(kind)) == 1 do 1 else nu_has(kind,6,0,Enum.count(kind)) end
+  end
+  # env with kind expected of the expression at pos, where the type is worth
+  # a record (nf_worth): every other value has its type without one. An if, case, cond, with or try gives the type to the ends
   # of its branches, so there it is what the surroundings expect.
   def nf_expecting(source: bytes, env: bytes, pos: integer, kind: bytes): bytes do
     start = nc_start(source,pos)
     block = nc_word(source,start,b[105,102])+nc_word(source,start,b[117,110,108,101,115,115])+nc_word(source,start,b[99,97,115,101])+nc_word(source,start,b[99,111,110,100])+nc_word(source,start,b[119,105,116,104])+nc_word(source,start,b[116,114,121])
-    if nu_has(kind,10,0,Enum.count(kind)) == 0 do env else nw_expect(env,if block > 0 do 0 else start end,kind) end
+    if nf_worth(kind) == 0 do env else nw_expect(env,if block > 0 do 0 else start end,kind) end
   end
   # env for a value its surroundings give no type: a binding without
   # annotation, an argument.
   def nf_unexpected(source: bytes, env: bytes, table: bytes): bytes do
-    kind = nf_ambient(source,env,table)
-    if nu_has(kind,10,0,Enum.count(kind)) == 0 do env else nw_expect(env,0,b[9]) end
+    found = nf_ambient_from(env,2,b[])
+    kind = nc_slice(found,1,Enum.count(found))
+    # What branches are held to (tag 21) is no business of a value inside one.
+    led = if Enum.at(found,0,0) != 21 do 0 else (nt_tag(kind)-9)*(nt_tag(kind)-30) end
+    if nf_worth(kind) > 0 do nw_expect(env,0,b[9]) else if led == 0 do env else nw_expect(env,0,b[9]) end end
   end
   # A lambda captures every enclosing binding. Binding them after the parameters
   # rejects a parameter that shadows one, as the pinned language does.

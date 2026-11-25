@@ -574,15 +574,17 @@
     target <> Enum.join(items, "")
   end
 #: reduce_while/3
-  def reduce_while(items: list[a], start: b, f: fn[a, b, tuple[boolean, b]]): b do
+  def reduce_while(items: list[a], start: b, f: fn[a, b, step[b]]): b do
     stepped(items, start, f)
   end
-  defp stepped(items: list[a], acc: b, f: fn[a, b, tuple[boolean, b]]): b do
+  defp stepped(items: list[a], acc: b, f: fn[a, b, step[b]]): b do
     case items do
       [] -> acc
       [x | rest] ->
-        step = f(x, acc)
-        if elem(step, 0) do elem(step, 1) else stepped(rest, elem(step, 1), f) end
+        case f(x, acc) do
+          cont(next) -> stepped(rest, next, f)
+          halt(last) -> last
+        end
     end
   end
 #: random/1
@@ -808,7 +810,7 @@
     Enum.chunk_while(Map.to_list(items), first, step, last)
   end
 #: reduce_while/3 form 2 needs reduce_while/3
-  def reduce_while(items: map[k, v], start: b, f: fn[tuple[k, v], b, tuple[boolean, b]]): b do
+  def reduce_while(items: map[k, v], start: b, f: fn[tuple[k, v], b, step[b]]): b do
     Enum.reduce_while(Map.to_list(items), start, f)
   end
 #: random/1 form 2 needs random/1
@@ -1335,10 +1337,16 @@
     Enum.count_until(s, fn x -> true end, limit)
   end
 #: reduce_while/3 form 3
-  def reduce_while(s: stream[a], start: b, f: fn[a, b, tuple[boolean, b]]): b do
+  def reduce_while(s: stream[a], start: b, f: fn[a, b, step[b]]): b do
     acc = some({false, start})
-    w = Stream.__run(s, fn it -> Stream.__until(it, fn x -> elem(Stream.__get(Stream.__put(acc, f(x, elem(Stream.__get(acc), 1)))), 0) end) end)
+    w = Stream.__run(s, fn it -> Stream.__until(it, fn x -> elem(Stream.__get(Stream.__put(acc, stepped(f(x, elem(Stream.__get(acc), 1))))), 0) end) end)
     elem(Stream.__get(acc), 1)
+  end
+  defp stepped(s: step[b]): tuple[boolean, b] do
+    case s do
+      cont(value) -> {false, value}
+      halt(value) -> {true, value}
+    end
   end
 #: count/1 needs reduce/3
   def count(s: stream[a]): integer do

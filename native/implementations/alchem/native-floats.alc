@@ -587,7 +587,7 @@ defmodule NativeFloats do
     op = ne_name(source,name)
     begin = nc_expect(source,nc_end(source,name),b[40])
     args = if op == 0 do b[] else if begin < 0 do b[] else nc_arguments(source,begin,env,table,nc_cursor(plan,0)) end end
-    if nc_pos(args) < 0 do b[] else nw_library(ne_function(source,table,args,op+nc_arg_count(args)*16,nc_cursor(plan,3)),args,2) end
+    if nc_pos(args) < 0 do b[] else nw_library(ne_function(source,table,args,op+nc_arg_count(args)*16,nc_cursor(plan,3)),args,0) end
   end
   def ne_places_message(): bytes do b[112,114,101,99,105,115,105,111,110,32,109,117,115,116,32,98,101,32,98,101,116,119,101,101,110,32,48,32,97,110,100,32,49,53] end
   # plan: the function and 16 times the number of arguments.

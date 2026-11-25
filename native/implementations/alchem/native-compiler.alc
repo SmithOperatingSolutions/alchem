@@ -1058,7 +1058,9 @@ defmodule NativeSourceCompiler do
   # functions and modules.
   def nc_name(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
     first = byte_at(source,pos)
-    typed = if (first-65)*(90-first) < 0 do b[] else nv_typed(source,pos,table,nc_owner(table,nc_read(env,0))) end
+    # The library writes step.cont and step.halt, which a program calls cont and halt.
+    lower = if (first-65)*(90-first) >= 0 do 0 else if first != 115 do 1 else if nc_word(source,pos,b[115,116,101,112])*nc_word(source,nc_end(source,pos),b[46]) == 0 do 1 else 1-nn_library(source,env,table) end end end
+    typed = if lower == 1 do b[] else nv_typed(source,pos,table,nc_owner(table,nc_read(env,0))) end
     if nc_pos(typed) < 0 do nc_name_other(source,pos,env,table,depth) else nv_construct(source,typed,env,table,depth) end
   end
   def nc_name_other(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
@@ -1075,7 +1077,7 @@ defmodule NativeSourceCompiler do
     else
     if nc_word(source,stop,b[46]) == 1 do if local >= 0 do
       held = nt_read(env,nc_env_offset(env,local)+7)
-      if nt_tag(held) == 23 do nk_range_field(source,nc_value(stop,nc_slot(b[72,139,69],local),held)) else if (nt_tag(held)-13)*(nt_tag(held)-18) == 0 do nd_access(source,nc_value(stop,nc_slot(b[72,139,69],local),held),env,table,depth) else nf_call_value(source,pos,nc_end(source,stop),env,table,depth) end end
+      if nt_tag(held) == 23 do nk_range_field(source,nc_value(stop,nc_slot(b[72,139,69],local),held)) else if (nt_tag(held)-13)*(nt_tag(held)-18) == 0 do nd_access(source,gm_loaded(source,pos,env,table,nc_value(stop,nc_slot(b[72,139,69],local),held)),env,table,depth) else nf_call_value(source,pos,nc_end(source,stop),env,table,depth) end end
     else
       # Module.function(...): a direct import or the module itself; defp stays private.
       # TLS is a module of the library alone (library/TLS.alc): the library's calls of it never mean a program's module of that name.
@@ -1335,7 +1337,7 @@ defmodule NativeSourceCompiler do
         if nc_pos(args) < 0 do b[] else
           # A first argument of open type: functions whose result has the same
           # element type take it from their own context, the others cannot.
-          shares = if op == 5 do 0 else if op == 2 do 3-nc_arg_count(args) else if (op-3)*(op-4)*(op-6)*(op-7)*(op-8)*(op-10) == 0 do 1 else 2 end end end
+          shares = if op == 5 do 0 else if op == 2 do 3-nc_arg_count(args) else if (op-3)*(op-4)*(op-6)*(op-7)*(op-8)*(op-10)*(op-13) == 0 do 1 else 2 end end end
           if op == 15 do nw_library(nl_each(args),args,2) else
           if nt_tag(nc_arg_kind(args,0)) == 8 do nw_library(nm_enum(args,op),args,shares) else
           if nt_tag(nc_arg_kind(args,0)) == 7 do nw_library(ne_summed(table,args,op,pos-4),args,shares) else
@@ -1457,7 +1459,7 @@ defmodule NativeSourceCompiler do
             other = nc_expect(source,nc_pos(yes),b[101,108,115,101])
             # Without else the if is a statement: it leaves no value.
             plain = if other < 0 do nc_value(nc_pos(yes),b[],b[12]) else nc_branch(source,other,env,table,depth) end
-            led = if nc_pos(plain) >= 0 do b[] else nf_led(source,env,table,yes) end
+            led = if nc_pos(plain) >= 0 do b[] else nf_led(source,env,table,yes,other) end
             no = if Enum.count(led) == 0 do plain else nc_branch(source,other,led,table,depth) end
             if nc_pos(no) < 0 do b[] else
               after = nc_expect(source,nc_pos(no),b[101,110,100])
@@ -1485,7 +1487,7 @@ defmodule NativeSourceCompiler do
     yes = if begin < 0 do b[] else nc_if_part(source,begin,env,table,depth+1) end
     other = if nc_pos(yes) < 0 do -1 else if nc_word(source,nc_pos(yes),b[44]) == 0 do -1 else nc_expect(source,nc_expect(source,nc_end(source,nc_pos(yes)),b[101,108,115,101]),b[58]) end end
     plain = if nc_pos(yes) < 0 do b[] else if other < 0 do nc_value(nc_pos(yes),b[],b[12]) else nc_if_part(source,other,env,table,depth+1) end end
-    led = if nc_pos(plain) >= 0 do b[] else if other < 0 do b[] else nf_led(source,env,table,yes) end end
+    led = if nc_pos(plain) >= 0 do b[] else if other < 0 do b[] else nf_led(source,env,table,yes,other) end end
     no = if Enum.count(led) == 0 do plain else nc_if_part(source,other,led,table,depth+1) end
     # A part that is a call of the function itself, where the if is the
     # function's result, is a jump (native-tail.alc).
