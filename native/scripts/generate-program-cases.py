@@ -36,9 +36,11 @@ ROOT = Path(__file__).resolve().parents[1]
 CASES = ROOT / 'harness/programs.json.xz'
 BATCH = 100
 # Modules whose functions wait, reach outside the program, or give what
-# differs from run to run; single functions likewise.
+# differs from run to run; single functions likewise. Float.pow is as the
+# processor is: Go's uses fused multiply-add where there is one
+# (spec/alchem-floats.md, harness/floats.py).
 LEFT = set('Process Task Task.Supervisor Agent Server Supervisor DynamicSupervisor Registry Port Node TCP UDP HTTP WebSocket System File IO Logger Testing Gen DiskStore TLS Markup'.split())
-LEFT_FUNCTIONS = re.compile(r'random|shuffle|strong_rand|hash_password|verify_password|utc_now|utc_today|\.now|today|monotonic|sleep|crash|throw|raise|halt|exit|to_existing_atom|from_local|local|expand|absname|wildcard|cwd|tzdata|run_until|interval|repeatedly|cycle|iterate|unfold|resource|flunk|assert|refute|^Kernel\.|print|inspect|unique|memory')
+LEFT_FUNCTIONS = re.compile(r'Float\.pow|random|shuffle|strong_rand|hash_password|verify_password|utc_now|utc_today|\.now|today|monotonic|sleep|crash|throw|raise|halt|exit|to_existing_atom|from_local|local|expand|absname|wildcard|cwd|tzdata|run_until|interval|repeatedly|cycle|iterate|unfold|resource|flunk|assert|refute|^Kernel\.|print|inspect|unique|memory')
 SCALARS = ['integer', 'float', 'string', 'boolean', 'atom']
 PRELUDE = '''  struct P do
     x: integer
