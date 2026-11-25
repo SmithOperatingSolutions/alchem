@@ -1737,11 +1737,10 @@
       m
     end
   end
-#: _kinit/1 needs _kcodes/1 _kcrc/2 _kpow/3 _kxor/2
+#: _kinit/1 needs _kcodes/1 _kpow/3 _kxor/2
   def _kinit(k: integer): integer do
     HTTP._kpow(k + 67584, 0, 1)
     HTTP._kxor(k, 0)
-    HTTP._kcrc(k, 0)
     Enum.reduce([3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258], k + 76800, fn v, a -> Sys.poke(a, v) - v + a + 8 end)
     Enum.reduce([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0], k + 77056, fn v, a -> Sys.poke(a, v) - v + a + 8 end)
     Enum.reduce([1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577], k + 77312, fn v, a -> Sys.poke(a, v) - v + a + 8 end)
@@ -1773,30 +1772,6 @@
 #: _x32/3
   def _x32(k: integer, a: integer, b: integer): integer do
     Sys.byte(k + rem(a, 256) * 256 + rem(b, 256)) + Sys.byte(k + rem(div(a, 256), 256) * 256 + rem(div(b, 256), 256)) * 256 + Sys.byte(k + rem(div(a, 65536), 256) * 256 + rem(div(b, 65536), 256)) * 65536 + Sys.byte(k + div(a, 16777216) * 256 + div(b, 16777216)) * 16777216
-  end
-#: _kcrc/2 needs _kcrc1/3
-  def _kcrc(k: integer, i: integer): integer do
-    if i == 256 do 0 else
-      Sys.poke(k + 65536 + 8 * i, HTTP._kcrc1(k, i, 8))
-      HTTP._kcrc(k, i + 1)
-    end
-  end
-#: _kcrc1/3 needs _x32/3
-  def _kcrc1(k: integer, c: integer, n: integer): integer do
-    if n == 0 do c else HTTP._kcrc1(k, if rem(c, 2) == 1 do HTTP._x32(k, 3988292384, div(c, 2)) else div(c, 2) end, n - 1) end
-  end
-# The CRC-32 of the n bytes at p, carried on from c (0 at the start).
-#: _crc/4 needs _crc1/4
-  def _crc(k: integer, p: integer, n: integer, c: integer): integer do
-    4294967295 - HTTP._crc1(k, p, n, 4294967295 - c)
-  end
-#: _crc1/4
-  def _crc1(k: integer, p: integer, n: integer, c: integer): integer do
-    if n == 0 do c else
-      t = Sys.peek(k + 65536 + 8 * Sys.byte(k + rem(c, 256) * 256 + Sys.byte(p)))
-      d = div(c, 256)
-      HTTP._crc1(k, p + 1, n - 1, Sys.byte(k + rem(t, 256) * 256 + rem(d, 256)) + Sys.byte(k + rem(div(t, 256), 256) * 256 + rem(div(d, 256), 256)) * 256 + Sys.byte(k + rem(div(t, 65536), 256) * 256 + div(d, 65536)) * 65536 + div(t, 16777216) * 16777216)
-    end
   end
 # n bits of the input, the lowest first; 0 and the mark at s + 56 past its
 # end.
@@ -2054,7 +2029,7 @@
   end
 # A gzip file (RFC 1952) as it was before: the text, or "" and what Go's
 # reader says of it.
-#: _unzip/1 needs _crc/4 _inflate/3 _k/0 _zskip/3
+#: _unzip/1 needs _inflate/3 _k/0 _zskip/3 Sys.crc/3
   def _unzip(text: string): tuple[string, string] do
     n = byte_size(text)
     p = Sys.addr(text)
@@ -2074,7 +2049,7 @@
               if e + 8 > p + n do {"", "unexpected EOF"} else
                 sum = Sys.byte(e) + Sys.byte(e + 1) * 256 + Sys.byte(e + 2) * 65536 + Sys.byte(e + 3) * 16777216
                 size = Sys.byte(e + 4) + Sys.byte(e + 5) * 256 + Sys.byte(e + 6) * 65536 + Sys.byte(e + 7) * 16777216
-                if sum != HTTP._crc(k, Sys.addr(plain), byte_size(plain), 0) or size != rem(byte_size(plain), 4294967296) do {"", "gzip: invalid checksum"} else
+                if sum != Sys.crc(Sys.addr(plain), byte_size(plain), 0) or size != rem(byte_size(plain), 4294967296) do {"", "gzip: invalid checksum"} else
                   if e + 8 == p + n do {plain, ""} else
                     {more, wrong} = HTTP._unzip(Sys.text(e + 8, p + n - e - 8))
                     {if wrong == "" do plain <> more else "" end, wrong}
@@ -2253,12 +2228,12 @@
     if k == n do head else head <> HTTP._stored(text, at + k) end
   end
 # RFC 1952: the text as a gzip file.
-#: _gzip/1 needs _crc/4 _deflate/2 _k/0 _le32/1 _stored/2
+#: _gzip/1 needs _deflate/2 _k/0 _le32/1 _stored/2 Sys.crc/3
   def _gzip(text: string): string do
     n = byte_size(text)
     packed = HTTP._deflate(text, 1)
     body = if byte_size(packed) > n + 5 * (div(n, 65535) + 1) do HTTP._stored(text, 0) else packed end
-    "\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff" <> body <> HTTP._le32(HTTP._crc(HTTP._k(), Sys.addr(text), n, 0)) <> HTTP._le32(rem(n, 4294967296))
+    "\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff" <> body <> HTTP._le32(Sys.crc(Sys.addr(text), n, 0)) <> HTTP._le32(rem(n, 4294967296))
   end
 # HTTP.serve_tls: the files named, in their order (httpServeTLSWith).
 #: _tlsfiles/2 needs Atom.to_string/1 String.contains?/2 Sys.open/3 TCP._file/1

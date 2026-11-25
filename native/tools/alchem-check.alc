@@ -83,7 +83,7 @@ defmodule AlchemCheck do
 
   def reserved?(name: string): boolean do
     name in ["IO", "List", "Map", "Process", "Supervisor", "Server", "String", "Integer", "Float", "File", "System", "Time",
-      "Kernel", "Enum", "Stream", "MapSet", "Path", "Base", "Bitwise", "Regex", "Task", "Agent", "Function", "JSON", "Date", "DateTime", "NaiveDateTime", "Calendar", "URI", "Version", "Duration", "Logger", "OptionParser", "Atom", "Keyword", "Port", "Node", "Registry", "DynamicSupervisor", "TCP", "HTTP", "Task.Supervisor", "TCP.Event", "UDP", "UDP.Event", "Gen", "IO.ANSI", "Port.Info", "File.Stat", "Version.Requirement", "PortEvent", "Range", "WebSocket", "WebSocket.Event", "Markup.Value", "Markup.Parts", "Crypto", "Markup", "DiskStore"]
+      "Kernel", "Enum", "Stream", "MapSet", "Path", "Base", "Binary", "Bitwise", "Regex", "Task", "Agent", "Function", "JSON", "Date", "DateTime", "NaiveDateTime", "Calendar", "URI", "Version", "Duration", "Logger", "OptionParser", "Atom", "Keyword", "Port", "Node", "Registry", "DynamicSupervisor", "TCP", "HTTP", "Task.Supervisor", "TCP.Event", "UDP", "UDP.Event", "Gen", "IO.ANSI", "Port.Info", "File.Stat", "Version.Requirement", "PortEvent", "Range", "WebSocket", "WebSocket.Event", "Markup.Value", "Markup.Parts", "Crypto", "Markup", "DiskStore"]
   end
   def retiring?(name: string): boolean do name in ["DiskStore", "WebSocket", "Version", "OptionParser"] end
 

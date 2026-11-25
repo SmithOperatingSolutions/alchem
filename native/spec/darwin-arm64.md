@@ -110,7 +110,7 @@ registers the context points to at 48.
 ## State
 
 Every program of examples/ runs on macOS as its Linux ARM64 build does, the
-corpus of scripts/upstream-examples.py (871 examples) passes on macOS with
+corpus of scripts/upstream-examples.py (878 examples) passes on macOS with
 the compiler built for macOS, and that compiler compiles its own source on
 macOS to itself, byte for byte. scripts/verify-darwin.py checks that on
 macOS, with the gates of harness/ that run there; the native workflow's

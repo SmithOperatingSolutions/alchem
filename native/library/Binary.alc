@@ -1,0 +1,64 @@
+# Binary: the bytes of a string as numbers.
+#: at/2
+  def at(data: string, index: integer): integer do
+    if index < 0 or index >= byte_size(data) do raise("Binary.at: the position is outside the string") end
+    Sys.byte(Sys.addr(data) + index)
+  end
+#: to_list/1 needs _bytes/3
+  def to_list(data: string): list[integer] do
+    none: list[integer] = []
+    Binary._bytes(data, byte_size(data), none)
+  end
+#: _bytes/3
+  def _bytes(data: string, n: integer, done: list[integer]): list[integer] do
+    if n == 0 do done else Binary._bytes(data, n - 1, [Sys.byte(Sys.addr(data) + n - 1) | done]) end
+  end
+# The bytes are gathered on the pad, which no other process is given
+# meanwhile: nothing here waits.
+#: from_list/1 needs _put/1 Sys.got/0 Sys.pad/0
+  def from_list(bytes: list[integer]): string do
+    Sys.pad()
+    Binary._put(bytes)
+    Sys.got()
+  end
+#: _put/1 needs Sys.room/1
+  def _put(bytes: list[integer]): integer do
+    case bytes do
+      [] -> 0
+      [b | rest] ->
+        if b < 0 or b > 255 do raise("Binary.from_list: a byte is a number from 0 to 255") end
+        Sys.poke(Sys.room(8), b)
+        Sys.poke(Sys.state() + 64, Sys.peek(Sys.state() + 64) + 1)
+        Binary._put(rest)
+    end
+  end
+# Whether the order is :little; f is the function that asks.
+#: _little/3
+  def _little(f: string, size: integer, order: atom): boolean do
+    if size != 1 and size != 2 and size != 4 and size != 8 do raise(f <> ": the size is 1, 2, 4 or 8 bytes") end
+    if order != :big and order != :little do raise(f <> ": the order is :big or :little") end
+    order == :little
+  end
+# A number's bytes, the highest first, lie in memory the lowest first once
+# they are turned round.
+#: _turned/3
+  def _turned(value: integer, size: integer, done: integer): integer do
+    if size == 0 do done else Binary._turned(value >>> 8, size - 1, (done <<< 8) ||| (value &&& 255)) end
+  end
+#: encode/3 needs _little/3 _turned/3 Sys.state/0
+  def encode(value: integer, size: integer, order: atom): string do
+    little = Binary._little("Binary.encode", size, order)
+    if size < 8 and (value < 0 or value >= (1 <<< (8 * size))) do raise("Binary.encode: the number does not fit in the size") end
+    s = Sys.state() + 512
+    Sys.poke(s, if little do value else Binary._turned(value, size, 0) end)
+    Sys.text(s, size)
+  end
+#: decode/4 needs _little/3 _turned/3 Sys.state/0
+  def decode(data: string, index: integer, size: integer, order: atom): integer do
+    little = Binary._little("Binary.decode", size, order)
+    if index < 0 or index > byte_size(data) - size do raise("Binary.decode: the bytes are outside the string") end
+    s = Sys.state() + 512
+    Sys.poke(s, 0)
+    Sys.copy(s, Sys.addr(data) + index, size)
+    if little do Sys.peek(s) else Binary._turned(Sys.peek(s), size, 0) end
+  end

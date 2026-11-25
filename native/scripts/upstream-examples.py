@@ -38,9 +38,7 @@ def build_upstream():
     # has no memory ceiling of its own (an endless stream collected into a
     # list took 58 GB and the machine with it).
     real=UP+'.bin'
-    if not os.path.exists(real):
-        os.makedirs(HERE,exist_ok=True)
-        subprocess.run(['go','build','-o',real,'./cmd/alchem'],cwd=U,env=env,check=True)
+    reference.command(real)
     wrapper='#!/usr/bin/env bash\nexport ALCHEM_MEMORY="${ALCHEM_MEMORY:-4G}" ALCHEM_SECONDS="${ALCHEM_SECONDS:-120}"\nexec "'+REPO+'/scripts/limited" "'+real+'" "$@"\n'
     if not os.path.exists(UP) or open(UP,'rb').read()!=wrapper.encode():
         if os.path.exists(UP):os.remove(UP)
@@ -111,7 +109,7 @@ def main():
     cs=[c for c in cases() if c[0].startswith(only)]
     cache_path=HERE+'/upstream-examples.json'
     cache=json.load(open(cache_path)) if os.path.exists(cache_path) else {}
-    key=lambda s:hashlib.sha1(s.encode()).hexdigest()
+    key=lambda s:hashlib.sha1((reference.version()+'\n'+s).encode()).hexdigest()
     todo=[c for c in cs if refresh or key(c[1]) not in cache]
     with ThreadPoolExecutor(8) as ex:
         for c,r in zip(todo,ex.map(lambda c:upstream(c[1]),todo)):cache[key(c[1])]=r
