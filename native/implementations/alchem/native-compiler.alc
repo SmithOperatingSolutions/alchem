@@ -1539,7 +1539,7 @@ defmodule NativeSourceCompiler do
     kind = nx_join(yes,no)
     if nt_tag(kind) < 0 do b[] else
     jump_end = Enum.concat(b[233],nc_u32(Enum.count(b)))
-    nw_keep(nc_value(after,nc_join(vs_test(nc_code(condition_code),Enum.count(a)+5),Enum.concat(a,jump_end),b),kind),yes,no)
+    nw_meet(nc_value(after,nc_join(vs_test(nc_code(condition_code),Enum.count(a)+5),Enum.concat(a,jump_end),b),kind),yes,no)
     end
   end
   # An instruction that addresses frame slot: prefix is its three bytes before

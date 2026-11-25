@@ -18,9 +18,9 @@
  {
   "name": "a sum type and a struct beside the library",
   "gives": [
-   1,
-   "",
-   "main.alc:2:3: import \"web_socket.alc\": web_socket.alc:2:14: unsupported syntax: expected identifier \"do\", found = \"=\"\n"
+   0,
+   "hello\nerror(\"bad url http://x\")\n\"/a\"\n",
+   ""
   ]
  },
  {

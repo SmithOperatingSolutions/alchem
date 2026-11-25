@@ -108,7 +108,7 @@ defmodule NativeArms do
     kind = if index < 0 do b[] else if nc_pos(rest) < 0 do b[] else nx_join(body,rest) end end
     open = if strict == 0 do 0 else if nc_tag(body) == 9 do 0 else if nc_tag(rest) == 9 do 0 else nu_holes(nc_kind(body),0)*nu_holes(nc_kind(rest),0) end end end
     if index < 0 do rest else if nc_pos(rest) < 0 do b[] else if open == 1 do b[] else if nt_tag(kind) < 0 do b[] else
-      pa_fold(values,ends,index-1,nw_keep(nc_value(nc_pos(rest),b[],kind),body,rest),strict)
+      pa_fold(values,ends,index-1,nw_meet(nc_value(nc_pos(rest),b[],kind),body,rest),strict)
     end end end end
   end
   # 1 when every pattern record from offset on is a name, _ or a pattern

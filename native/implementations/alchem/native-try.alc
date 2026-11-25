@@ -434,7 +434,7 @@ defmodule NativeTry do
     made = if nc_cursor(plan,17) == 0 do inner else ty_after(table,slot,inner,wc_first(pair)) end
     core = Enum.concat(zf_tried(table,nc_code(body),nc_code(chain),Enum.concat(nc_u32(whole-ty_u32(plan,35)),nc_u32(whole-ty_u32(plan,39))),wc_first(pair)),made)
     if nt_tag(kind) < 0 do b[] else
-      nw_keep(ty_closed(source,table,nc_value(nc_end(source,nc_cursor(plan,20)),if nc_cursor(plan,11) == 0 do core else ty_hide(core,0,Enum.count(core)) end,kind),plan),if other == 1 do b[] else body end,chain)
+      nw_meet(ty_closed(source,table,nc_value(nc_end(source,nc_cursor(plan,20)),if nc_cursor(plan,11) == 0 do core else ty_hide(core,0,Enum.count(core)) end,kind),plan),if other == 1 do b[] else body end,chain)
     end
   end
   def ty_after(table: bytes, slot: integer, inner: bytes, cleanup: bytes): bytes do
