@@ -569,7 +569,10 @@ defmodule AlchemCommand do
       found = AlchemCheck.load(origin, File.cwd!())
       if found != none do said(found) else
       if Enum.count(source) > 16776191 do "E_RUNTIME_INPUT: input exceeds byte limit" else
-        image = AlchemCompiler.nc_compile(source)
+        # A check makes no program: the functions the file has are compiled.
+        fine = out == "" and Enum.count(AlchemCompiler.nc_checked(source)) == 1
+        image = if fine do b[] else AlchemCompiler.nc_compile(source) end
+        if fine or (out == "" and Enum.count(image) > 0) do "" else
         if Enum.count(image) == 0 do
           refusal(elem(bundled, 1), rx_as(AlchemCompiler.nc_explain(source)))
         else
@@ -581,7 +584,7 @@ defmodule AlchemCommand do
             ok(_) -> ""
             error(message) -> message
           end
-        end
+        end end
       end end
     end
   end
@@ -1061,16 +1064,9 @@ defmodule AlchemCommand do
       File.write(work <> "/checking.alc", "defmodule AlchemChecking do\n  import " <> inspect(up <> String.trim_leading(Path.expand(entry), "/")) <> "\n  def main() do\n    IO.write(\"\")\n  end\nend\n")
       work <> "/checking.alc"
     end
-    built = build_from(used, work <> "/checked", locked, entry)
+    built = build_from(used, "", locked, entry)
     File.rm_rf(work)
-    # The compiler takes some programs the pinned compiler refuses: what
-    # the front end finds in one is said too.
-    if built != "" do built else
-      case AlchemCheck.load(entry, File.cwd!()) do
-        some(found) -> found.text
-        none -> ""
-      end
-    end
+    built
   end
 
   # my_app is the module MyApp.

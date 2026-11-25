@@ -101,6 +101,8 @@ def corpus(compiler):
 
     def run(command, source, stdin):
         with tempfile.TemporaryDirectory(dir=HERE) as d:
+            # A directory for temporary files of its own (scripts/upstream-examples.py).
+            tmp = examples.scratch(d)
             program = Path(d) / 'p'
             if stdin:
                 made = subprocess.run(command, input=source.encode(), capture_output=True, timeout=120)
@@ -114,7 +116,7 @@ def corpus(compiler):
                 command = command + [d + '/p.alc']
             for attempt in range(50):
                 try:
-                    r = subprocess.run(command, capture_output=True, timeout=120, stdin=subprocess.DEVNULL, cwd=d, env=examples.env)
+                    r = subprocess.run(command, capture_output=True, timeout=120, stdin=subprocess.DEVNULL, cwd=d, env=dict(examples.env, TMPDIR=tmp))
                     break
                 except subprocess.TimeoutExpired:
                     return ['timeout', 0, '', '']
@@ -124,7 +126,7 @@ def corpus(compiler):
                     if error.errno != errno.ETXTBSY or attempt == 49:
                         raise
                     time.sleep(0.01)
-            return ['ran', r.returncode, r.stdout.decode('utf8', 'replace'), r.stderr.decode('utf8', 'replace')]
+            return ['ran', r.returncode, r.stdout.decode('utf8', 'replace').replace(tmp, '/tmp'), r.stderr.decode('utf8', 'replace').replace(tmp, '/tmp')]
 
     cases = [c for c in examples.cases() if '/'.join(c[0].split('/')[:2]) not in examples.DROPPED]
     with ThreadPoolExecutor(8) as pool:

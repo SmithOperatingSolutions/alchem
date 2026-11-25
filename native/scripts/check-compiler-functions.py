@@ -29,7 +29,7 @@ def main():
     compiler=Path(sys.argv[1]).resolve();wanted=set(sys.argv[2:])
     spec=importlib.util.spec_from_file_location('alchem_bootstrap',ROOT/'scripts/bootstrap-alchem-compiler.py')
     bootstrap=importlib.util.module_from_spec(spec);spec.loader.exec_module(bootstrap)
-    found=functions(bootstrap.source_text('functions',compact=False))
+    found=functions(bootstrap.source_text('functions',compact=False,seed=True))
     names=[name for name,_,_,_ in found]
     duplicates=sorted({name for name in names if names.count(name)>1})
     if duplicates:print('DUPLICATE',*duplicates);return 1

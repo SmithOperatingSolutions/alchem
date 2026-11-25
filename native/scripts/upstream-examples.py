@@ -73,29 +73,34 @@ def cases():
             block=None
         elif block is not None:block.append(line)
     return out
+# Examples name files in the directory for temporary ones, some the same, and
+# run side by side: each has a directory of its own, shown as /tmp.
+def scratch(d):
+    os.mkdir(d+'/tmp');return d+'/tmp'
 def upstream(src):
     with tempfile.TemporaryDirectory(dir=HERE) as d:
         open(d+'/p.alc','w').write(src)
-        try:u=subprocess.run([UP,'run',d+'/p.alc'],capture_output=True,env=env,timeout=120,stdin=subprocess.DEVNULL,cwd=d)
+        tmp=scratch(d)
+        try:u=subprocess.run([UP,'run',d+'/p.alc'],capture_output=True,env=dict(env,TMPDIR=tmp),timeout=120,stdin=subprocess.DEVNULL,cwd=d)
         except subprocess.TimeoutExpired:return [124,'','timeout']
-        return [u.returncode,u.stdout.decode('utf8','replace'),u.stderr.decode('utf8','replace').replace(d+'/p.alc','<stdin>')]
+        return [u.returncode,u.stdout.decode('utf8','replace').replace(tmp,'/tmp'),u.stderr.decode('utf8','replace').replace(d+'/p.alc','<stdin>').replace(tmp,'/tmp')]
 def native(src,comp):
     with tempfile.TemporaryDirectory(dir=HERE) as d:
         try:n=subprocess.run([comp],input=src.encode(),capture_output=True,env={'PATH':''},timeout=60)
         except subprocess.TimeoutExpired:return ['compile-timeout',0,'','']
         if n.returncode:return ['reject',n.returncode,'','']
-        open(d+'/p','wb').write(n.stdout);os.chmod(d+'/p',0o700)
+        tmp=scratch(d);open(d+'/p','wb').write(n.stdout);os.chmod(d+'/p',0o700)
         for attempt in range(50):
             # Another thread's fork may still hold the file open for writing.
             # A native program reserves its arena lazily, up to 16 GiB: under an
             # address-space limit it settles for less, so a runaway example
             # cannot take the machine's memory.
-            try:r=subprocess.run([d+'/p'],capture_output=True,timeout=20,stdin=subprocess.DEVNULL,cwd=d,preexec_fn=lambda:resource.setrlimit(resource.RLIMIT_AS,(3<<30,3<<30)));break
+            try:r=subprocess.run([d+'/p'],capture_output=True,env=dict(os.environ,TMPDIR=tmp),timeout=20,stdin=subprocess.DEVNULL,cwd=d,preexec_fn=lambda:resource.setrlimit(resource.RLIMIT_AS,(3<<30,3<<30)));break
             except subprocess.TimeoutExpired:return ['run-timeout',0,'','']
             except OSError as error:
                 if error.errno!=26 or attempt==49:raise
                 time.sleep(0.01)
-        return ['ran',r.returncode,r.stdout.decode('utf8','replace'),r.stderr.decode('utf8','replace')]
+        return ['ran',r.returncode,r.stdout.decode('utf8','replace').replace(tmp,'/tmp'),r.stderr.decode('utf8','replace').replace(tmp,'/tmp')]
 DROPPED={'syntax/extern'}
 def main():
     build_upstream()
@@ -109,7 +114,7 @@ def main():
     cs=[c for c in cases() if c[0].startswith(only)]
     cache_path=HERE+'/upstream-examples.json'
     cache=json.load(open(cache_path)) if os.path.exists(cache_path) else {}
-    key=lambda s:hashlib.sha1((reference.version()+'\n'+s).encode()).hexdigest()
+    key=lambda s:hashlib.sha1((reference.version()+'\ntmp\n'+s).encode()).hexdigest()
     todo=[c for c in cs if refresh or key(c[1]) not in cache]
     with ThreadPoolExecutor(8) as ex:
         for c,r in zip(todo,ex.map(lambda c:upstream(c[1]),todo)):cache[key(c[1])]=r
