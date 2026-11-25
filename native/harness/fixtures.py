@@ -28,6 +28,28 @@ REFERENCES = [
     ('String.ends_with', '"ab", "b"', 'true'), ('String.replace', '"ab", "a", "c"', '"cb"')]
 
 
+# A regex goes through generic functions, in a list, a map and a struct.
+REGEXES = '''defmodule M do
+  struct R do
+    r: regex
+  end
+
+  def id(a: a): a do
+    a
+  end
+
+  def main() do
+    IO.inspect(Enum.any?([~r/a/, ~r/b/], fn r -> Regex.match?(r, "b") end))
+    IO.inspect(Regex.source(List.first!([~r/x+/])))
+    IO.inspect(Regex.match?(Map.fetch!(%{"k" => ~r/a/}, "k"), "cat"))
+    IO.inspect(Regex.source(id(~r/y/)))
+    IO.inspect(Regex.source(id(%R{r: ~r/z/}).r))
+    IO.inspect(Enum.map([~r/a/, ~r/b/], &Regex.source/1))
+  end
+end
+'''
+
+
 def verify(compiler):
     spec = spec_from_file_location('build_alchem', ROOT / 'scripts/build-alchem.py')
     builder = module_from_spec(spec)
@@ -53,6 +75,9 @@ def verify(compiler):
             (work / 'm.alc').write_text('defmodule M do\n  def main() do\n' + ''.join(f'    {line}\n' for line in body) + '  end\nend\n')
             done = subprocess.run([str(alchem), 'run', 'm.alc'], capture_output=True, text=True, cwd=work, env=env, timeout=600)
             assert (done.returncode, done.stdout, done.stderr) == (0, f'{shown}\n{shown}\n', ''), (name, done)
+        (work / 'm.alc').write_text(REGEXES)
+        done = subprocess.run([str(alchem), 'run', 'm.alc'], capture_output=True, text=True, cwd=work, env=env, timeout=600)
+        assert (done.returncode, done.stdout, done.stderr) == (0, 'true\n"x+"\ntrue\n"y"\n"z"\n["a", "b"]\n', ''), done
         shutil.copytree(REPOSITORY / 'tests/fixtures', base / 'fixtures')
         tests = subprocess.run([str(alchem), 'test', 'fixtures'], capture_output=True, text=True, cwd=base, env=env, timeout=1800)
         counted = re.search(r'^(\d+) tests, 0 failures$', tests.stdout, re.M)

@@ -46,7 +46,7 @@ GATES = ['atoms', 'binary', 'boolean_library', 'clauses', 'closures', 'commands'
          'diskstore', 'front_end', 'equality', 'exceptions', 'facts', 'failures', 'fetch', 'fixtures', 'floats', 'forms', 'gen', 'generics', 'graphemes',
          'inference', 'inspection', 'json_library', 'library', 'lists', 'literals', 'long_bodies', 'lsp', 'macros', 'maps',
          'nil_forms', 'nodes', 'operators', 'options', 'ordering', 'packages', 'parsing', 'patterns', 'pipes', 'processes',
-         'protocols', 'ranges', 'refusals', 'regex', 'replaced', 'sets', 'sigils', 'speed', 'statements', 'streams', 'string_case',
+         'programs', 'protocols', 'ranges', 'refusals', 'regex', 'replaced', 'sets', 'sigils', 'speed', 'statements', 'streams', 'string_case',
          'templates', 'testing', 'traces', 'type_words', 'wide']
 
 

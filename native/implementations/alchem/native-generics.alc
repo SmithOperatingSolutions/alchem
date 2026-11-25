@@ -321,11 +321,11 @@ defmodule NativeGenerics do
     kind = nu_apply(Enum.concat(b[16,size-twin],nc_slice(names,1,1+size-twin)),nc_slice(plan,1,Enum.count(plan)))
     wants = if ordered == 0 do 0 else od_marked(nc_slice(names,1,1+size)) end
     found = if twin == 1 do jd_twin(source,table,kind,vars) else if wants == 0 do nq_comparator(source,table,kind,vars) else if od_orderable(kind,ordered-1) == 0 do b[] else od_comparator(source,table,kind,vars) end end end
-    # A type without equality (it holds a function or a stream): its values
+    # A type without equality (it holds a function, a stream or a regex): its values
     # pass through a function that does not compare them, with the
     # comparator of words. So does a type that mentions the variable a
     # function is compiled without the equality of (qn_needs).
-    one = if Enum.count(found) > 0 do found else if wants+twin > 0 do b[] else if nu_functional(kind,0)+nu_has(kind,26,0,Enum.count(kind))+qn_mentions(kind,barred) == 0 do b[] else b[49,192] end end end
+    one = if Enum.count(found) > 0 do found else if wants+twin > 0 do b[] else if nu_functional(kind,0)+nu_has(kind,26,0,Enum.count(kind))+nu_has(kind,29,0,Enum.count(kind))+qn_mentions(kind,barred) == 0 do b[] else b[49,192] end end end
     rest = if 1+size >= Enum.count(names) do b[] else nu_comparators(source,table,nc_slice(names,1+size,Enum.count(names)),plan,vars,barred) end
     if Enum.count(names) == 0 do b[] else if Enum.count(one) == 0 do b[] else
       if 1+size >= Enum.count(names) do Enum.concat(one,b[80]) else if Enum.count(rest) == 0 do b[] else nc_join(one,b[80],rest) end end
@@ -370,7 +370,7 @@ defmodule NativeGenerics do
     wants = if rule == 1 do 1 else if rule == 2 do if index == 0 do 1 else 0 end else if rule == 3 do if index == 1 do 1 else 0 end else last end end end
     kind = if rule == 0 do b[] else nu_apply(Enum.concat(b[16],nc_slice(names,offset,offset+1+size)),subst) end
     if rule == 0 do 0 else if offset >= Enum.count(names) do 0 else
-      if wants*(nu_functional(kind,0)+nu_has(kind,26,0,Enum.count(kind))+qn_mentions(kind,barred)) > 0 do 1 else nu_refused(names,subst,rule,Enum.concat(nc_u32(offset+1+size),nc_u24(index+1)),barred) end
+      if wants*(nu_functional(kind,0)+nu_has(kind,26,0,Enum.count(kind))+nu_has(kind,29,0,Enum.count(kind))+qn_mentions(kind,barred)) > 0 do 1 else nu_refused(names,subst,rule,Enum.concat(nc_u32(offset+1+size),nc_u24(index+1)),barred) end
     end end
   end
   # 1 when the result type of a function of the program names a type

@@ -83,6 +83,7 @@ RECORDED = {
     'list-cases': 'harness/lists.py (chosen from random programs)',
     'nil-forms-cases': 'harness/nil_forms.py (chosen from random programs)',
     'ordering-cases': 'harness/ordering.py (chosen from random programs)',
+    'program-cases': 'harness/programs.py (random programs)',
     'test-driver-cases': 'harness/test_driver.py',
 }
 
