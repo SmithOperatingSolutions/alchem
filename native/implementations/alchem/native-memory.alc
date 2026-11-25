@@ -169,6 +169,12 @@ defmodule NativeMemory do
       end end end
     end end end
   end
+  # 1 when the string at pos is the first argument of a function whose
+  # result holds none of it: a copy of a part, a byte, a number of bytes,
+  # a checksum.
+  def gm_copies(source: bytes, pos: integer, env: bytes, table: bytes): integer do
+    if gm_inside(source,pos,env,table,b[98,105,110,97,114,121,95,112,97,114,116]) == 1 do 1 else if gm_within(source,pos,table,b[66,105,110,97,114,121],b[97,116])+gm_within(source,pos,table,b[66,105,110,97,114,121],b[100,101,99,111,100,101])+gm_within(source,pos,table,b[66,105,110,97,114,121],b[116,111,95,108,105,115,116])+gm_within(source,pos,table,b[67,114,121,112,116,111],b[99,114,99,51,50]) > 0 do 1 else 0 end end
+  end
   # 1 when the read of the accumulator at pos (its name ends at stop) only
   # looks at the value of type tag: nothing keeps it.
   def gm_looks(source: bytes, pos: integer, env: bytes, table: bytes, tag: integer): integer do
@@ -176,7 +182,7 @@ defmodule NativeMemory do
     closed = nc_word(source,stop,b[41])
     if tag == 2 do
       if nc_word(source,stop,b[61,61])+nc_word(source,stop,b[33,61]) > 0 do 1 else
-        if closed == 0 do 0 else if gm_inside(source,pos,env,table,b[98,121,116,101,95,115,105,122,101]) == 1 do 1 else gm_within(source,pos,table,b[83,116,114,105,110,103],b[108,101,110,103,116,104]) end end
+        if closed == 0 do gm_copies(source,pos,env,table) else if gm_inside(source,pos,env,table,b[98,121,116,101,95,115,105,122,101])+gm_copies(source,pos,env,table) > 0 do 1 else gm_within(source,pos,table,b[83,116,114,105,110,103],b[108,101,110,103,116,104]) end end
       end
     else
       if gm_within(source,pos,table,b[77,97,112],b[103,101,116])+gm_within(source,pos,table,b[77,97,112],b[102,101,116,99,104])+gm_within(source,pos,table,b[77,97,112],b[104,97,115,95,107,101,121,63])+gm_within(source,pos,table,b[77,97,112],b[102,101,116,99,104,33]) > 0 do 1 else

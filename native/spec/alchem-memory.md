@@ -369,7 +369,9 @@ has to know that nothing else holds the string.
   `Enum.uniq`) are the library's alone.
 - *Every other read gives the value away*: it is followed by the release
   (`gm_str_done`, `gm_map_done`), unless it only looks: `acc == x`,
-  `acc != x`, `byte_size(acc)`, `String.length(acc)`, `Map.get(acc, ...)`,
+  `acc != x`, `byte_size(acc)`, `String.length(acc)`, `binary_part(acc, ...)`,
+  `Binary.at`, `Binary.decode`, `Binary.to_list`, `Crypto.crc32` (whose
+  results hold none of the string), `Map.get(acc, ...)`,
   `Map.fetch`, `Map.fetch!`, `Map.has_key?`, `map_size(acc)`,
   `MapSet.member?`, `MapSet.size` (each only where the program has no
   function or module of that name). A `fn` whose text names the
