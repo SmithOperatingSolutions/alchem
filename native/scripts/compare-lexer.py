@@ -3,11 +3,12 @@
 files: the tokens and comments of each, written as JSON, must be the same
 bytes, and so must the message for a file the lexer refuses. Not a gate.
 
-    compare-lexer.py ALCHEM FILE...
+    compare-lexer.py COMPILER FILE...
 
-ALCHEM is the alchem that builds the native side (scripts/lexer-dump.alc);
+COMPILER is the compiler that builds the native side (scripts/lexer-dump.alc);
 the pinned side is scripts/pinned-lexer, built with the Go module cache
 (GOMODCACHE, as the container sets it)."""
+from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import json
 import os
@@ -21,12 +22,15 @@ ROOT = Path(__file__).resolve().parents[1]
 def main(arguments):
     if len(arguments) < 2:
         raise SystemExit(__doc__)
-    alchem, files = Path(arguments[0]).resolve(), [str(Path(f).resolve()) for f in arguments[1:]]
+    compiler, files = Path(arguments[0]).resolve(), [str(Path(f).resolve()) for f in arguments[1:]]
     with tempfile.TemporaryDirectory() as d:
         pinned, native = Path(d) / 'pinned', Path(d) / 'native'
         subprocess.run(['go', 'build', '-o', str(pinned), '.'], cwd=ROOT / 'scripts/pinned-lexer', check=True,
                        env=dict(os.environ, GOFLAGS='-mod=mod', GOPROXY='off'))
-        subprocess.run([str(alchem), 'build', '-o', str(native), 'lexer-dump.alc'], cwd=ROOT / 'scripts', check=True)
+        spec = spec_from_file_location('build_alchem', ROOT / 'scripts/build-alchem.py')
+        builder = module_from_spec(spec)
+        spec.loader.exec_module(builder)
+        builder.build_tool(compiler, ROOT / 'scripts/lexer-dump.alc', native)
         def dump(program):
             out = subprocess.run([str(program)] + files, capture_output=True, text=True, check=True).stdout
             return {json.loads(line)[0]: line for line in out.splitlines() if line.startswith('[')}

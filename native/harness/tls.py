@@ -31,6 +31,7 @@ from pathlib import Path
 import base64
 import hashlib
 import hmac
+import importlib.util
 import os
 import re
 import shutil
@@ -48,6 +49,15 @@ sys.path.insert(0,str(Path(__file__).resolve().parent))
 import tls_data as DATA
 
 ROOT=Path(__file__).resolve().parents[1]
+
+
+def marked(text):
+    """The source with the build's mark: its module may call what only the
+    library may (scripts/bundle-alchem.py)."""
+    spec=importlib.util.spec_from_file_location('alchem_bundle',ROOT/'scripts/bundle-alchem.py')
+    bundler=importlib.util.module_from_spec(spec);spec.loader.exec_module(bundler)
+    return bundler.marked(text.encode()).decode()
+
 T12=ssl.TLSVersion.TLSv1_2
 
 # ---- arithmetic to check the library against ----
@@ -321,7 +331,7 @@ def known(directory):
     line('{texts, nums, dns, ips} = TLS._cert(elem(hd(TLS._pem(TCP._file("leaf-rsa.crt"), 0)), 1))',[])
     line('IO.puts(inspect(nums) <> " " <> inspect(dns) <> " " <> inspect(Enum.map(ips, fn x -> TLS._ipshow(x) end)) <> " " <> Enum.at(texts, 9, ""))',
          ['[3, 19, 1, 0, 1577836800, 4102444799, 1, 0, -1, 40960, 2, 1, 0, 0] ["localhost", "*.example.test"] ["127.0.0.1", "::1"] leaf rsa'])
-    return KAT_HEAD+''.join(body)+KAT_TAIL,want,checks
+    return marked(KAT_HEAD+''.join(body)+KAT_TAIL),want,checks
 
 
 UNKNOWN='tls: failed to verify certificate: x509: certificate signed by unknown authority'

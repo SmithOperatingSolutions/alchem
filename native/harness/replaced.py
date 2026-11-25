@@ -65,6 +65,9 @@ PROGRAMS = [
         'main.alc': 'defmodule M do\n  import "t2.alc"\n\n  def main() do\n    IO.inspect(Date.utc_today().year > 2000)\n    IO.puts(inspect(AlchemTypes.valid?("integer")))\n    IO.inspect(~D[2026-01-05])\n    IO.inspect(AlchemTypes.shape(3))\n    IO.inspect(Enum.map([1, 2], fn x -> x * 2 end))\n  end\nend\n',
         't2.alc': 'defmodule AlchemTypes do\n  struct Shape do\n    n: integer\n  end\n\n  def valid?(t: string): boolean do\n    t == "integer"\n  end\n\n  def shape(n: integer): Shape do\n    %Shape{n: n}\n  end\nend\n',
     }),
+    *[(f'what only the library may call, {call}', {
+        'main.alc': 'defmodule AlchemX do\n  def main() do\n    IO.inspect(' + call + ')\n  end\nend\n',
+    }) for call in ('Sys.call(39, 0, 0, 0, 0, 0, 0)', 'Sys.peek(4194304)', 'HTTP._k()', 'TLS._hex("00")', 'Process._g()')],
 ]
 
 

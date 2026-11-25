@@ -160,7 +160,18 @@ def program(darwin=False, windows=False, version='devel', platform='linux/amd64'
     for index in range(count):
         size, path = lines[index][2:].split(b' ', 1)
         lines[index] = b'# ' + size + b' ' + names[path.decode()].encode()
-    return head + b'\n' + b'\n'.join(lines)
+    return bundle.marked(head + b'\n' + b'\n'.join(lines))
+
+
+def build_tool(compiler, entry, output):
+    """A program that imports alchem's own modules (tools/): a marked bundle,
+    as alchem itself is."""
+    bundle = _load('alchem_bundle', ROOT / 'scripts/bundle-alchem.py')
+    made = subprocess.run([str(compiler)], input=bundle.marked(bundle.bundle(Path(entry), limit=None)), capture_output=True, env={'PATH': ''}, timeout=600)
+    if made.returncode or made.stderr:
+        raise RuntimeError(f'the compiler did not build {entry}: {made.returncode} {made.stderr.decode(errors="replace").strip()}')
+    Path(output).write_bytes(made.stdout)
+    Path(output).chmod(0o755)
 
 
 def build(compiler, output, darwin=False, windows=False, version='devel', arm64=False):

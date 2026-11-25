@@ -86,5 +86,45 @@
    "true\ntrue\n~D[2026-01-05]\n%Shape{n: 3}\n[2, 4]\n",
    ""
   ]
+ },
+ {
+  "name": "what only the library may call, Sys.call(39, 0, 0, 0, 0, 0, 0)",
+  "gives": [
+   1,
+   "",
+   "main.alc:3:16: module Sys is not imported\n"
+  ]
+ },
+ {
+  "name": "what only the library may call, Sys.peek(4194304)",
+  "gives": [
+   1,
+   "",
+   "main.alc:3:16: module Sys is not imported\n"
+  ]
+ },
+ {
+  "name": "what only the library may call, HTTP._k()",
+  "gives": [
+   1,
+   "",
+   "main.alc:3:16: undefined function HTTP._k\n"
+  ]
+ },
+ {
+  "name": "what only the library may call, TLS._hex(\"00\")",
+  "gives": [
+   1,
+   "",
+   "main.alc:3:16: module TLS is not imported\n"
+  ]
+ },
+ {
+  "name": "what only the library may call, Process._g()",
+  "gives": [
+   1,
+   "",
+   "main.alc:3:16: unknown runtime operation Process._g\n"
+  ]
  }
 ]
