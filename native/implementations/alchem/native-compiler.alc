@@ -723,7 +723,7 @@ defmodule NativeSourceCompiler do
     first = byte_at(source,name)
     count = nc_cursor(state,4)
     valid = if nc_identifier(source,name) == 0 do 0 else if first < 65 do 0 else if first > 90 do 0 else 1 end end end
-    if valid == 0 do b[] else if count >= nc_record_limit() do b[] else if nc_library_module(source,name) == 1 do b[] else
+    if valid == 0 do b[] else if count >= nc_record_limit() do b[] else if nc_library_module(source,name)-nc_retiring_module(source,name) == 1 do b[] else
       body = nc_expect(source,nc_end(source,name),b[100,111])
       after = if body < 0 do -1 else nc_imports_end(source,body) end
       if after < 0 do b[] else
@@ -732,6 +732,11 @@ defmodule NativeSourceCompiler do
         nc_table_state(after,0,nc_join(nc_u24(count+1),nc_u24(count),nc_u24(previous)),record,record,Enum.concat(nc_table_made(state),record))
       end
     end end end
+  end
+  # The library modules a package now provides (RetiringModule): a program
+  # may have a module of such a name, and its calls then reach that module.
+  def nc_retiring_module(source: bytes, pos: integer): integer do
+    nc_word(source,pos,b[68,105,115,107,83,116,111,114,101])+nc_word(source,pos,b[87,101,98,83,111,99,107,101,116])+nc_word(source,pos,b[86,101,114,115,105,111,110])+nc_word(source,pos,b[79,112,116,105,111,110,80,97,114,115,101,114])
   end
   # Namespaces the pinned language reserves for its library (ReservedModule).
   def nc_library_module(source: bytes, pos: integer): integer do

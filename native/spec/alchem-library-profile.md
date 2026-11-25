@@ -269,6 +269,28 @@ The functions with machine code of their own that need a shared runtime
 grapheme functions) were likewise found by one reading of the source per
 function, fourteen in all; `na_seen` now finds them in one reading.
 
+## A program's module in place of a library module
+
+The pinned language lets a program have a module named `DiskStore`,
+`WebSocket`, `Version` or `OptionParser` (`RetiringModule`): a package now
+provides each, and a program that imports the package, or has a module of
+the name, uses that module and not the library's (issue #129).
+
+- The name is taken as a module's (`nc_retiring_module`); every other
+  library module's name is refused, as before.
+- The library is chosen from the program's text with such a name
+  unreadable wherever it stands (`ny_masked`), when a line of the program
+  declares the module: none of the library's functions or types of that
+  name is appended.
+- The module's types are its own under any name, and the type of the
+  module's own name is written by that name alone in every module
+  (`%Version{}`), as the library's type was (`nd_library`).
+- A type named after a library module anywhere else is refused by the
+  front end with the pinned message, `type name Registry is reserved for
+  the builtin Registry functions`, at its place.
+
+`harness/replaced.py` holds ten programs with what the pinned command gives.
+
 ## Ordering and sets (state after the float-forms merge)
 
 The ordered functions (`Enum.sort`, `max`, `min`, `min_max`, the `_by`

@@ -1,0 +1,82 @@
+[
+ {
+  "name": "a module of its own name with main",
+  "gives": [
+   0,
+   "mine 1 2\nmine 3 4\n",
+   ""
+  ]
+ },
+ {
+  "name": "types of the module, written from another",
+  "gives": [
+   0,
+   "%Version{major: 1, minor: 4}\n%Requirement{text: \"~> 1\"}\n:eq\n5\n:ne\n2\n",
+   ""
+  ]
+ },
+ {
+  "name": "a sum type and a struct beside the library",
+  "gives": [
+   1,
+   "",
+   "main.alc:2:3: import \"web_socket.alc\": web_socket.alc:2:14: unsupported syntax: expected identifier \"do\", found = \"=\"\n"
+  ]
+ },
+ {
+  "name": "a type of the name outside the module",
+  "gives": [
+   1,
+   "",
+   "main.alc:2:10: type name Version is reserved for the builtin Version functions\n"
+  ]
+ },
+ {
+  "name": "one module taken, another left to the library",
+  "gives": [
+   0,
+   "%{\"--a\" => \"yes\", \"--b\" => \"yes\"}\ntrue\n",
+   ""
+  ]
+ },
+ {
+  "name": "a struct of the module updated and inspected",
+  "gives": [
+   0,
+   "some(\"v\")\nnone\n%DiskStore{path: \"x.db\", entries: %{\"k\" => \"v\"}}\n",
+   ""
+  ]
+ },
+ {
+  "name": "a type named after another library module, inside",
+  "gives": [
+   0,
+   "%Enum{n: 1}\n",
+   ""
+  ]
+ },
+ {
+  "name": "a struct named after a library module that is not given up",
+  "gives": [
+   1,
+   "",
+   "main.alc:2:10: type name Registry is reserved for the builtin Registry functions\n"
+  ]
+ },
+ {
+  "name": "a module named after a library module that is not given up",
+  "gives": [
+   1,
+   "",
+   "main.alc:1:11: reserved module name HTTP\n"
+  ]
+ },
+ {
+  "name": "the name in a comment and a string takes nothing",
+  "gives": [
+   0,
+   "defmodule Version do\ntrue\n",
+   ""
+  ]
+ }
+]

@@ -3780,10 +3780,29 @@ defmodule AlchemTyping do
     end
   end
 
+  # The first type whose name is a library module's (ReservedModule), as
+  # the pinned checker refuses it while it declares the types in order: a
+  # type of a module that takes a library module's place is that module's
+  # own. Nothing is said once a type is declared twice, which comes first.
+  def reserved_type(program: AlchemJson.J): tuple[string, string] do
+    replaced = texts(program, "Replaced")
+    start: tuple[list[string], tuple[string, string]] = {[], {"clean", ""}}
+    {_, said} = Enum.reduce(its(program, "Types"), start, fn j, {seen, sofar} ->
+      name = tx(j, "Name")
+      local = tx(j, "Local")
+      own = Enum.any?(replaced, fn module -> name == module or String.starts_with?(name, module <> ".") end)
+      if elem(sofar, 0) != "clean" or name in seen do {seen, if elem(sofar, 0) == "clean" do {"skip", "duplicate type " <> local} else sofar end} else
+        if reserved?(local) and not own do {seen, located(tx(j, "Source"), at(j, "type name " <> local <> " is reserved for the builtin " <> local <> " functions"))} else {[name | seen], sofar} end
+      end
+    end)
+    said
+  end
+
   # What the walk ends in: {"found", message}, {"skip", why} or {"clean", ""}.
   def outcome(program: AlchemJson.J): tuple[string, string] do
     functions = its(program, "Functions")
-    if not null?(program, "Replaced") or Enum.any?(functions, fn fun -> tx(fun, "Extern") != "" end) do {"skip", "replaced modules, or an extern (AlchemCheck.extern_problem)"} else
+    named = reserved_type(program)
+    if elem(named, 0) == "found" do named else if not null?(program, "Replaced") or Enum.any?(functions, fn fun -> tx(fun, "Extern") != "" end) do {"skip", "replaced modules, or an extern (AlchemCheck.extern_problem)"} else
       t = tables()
       case protocols(program, functions) do
         error(stop) -> stop
@@ -3814,6 +3833,6 @@ defmodule AlchemTyping do
               end
           end
       end
-    end
+    end end
   end
 end

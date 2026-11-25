@@ -421,9 +421,11 @@ defmodule NativeSigils do
     ny_module(source,table,b[65,108,99,104,101,109,84,121,112,101,115],sg_all(table))
   end
   # 1 when the type named at pos may not be declared in module owner: a
-  # library module's name belongs to the library's own types.
+  # library module's name belongs to the library's own types. A program's
+  # module that takes the place of a library module (nc_retiring_module)
+  # has its own types in place of that module's, under any name.
   def sg_reserved(source: bytes, table: bytes, pos: integer, owner: integer): integer do
-    if nc_library_module(source,pos) == 0 do 0 else if nt_same(nc_slice(source,nc_meta(table,owner,0),nc_meta(table,owner,3)),b[65,108,99,104,101,109,84,121,112,101,115]) == 1 do 0 else 1 end end
+    if nc_library_module(source,pos) == 0 do 0 else if nc_retiring_module(source,nc_meta(table,owner,0)) == 1 do 0 else if nt_same(nc_slice(source,nc_meta(table,owner,0),nc_meta(table,owner,3)),b[65,108,99,104,101,109,84,121,112,101,115]) == 1 do 0 else 1 end end end
   end
   # The struct a calendar sigil makes: Date, Time, NaiveDateTime, DateTime.
   def sg_calendar_name(letter: integer): bytes do
