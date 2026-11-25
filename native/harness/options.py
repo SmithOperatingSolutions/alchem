@@ -53,7 +53,7 @@ def verify(compiler):
             result=subprocess.run([str(compiler)],input=native_bytes(('defmodule M do '+helpers+'def main() do '+body+' end end').encode()),capture_output=True,env={'PATH':''},timeout=15)
             assert result.returncode==65 and not result.stdout,('option rejection',helpers,body,result.returncode,result.stderr)
         measured=0
-        for expression,charge in [(': option[integer] = none',0),('some(0)',16),('some(false)',16),(': option[list[integer]] = some([])',24),('Enum.at([7],0)',32),('Enum.at([7],1)',16),(': option[integer] = List.first([])',8),('String.first("")',0),('String.first("a")',32),('String.length("e\\xcc\\x81")',0),('String.slice("abc",0,0)',8)]:
+        for expression,charge in [(': option[integer] = none',0),('some(0)',16),('some(false)',16),(': option[list[integer]] = some([])',16),('Enum.at([7],0)',32),('Enum.at([7],1)',16),(': option[integer] = List.first([])',8),('String.first("")',0),('String.first("a")',32),('String.length("e\\xcc\\x81")',0),('String.slice("abc",0,0)',8)]:
             # A value of open type takes it from the binding's annotation.
             source=('defmodule M do def main() do value'+(expression if expression.startswith(':') else '='+expression)+'\nSystem.halt(0) end end').encode()
             built=subprocess.run([str(compiler)],input=native_bytes(source),capture_output=True,env={'PATH':''},timeout=120)

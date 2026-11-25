@@ -32,7 +32,7 @@ def grown(text,total,functions):
 
 def verify(frontend,backend,compiler):
     spec=spec_from_file_location('alchem_bootstrap',ROOT/'scripts/bootstrap-alchem-compiler.py');boot=module_from_spec(spec);spec.loader.exec_module(boot)
-    text=boot.source_text('functions');count=text.count('\ndef ')
+    text=boot.source_text('functions',seed=True);count=text.count('\ndef ')
     # Enough data functions to pass the 4096 that the table and seed IR V11
     # once held: the limit is 65,535 and the source limit comes first.
     # As many as leave each one room for its hundred bytes: the compiler's
