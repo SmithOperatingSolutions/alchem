@@ -305,7 +305,7 @@ def generate():
         data=b''
         for e in members:
             records.append(u16(g)+u24(len(data))+u24(len(e['packed']))+u24(listed(e['after']))+u24(listed(e['homes']))+u24(listed(e['extras'])));data+=e['packed']
-        name=('AlchemTypes' if module=='~Types' else f'Alchem{module}{arity}'+('' if form==1 else f'v{form}')).encode()
+        name=('Alch\x7fmTypes' if module=='~Types' else f'Alch\x7fm{module}{arity}'+('' if form==1 else f'v{form}')).encode()
         heads.append(u16(members[0]['id'])+u24(place(bytes([len(name)])+name))+u24(0 if guard is None else listed(guard)))
         assert len(data)<1<<24
         out.extend(held(f'ny_d{g}',data))

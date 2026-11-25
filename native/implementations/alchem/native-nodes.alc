@@ -111,7 +111,7 @@ defmodule NativeNodes do
     name = dn_name(source,table,id)
     owner = if id < 0 do -1 else nc_owner(table,id) end
     home = dn_name(source,table,owner)
-    full = if nt_same(nc_slice(home,0,6),b[65,108,99,104,101,109]) == 1 do name else nc_join(home,b[46],name) end
+    full = if nt_same(nc_slice(home,0,6),b[65,108,99,104,127,109]) == 1 do name else nc_join(home,b[46],name) end
     generic = if (nt_tag(kind)-18)*(nt_tag(kind)-19) == 0 do nt_count(kind) else 0 end
     if id < 0 do b[] else if generic == 0 do full else dn_args(full,dn_list(source,table,kind,0,generic)) end end
   end
@@ -190,7 +190,7 @@ defmodule NativeNodes do
   def dn_checked(source: bytes, table: bytes, owner: integer, kind: bytes, made: bytes): bytes do
     name = dn_name(source,table,nd_id(table,made))
     deep = nt_same(name,b[112,105,100])+nt_same(name,b[115,117,112,101,114,118,105,115,111,114])+nt_same(name,b[115,101,114,118,101,114])
-    if Enum.count(made) == 0 do b[] else if deep+nt_same(name,b[116,97,115,107]) == 0 do made else if nt_same(nc_slice(dn_name(source,table,owner),0,6),b[65,108,99,104,101,109]) == 1 do made else
+    if Enum.count(made) == 0 do b[] else if deep+nt_same(name,b[116,97,115,107]) == 0 do made else if nt_same(nc_slice(dn_name(source,table,owner),0,6),b[65,108,99,104,127,109]) == 1 do made else
       if dn_raws(source,table,nc_join(nc_u16(owner),nc_u24(0),nc_u24(nt_count(kind))),kind,b[deep,0]) == 0 do b[] else made end
     end end end
   end

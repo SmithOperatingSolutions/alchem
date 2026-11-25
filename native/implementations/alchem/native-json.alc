@@ -79,7 +79,7 @@ defmodule NativeJson do
     node = if op != 3 do described else if Enum.count(described) == 0 do b[] else if jn_keyed(described,0) == 1 do b[] else described end end end
     kinds = nc_join(nt_cell(if op == 3 do nc_arg_kind(args,0) else b[0] end),if count == 2 do nt_cell(nc_arg_kind(args,1)) else b[] end,Enum.concat(b[1,0],nt_cell(nc_zeros(count+1))))
     packet = if Enum.count(node) == 0 do b[] else nc_arg_packet(nc_pos(args),count+1,kinds,nc_join(nc_arg_code(args),jd_placed(node,nu_vars(env,2)),b[80])) end
-    home = Enum.concat(b[65,108,99,104,101,109,74,83,79,78],ny_digits(count+1))
+    home = Enum.concat(b[65,108,99,104,127,109,74,83,79,78],ny_digits(count+1))
     made = if Enum.count(node) == 0 do b[] else nn_passes(source,pos,name,env,table,nc_join(b[Enum.at(plan,0,0),1,0,Enum.count(home)],home,packet)) end
     if nc_pos(made) < 0 do b[] else nh_placed(table,if op == 3 do nc_join(nc_slice(made,0,4),nt_cell(wanted),nc_code(made)) else made end,nc_start(source,pos)) end
   end
@@ -97,7 +97,7 @@ defmodule NativeJson do
     node = if nc_pos(args) < 0 do b[] else if (count-2)*(count-3) != 0 do b[] else if (nt_tag(first)-18)*(nt_tag(first)-19) != 0 do b[] else if nt_count(first) != 1 do b[] else ni_describe(source,table,nt_child(first,0),0,Enum.concat(b[1,254,0,0],jd_seed(nu_vars(env,2),0))) end end end end
     kinds = if Enum.count(node) == 0 do b[] else nc_join(nc_slice(types,0,nt_skip(types,0,count)),b[1,0],nt_cell(Enum.concat(nt_item(types,count),b[0]))) end
     packet = if Enum.count(node) == 0 do b[] else nc_arg_packet(nc_pos(args),count+1,kinds,nc_join(nc_arg_code(args),jd_placed(node,nu_vars(env,2)),b[80])) end
-    home = Enum.concat(b[65,108,99,104,101,109,71,101,110],ny_digits(count+1))
+    home = Enum.concat(b[65,108,99,104,127,109,71,101,110],ny_digits(count+1))
     made = if Enum.count(node) == 0 do b[] else nn_passes(source,pos,name,env,table,nc_join(b[Enum.at(plan,0,0),1,0,Enum.count(home)],home,packet)) end
     if nc_pos(made) < 0 do b[] else nh_placed(table,made,nc_start(source,pos)) end
   end

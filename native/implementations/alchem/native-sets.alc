@@ -202,7 +202,7 @@ defmodule NativeSets do
   def nn_set_type(source: bytes, table: bytes, owner: integer, kind: bytes): bytes do
     if (nt_tag(kind)-25)*(nt_tag(kind)-8) != 0 do kind else if nn_key(nt_child(kind,0)) == 1 do kind else
       if nt_tag(kind)*nt_tag(nt_child(kind,0)) == 72 do kind else
-        if nc_word_at(source,nc_meta(table,owner,0),b[65,108,99,104,101,109],0) == 0 do b[] else
+        if nc_ours(source,nc_meta(table,owner,0)) == 0 do b[] else
           if nt_tag(kind) == 8 do kind else if nt_tag(nt_child(kind,0)) == 16 do kind else b[] end end
         end
       end
@@ -231,7 +231,7 @@ defmodule NativeSets do
   # Stream has with a stream as its result: the list of that stream.
   def nn_streamed(source: bytes, name: integer, env: bytes, table: bytes, plan: bytes): bytes do
     size = Enum.at(plan,3,0)
-    base = Enum.concat(b[65,108,99,104,101,109,83,116,114,101,97,109],nc_slice(plan,14,4+size))
+    base = Enum.concat(b[65,108,99,104,127,109,83,116,114,101,97,109],nc_slice(plan,14,4+size))
     made = if nn_lazy(nc_slice(plan,4+size,Enum.count(plan)),0) == 0 do b[] else nn_forms(source,name,env,table,nc_join(b[Enum.at(plan,0,0),1,5,Enum.count(base)],base,nc_slice(plan,4+size,Enum.count(plan)))) end
     kind = nt_unary(7,nt_child(nc_kind(made),0))
     if nc_tag(made) != 26 do b[] else nc_join(nc_slice(made,0,4),Enum.concat(b[Enum.count(kind)],kind),Enum.concat(nc_code(made),nn_stream_list())) end
@@ -303,7 +303,7 @@ defmodule NativeSets do
   end
   # 1 inside a module of the library written in Alchem.
   def nn_library(source: bytes, env: bytes, table: bytes): integer do
-    nc_word_at(source,nc_meta(table,nc_owner(table,nc_read(env,0)),0),b[65,108,99,104,101,109],0)
+    nc_ours(source,nc_meta(table,nc_owner(table,nc_read(env,0)),0))
   end
   # What the library is written with, and only it may call. A stream is a
   # function from a context to an iterator, and an iterator a function of

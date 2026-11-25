@@ -8,6 +8,11 @@ type of its own name is written by that name in every module. Each program
 here is run by `alchem run main.alc`, and gives the status, the output and
 the message the pinned command gives (harness/replaced-cases.json).
 
+The library's own modules are appended to a program under names a program
+cannot have (nc_ours), so a program's module of any name beginning with
+Alchem is the program's: the last program has one named as the library's
+module of types was (issue #102).
+
     replaced.py --record PINNED   write replaced-cases.json from the pinned command line
 """
 from importlib.util import module_from_spec, spec_from_file_location
@@ -55,6 +60,10 @@ PROGRAMS = [
     }),
     ('the name in a comment and a string takes nothing', {
         'main.alc': 'defmodule Main do\n  # defmodule Version do\n  def main() do\n    IO.puts("defmodule Version do")\n    IO.inspect(Version.match?("1.4.2", "~> 1.4"))\n  end\nend\n',
+    }),
+    ("a module named as the library's own module of types was (issue #102)", {
+        'main.alc': 'defmodule M do\n  import "t2.alc"\n\n  def main() do\n    IO.inspect(Date.utc_today().year > 2000)\n    IO.puts(inspect(AlchemTypes.valid?("integer")))\n    IO.inspect(~D[2026-01-05])\n    IO.inspect(AlchemTypes.shape(3))\n    IO.inspect(Enum.map([1, 2], fn x -> x * 2 end))\n  end\nend\n',
+        't2.alc': 'defmodule AlchemTypes do\n  struct Shape do\n    n: integer\n  end\n\n  def valid?(t: string): boolean do\n    t == "integer"\n  end\n\n  def shape(n: integer): Shape do\n    %Shape{n: n}\n  end\nend\n',
     }),
 ]
 

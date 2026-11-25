@@ -738,6 +738,20 @@ defmodule NativeSourceCompiler do
   def nc_retiring_module(source: bytes, pos: integer): integer do
     nc_word(source,pos,b[68,105,115,107,83,116,111,114,101])+nc_word(source,pos,b[87,101,98,83,111,99,107,101,116])+nc_word(source,pos,b[86,101,114,115,105,111,110])+nc_word(source,pos,b[79,112,116,105,111,110,80,97,114,115,101,114])
   end
+  # The modules the compiler appends to a program (the library written in
+  # Alchem, scripts/generate-prelude.py) have names a program cannot have:
+  # they start with Alch, the byte 127 and m, and neither front end takes
+  # that byte in a source file. So a program's module is never one of them
+  # by its name, and a program's module named as one of them was (issue
+  # #102) is a module of the program.
+  # 1 when the module named at pos may do what only the library may (Sys):
+  # one of those, or a module whose name starts with Alchem, as the modules
+  # of `alchem` itself do (tools/), which are built as programs are. The
+  # second is still open to any program; it closes when tools/ is written
+  # on the public byte functions of issue #130.
+  def nc_ours(source: bytes, pos: integer): integer do
+    if nc_word_at(source,pos,b[65,108,99,104,127,109],0) == 1 do 1 else nc_word_at(source,pos,b[65,108,99,104,101,109],0) end
+  end
   # Namespaces the pinned language reserves for its library (ReservedModule).
   def nc_library_module(source: bytes, pos: integer): integer do
     nc_library_module_0(source,pos)+nc_library_module_1(source,pos)+nc_library_module_2(source,pos)+nc_library_module_3(source,pos)+nc_library_module_4(source,pos)

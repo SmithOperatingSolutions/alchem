@@ -180,7 +180,7 @@ defmodule NativeFailures do
   # The test that the option in RAX is none. In the library a nil is one
   # too: the pinned runtime's own functions ask only whether a value is some.
   def zf_none(source: bytes, table: bytes, env: bytes): bytes do
-    if nc_word_at(source,nc_meta(table,nc_owner(table,nc_read(env,0)),0),b[65,108,99,104,101,109],0) == 1 do b[72,61,0,0,64,0,15,135] else b[72,133,192,15,133] end
+    if nc_ours(source,nc_meta(table,nc_owner(table,nc_read(env,0)),0)) == 1 do b[72,61,0,0,64,0,15,135] else b[72,133,192,15,133] end
   end
   # 1 when the count trees from offset on are names, _, none, and tuples and structs of such.
   def zf_bare(tree: bytes, offset: integer, count: integer): integer do
@@ -258,7 +258,7 @@ defmodule NativeFailures do
   # calls keep the tuple[] they are written with).
   def zf_voided(source: bytes, table: bytes, env: bytes, made: bytes, void: integer): bytes do
     if void == 0 do made else if nc_pos(made) < 0 do made else if (void-1)*nt_tag(nc_kind(made)) > 0 do if nt_tag(nc_kind(made)) != 5 do made else zf_voided(source,table,env,made,1) end else
-      if nc_word_at(source,nc_meta(table,nc_owner(table,nc_read(env,0)),0),b[65,108,99,104,101,109],0) == 1 do made else nc_join(nc_slice(made,0,4),b[1,12],nc_code(made)) end
+      if nc_ours(source,nc_meta(table,nc_owner(table,nc_read(env,0)),0)) == 1 do made else nc_join(nc_slice(made,0,4),b[1,12],nc_code(made)) end
     end end end
   end
   def zf_nils(cells: bytes, count: integer): integer do
@@ -477,7 +477,7 @@ defmodule NativeFailures do
   # the files under test runs: byte 15 of the first table record is 2.
   def zf_covered(source: bytes, table: bytes): bytes do
     count = nc_records(Enum.count(table))
-    test = ny_module(source,table,b[65,108,99,104,101,109,127,84,80,114,111,99,101,115,115],Enum.concat(nc_u24(0),nc_u24(count)))
+    test = ny_module(source,table,b[65,108,99,104,127,109,127,84,80,114,111,99,101,115,115],Enum.concat(nc_u24(0),nc_u24(count)))
     if test < 0 do table else if count+8 > nc_slot_limit() do table else nc_join(nc_slice(table,0,15),b[2],nc_slice(table,16,Enum.count(table))) end end
   end
   def zf_cover_slot(table: bytes): integer do nc_records(Enum.count(table))+8 end
@@ -491,7 +491,7 @@ defmodule NativeFailures do
   end
   def zf_cover_in(source: bytes, table: bytes, id: integer, pos: integer): bytes do
     owner = nc_owner(table,id)
-    if Enum.at(table,15,0) != 2 do b[] else if owner == zf_entry(table,0) do b[] else if nc_word_at(source,nc_meta(table,owner,0),b[65,108,99,104,101,109],0) == 1 do b[] else if tm_ours(source,nc_meta(table,id,0)) > 0 do b[] else
+    if Enum.at(table,15,0) != 2 do b[] else if owner == zf_entry(table,0) do b[] else if nc_ours(source,nc_meta(table,owner,0)) == 1 do b[] else if tm_ours(source,nc_meta(table,id,0)) > 0 do b[] else
       zf_cover_call(table,pos)
     end end end end
   end

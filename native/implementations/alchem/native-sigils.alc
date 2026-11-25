@@ -418,14 +418,14 @@ defmodule NativeSigils do
   def sg_all(table: bytes): bytes do Enum.concat(nc_u24(0),nc_u24(nc_records(Enum.count(table)))) end
   # The header record of the appended module that holds the library's structs.
   def sg_types(source: bytes, table: bytes): integer do
-    ny_module(source,table,b[65,108,99,104,101,109,84,121,112,101,115],sg_all(table))
+    ny_module(source,table,b[65,108,99,104,127,109,84,121,112,101,115],sg_all(table))
   end
   # 1 when the type named at pos may not be declared in module owner: a
   # library module's name belongs to the library's own types. A program's
   # module that takes the place of a library module (nc_retiring_module)
   # has its own types in place of that module's, under any name.
   def sg_reserved(source: bytes, table: bytes, pos: integer, owner: integer): integer do
-    if nc_library_module(source,pos) == 0 do 0 else if nc_retiring_module(source,nc_meta(table,owner,0)) == 1 do 0 else if nt_same(nc_slice(source,nc_meta(table,owner,0),nc_meta(table,owner,3)),b[65,108,99,104,101,109,84,121,112,101,115]) == 1 do 0 else 1 end end end
+    if nc_library_module(source,pos) == 0 do 0 else if nc_retiring_module(source,nc_meta(table,owner,0)) == 1 do 0 else if nt_same(nc_slice(source,nc_meta(table,owner,0),nc_meta(table,owner,3)),b[65,108,99,104,127,109,84,121,112,101,115]) == 1 do 0 else 1 end end end
   end
   # The struct a calendar sigil makes: Date, Time, NaiveDateTime, DateTime.
   def sg_calendar_name(letter: integer): bytes do
@@ -524,7 +524,7 @@ defmodule NativeSigils do
   # String.split of it.
   def sg_filled(source: bytes, start: integer, env: bytes, table: bytes, spec: bytes, value: bytes): bytes do
     letter = Enum.at(spec,1,0)
-    home = ny_module(source,table,b[65,108,99,104,101,109,83,116,114,105,110,103,49],sg_all(table))
+    home = ny_module(source,table,b[65,108,99,104,127,109,83,116,114,105,110,103,49],sg_all(table))
     split = if home < 0 do -1 else sg_find(source,table,b[115,112,108,105,116],sg_all(table),home,0) end
     if nc_pos(value) < 0 do b[] else if letter == 115 do nc_value(nc_cursor(spec,2),nc_code(value),b[2]) else
       if letter == 119 do if split < 0 do b[] else sg_call(source,start,env,table,nc_join(b[Enum.at(spec,0,0)],nc_u16(split),sg_packet(nc_cursor(spec,2),1,b[1,2],Enum.concat(nc_code(value),b[80])))) end else
@@ -687,7 +687,7 @@ defmodule NativeSigils do
   def sg_referred_module(source: bytes, pos: integer, count: integer): bytes do
     name = nc_start(source,nc_end(source,pos))
     home = sg_before_last(source,name,sg_referred(source,pos))
-    nc_join(b[65,108,99,104,101,109],if sg_referred(source,pos) == name do b[75,101,114,110,101,108] else nc_slice(source,home,nc_end(source,home)) end,ny_digits(count))
+    nc_join(b[65,108,99,104,127,109],if sg_referred(source,pos) == name do b[75,101,114,110,101,108] else nc_slice(source,home,nc_end(source,home)) end,ny_digits(count))
   end
   # A call with the arguments of a packet of the function named at last, in
   # the first form of its library module the arguments fit. plan: the form
@@ -728,7 +728,7 @@ defmodule NativeSigils do
   # the pinned library types its own functions. The flag travels in the top
   # bit of the length the state of nw_order_from keeps.
   def sg_strict_target(source: bytes, table: bytes, target: integer): integer do
-    1-nc_word_at(source,nc_meta(table,nc_owner(table,target),0),b[65,108,99,104,101,109],0)
+    1-nc_ours(source,nc_meta(table,nc_owner(table,target),0))
   end
   def sg_strict(state: bytes): integer do
     if nc_read(state,4) >= 32768 do 1 else 0 end
@@ -913,7 +913,7 @@ defmodule NativeSigils do
     flags = sg_mods(nc_slice(source,nc_cursor(spec,5),stop),0)
     kept = sg_drop(flags,0)
     code = if Enum.count(kept) == 0 do nc_code(value) else nc_join(nc_join(nc_text_emit(nc_join(b[40,63],kept,b[41])),b[80],nc_code(value)),b[80],ns_concat_emit()) end
-    target = sg_library(source,table,b[65,108,99,104,101,109,82,101,103,101,120,49],b[99,111,109,112,105,108,101,33])
+    target = sg_library(source,table,b[65,108,99,104,127,109,82,101,103,101,120,49],b[99,111,109,112,105,108,101,33])
     if Enum.at(flags,0,1) == 0 do b[] else if target < 0 do b[] else if nc_tag(value) != 2 do b[] else
       nh_placed(table,sg_call(source,start,env,table,nc_join(b[Enum.at(spec,0,0)],nc_u16(target),sg_packet(stop,1,b[1,2],Enum.concat(code,b[80])))),start)
     end end end
@@ -922,7 +922,7 @@ defmodule NativeSigils do
   def sg_match(source: bytes, left: bytes, env: bytes, table: bytes, depth: integer): bytes do
     op = nc_start(source,nc_pos(left))
     right = nc_math(source,op+2,env,table,depth)
-    target = sg_library(source,table,b[65,108,99,104,101,109,83,116,114,105,110,103,50,118,49,54],b[109,97,116,99,104,63])
+    target = sg_library(source,table,b[65,108,99,104,127,109,83,116,114,105,110,103,50,118,49,54],b[109,97,116,99,104,63])
     pushed = nc_join(Enum.concat(nc_code(left),b[80]),nc_code(right),b[80])
     if nc_pos(right) < 0 do b[] else if target < 0 do b[] else if nc_tag(left) != 2 do b[] else if nc_tag(right) != 29 do b[] else
       nh_placed(table,sg_call(source,op,env,table,nc_join(b[depth],nc_u16(target),sg_packet(nc_pos(right),2,b[1,2,1,29],pushed))),op)

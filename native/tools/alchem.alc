@@ -476,7 +476,9 @@ defmodule AlchemCommand do
   # when the compiler can name the function it could not make, where that
   # function is (spec/alchem-commands.md). bundle is the program as the
   # bundler gave it, whose head names its files.
-  def refusal(bundle: string, function: string): string do
+  def refusal(bundle: string, made: string): string do
+    # The library's modules are named with a byte no program can write.
+    function = String.replace(made, "Alch\x7fm", "Alchem")
     plain = "E_COMPILE: invalid or unsupported Alchem function program"
     if function == "" do plain else
       named = "E_COMPILE: the native compiler does not take something in " <> function

@@ -19,7 +19,7 @@ defmodule NativeOrdering do
   end
   # 1 for a function of the library written in Alchem.
   def od_library(source: bytes, table: bytes, id: integer): integer do
-    nc_word_at(source,nc_meta(table,nc_owner(table,id),0),b[65,108,99,104,101,109],0)
+    nc_ours(source,nc_meta(table,nc_owner(table,id),0))
   end
   # 1 when the type has an order; inside says a marked type variable counts
   # (1), or any type variable (2).

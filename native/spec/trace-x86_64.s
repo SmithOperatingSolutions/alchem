@@ -303,7 +303,7 @@ tr_library:
  jb 9f
  cmp dword ptr [rsi+1],0x68636C41
  jne 9f
- cmp word ptr [rsi+5],0x6D65
+ cmp word ptr [rsi+5],0x6D7F
 9:
  ret
 # RSI: the name record (a length byte, then the name) of the function whose

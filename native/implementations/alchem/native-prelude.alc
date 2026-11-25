@@ -383,7 +383,7 @@ defmodule NativePrelude do
     spans = if paren < 0 do b[] else if nc_word(source,paren,b[41]) == 1 do b[] else nc_list_collect(source,paren,b[],0,41) end end
     given = if nc_pos(spans) < 0 do 0 else nc_units(Enum.count(nc_code(spans)),6) end
     count = if paren < 0 do 0 else if nc_pos(nf_piped(source,paren,env)) < 0 do given else given+1 end end
-    wanted = nc_join(b[65,108,99,104,101,109],nc_slice(source,nc_start(source,pos),nc_end(source,pos)),ny_digits(count))
+    wanted = nc_join(b[65,108,99,104,127,109],nc_slice(source,nc_start(source,pos),nc_end(source,pos)),ny_digits(count))
     # An empty list literal says nothing of its elements, which the Enum and
     # List functions take from their arguments.
     generic = nc_word(source,pos,b[69,110,117,109])+nc_word(source,pos,b[76,105,115,116])
@@ -419,7 +419,7 @@ defmodule NativePrelude do
     # map, filter and reduce without a module take a function that has its
     # types: a named one or fn(x: type): type, not fn x -> ... or a capture.
     typed = if nc_word(source,name,b[109,97,112])+nc_word(source,name,b[102,105,108,116,101,114])+nc_word(source,name,b[114,101,100,117,99,101]) == 0 do 1 else if nc_pos(spans) < 0 do 1 else 1-ny_untyped(source,nc_code(spans),0) end end
-    if paren < 0 do b[] else if typed == 0 do b[] else zf_voided(source,table,env,nh_placed(table,ny_forms(source,name,env,table,nc_join(b[depth,1],b[65,108,99,104,101,109,75,101,114,110,101,108],ny_digits(count))),nk_from(source,name)),zf_void(source,-1,name)) end end
+    if paren < 0 do b[] else if typed == 0 do b[] else zf_voided(source,table,env,nh_placed(table,ny_forms(source,name,env,table,nc_join(b[depth,1],b[65,108,99,104,127,109,75,101,114,110,101,108],ny_digits(count))),nk_from(source,name)),zf_void(source,-1,name)) end end
   end
   # 1 when an argument among the spans from index on is fn x -> ... or a capture.
   def ny_untyped(source: bytes, spans: bytes, index: integer): integer do

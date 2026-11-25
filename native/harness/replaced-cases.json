@@ -78,5 +78,13 @@
    "defmodule Version do\ntrue\n",
    ""
   ]
+ },
+ {
+  "name": "a module named as the library's own module of types was (issue #102)",
+  "gives": [
+   0,
+   "true\ntrue\n~D[2026-01-05]\n%Shape{n: 3}\n[2, 4]\n",
+   ""
+  ]
  }
 ]
