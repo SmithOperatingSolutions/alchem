@@ -9,7 +9,8 @@
 #
 # The command runs in a systemd user scope with MemoryMax and no swap; when
 # no user manager is reachable it falls back to an address-space limit, and
-# where there is no prlimit (macOS) to the time limit alone.
+# where there is no prlimit (macOS) to scripts/bounded.py, which watches the
+# memory the command is charged for and kills it past the ceiling.
 set -euo pipefail
 memory="${ALCHEM_MEMORY:-6G}"
 seconds="${ALCHEM_SECONDS:-600}"
@@ -23,5 +24,7 @@ if command -v prlimit >/dev/null && command -v numfmt >/dev/null; then
   bytes="$(numfmt --from=iec "$memory")"
   exec prlimit --as="$bytes" timeout --signal=KILL "$seconds" "$@"
 fi
-# Neither (macOS, which keeps no address-space limit): the time alone.
-exec perl -e '$SIG{ALRM} = sub { kill "KILL", $pid; exit 137 }; alarm shift; $pid = fork // die; if (!$pid) { exec @ARGV or exit 127 } waitpid $pid, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$seconds" "$@"
+# Neither (macOS, which keeps no address-space limit): a watch on what the
+# command and its group are charged for (scripts/bounded.py).
+python=python3; [[ -x /usr/bin/python3 ]] && python=/usr/bin/python3
+exec "$python" "$(dirname "${BASH_SOURCE[0]}")/bounded.py" --memory "$memory" --seconds "$seconds" "$@"

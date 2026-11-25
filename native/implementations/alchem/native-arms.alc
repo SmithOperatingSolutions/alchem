@@ -264,11 +264,22 @@ defmodule NativeArms do
       if pa_whole(source,pa_part(run,3),ends,nc_long(run,5)) == 0 do b[] else nc_value(nc_cursor(run,0),if pa_any(pa_part(run,3),0,0) >= 0 do b[] else zf_unmatched(table,env,nc_cursor(plan,1)) end,b[9,2]) end
     else np_arms(source,nc_cursor(run,0),env,table,Enum.at(plan,0,0),Enum.concat(nc_slice(plan,1,4),pa_rows(pa_part(run,3),ends,0,nc_long(run,5)))) end
   end
+  # env for the arms after the run where they did not compile (plain): they
+  # are expected to give what the arms of the run give (nf_led).
+  def pa_led(source: bytes, env: bytes, table: bytes, run: bytes, sizes: bytes, plain: bytes): bytes do
+    count = nc_long(run,5)
+    after = nc_value(nc_cursor(run,0),b[],b[9,2])
+    first = if nc_pos(plain) >= 0 do b[] else if (Enum.at(run,3,0)-2)*(Enum.at(run,3,0)-2)+if count == 0 do 1 else 0 end > 0 do b[] else pa_fold(pa_part(run,2),pa_sums(sizes,1,0,count,0),count-1,nc_slice(after,0,nt_after(after,4)),0) end end
+    if nc_pos(first) < 0 do b[] else nf_led(source,env,table,first,nc_cursor(run,0)) end
+  end
   def pa_finish(source: bytes, env: bytes, table: bytes, plan: bytes, run: bytes): bytes do
     count = nc_long(run,5)
     sizes = pa_part(run,1)
     ends = pa_sums(sizes,2,0,count,0)
-    tail = if pa_sound(source,pa_part(run,3),ends,count) == 0 do b[] else pa_tail(source,env,table,plan,run,ends) end
+    sound = pa_sound(source,pa_part(run,3),ends,count)
+    plain = if sound == 0 do b[] else pa_tail(source,env,table,plan,run,ends) end
+    led = if sound == 0 do b[] else pa_led(source,env,table,run,sizes,plain) end
+    tail = if Enum.count(led) == 0 do plain else pa_tail(source,led,table,plan,run,ends) end
     value = pa_fold(pa_part(run,2),pa_sums(sizes,1,0,count,0),count-1,nc_slice(tail,0,nt_after(tail,4)),if nf_open_end(env,2,0) == 3 do 1 else 0 end)
     if nc_pos(value) < 0 do b[] else
       nc_join(value,pa_assemble(pa_part(run,0),pa_sums(sizes,0,0,count,0),0,count,Enum.count(nc_code(tail))),nc_code(tail))
@@ -449,7 +460,9 @@ defmodule NativeArms do
   def pk_finish(source: bytes, env: bytes, table: bytes, plan: bytes, run: bytes): bytes do
     count = nc_long(run,5)
     sizes = pa_part(run,1)
-    tail = if Enum.at(run,3,0) == 1 do nc_value(nc_cursor(run,0),nz_fail(table,nc_cursor(plan,1),8),b[9,2]) else nk_cond_arms(source,nc_cursor(run,0),env,table,Enum.at(plan,0,0),nc_cursor(plan,1)) end
+    plain = if Enum.at(run,3,0) == 1 do nc_value(nc_cursor(run,0),nz_fail(table,nc_cursor(plan,1),8),b[9,2]) else nk_cond_arms(source,nc_cursor(run,0),env,table,Enum.at(plan,0,0),nc_cursor(plan,1)) end
+    led = pa_led(source,env,table,run,sizes,plain)
+    tail = if Enum.count(led) == 0 do plain else nk_cond_arms(source,nc_cursor(run,0),led,table,Enum.at(plan,0,0),nc_cursor(plan,1)) end
     value = pa_fold(pa_part(run,2),pa_sums(sizes,1,0,count,0),count-1,nc_slice(tail,0,nt_after(tail,4)),if nf_open_end(env,2,0) == 3 do 1 else 0 end)
     if nc_pos(value) < 0 do b[] else
       nc_join(value,pa_assemble(pa_part(run,0),pa_sums(sizes,0,0,count,0),0,count,Enum.count(nc_code(tail))),nc_code(tail))

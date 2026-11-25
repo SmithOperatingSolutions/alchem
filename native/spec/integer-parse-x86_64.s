@@ -974,9 +974,13 @@ ins_absent:
  push rdx
  mov rsi,rdx
  call ins_count
+# A type without a name here (step) has its variants written alone.
+ test ecx,ecx
+ jz 3f
  call ins_text
  mov al,46
  call ins_char
+3:
  mov rsi,[rsp]
  call ins_count
  add rsi,rcx

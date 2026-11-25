@@ -1,5 +1,10 @@
 # Kernel: the functions called without a module name that are written in
 # Alchem.
+#: struct step also cont halt reduce_while
+  type step[a] do
+    cont(value: a)
+    halt(value: a)
+  end
 #: concat/2
   def concat(left: list[a], right: list[a]): list[a] do
     left ++ right
@@ -42,12 +47,12 @@
     f(value)
   end
 #: halt/1
-  def halt(value: a): tuple[boolean, a] do
-    {true, value}
+  def halt(value: a): step[a] do
+    step.halt(value)
   end
 #: cont/1
-  def cont(value: a): tuple[boolean, a] do
-    {false, value}
+  def cont(value: a): step[a] do
+    step.cont(value)
   end
 #: binary_part/3
   def binary_part(text: string, start: integer, count: integer): string do

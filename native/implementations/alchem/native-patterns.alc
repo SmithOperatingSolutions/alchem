@@ -76,12 +76,17 @@ defmodule NativePatterns do
         if nc_word(source,start,b[110,111,110,101]) == 1 do if tag != 4 do np_name(source,start,env,kind) else np_pack(nc_end(source,start),np_node(0,2,2,b[0]),env) end else
           if nc_word(source,start,b[115,111,109,101])*open == 1 do np_wrapped(source,start,env,table,kind) else
             if (nc_word(source,start,b[111,107])+nc_word(source,start,b[101,114,114,111,114]))*open == 1 do np_wrapped(source,start,env,table,kind) else
-              if (value-65)*(90-value) >= 0 do np_variant(source,start,env,table,kind) else np_name(source,start,env,kind) end
+              if (value-65)*(90-value) >= 0 do np_variant(source,start,env,table,kind) else if open*np_step(source,table,kind) == 1 do np_variant(source,start,env,table,kind) else np_name(source,start,env,kind) end end
             end
           end
         end
       end
     end end
+  end
+  # 1 for step[a], the sum type whose variants are written without its name:
+  # cont(p) and halt(p).
+  def np_step(source: bytes, table: bytes, kind: bytes): integer do
+    if nt_tag(kind) != 19 do 0 else nc_word(source,nc_meta(table,nd_id(table,kind),0),b[115,116,101,112]) end
   end
   def np_name(source: bytes, start: integer, env: bytes, kind: bytes): bytes do
     bound = if nc_identifier(source,start) == 0 do b[] else nc_bind(source,start,env,kind) end
@@ -200,8 +205,8 @@ defmodule NativePatterns do
   end
   # Name.variant or Name.variant(p, ...) of the sum type kind.
   def np_variant(source: bytes, start: integer, env: bytes, table: bytes, kind: bytes): bytes do
-    typed = nv_typed(source,start,table,nc_owner(table,nc_read(env,0)))
     id = nd_id(table,kind)
+    typed = if np_step(source,table,kind)*nc_word(source,nc_end(source,start),b[40]) == 1 do nc_value(start,nc_u16(id),b[0]) else nv_typed(source,start,table,nc_owner(table,nc_read(env,0))) end
     name = nc_pos(typed)
     index = if nc_pos(typed) < 0 do -1 else if nc_read(nc_code(typed),0) != id do -1 else nv_search(source,table,id,name,0) end end
     variant = nc_code(nv_at(source,table,id,index))
@@ -538,7 +543,7 @@ defmodule NativePatterns do
     body = if nc_pos(first) >= 0 do first else if Enum.count(settled) == 0 do b[] else nc_branch(source,arrow,settled,table,depth+1) end end
     plain = if nc_pos(body) < 0 do b[] else if nc_pos(later) >= 0 do later else np_arms(source,nc_pos(body),env,table,depth,Enum.concat(state,row)) end end
     # Later arms are expected to give the type of the first.
-    led = if nc_pos(plain) >= 0 do b[] else nf_led(source,env,table,body) end
+    led = if nc_pos(plain) >= 0 do b[] else nf_led(source,env,table,body,nc_pos(body)) end
     rest = if Enum.count(led) == 0 do plain else np_arms(source,nc_pos(body),led,table,depth,Enum.concat(state,row)) end
     match = np_emit(source,scope,table,np_tree(parsed),0)
     check = if guarded == 0 do b[] else Enum.concat(nc_code(guard),b[72,133,192,15,132]) end
@@ -616,10 +621,13 @@ defmodule NativePatterns do
   # it and binds the pattern's names, and the environment with them.
   def np_statement(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
     equals = np_skip(source,start)
-    value = nc_expression(source,nc_end(source,equals),env,table,depth)
+    plain = nc_expression(source,nc_end(source,equals),env,table,depth)
+    # A tuple accumulator is taken apart: its strings go on as the names.
+    apart = if nc_tag(plain) != 5 do 0 else gm_apart(source,start,nc_end(source,equals),nc_pos(plain),env,table) end
+    value = if apart == 0 do plain else nc_expression(source,nc_end(source,equals),gm_note(env,49,nc_start(source,nc_end(source,equals))),table,depth) end
     parsed = if nc_pos(value) < 0 do b[] else if nc_tag(value) == 12 do b[] else np_parse(source,start,env,table,nc_kind(value)) end end
     match = if nc_pos(parsed) < 0 do b[] else if nc_start(source,nc_pos(parsed)) != nc_start(source,equals) do b[] else np_emit(source,np_env(parsed),table,np_tree(parsed),0) end end
-    if Enum.count(match) == 0 do b[] else np_pack(nc_pos(value),nc_join(nc_code(value),match,nz_must(table,start)),np_env(parsed)) end
+    if Enum.count(match) == 0 do b[] else np_pack(nc_pos(value),nc_join(nc_code(value),match,nz_must(table,start)),if apart == 0 do np_env(parsed) else gm_taken(np_env(parsed),np_env(parsed),2,start,equals) end) end
   end
   # 1 when the pattern matches every value of its type, as a parameter of a
   # named function must; a pattern of fn p -> ... may fail when it is called.

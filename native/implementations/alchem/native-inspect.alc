@@ -64,7 +64,8 @@ defmodule NativeInspect do
   def ni_named(source: bytes, table: bytes, kind: bytes, base: integer, seen: bytes): bytes do
     id = nd_id(table,kind)
     back = ni_seen(seen,kind,0)
-    name = if id < 0 do b[] else ni_text(nc_slice(source,nc_meta(table,id,0),nc_meta(table,id,3))) end
+    # The variants of step are written without the type's name.
+    name = if id < 0 do b[] else if np_step(source,table,kind) == 1 do b[0] else ni_text(nc_slice(source,nc_meta(table,id,0),nc_meta(table,id,3))) end end
     inner = if Enum.count(kind) > 255 do b[] else nc_join(seen,Enum.concat(b[Enum.count(kind)],kind),nc_u16(base)) end
     # A handle of the library is written as a name between # and <>: the process types (ac_shown) and a generator.
     fixed = if nt_same(name,b[9,103,101,110,101,114,97,116,111,114]) == 1 do b[12,35,103,101,110,101,114,97,116,111,114,60,62,0] else ac_shown(nc_slice(name,1,Enum.count(name))) end

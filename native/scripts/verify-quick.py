@@ -99,6 +99,7 @@ GATES={
     'lsp':'verify(compiler)',
     'replaced':'verify(compiler)',
     'programs':'verify(compiler)',
+    'written':'verify(compiler)',
     'fixtures':'verify(compiler)',
     'refusals':'verify(compiler)',
     'binary':'verify(compiler)',

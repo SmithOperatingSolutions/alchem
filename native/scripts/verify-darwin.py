@@ -48,7 +48,7 @@ GATES = ['atoms', 'binary', 'boolean_library', 'clauses', 'closures', 'commands'
          'inference', 'inspection', 'json_library', 'library', 'lists', 'literals', 'long_bodies', 'lsp', 'macros', 'maps',
          'nil_forms', 'nodes', 'operators', 'options', 'ordering', 'packages', 'parsing', 'patterns', 'pipes', 'processes',
          'programs', 'protocols', 'ranges', 'refusals', 'regex', 'replaced', 'sets', 'sigils', 'speed', 'statements', 'streams', 'string_case',
-         'templates', 'testing', 'traces', 'type_words', 'wide']
+         'templates', 'testing', 'traces', 'type_words', 'wide', 'written']
 
 
 # What each gate took, in seconds, on a runner of macos-15 running three at a
@@ -60,7 +60,7 @@ SECONDS = {'front_end': 2169, 'ordering': 1242, 'core_modules': 1185, 'corpus': 
            'testing': 193, 'binary': 188, 'processes': 166, 'failures': 159, 'commands': 150, 'refusals': 150,
            'regex': 136, 'nil_forms': 129, 'options': 113, 'streams': 108, 'comprehensions': 94, 'json_library': 93,
            'long_bodies': 90, 'described': 83, 'sets': 76, 'macros': 75, 'floats': 69, 'gen': 68, 'crypto': 64,
-           'speed': 62, 'clauses': 57, 'sigils': 44, 'protocols': 31, 'exceptions': 27, 'parsing': 25,
+           'speed': 62, 'written': 60, 'clauses': 57, 'sigils': 44, 'protocols': 31, 'exceptions': 27, 'parsing': 25,
            'operators': 23, 'closures': 20, 'diskstore': 20, 'equality': 19, 'templates': 19, 'patterns': 12,
            'generics': 11, 'inference': 9, 'pipes': 8, 'literals': 7, 'ranges': 6, 'forms': 4, 'packages': 4,
            'atoms': 3, 'statements': 3, 'wide': 3, 'inspection': 2, 'facts': 1, 'traces': 1}

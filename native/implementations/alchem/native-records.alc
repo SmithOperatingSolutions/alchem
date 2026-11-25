@@ -5,9 +5,9 @@ defmodule NativeRecords do
   # function table holds one record per declaration (flag 64) and no code.
   # Values are laid out like tuples: the field count, then one word per field.
   # The types of the library whose names are not capitalized: file and the
-  # process types (ac_typeword), and generator[a].
+  # process types (ac_typeword), generator[a] and step[a].
   def nd_lower(source: bytes, pos: integer): integer do
-    ac_typeword(source,pos)+nc_word(source,pos,b[103,101,110,101,114,97,116,111,114])
+    ac_typeword(source,pos)+nc_word(source,pos,b[103,101,110,101,114,97,116,111,114])+nc_word(source,pos,b[115,116,101,112])*nc_word(source,nc_end(source,pos),b[91])
   end
   def nd_declare(source: bytes, pos: integer, owner: integer, flag: integer): bytes do
     name = nc_start(source,nc_end(source,pos))

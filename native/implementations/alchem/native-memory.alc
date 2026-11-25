@@ -91,10 +91,11 @@ defmodule NativeMemory do
   def gm_any(env: bytes, offset: integer, tag: integer): integer do
     if offset >= Enum.count(env) do 0 else if nc_env_tag(env,offset) == tag do 1 else gm_any(env,nc_env_next(env,offset),tag) end end
   end
-  # Which accumulator the record of slot local is: 53, 50 or 0.
+  # Which accumulator the record of slot local is: 53, 50, 54 (a struct or
+  # tuple parameter), 57 (a string taken out of a tuple accumulator) or 0.
   def gm_role(env: bytes, local: integer): integer do
     name = nc_cursor(env,nc_env_offset(env,local))
-    if local < 0 do 0 else if gm_noted(env,2,53,name) == 1 do 53 else if gm_noted(env,2,50,name) == 1 do 50 else 0 end end end
+    if local < 0 do 0 else if gm_noted(env,2,53,name) == 1 do 53 else if gm_noted(env,2,50,name) == 1 do 50 else if gm_noted(env,2,54,name) == 1 do 54 else if gm_noted(env,2,57,name) == 1 do 57 else 0 end end end end end
   end
   # The system-call entry asked for one of the collector's own numbers.
   def gm_ask(number: integer): bytes do
@@ -178,7 +179,10 @@ defmodule NativeMemory do
   # 1 when the read of the accumulator at pos (its name ends at stop) only
   # looks at the value of type tag: nothing keeps it.
   def gm_looks(source: bytes, pos: integer, env: bytes, table: bytes, tag: integer): integer do
-    stop = nc_end(source,pos)
+    gm_looks_to(source,pos,env,table,tag,nc_end(source,pos))
+  end
+  # The same for the read that starts at pos and ends at stop.
+  def gm_looks_to(source: bytes, pos: integer, env: bytes, table: bytes, tag: integer, stop: integer): integer do
     closed = nc_word(source,stop,b[41])
     if tag == 2 do
       if nc_word(source,stop,b[61,61])+nc_word(source,stop,b[33,61]) > 0 do 1 else
@@ -197,11 +201,58 @@ defmodule NativeMemory do
   # every read but the noted one (49) and those that only look.
   def gm_loaded(source: bytes, pos: integer, env: bytes, table: bytes, value: bytes): bytes do
     tag = nc_tag(value)
-    if (tag-2)*(tag-8)*(tag-25) != 0 do value else
+    if (tag-13)*(tag-18) == 0 do gm_held_loaded(source,pos,env,table,value) else if tag == 5 do gm_tuple_loaded(source,pos,env,table,value) else if (tag-2)*(tag-8)*(tag-25) != 0 do value else
       if gm_role(env,nc_lookup(source,pos,env,2)) == 0 do value else if gm_noted(env,2,49,pos) == 1 do if tag == 2 do value else if gm_given(source,pos,table) == 0 do value else Enum.concat(value,gm_own_emit()) end end else
         if gm_looks(source,pos,env,table,tag) == 1 do value else Enum.concat(value,gm_release(tag)) end
       end end
-    end
+    end end end
+  end
+  # The same for a struct. Its string fields may be the loop's own: where it
+  # is read whole they all are released (it may be kept), where one of them
+  # is read (name.field) that one is, unless the read is the noted one or
+  # only looks. A field of another type holds none of them.
+  def gm_held_loaded(source: bytes, pos: integer, env: bytes, table: bytes, value: bytes): bytes do
+    kind = nc_kind(value)
+    dot = nc_end(source,pos)
+    name = nc_start(source,nc_end(source,dot))
+    index = if nc_word(source,dot,b[46]) == 0 do -1 else nd_search(source,table,nd_id(table,kind),name,0) end
+    field = if index < 0 do b[] else nd_field_kind(source,table,kind,index) end
+    if gm_role(env,nc_lookup(source,pos,env,2)) == 0 do value else if gm_noted(env,2,49,pos) == 1 do value else
+      if index < 0 do Enum.concat(value,gm_fields(source,table,kind,0,nd_fields(source,table,nd_id(table,kind),0))) else
+        if nt_tag(field) != 2 do value else if gm_looks_to(source,pos,env,table,2,nc_end(source,name)) == 1 do value else Enum.concat(value,gm_field(index)) end end
+      end
+    end end
+  end
+  # The same for a tuple: elem(name, 1) reads that part, anything else reads
+  # it whole.
+  def gm_tuple_loaded(source: bytes, pos: integer, env: bytes, table: bytes, value: bytes): bytes do
+    kind = nc_kind(value)
+    comma = nc_end(source,pos)
+    at = nc_start(source,nc_end(source,comma))
+    digit = byte_at(source,at)-48
+    part = if gm_inside(source,pos,env,table,b[101,108,101,109])*nc_word(source,comma,b[44]) == 0 do -1 else if (byte_at(source,at)-48)*(57-byte_at(source,at)) < 0 do -1 else if nc_word(source,at+1,b[41]) == 0 do -1 else if digit >= nt_count(kind) do -1 else digit end end end end
+    if gm_role(env,nc_lookup(source,pos,env,2)) == 0 do value else if gm_noted(env,2,49,pos) == 1 do value else
+      if part < 0 do Enum.concat(value,gm_fields(source,table,kind,0,nt_count(kind))) else
+        if nt_tag(nt_child(kind,part)) != 2 do value else Enum.concat(value,gm_field(part)) end
+      end
+    end end
+  end
+  # The type of part index of a struct or tuple.
+  def gm_part(source: bytes, table: bytes, kind: bytes, index: integer): bytes do
+    if nt_tag(kind) == 5 do nt_child(kind,index) else nd_field_kind(source,table,kind,index) end
+  end
+  # RAX is a struct or a tuple: its string in part index is owned no longer.
+  def gm_field(index: integer): bytes do
+    nc_join(Enum.concat(b[80,72,139,128],nc_u32(8+index*8)),gm_release(2),b[88])
+  end
+  # The same for each string field from index up to count.
+  def gm_fields(source: bytes, table: bytes, kind: bytes, index: integer, count: integer): bytes do
+    if index >= count do b[] else Enum.concat(if nt_tag(gm_part(source,table,kind,index)) == 2 do gm_field(index) else b[] end,gm_fields(source,table,kind,index+1,count)) end
+  end
+  # The release of RAX, a value of type kind that an accumulator held.
+  def gm_given_up(source: bytes, table: bytes, kind: bytes): bytes do
+    tag = nt_tag(kind)
+    if (tag-13)*(tag-18) == 0 do gm_fields(source,table,kind,0,nd_fields(source,table,nd_id(table,kind),0)) else if tag == 5 do gm_fields(source,table,kind,0,nt_count(kind)) else gm_release(tag) end end
   end
   # Enum.reduce(..., fn x, acc -> ... end) at pos, where Enum is the
   # library's and the fn is the last of up to three arguments: the position
@@ -220,12 +271,19 @@ defmodule NativeMemory do
       end
     end
   end
-  # after stands behind a fn: itself when two plain names and an arrow follow.
+  # after stands behind a fn: itself when two names or tuple patterns and an
+  # arrow follow.
   def gm_fold_fn(source: bytes, after: integer): integer do
     one = nc_start(source,after)
-    comma = nc_end(source,one)
-    two = nc_start(source,nc_end(source,comma))
-    if nc_identifier(source,one)*nc_word(source,comma,b[44])*nc_identifier(source,two)*nc_word(source,nc_end(source,two),b[45,62]) == 1 do after else -1 end
+    comma = gm_parameter(source,one)
+    two = if comma < 0 do -1 else if nc_word(source,comma,b[44]) == 0 do -1 else nc_start(source,nc_end(source,comma)) end end
+    arrow = if two < 0 do -1 else gm_parameter(source,two) end
+    if arrow < 0 do -1 else if nc_word(source,arrow,b[45,62]) == 1 do after else -1 end end
+  end
+  # The position after the parameter at start, a name or a tuple pattern; -1
+  # for any other.
+  def gm_parameter(source: bytes, start: integer): integer do
+    if start < 0 do -1 else if byte_at(source,start) == 123 do np_close(source,start,0,16777216) else if nc_identifier(source,start) == 1 do nc_end(source,start) else -1 end end end
   end
   # 1 when the fn whose parameters start at after is the function of such
   # an Enum.reduce: one of the "Enum.reduce(" written before it, looked
@@ -257,15 +315,39 @@ defmodule NativeMemory do
     start = nc_start(source,pos)
     value = nc_unary_plain(source,pos,env,table,depth)
     tag = nc_tag(value)
-    if byte_at(source,start) != 69 do value else if (tag-2)*(tag-8)*(tag-25) != 0 do value else
-      if gm_fold(source,start,table) < 0 do value else Enum.concat(value,gm_release(tag)) end
+    if byte_at(source,start) != 69 do value else if (tag-2)*(tag-8)*(tag-25)*(tag-13)*(tag-18)*(tag-5) != 0 do value else
+      if gm_fold(source,start,table) < 0 do value else Enum.concat(value,gm_given_up(source,table,nc_kind(value))) end
     end end
   end
   # The environment of a fn's body (nf_finish): after is where the fn's
   # parameters start. The second parameter of the fn of a fold is its
   # accumulator.
   def gm_scope(source: bytes, table: bytes, after: integer, env: bytes): bytes do
-    if after <= 0 do env else if gm_folded(source,after-3,table,after,2000) == 0 do env else gm_note(env,53,nc_cursor(env,nc_env_offset(env,1))) end end
+    if after <= 0 do env else if gm_folded(source,after-3,table,after,2000) == 0 do env else
+      second = nc_start(source,nc_end(source,gm_parameter(source,nc_start(source,after))))
+      noted = gm_note(env,53,nc_cursor(env,nc_env_offset(env,1)))
+      if byte_at(source,second) == 123 do gm_taken(noted,noted,2,second,np_close(source,second,0,16777216)) else noted end
+    end end
+  end
+  # env with every string its records name between first and stop, where a
+  # tuple accumulator is taken apart, noted (57).
+  def gm_taken(env: bytes, done: bytes, offset: integer, first: integer, stop: integer): bytes do
+    at = nc_cursor(env,offset)
+    if offset >= Enum.count(env) do done else
+      named = if nc_env_tag(env,offset) != 2 do 0 else if nc_cursor(env,offset+3) == at do 0 else if at < first do 0 else if at >= stop do 0 else 1 end end end end
+      gm_taken(env,if named == 1 do gm_note(done,57,at) else done end,nc_env_next(env,offset),first,stop)
+    end
+  end
+  # 1 when the value from pos to stop is a tuple accumulator, named alone,
+  # that {...} at start takes apart and nothing behind it names again.
+  def gm_apart(source: bytes, start: integer, pos: integer, stop: integer, env: bytes, table: bytes): integer do
+    name = nc_start(source,pos)
+    local = if byte_at(source,start) != 123 do -1 else if nc_identifier(source,name) == 0 do -1 else if nz_before(source,stop-1)+1 != nc_end(source,name) do -1 else nc_lookup(source,name,env,2) end end end
+    role = gm_role(env,local)
+    last = nc_meta(table,nc_read(env,0),12)
+    if (role-53)*(role-54) != 0 do 0 else if nc_env_tag(env,nc_env_offset(env,local)) != 5 do 0 else if gm_direct(env,2,nc_cursor(env,nc_env_offset(env,local)),0) == 0 do 0 else
+      if stop >= last do 0 else 1-gm_occurs(source,stop,last,name,nc_end(source,name)-name) end
+    end end end
   end
   # 1 when no fn, for, try or form used as a value was entered since the
   # accumulator of the name at name was noted: a statement's value there is
@@ -273,7 +355,7 @@ defmodule NativeMemory do
   def gm_direct(env: bytes, offset: integer, name: integer, found: integer): integer do
     if offset >= Enum.count(env) do found else
       tag = nc_env_tag(env,offset)
-      here = if tag != 53 do 0 else if nc_cursor(env,offset+8+nt_head(env,offset+7)) == name do 1 else 0 end end
+      here = if (tag-53)*(tag-54)*(tag-57) != 0 do 0 else if nc_cursor(env,offset+8+nt_head(env,offset+7)) == name do 1 else 0 end end
       gm_direct(env,nc_env_next(env,offset),name,if here == 1 do 1 else if (tag-40)*(tag-41) == 0 do 0 else found end end)
     end
   end
@@ -284,7 +366,7 @@ defmodule NativeMemory do
   # (or Map.update, Map.put_new, MapSet.put) that ends the statement and
   # does not name acc behind its value, and "acc" alone.
   def gm_valued(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, value: bytes): bytes do
-    if gm_any(env,2,53) == 0 do value else
+    if gm_any(env,2,53) == 0 do value else if byte_at(source,start) == 37 do gm_rebuilt(source,start,env,table,depth,value) else if byte_at(source,start) == 123 do gm_retupled(source,start,env,table,depth,value) else
       stop = nc_pos(value)
       put = if byte_at(source,start) != 77 do -1 else gm_put_site(source,start,table,stop) end
       at = if put >= 0 do put else start end
@@ -297,7 +379,100 @@ defmodule NativeMemory do
       end end
       again = if fits == 0 do b[] else if wf_dropped(source,stop,env,table) == 1 do b[] else nc_expression(source,start,gm_note(env,49,at),table,depth) end end
       if nc_pos(again) != stop do value else if nt_same(nc_kind(again),nc_kind(value)) == 0 do value else again end end
-    end
+    end end end
+  end
+  # %Name{acc | field: acc.field <> rest, ...} as the fn's result: acc is
+  # over, its strings go on in the struct made of it (gm_update).
+  def gm_rebuilt(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, value: bytes): bytes do
+    stop = nc_pos(value)
+    at = gm_base(source,start,nz_before(source,stop-1)+1)
+    local = if at < 0 do -1 else nc_lookup(source,at,env,2) end
+    fits = if local < 0 do 0 else if gm_direct(env,2,nc_cursor(env,nc_env_offset(env,local)),0) == 0 do 0 else 1-wf_dropped(source,stop,env,table) end end
+    again = if fits == 0 do b[] else nc_expression(source,start,gm_update(source,env,at,stop),table,depth) end
+    if nc_pos(again) != stop do value else if nt_same(nc_kind(again),nc_kind(value)) == 0 do value else again end end
+  end
+  # %Name{base | ...} at start, which ends at stop: where base, a name alone,
+  # stands; -1 for anything else.
+  def gm_base(source: bytes, start: integer, stop: integer): integer do
+    open = if byte_at(source,start) != 37 do -1 else nc_expect(source,nd_name_end(source,nc_start(source,nc_end(source,start))),b[123]) end
+    at = nc_start(source,open)
+    close = if open < 0 do -1 else np_close(source,open,1,16777216) end
+    if open < 0 do -1 else if close != stop do -1 else if nc_identifier(source,at)*nc_word(source,nc_end(source,at),b[124]) == 0 do -1 else at end end end
+  end
+  # {name <> rest, ...} as the fn's result, name a string taken out of the
+  # accumulator.
+  def gm_retupled(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, value: bytes): bytes do
+    stop = nc_pos(value)
+    close = if nc_tag(value) != 5 do -1 else if gm_any(env,2,57) == 0 do -1 else np_close(source,start,0,16777216) end end
+    fits = if close < 0 do 0 else if close != nz_before(source,stop-1)+1 do 0 else 1-wf_dropped(source,stop,env,table) end end
+    noted = if fits == 0 do env else gm_parts(source,env,nc_end(source,start),stop) end
+    again = if Enum.count(noted) == Enum.count(env) do b[] else nc_expression(source,start,noted,table,depth) end
+    if nc_pos(again) != stop do value else if nt_same(nc_kind(again),nc_kind(value)) == 0 do value else again end end
+  end
+  # The parts of a tuple literal from pos on: the read of each "name <> rest"
+  # or name alone whose name was taken out of the accumulator here and is not named behind
+  # that up to stop is noted (49).
+  def gm_parts(source: bytes, env: bytes, pos: integer, stop: integer): bytes do
+    name = nc_start(source,pos)
+    after = nc_end(source,name)
+    local = if nc_identifier(source,name) == 0 do -1 else if nc_word(source,after,b[60,62])+nc_word(source,after,b[44])+nc_word(source,after,b[125]) == 0 do -1 else nc_lookup(source,name,env,2) end end
+    fits = if local < 0 do 0 else if gm_role(env,local) != 57 do 0 else if gm_direct(env,2,nc_cursor(env,nc_env_offset(env,local)),0) == 0 do 0 else 1-gm_occurs(source,after,stop,name,after-name) end end end
+    noted = if fits == 1 do gm_note(env,49,name) else env end
+    next = gm_next(source,pos,16777216)
+    if next < 0 do noted else gm_parts(source,noted,next,stop) end
+  end
+  # The environment for that literal, where nothing else is done with base
+  # behind it up to stop: the read of base at at is noted (49), and that of
+  # base.field in "field: base.field <> rest" for each field, where the same
+  # field of it and base whole are not named behind that.
+  def gm_update(source: bytes, env: bytes, at: integer, stop: integer): bytes do
+    gm_update_from(source,gm_note(env,49,at),at,nc_end(source,nc_end(source,at)),stop)
+  end
+  # The fields from pos on.
+  def gm_update_from(source: bytes, env: bytes, at: integer, pos: integer, stop: integer): bytes do
+    field = nc_start(source,pos)
+    colon = nc_expect(source,nc_end(source,field),b[58])
+    name = nc_start(source,colon)
+    size = nc_end(source,at)-at
+    dot = nc_end(source,name)
+    again = nc_start(source,nc_end(source,dot))
+    after = nc_end(source,again)
+    same = if colon < 0 do 0 else if nc_end(source,name)-name != size do 0 else if nc_equal(source,name,at,size)*nc_word(source,dot,b[46])*nc_word(source,after,b[60,62]) == 0 do 0 else if after-again != nc_end(source,field)-field do 0 else nc_equal(source,again,field,after-again) end end end end
+    free = if same == 0 do 0 else 1-gm_again(source,after,stop,at,size,Enum.concat(nc_u24(field),nc_u24(after-again))) end
+    next = if colon < 0 do -1 else gm_next(source,colon,16777216) end
+    noted = if free == 1 do gm_note(env,49,name) else env end
+    if next < 0 do noted else gm_update_from(source,noted,at,next,stop) end
+  end
+  # The position after the comma that ends the value at pos, by its brackets
+  # and blocks; -1 when the literal ends in it.
+  def gm_next(source: bytes, pos: integer, budget: integer): integer do
+    start = nc_start(source,pos)
+    value = byte_at(source,start)
+    opens = if (value-40)*(value-91)*(value-123) == 0 do 1 else if value == 100 do nc_opens(source,start) else if value == 102 do nf_untyped(source,start) else 0 end end end
+    if pos < 0 do -1 else if budget == 0 do -1 else if start >= Enum.count(source) do -1 else if nc_end(source,start) < 0 do -1 else if value == 125 do -1 else
+      if nc_word(source,start,b[44]) == 1 do nc_end(source,start) else
+        if (value-40)*(value-91)*(value-123) == 0 do gm_next(source,np_close(source,start,0,16777216),budget-1) else
+          # A block holds no field of the literal: what follows one is not looked at.
+          if opens == 1 do -1 else gm_next(source,nc_end(source,start),budget-1) end
+        end
+      end
+    end end end end end
+  end
+  # 1 when the name at at (size bytes) stands whole, or with the field plan
+  # names (where it stands and its size), somewhere from first up to stop.
+  def gm_again(source: bytes, first: integer, stop: integer, at: integer, size: integer, plan: bytes): integer do
+    found = gm_seek(source,first,stop,at,size)
+    dot = nc_start(source,found+size)
+    name = nc_start(source,dot+1)
+    length = nc_cursor(plan,3)
+    other = if byte_at(source,dot) != 46 do 0 else if byte_at(source,dot+1) == 46 do 0 else if classify_ascii(byte_at(source,name)) != 2 do 0 else if nc_end(source,name)-name != length do 1 else 1-nc_equal(source,name,nc_cursor(plan,0),length) end end end end
+    if found >= stop do 0 else if other == 0 do 1 else gm_again(source,found+size,stop,at,size,plan) end end
+  end
+  # Where the name at at stands next as a word from pos on; stop for nowhere.
+  def gm_seek(source: bytes, pos: integer, stop: integer, at: integer, size: integer): integer do
+    if pos >= stop do stop else if gm_occurs(source,pos,if pos+64 > stop do stop else pos+64 end,at,size) == 0 do gm_seek(source,pos+64,stop,at,size) else
+      if gm_occurs_from(source,pos,pos+1,at,size) == 1 do pos else gm_seek(source,pos+1,stop,at,size) end
+    end end
   end
   # "Map.put(" at start, in a program with no module Map, whose ")" ends
   # the statement at stop: where its first argument starts, else -1.
@@ -315,7 +490,12 @@ defmodule NativeMemory do
   def gm_appends(source: bytes, env: bytes, left: bytes, op: integer): integer do
     name = nj_back(source,nz_before(source,op-1)+1)
     local = nc_lookup(source,name,env,2)
-    if gm_noted(env,2,49,name) == 0 do 0 else if nt_same(nc_code(left),nc_slot(b[72,139,69],local)) == 0 do 0 else if gm_role(env,local) == 50 do 2 else 1 end end end
+    noted = if local < 0 do 0 else gm_noted(env,2,49,name) end
+    slot = if noted == 0 do b[] else nc_slot(b[72,139,69],local) end
+    size = Enum.count(slot)
+    # name.field of a struct: the load and that of the field.
+    held = if noted == 0 do 0 else if Enum.count(nc_code(left)) != size+7 do 0 else nt_same(nc_slice(nc_code(left),0,size+3),Enum.concat(slot,b[72,139,128])) end end
+    if noted == 0 do 0 else if held == 1 do 1 else if nt_same(nc_code(left),slot) == 0 do 0 else if gm_role(env,local) == 50 do 2 else 1 end end end end
   end
   # acc <> rest (ns_concat), acc the noted read: rest is all that follows
   # the "<>" (the strings joined behind acc), made first, so that it reads
@@ -351,21 +531,21 @@ defmodule NativeMemory do
   # The fn made in the environment env, whose text runs from first to stop
   # (first 0: unknown): every accumulator its text names is released where
   # the fn is made, since the fn keeps it.
-  def gm_shed(source: bytes, env: bytes, first: integer, value: bytes): bytes do
-    if nc_pos(value) < 0 do value else if gm_any(env,2,53)+gm_any(env,2,50) == 0 do value else
-      code = gm_shed_from(source,env,2,0,nc_join(nc_u24(first),nc_u24(nc_pos(value)),b[]))
+  def gm_shed(source: bytes, env: bytes, table: bytes, first: integer, value: bytes): bytes do
+    if nc_pos(value) < 0 do value else if gm_any(env,2,53)+gm_any(env,2,50)+gm_any(env,2,54)+gm_any(env,2,57) == 0 do value else
+      code = gm_shed_from(source,env,table,2,0,nc_join(nc_u24(first),nc_u24(nc_pos(value)),b[]))
       if Enum.count(code) == 0 do value else nc_join(nc_slice(value,0,nt_after(value,4)),code,nc_code(value)) end
     end end
   end
-  def gm_shed_from(source: bytes, env: bytes, offset: integer, slot: integer, span: bytes): bytes do
+  def gm_shed_from(source: bytes, env: bytes, table: bytes, offset: integer, slot: integer, span: bytes): bytes do
     if offset >= Enum.count(env) do b[] else
       tag = nt_tag(nt_read(env,offset+7))
       start = nc_cursor(env,offset)
       size = nc_cursor(env,offset+3)-start
-      named = if size <= 0 do 0 else if (tag-2)*(tag-8)*(tag-25) != 0 do 0 else if gm_role(env,slot) == 0 do 0 else
+      named = if size <= 0 do 0 else if (tag-2)*(tag-8)*(tag-25)*(tag-13)*(tag-18)*(tag-5) != 0 do 0 else if gm_role(env,slot) == 0 do 0 else
         if nc_cursor(span,0) == 0 do 1 else gm_occurs(source,nc_cursor(span,0),nc_cursor(span,3),start,size) end
       end end end
-      Enum.concat(if named == 0 do b[] else Enum.concat(nc_slot(b[72,139,69],slot),gm_release(tag)) end,gm_shed_from(source,env,nc_env_next(env,offset),slot+1,span))
+      Enum.concat(if named == 0 do b[] else Enum.concat(nc_slot(b[72,139,69],slot),gm_given_up(source,table,nt_read(env,offset+7))) end,gm_shed_from(source,env,table,nc_env_next(env,offset),slot+1,span))
     end
   end
   # 1 when the name that starts at name with size bytes starts an argument
@@ -399,9 +579,30 @@ defmodule NativeMemory do
     if count <= 0 do done else if offset >= Enum.count(env) do done else
       start = nc_cursor(env,offset)
       size = nc_cursor(env,offset+3)-start
-      found = if size <= 0 do 0 else if nc_env_tag(env,offset) != 2 do 0 else gm_handed(source,nc_cursor(span,0),nc_cursor(span,3),start,size) end end
-      gm_params_from(source,env,count-1,span,nc_env_next(env,offset),if found == 1 do gm_note(done,50,start) else done end)
+      tag = nc_env_tag(env,offset)
+      found = if size <= 0 do 0 else if tag != 2 do 0 else gm_handed(source,nc_cursor(span,0),nc_cursor(span,3),start,size) end end
+      held = if size <= 0 do 0 else if tag == 5 do gm_opened(source,nc_cursor(span,0),nc_cursor(span,3),start,size) else if (tag-13)*(tag-18) != 0 do 0 else gm_updated(source,nc_cursor(span,0),nc_cursor(span,3),start,size) end end end
+      gm_params_from(source,env,count-1,span,nc_env_next(env,offset),if found == 1 do gm_note(done,50,start) else if held == 1 do gm_note(done,54,start) else done end end)
     end end
+  end
+  # 1 when "} = name" stands from first up to stop.
+  def gm_opened(source: bytes, first: integer, stop: integer, name: integer, size: integer): integer do
+    found = gm_seek(source,first,stop,name,size)
+    equal = nz_before(source,found-1)
+    if found >= stop do 0 else if byte_at(source,equal) != 61 do gm_opened(source,found+size,stop,name,size) else if byte_at(source,nz_before(source,equal-1)) == 125 do 1 else gm_opened(source,found+size,stop,name,size) end end end
+  end
+  # 1 when "{name |" stands from first up to stop, and "name.field <>" with it.
+  def gm_updated(source: bytes, first: integer, stop: integer, name: integer, size: integer): integer do
+    found = gm_seek(source,first,stop,name,size)
+    if found >= stop do 0 else
+      if byte_at(source,nz_before(source,found-1))*nc_word(source,found+size,b[124]) == 123 do gm_joined(source,first,stop,name,size) else gm_updated(source,found+size,stop,name,size) end
+    end
+  end
+  def gm_joined(source: bytes, first: integer, stop: integer, name: integer, size: integer): integer do
+    found = gm_seek(source,first,stop,name,size)
+    if found >= stop do 0 else
+      if nc_word(source,found+size,b[46])*nc_word(source,nc_end(source,nc_end(source,found+size)),b[60,62]) == 1 do 1 else gm_joined(source,found+size,stop,name,size) end
+    end
   end
   # The environment for the arguments of a function's call to itself in
   # return position (tl_made): the call runs from start to the ")" at
@@ -409,8 +610,23 @@ defmodule NativeMemory do
   # parameter at its own place has that read noted (49), and its place
   # among the arguments (51).
   def gm_handing(source: bytes, env: bytes, start: integer, close: integer): bytes do
-    open = if gm_any(env,2,50) == 0 do -1 else tl_open(source,start,close) end
-    if open < 0 do env else if nj_back(source,nz_before(source,open-1)+1) != start do env else gm_handing_from(source,env,nc_start(source,open+1),close,0) end end
+    open = if gm_any(env,2,50)+gm_any(env,2,54) == 0 do -1 else tl_open(source,start,close) end
+    if open < 0 do env else if nj_back(source,nz_before(source,open-1)+1) != start do env else
+      gm_handing_from(source,if gm_any(env,2,54) == 0 do env else gm_passing(source,env,nc_start(source,open+1),close,0) end,nc_start(source,open+1),close,0)
+    end end
+  end
+  # The struct parameters among them: each argument that is the noted
+  # parameter at its own place, or is made of it (gm_update).
+  def gm_passing(source: bytes, env: bytes, at: integer, close: integer, index: integer): bytes do
+    stop = if at < 0 do -1 else if at >= close do -1 else nc_span(source,nc_span_state(at,0,0,0,0),16777216) end end
+    last = if stop < 0 do -1 else nz_before(source,stop-1)+1 end
+    base = if stop < 0 do -1 else if byte_at(source,at) == 37 do gm_base(source,at,last) else if nc_identifier(source,at) == 0 do -1 else if nc_end(source,at) == last do at else -1 end end end end
+    local = if base < 0 do -1 else nc_lookup(source,base,env,2) end
+    fits = if local != index do 0 else if gm_role(env,local) == 54 do 1 else 0 end end
+    # A tuple made anew for a tuple parameter at its place.
+    tuple = if stop < 0 do 0 else if byte_at(source,at) != 123 do 0 else if np_close(source,at,0,16777216) != last do 0 else if index >= nc_env_count(env,2) do 0 else if nc_env_tag(env,nc_env_offset(env,index)) != 5 do 0 else if gm_role(env,index) == 54 do 1 else 0 end end end end end end
+    made = if tuple == 1 do gm_parts(source,env,nc_end(source,at),close) else if fits == 0 do env else if base == at do gm_note(env,49,at) else gm_update(source,env,base,close) end end end
+    if stop < 0 do env else if stop >= close do made else if nc_word(source,stop,b[44]) == 0 do made else gm_passing(source,made,nc_start(source,nc_end(source,stop)),close,index+1) end end end
   end
   def gm_handing_from(source: bytes, env: bytes, at: integer, close: integer, index: integer): bytes do
     after = nc_end(source,at)
@@ -553,9 +769,9 @@ defmodule NativeMemory do
     if name < 0 do env else if nc_identifier(source,name) == 0 do env else if nc_word(source,nc_end(source,name),b[45,62]) == 0 do env else gm_note(env,53,name) end end end
   end
   # What such a for gives is released: the fold is over.
-  def gm_reduced(value: bytes): bytes do
+  def gm_reduced(source: bytes, table: bytes, value: bytes): bytes do
     tag = nc_tag(value)
-    if nc_pos(value) < 0 do value else if (tag-2)*(tag-8)*(tag-25) != 0 do value else Enum.concat(value,gm_release(tag)) end end
+    if nc_pos(value) < 0 do value else if (tag-2)*(tag-8)*(tag-25)*(tag-13)*(tag-18)*(tag-5) != 0 do value else Enum.concat(value,gm_given_up(source,table,nc_kind(value))) end end
   end
   # Native smoke test; the collector's place in a program.
   def main() do System.halt(0) end

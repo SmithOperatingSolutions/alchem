@@ -156,8 +156,9 @@ Differences that remain:
   the pinned runtime has it (`alchem-sets-streams.md`). Where a library
   function does not `raise` the pinned message, the message is that of the
   code that failed there (often `pattern match failed`).
-- `halt(x)` and `cont(x)` for `Enum.reduce_while` are tuples, so `inspect`
-  of one differs.
+- `step[a]` is a sum type the library declares (`library/Kernel.alc`); its
+  variants are written `cont(x)` and `halt(x)`, as values and as patterns,
+  and `inspect` writes them so.
 - A name takes at most sixteen forms per number of arguments.
 - The library text is held in the compiler's source as base64 byte
   literals (`b"..."`), packed by byte pairs (127 codes; `ny_expand_range`
