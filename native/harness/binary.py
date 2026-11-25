@@ -14,6 +14,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES = ROOT / 'harness/binary-cases.json'
@@ -53,6 +54,9 @@ PROGRAMS = [
     main_of('File.write!("a.txt", "kept")', 'IO.inspect(File.sync("a.txt"))', 'IO.inspect(File.sync("."))', 'IO.inspect(File.sync("none.txt"))',
             'ok(file) = File.open("a.txt", [:write])', 'IO.write(file, "new")', 'IO.inspect(File.sync(file))', 'IO.inspect(File.close(file))',
             'IO.inspect(File.sync(file))', 'IO.inspect(File.read("a.txt"))'),
+    # A string that is appended to in a loop and read between appends by what
+    # copies: what was read before never changes (spec/alchem-memory.md).
+    'defmodule A do\n  def keep(out: string, kept: list[string], k: integer): list[string] do\n    if k == 0 do [out | kept] else\n      piece = if byte_size(out) > 2 do binary_part(out, 0, 3) else "abc" end\n      keep(out <> piece, [piece | kept], k - 1)\n    end\n  end\n\n  def whole(out: string, kept: list[string], k: integer): list[string] do\n    if k == 0 do kept else\n      all = binary_part(out, 0, byte_size(out))\n      whole(out <> "y", [all | kept], k - 1)\n    end\n  end\n\n  def mixed(out: string, kept: list[string], k: integer): list[string] do\n    if k == 0 do kept else\n      held = if rem(k, 3) == 0 do [out | kept] else kept end\n      b = if byte_size(out) > 0 do Binary.at(out, 0) else 1 end\n      mixed(out <> Binary.from_list([65 + rem(b + k, 26)]), held, k - 1)\n    end\n  end\n\n  def self(out: string, k: integer): string do\n    if k == 0 do out else self(out <> binary_part(out, 0, byte_size(out)), k - 1) end\n  end\n\n  def inner(out: string, k: integer): string do\n    if k == 0 do out else inner(out <> binary_part(out <> "!", byte_size(out), 1), k - 1) end\n  end\n\n  def caught(out: string, k: integer): string do\n    if k == 0 do out else\n      got = try do\n        binary_part(out, 5, 100000)\n      rescue\n        _ -> "r"\n      end\n      caught(out <> got, k - 1)\n    end\n  end\n\n  def lists(out: string, all: list[list[integer]], k: integer): list[list[integer]] do\n    if k == 0 do all else lists(out <> "q", [Binary.to_list(out) | all], k - 1) end\n  end\n\n  def sums(out: string, all: list[integer], k: integer): list[integer] do\n    if k == 0 do all else sums(out <> "q", [Crypto.crc32(out), Crypto.crc32(out) | all], k - 1) end\n  end\n\n  def main() do\n    IO.inspect(Enum.take(keep("", [], 400), 5) |> Enum.map(fn s -> byte_size(s) end))\n    ws = whole("s", [], 300)\n    IO.inspect(Enum.all?(Enum.with_index(Enum.reverse(ws)), fn {w, i} -> byte_size(w) == i + 1 and w == "s" <> String.duplicate("y", i) end))\n    ms = mixed("", [], 300)\n    IO.inspect(Enum.map(ms, fn s -> Crypto.crc32(s) end) |> Enum.sum())\n    IO.inspect(Enum.all?(Enum.zip(ms, tl(ms)), fn {long, short} -> String.starts_with?(long, short) end))\n    IO.inspect(byte_size(self("ab", 12)))\n    IO.inspect(inner("a", 50))\n    IO.inspect(caught("a", 20))\n    IO.inspect(Enum.map(lists("", [], 60), fn l -> length(l) end) |> Enum.sum())\n    IO.inspect(Enum.sum(sums("", [], 500)))\n    start = "base"\n    a = self(start, 3)\n    b = keep(start, [], 4)\n    IO.inspect({start, byte_size(a), Enum.count(b)})\n    folded = Enum.reduce(1..200, "", fn i, acc -> acc <> (if byte_size(acc) > 4 do binary_part(acc, byte_size(acc) - 2, 2) else to_string(i) end) end)\n    IO.inspect(Crypto.crc32(folded))\n  end\nend\n',
 ]
 
 
@@ -88,6 +92,12 @@ def verify(compiler):
         (Path(top) / 'binary_test.alc').write_bytes(FIXTURE.read_bytes())
         tests = subprocess.run([str(alchem), 'test', 'binary_test.alc'], capture_output=True, text=True, cwd=top, env={'PATH': '/usr/bin:/bin', 'HOME': top}, timeout=600)
         assert tests.returncode == 0 and '\n5 tests, 0 failures\n' in tests.stdout, tests
+        # 400,000 appends with a read before each: a copy at each of them
+        # would take most of a minute.
+        (Path(top) / 'loop.alc').write_text('defmodule M do\n  def at(out: string, sum: integer, k: integer): integer do\n    if k == 0 do sum else at(out <> "x", sum + (if byte_size(out) > 0 do Binary.at(out, byte_size(out) - 1) + byte_size(binary_part(out, 0, 1)) else 0 end), k - 1) end\n  end\n\n  def main() do\n    IO.inspect(at("", 0, 400000))\n  end\nend\n')
+        started = time.monotonic()
+        loop = subprocess.run([str(alchem), 'run', 'loop.alc'], capture_output=True, text=True, cwd=top, env={'PATH': '/usr/bin:/bin', 'HOME': top}, timeout=600)
+        assert (loop.returncode, loop.stdout) == (0, f'{399999 * 121}\n') and time.monotonic() - started < 15, (loop, time.monotonic() - started)
     print(f'binary: {len(held)} programs give what the pinned command gives, and the fixture\'s 5 tests pass')
 
 

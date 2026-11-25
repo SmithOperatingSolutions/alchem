@@ -138,5 +138,10 @@
   0,
   "ok({})\nok({})\nerror(\"open none.txt: no such file or directory\")\nok({})\ntrue\nerror(\"closed\")\nok(\"new\")\n",
   ""
+ ],
+ [
+  0,
+  "[1200, 3, 3, 3, 3]\ntrue\n211384481684\ntrue\n8192\n\"a!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\"\n\"arrrrrrrrrrrrrrrrrrrr\"\n1770\n2173734558612\n{\"base\", 32, 5}\n210600857\n",
+  ""
  ]
 ]
