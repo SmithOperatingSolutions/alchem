@@ -18,6 +18,9 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'scripts'))
+import reference  # noqa: E402
+
 MODULE = 'github.com/SmithOperatingSolutions/alchem'
 
 
@@ -29,12 +32,6 @@ def versions():
         if named:
             found[str(path.relative_to(ROOT))] = named.group(1)
     return found
-
-
-def reference():
-    """The pinned compiler's source, in the module cache."""
-    version = versions()['adapters/alchem/go.mod']
-    return ROOT / '.cache/gomod/github.com/!smith!operating!solutions' / f'alchem@{version}'
 
 
 def go_names(text, function):
@@ -66,7 +63,7 @@ def compiler_words(function):
 def verify(compiler=None):
     named = versions()
     assert len(named) >= 6 and len(set(named.values())) == 1, f'the go.mod files of native/ name more than one version of the reference: {named}'
-    source = (reference() / 'compiler/syntax/builtins.go').read_text()
+    source = (reference.tree() / 'compiler/syntax/builtins.go').read_text()
     reserved, retiring = go_names(source, 'ReservedModule'), go_names(source, 'RetiringModule')
     assert len(reserved) > 40 and len(retiring) >= 1, (reserved, retiring)
     copies = {

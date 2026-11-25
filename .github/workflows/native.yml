@@ -157,6 +157,28 @@ jobs:
           python3 scripts/verify-quick.py --seed --build-only
           cmp build/dev/A2 build/dev/A2-pinned
 
+  derived:
+    # Every file made from other files is what its generator makes of them
+    # (native/scripts/verify-derived.py), with the assemblers and the C
+    # compiler of the development container, the same wherever it runs.
+    name: Derived files
+    needs: verified
+    if: needs.verified.outputs.run == ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: native
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Regenerate and compare
+        run: |
+          bash scripts/linux-container.sh bash -c '
+            apt-get update -q && bash scripts/fetch-arm64-tools.sh &&
+            (cd adapters/alchem && GOMODCACHE=/work/.cache/gomod go mod download) &&
+            python3 scripts/verify-derived.py'
+
   windows-compiler:
     # spec/windows.md: the Windows compiler, the programs it is checked with
     # and the pinned compiler as a Windows program, built on Linux beside the
@@ -375,7 +397,7 @@ jobs:
     # Every job passed: the inputs are recorded as verified, by an artifact
     # named for their key, which native-verified.sh looks for.
     name: Record as verified
-    needs: [verified, native, windows-compiler, macos-compiler, macos, windows]
+    needs: [verified, native, derived, windows-compiler, macos-compiler, macos, windows]
     if: needs.verified.outputs.run == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 5

@@ -14,12 +14,16 @@ of one name and arity disagree, only the parameters all of them write so."""
 from pathlib import Path
 import collections
 import re
+import sys
+
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+import reference
 
 ROOT=Path(__file__).resolve().parents[1]
 
 
 def rows():
-    upstream=next((ROOT/'.cache/gomod/github.com/!smith!operating!solutions').glob('alchem@*'))
+    upstream=reference.tree()
     found=collections.defaultdict(list)
     for path in sorted((upstream/'compiler/syntax').glob('*.go')):
         if path.name.endswith('_test.go'):continue

@@ -75,7 +75,8 @@ def compiler_io():
     plain, at = assemble(source), symbols(source)['io_call']
     runtime = (ROOT / 'implementations/alchem/native-runtime.alc').read_text()
     def emitted(name):
-        return bytes(int(x) for x in re.search(r'def ' + name + r'\(\): bytes do\n(?:    #.*\n)*    b\[([0-9,]*)\]', runtime).group(1).split(','))
+        # As the Linux compiler has it: nc_sc() is 5 (native-windows.alc).
+        return bytes(int(x) for x in re.search(r'def ' + name + r'\(\): bytes do\n(?:    #.*\n)*    b\[((?:[0-9,]|nc_sc\(\))*)\]', runtime).group(1).replace('nc_sc()', '5').split(','))
     if plain[:at] != emitted('nc_io_prefix') or plain[at + 9:] != b''.join(emitted(f'nc_io_part{i}') for i in range(4)):
         raise SystemExit('spec/compiler-io-x86_64.s is not what native-runtime.alc emits')
     text = marked(source)

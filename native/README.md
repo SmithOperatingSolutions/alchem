@@ -107,6 +107,16 @@ python3 scripts/verify-quick.py --seed      # the same from the seed, with the g
 bash scripts/verify-local.sh --with-source  # the complete suite, from the seed
 ```
 
+A file made from other files (the runtimes, the library's data, the tables
+of `tools/`) is committed, and CI makes every one of them again on each pull
+request and fails on a difference (*Derived files*). In the container, as the
+machine code depends on the assembler:
+
+```sh
+bash scripts/linux-container.sh python3 scripts/verify-derived.py           # compare
+bash scripts/linux-container.sh python3 scripts/verify-derived.py --write   # regenerate what differs
+```
+
 The complete suite needs ptrace permission for fault injection and register
 measurements; a skip is not a pass. The Go compiler of this repository is the
 reference the gates compare against: they need Go (`mise install go`, `mise
