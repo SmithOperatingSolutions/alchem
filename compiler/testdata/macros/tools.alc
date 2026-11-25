@@ -17,7 +17,7 @@ defmodule Tools do
       started = Time.monotonic()
       unquote(body)
       elapsed = Time.monotonic() - started
-      IO.puts("#{unquote(label)} took under a second: #{elapsed < 1000}")
+      IO.puts("#{unquote(label)} took under a second: #{elapsed < 1000000}")
     end
   end
 
