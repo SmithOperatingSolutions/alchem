@@ -395,12 +395,20 @@ defmodule NativeOperators do
   def nk_keyword(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
     colon = nc_end(source,start)
     # A key may be any word, reserved ones too: [case: :lower].
-    value = if classify_ascii(byte_at(source,start)) != 2 do b[] else if nc_word(source,colon,b[58]) == 0 do b[] else nc_expression(source,nc_end(source,colon),env,table,depth+1) end end
+    value = if classify_ascii(byte_at(source,start)) != 2 do b[] else if nc_word(source,colon,b[58]) == 0 do b[] else nk_keyed(source,nc_end(source,colon),env,table,depth+1) end end
     kind = nt_tuple(Enum.concat(b[1,22],nt_cell(nc_kind(value))),2)
     pushed = nc_join(nc_text_emit(nc_slice(source,start,colon)),b[80],Enum.concat(nc_code(value),b[80]))
     if nc_pos(value) < 0 do b[] else if nt_tag(kind) < 0 do b[] else
       nc_value(nc_pos(value),nc_join(pushed,nc_join(nc_allocate_emit(16),b[72,199,2,2,0,0,0],nr_stores(2)),b[72,137,208]),kind)
     end end
+  end
+  # Its value, which has the second type of the tuple the list's elements are
+  # expected to be.
+  def nk_keyed(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
+    part = nf_part(source,env,table,0)
+    wanted = if nt_tag(part) != 5 do b[] else if nt_count(part) != 2 do b[] else nt_child(part,1) end end
+    plain = nc_expression(source,pos,env,table,depth)
+    if nc_pos(plain) >= 0 do plain else if Enum.count(wanted) == 0 do b[] else nf_valued(source,pos,env,table,depth,wanted) end end
   end
   # cond do condition -> body ... end: the first arm whose condition holds.
   # When none does the program ends, naming the cond.
@@ -448,8 +456,18 @@ defmodule NativeOperators do
   def nk_kernel(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
     op = nk_op(source,pos)
     begin = nc_expect(source,nc_end(source,pos),b[40])
-    args = if op == 0 do b[] else if begin < 0 do b[] else nc_arguments(source,begin,env,table,depth) end end
+    plain = if op == 0 do b[] else if begin < 0 do b[] else nc_arguments(source,begin,env,table,depth) end end
+    args = if op != 7 do plain else if nc_pos(plain) >= 0 do plain else if begin < 0 do b[] else nk_head_wanted(source,nc_start(source,nc_end(source,pos)),env,table,depth) end end end
     if op == 0 do if nc_word(source,pos,b[114,97,105,115,101]) == 1 do ty_raise(source,pos,env,table,depth) else if nc_word(source,pos,b[116,104,114,111,119]) == 1 do ty_throw(source,pos,env,table,depth) else ny_bare(source,pos,env,table,depth) end end else if nc_pos(args) < 0 do b[] else nk_ordered(nw_library(if op == 12 do ni_call(source,table,args,env) else ne_call(table,args,op,nk_from(source,nc_start(source,pos))) end,args,if op == 7 do 1 else 2 end),source,pos,Enum.concat(b[depth,op],env),table) end end
+  end
+  # The argument of hd where the list needs the type of its elements from
+  # what is expected of the call, whose "(" is at paren.
+  def nk_head_wanted(source: bytes, paren: integer, env: bytes, table: bytes, depth: integer): bytes do
+    wanted = nw_expected(env,paren,2)
+    kind = nt_unary(7,wanted)
+    value = if Enum.count(wanted) == 0 do b[] else nf_valued(source,paren+1,env,table,depth+1,kind) end
+    close = if nc_pos(value) < 0 do -1 else nc_expect(source,nc_pos(value),b[41]) end
+    if close < 0 do b[] else nc_arg_packet(close,1,nt_cell(nc_kind(value)),Enum.concat(nc_code(value),b[80])) end
   end
   # Kernel.name for a name that is no function of the library (elem, some,
   # byte_size, put_elem) is the name alone. plan: the nesting, the environment.

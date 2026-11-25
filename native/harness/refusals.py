@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """What `alchem check` says of every program the gates know is refused.
 
-The programs are those of REJECTS in the files of harness/. What the pinned
+The programs are those of REJECTS in the files of harness/, and LOOSE. What the pinned
 command says of each, its file, line, column and reason, is in
 harness/refusals.json.xz by the program's SHA-256, and alchem says the same,
 word for word. A program the pinned check accepts and the compiler refuses
@@ -41,7 +41,18 @@ def programs():
             text = item if isinstance(item, str) else item[0] if isinstance(item, (tuple, list)) and item and isinstance(item[0], str) else ''
             if 'defmodule' in text:
                 found[hashlib.sha256(text.encode('utf8', 'surrogateescape')).hexdigest()] = text
+    for text in LOOSE:
+        found[hashlib.sha256(text.encode()).hexdigest()] = text
     return found
+
+
+# Programs the compiler would take and the pinned check refuses: alchem asks
+# the front end first.
+FUNCTIONS = ['if true do fn b -> true end else fn c -> false end', 'Map.fetch!(%{1 => fn b -> true end}, 1)', 'Enum.fetch!([fn b -> true end], 0)',
+             'try do\n      fn b -> true end\n    rescue\n      _ -> fn c -> false end\n    end', 'case 1 do\n      1 -> fn b -> true end\n      _ -> fn c -> false end\n    end']
+PLACES = ['f: fn[integer, boolean] = %s\n    IO.inspect(f(1))', 'IO.inspect(Enum.map([1], %s))', 'IO.inspect(then(1, %s))', 'IO.inspect(tap(1, %s))',
+          'IO.inspect(Enum.sort_by([1], %s))', 'IO.inspect(Enum.any?([1], %s))', 'IO.inspect(MapSet.filter(MapSet.new([1]), %s))']
+LOOSE = ['defmodule M do\n  def main() do\n    ' + place % ('(' + function + ')' if ' do' in function[:8] else function) + '\n  end\nend\n' for function in FUNCTIONS for place in PLACES]
 
 
 def says(command, text, pinned=False):
@@ -77,8 +88,12 @@ def verify(compiler):
         builder.build(compiler, alchem, builder.platform_of(compiler).startswith('darwin/'))
         seen = all_of(alchem, texts)
     unsaid = 0
+    loose = {hashlib.sha256(text.encode()).hexdigest() for text in LOOSE}
     for key, text in texts.items():
-        if held[key]:
+        if key in loose:
+            # Some of these are programs.
+            assert seen[key] == held[key], (text, seen[key], held[key])
+        elif held[key]:
             assert seen[key] == held[key], (text, seen[key], held[key])
         else:
             unsaid += 1

@@ -28,6 +28,7 @@ its arithmetic is never checked; inside `alchem` the compiler's code is an
 ordinary module, so everything it relies on holds in a traced program too.
 """
 import argparse
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -63,6 +64,8 @@ def compiler_module(darwin=False, windows=False, arm64=False):
         if text.count(switch) != 1:
             raise ValueError('the compiler source has no single nc_arm()')
         text = text.replace(switch, '  def nc_arm(): integer do %d end\n' % (3 if darwin else 1))
+    if darwin:
+        text = bootstrap.darwin(text)
     text = bootstrap.compact_identifiers(bootstrap.compact_source(text))
     head, rest = text.split('\n', 1)
     if head != 'defmodule NativeSourceCompiler do':
@@ -163,11 +166,39 @@ def program(darwin=False, windows=False, version='devel', platform='linux/amd64'
     return bundle.marked(head + b'\n' + b'\n'.join(lines))
 
 
+def compiled(compiler, source):
+    """What the compiler makes of a source, kept in build/alchem by the bytes
+    of both: ten gates build the same alchem, which takes a minute. The
+    first to ask compiles it and the others wait for it."""
+    held = ROOT / 'build/alchem'
+    held.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha256(hashlib.sha256(Path(compiler).read_bytes()).digest() + source).hexdigest()
+    image = held / key
+    with open(held / (key + '.lock'), 'w') as lock:
+        try:
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        except ImportError:
+            pass
+        if image.exists():
+            os.utime(image)
+            return subprocess.CompletedProcess([str(compiler)], 0, image.read_bytes(), b'')
+        made = subprocess.run([str(compiler)], input=source, capture_output=True, env={'PATH': ''}, timeout=1800)
+        if made.returncode == 0 and not made.stderr:
+            staged = held / f'{key}.{os.getpid()}'
+            staged.write_bytes(made.stdout)
+            staged.replace(image)
+            # The twelve used last are kept.
+            for old in sorted((p for p in held.iterdir() if len(p.name) == 64), key=lambda p: p.stat().st_mtime)[:-12]:
+                old.unlink(missing_ok=True)
+        return made
+
+
 def build_tool(compiler, entry, output):
     """A program that imports alchem's own modules (tools/): a marked bundle,
     as alchem itself is."""
     bundle = _load('alchem_bundle', ROOT / 'scripts/bundle-alchem.py')
-    made = subprocess.run([str(compiler)], input=bundle.marked(bundle.bundle(Path(entry), limit=None)), capture_output=True, env={'PATH': ''}, timeout=600)
+    made = compiled(compiler, bundle.marked(bundle.bundle(Path(entry), limit=None)))
     if made.returncode or made.stderr:
         raise RuntimeError(f'the compiler did not build {entry}: {made.returncode} {made.stderr.decode(errors="replace").strip()}')
     Path(output).write_bytes(made.stdout)
@@ -180,7 +211,7 @@ def build(compiler, output, darwin=False, windows=False, version='devel', arm64=
         # As for Windows: the alchem would take itself for Linux ARM64's.
         raise RuntimeError(f'--arm64 needs a compiler that makes Linux ARM64 programs: {compiler} makes those of {platform}')
     source = program(darwin, windows, version, platform, arm64)
-    made = subprocess.run([str(compiler)], input=source, capture_output=True, env={'PATH': ''}, timeout=600)
+    made = compiled(compiler, source)
     if made.returncode or made.stderr or made.stdout[:4] not in (b'\x7fELF', b'\xcf\xfa\xed\xfe') and made.stdout[:2] != b'MZ':
         raise RuntimeError(f'the compiler did not build alchem: {made.returncode} {made.stderr.decode(errors="replace").strip()}')
     if windows and made.stdout[:2] != b'MZ':

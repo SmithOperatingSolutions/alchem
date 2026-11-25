@@ -107,6 +107,11 @@ python3 scripts/verify-quick.py --seed      # the same from the seed, with the g
 bash scripts/verify-local.sh --with-source  # the complete suite, from the seed
 ```
 
+On a Mac with Apple silicon, `scripts/verify-arm64.sh [GATE...]` runs the
+gates and the corpus in a native Linux ARM64 container in about nine minutes.
+macOS checks every new program before its first run, a sixth of a second
+each, and the gates run thousands: there they take four times as long.
+
 A file made from other files (the runtimes, the library's data, the tables
 of `tools/`) is committed, and CI makes every one of them again on each pull
 request and fails on a difference (*Derived files*). In the container, as the

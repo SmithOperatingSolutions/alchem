@@ -439,7 +439,8 @@ def taken(pinned, cases):
     status, out, said = command(pinned, 'run', program(cases)[0])
     if status == 0 and out.endswith('end\n'):
         # A case that makes a text of megabytes is about memory.
-        given = {n: text for n, text in answers(out).items() if len(text) < 4000}
+        # One that ends in a panic of the pinned runtime is a fault of it.
+        given = {n: text for n, text in answers(out).items() if len(text) < 4000 and 'panic: runtime error' not in text}
         return [c for c in cases if str(c[0]) in given], given
     if len(cases) == 1:
         return [], {}

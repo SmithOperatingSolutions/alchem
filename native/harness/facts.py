@@ -13,6 +13,7 @@ it; a version several files name must be one version.
   the bytes of its letters; the compiler holds the names that can be a
   module's, those without a dot.
 """
+from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import re
 import sys
@@ -87,6 +88,14 @@ def verify(compiler=None):
         for module, name in re.findall(r'nf_simple_pair\(source,name,last,b\[([0-9,]+)\],b\[([0-9,]+)\]\)', body):
             held.add(('.'.join(bytes(int(n) for n in word.split(',')).decode() for word in (module, name)), count))
     assert held == pinned, f'the compiler, nf_simple: only here {sorted(held - pinned)}, only pinned {sorted(pinned - held)}'
+    # The seed (the Go frontend of adapters/alchem) knows a function by its
+    # name alone, and only nightly runs start from it.
+    spec = spec_from_file_location('bootstrap', ROOT / 'scripts/bootstrap-alchem-compiler.py')
+    bootstrap = module_from_spec(spec)
+    spec.loader.exec_module(bootstrap)
+    defined = re.findall(r'^  def (\w+)\(', bootstrap.source_text('functions', False), re.M)
+    twice = sorted({name for name in defined if defined.count(name) > 1}) if len(set(defined)) != len(defined) else []
+    assert not twice and len(defined) > 3000, f'functions of the compiler defined twice: {twice}'
     print(f'facts: {len(named)} go.mod files name {next(iter(named.values()))}; {len(copies)} copies of the library\'s namespaces are the pinned ones')
 
 
