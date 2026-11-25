@@ -30,6 +30,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # A download of the toolchain that fails is tried again, over minutes.
+  MISE_HTTP_RETRIES: '10'
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
