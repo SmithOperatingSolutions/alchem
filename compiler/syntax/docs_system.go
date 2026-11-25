@@ -101,6 +101,9 @@ func init() {
 		"alx> File.write!(\"doc_stream.txt\", \"one\\ntwo\\nthree\\n\")", "alx> File.stream!(\"doc_stream.txt\") |> Stream.map(&String.trim(&1)) |> Enum.take(2)", "[\"one\", \"two\"]",
 		"alx> File.stream!(\"doc_stream.txt\", 4) |> Enum.take(1)", "[\"one\\n\"]")
 	doc("File.touch", "Creates an empty file, or updates the modification time of an existing one.", "alx> File.touch(\"doc_touch.txt\")", "ok({})", "alx> File.exists?(\"doc_touch.txt\")", "true")
+	doc("File.sync", "Has the system write what it holds of a file, given its path or the open file, to the disk before returning, so that the contents survive a loss of power; given the path of a directory, the names in it, which makes a File.rename into it last. A write alone is kept by the system for a while.",
+		"alx> File.write!(\"doc_sync.txt\", \"kept\")", "alx> File.sync(\"doc_sync.txt\")", "ok({})", "alx> File.sync(\".\")", "ok({})",
+		"alx> File.open(\"doc_sync.txt\", [:write], fn file -> File.sync(file) end)", "ok(ok({}))")
 	doc("File.write", "Writes text, or any bytes, to a file, replacing its contents.", "alx> File.write(\"doc_write.txt\", \"hello\")", "ok({})")
 	doc("File.write!", "Writes text to a file; fails when it cannot be written.", "alx> File.write!(\"doc_write_bang.txt\", \"hello\")", "alx> File.read!(\"doc_write_bang.txt\")", "\"hello\"")
 

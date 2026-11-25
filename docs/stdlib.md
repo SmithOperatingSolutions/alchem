@@ -296,6 +296,14 @@ end
 
 `Crypto.strong_rand_bytes(n)` reads the operating system's secure random source, `Crypto.hash(:sha256, data)` and `Crypto.hmac(:sha256, key, data)` give raw digests (`Base.encode16` or `Base.encode64` make them printable), and `Crypto.secure_compare(a, b)` compares signatures and tokens in time that does not depend on where they differ.
 
+`Crypto.crc32(data)` is the CRC-32 checksum zip, gzip and PNG use, for catching accidental damage.
+
+## Bytes
+
+`Binary` works on the bytes of a string as numbers, for file formats, protocols and checksums. `Binary.at(data, index)` is the byte at a position, `Binary.to_list(data)` all of them, and `Binary.from_list(bytes)` the string of some. `Binary.encode(n, size, :big)` writes a number in 1, 2, 4 or 8 bytes (`:little` puts the lowest byte first) and `Binary.decode(data, index, size, :big)` reads one. A position outside the string, a byte outside 0 to 255 and a number that does not fit fail the process.
+
+`File.sync(path)` or `File.sync(file)` returns once a file's contents are on the disk, and `File.sync(directory)` once the names in it are.
+
 ## HTML templates
 
 `~h"<li>#{name}</li>"` and `~h"""` heredocs build `Markup`: the template's own text is kept, and every interpolated string is escaped, so text from users cannot become markup. A `Markup` value interpolated into another template goes in unchanged, a list of them is joined, and numbers and atoms are written as text. `Markup.to_string` gives the HTML, `Markup.raw` marks trusted text as markup, and `Markup.escape` escapes a string. `Markup.parts(markup)` takes markup apart for libraries that render pages: `template` names the `~h` that made it, `fixed` is the template's own text in the pieces around its values, and `values` are the values in order, each `Markup.Value.text` (already escaped), `Markup.Value.markup` (a template inside it) or `Markup.Value.list`. A library can send the fixed text of a template once and afterwards only the values that changed. How markup was made is no part of its value: it compares, prints and encodes by its text alone, and markup that has crossed to another node has nothing fixed.

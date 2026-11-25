@@ -93,7 +93,7 @@ No import is needed. By group; `alchem doc --group <group>` describes a group's 
 
 - **Core** (`core`): `Kernel`, `Atom`, `Function`, `Bitwise`, `IO.ANSI`
 - **Collections** (`collections`): `Enum`, `Stream`, `List`, `Map`, `Keyword`, `MapSet`, `Range`
-- **Text** (`text`): `String`, `Regex`, `Integer`, `Float`, `Base`, `JSON`, `URI`, `Version`, `Markup`, `Crypto`
+- **Text** (`text`): `String`, `Regex`, `Integer`, `Float`, `Base`, `Binary`, `JSON`, `URI`, `Version`, `Markup`, `Crypto`
 - **Dates and times** (`dates-and-times`): `Date`, `Time`, `NaiveDateTime`, `DateTime`, `Calendar`, `Duration`
 - **Files and system** (`files-and-system`): `File`, `Path`, `IO`, `System`, `OptionParser`, `Logger`, `Port`, `DiskStore`
 - **Concurrency** (`concurrency`): `Process`, `Node`, `Supervisor`, `Server`, `Task`, `Task.Supervisor`, `Agent`, `Registry`, `DynamicSupervisor`
