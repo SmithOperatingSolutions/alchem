@@ -287,6 +287,14 @@ defmodule AlchemParse do
   end
   def exponent_text(e: integer): string do Integer.to_string(e) end
 
+  # Whether a float literal's text is one of 64 bits.
+  def float_held?(text: string): boolean do
+    case Float.parse(String.replace(text, "_", "")) do
+      ok(_) -> true
+      error(_) -> false
+    end
+  end
+
   # The fewest of the digits, rounded, that read as the float the text
   # reads as; the digits stand where the text's do.
   def shortest(digits: string, k: integer, given: string): string do
@@ -789,11 +797,11 @@ end
       end
     else
       if t.text == "-" and next.kind == "float" do
-        with ok({v, p1}) <- atom(p) do
+        if not float_held?(next.text) do error(problem(next.line, next.column, "float outside 64-bit range")) else with ok({v, p1}) <- atom(p) do
           ok({set(v, [{"Value", set(get(v, "Value"), [{"Float", AlchemJson.J.number(float_json(next.text, true))}])}, {"Line", n(t.line)}, {"Column", n(t.column)}]), p1})
         else
           error(why) -> error(why)
-        end
+        end end
       else
         with ok({v, p1}) <- primary(p) do
           ok({set(e, [{"Kind", s("unary")}, {"Op", s(t.text)}, {"Left", v}]), p1})
@@ -825,7 +833,7 @@ end
             spelled = String.contains?(t.text, "_") or String.contains?(t.text, "x") or String.contains?(t.text, "o") or String.contains?(t.text, "b")
             ok({set(e, [{"Kind", s("literal")}, {"Value", set(literal("integer"), [{"Integer", n(v)}, {"Text", s(if spelled do t.text else "" end)}])}]), adv(p)})
         end
-      "float" -> ok({set(e, [{"Kind", s("literal")}, {"Value", set(literal("float"), [{"Float", AlchemJson.J.number(float_json(t.text, false))}])}]), adv(p)})
+      "float" -> if not float_held?(t.text) do error(problem(t.line, t.column, "float outside 64-bit range")) else ok({set(e, [{"Kind", s("literal")}, {"Value", set(literal("float"), [{"Float", AlchemJson.J.number(float_json(t.text, false))}])}]), adv(p)}) end
       "template" ->
         with ok({template, p1}) <- template(adv(p), t) do ok({set(template, [{"Heredoc", s(heredoc_of(p, t))}]), p1}) else
   error(why) -> error(why)

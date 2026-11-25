@@ -408,11 +408,23 @@ defmodule AlchemCheck do
   # or a doctest, whose steps are not followed here.
   def merged(loaded: Loaded, entry: string): option[Problem] do
     trees = Enum.map(loaded.order, fn u -> u.tree end)
-    if skipped?(loaded) do none else
+    if skipped?(loaded) do doctest_problem(loaded, entry) else
       case expand_problem(loaded.order) do
         some(problem) -> some(problem)
         none -> merged_after(loaded, entry, trees)
       end
+    end
+  end
+
+  # documented: a doctest of a module the entry does not bring in.
+  def doctest_problem(loaded: Loaded, entry: string): option[Problem] do
+    macros = Enum.any?(loaded.order, fn u -> its(u.tree, "Macros") != [] or its(u.tree, "Uses") != [] or its(u.tree, "Requires") != [] end)
+    mine = Enum.filter(loaded.order, fn u -> u.path == entry end)
+    others = Enum.flat_map(loaded.order, fn u -> if u.path == entry do [] else [tx(u.tree, "Module")] end end)
+    wanted = Enum.flat_map(mine, fn u -> Enum.map(its(u.tree, "Doctests"), fn d -> AlchemJson.text_of(d) end) end)
+    case if macros do [] else Enum.filter(wanted, fn name -> not (name in others) end) end do
+      [name | _] -> some(diagnostic(entry, 1, 1, "doctest " <> name <> ": no imported module has that name"))
+      [] -> none
     end
   end
 

@@ -77,6 +77,16 @@ def verify(compiler=None):
     }
     for where, (held, pinned) in copies.items():
         assert sorted(held) == sorted(pinned), f'{where} is not the pinned list: only here {sorted(set(held) - set(pinned))}, only pinned {sorted(set(pinned) - set(held))}'
+    builtins = source[source.rfind('= map[', 0, source.index('"File.exists":')):source.index('\n}\n', source.index('"File.exists":'))]
+    pinned = {(name, 1 + types.count(',')) for name, types in re.findall(r'"([^"]+)":\s*\{\[\]string\{([^}]*)\}', builtins)}
+    text = (ROOT / 'implementations/alchem/native-functions.alc').read_text()
+    held = set()
+    for count, function in ((3, 'nf_simple'), (1, 'nf_simple_one'), (2, 'nf_simple_two')):
+        body = text[text.index(f'  def {function}(source'):]
+        body = body[:body.index('\n  end')]
+        for module, name in re.findall(r'nf_simple_pair\(source,name,last,b\[([0-9,]+)\],b\[([0-9,]+)\]\)', body):
+            held.add(('.'.join(bytes(int(n) for n in word.split(',')).decode() for word in (module, name)), count))
+    assert held == pinned, f'the compiler, nf_simple: only here {sorted(held - pinned)}, only pinned {sorted(pinned - held)}'
     print(f'facts: {len(named)} go.mod files name {next(iter(named.values()))}; {len(copies)} copies of the library\'s namespaces are the pinned ones')
 
 

@@ -301,6 +301,110 @@ defmodule AlchemTyping do
     # functions that implement each, one for a type.
     declared: map[string, AlchemJson.J]
     implementations: map[string, list[AlchemJson.J]]
+    notes: agent[list[Note]]
+  end
+
+  # What the walk notes of type variables as it goes (the checker's needs,
+  # reads and uses, which it shares between its passes): that a function's
+  # variable must support equality, or be read from JSON, or that a generic
+  # function was used with types for its variables.
+  type Note do
+    needs(of: string, variable: string)
+    reads(of: string, variable: string)
+    taken(caller: string, callee: string, source: string, names: list[string], types: list[string], at: AlchemJson.J)
+  end
+
+  def note(c: Ctx, n: Note): boolean do
+    Agent.update(c.notes, fn held -> [n | held] end)
+    true
+  end
+
+  # compare: comparable, noting the variables of the current function that
+  # must support equality.
+  def compare?(c: Ctx, t: string): boolean do
+    if not comparable?(c, t) do false else
+      Enum.each(tvars(t, none_strings()), fn v -> note(c, Note.needs(c.current, v)) end)
+      true
+    end
+  end
+
+  # instantiated.
+  def used(c: Ctx, e: AlchemJson.J, fun: AlchemJson.J, names: list[string], b: map[string, string]): boolean do
+    if names == [] do false else
+      source = case Map.get(c.functions, c.current) do
+        some(caller) -> tx(caller, "Source")
+        none -> ""
+      end
+      note(c, Note.taken(c.current, tx(fun, "Name"), source, names, Enum.map(names, fn n -> Map.get(b, n, "") end), e))
+    end
+  end
+
+  # The requirements pushed up through generic callers: for each use, what
+  # the callee's variable requires is required of the variables of the type
+  # it stands for.
+  def pushed(held: list[tuple[string, string]], uses: list[tuple[string, string, list[tuple[string, string]]]]): list[tuple[string, string]] do
+    more = Enum.reduce(uses, held, fn {caller, callee, pairs}, known ->
+      Enum.reduce(pairs, known, fn {name, typ}, sofar ->
+        if not ({callee, name} in sofar) do sofar else
+          Enum.reduce(tvars(typ, none_strings()), sofar, fn v, have -> if {caller, v} in have do have else [{caller, v} | have] end end)
+        end
+      end)
+    end)
+    if length(more) == length(held) do held else pushed(more, uses) end
+  end
+
+  # What Analyze finds once every function is walked: a use whose types do
+  # not meet what its function requires of them.
+  def required(c: Ctx): tuple[string, string] do
+    notes = Enum.reverse(Agent.get(c.notes, fn held -> held end))
+    none_yet: list[tuple[string, string]] = []
+    needs = Enum.uniq(Enum.flat_map(notes, fn n ->
+      case n do
+        Note.needs(of, v) -> [{of, v}]
+        _ -> none_yet
+      end
+    end))
+    reads = Enum.uniq(Enum.flat_map(notes, fn n ->
+      case n do
+        Note.reads(of, v) -> [{of, v}]
+        _ -> none_yet
+      end
+    end))
+    no_uses: list[tuple[string, string, list[tuple[string, string]]]] = []
+    uses = Enum.flat_map(notes, fn n ->
+      case n do
+        Note.taken(caller, callee, _, names, types, _) -> [{caller, callee, Enum.zip(names, types)}]
+        _ -> no_uses
+      end
+    end)
+    equal = pushed(needs, uses)
+    wrong = unmet(c, notes, equal, fn callee, v, typ -> if comparable?(c, typ) do "" else callee <> " needs equality for " <> v <> ", which " <> typ <> " does not support" end end)
+    if elem(wrong, 0) != "clean" do wrong else
+      read = pushed(reads, uses)
+      unmet(c, notes, read, fn callee, v, typ ->
+        blocked = unread(c, subst(typ, Map.new(Enum.map(tvars(typ, none_strings()), fn n -> {n, "integer"} end))))
+        if blocked == "" do "" else callee <> " reads " <> v <> " from JSON, and " <> typ <> " cannot be read: " <> blocked <> " has no JSON form" end
+      end)
+    end
+  end
+
+  def unmet(c: Ctx, notes: list[Note], wanted: list[tuple[string, string]], says: fn[string, string, string, string]): tuple[string, string] do
+    Enum.reduce(notes, {"clean", ""}, fn n, sofar ->
+      if elem(sofar, 0) != "clean" do sofar else
+        case n do
+          Note.taken(_, callee, source, names, types, e) ->
+            local = case Map.get(c.functions, callee) do
+              some(fun) -> local_name(fun)
+              none -> callee
+            end
+            message = Enum.reduce(Enum.zip(names, types), "", fn {v, typ}, said ->
+              if said != "" or not ({callee, v} in wanted) do said else says(local, v, typ) end
+            end)
+            if message == "" do sofar else located(source, at(e, message)) end
+          _ -> sofar
+        end
+      end
+    end)
   end
 
   # What a block's typing carries on to what comes after it: the type the
@@ -652,7 +756,7 @@ defmodule AlchemTyping do
           none -> error(at(j, "pinned binding " <> AlchemLexer.go_quote(p.name) <> " is not defined before this pattern"))
           some(bound) ->
             if bound != typ do error(at(j, "pinned binding " <> AlchemLexer.go_quote(p.name) <> " has type " <> bound <> ", pattern requires " <> typ)) else
-              if not comparable?(c, typ) do error(at(j, "pinned binding " <> AlchemLexer.go_quote(p.name) <> " has a type without equality")) else ok({p, scope}) end
+              if not compare?(c, typ) do error(at(j, "pinned binding " <> AlchemLexer.go_quote(p.name) <> " has a type without equality")) else ok({p, scope}) end
             end
         end
       "name" ->
@@ -1013,7 +1117,7 @@ defmodule AlchemTyping do
               some(member) ->
                 case ex(c, g(e, "Left"), scope, member, false, next) do
                   error(s) -> error(s)
-                  ok({_, after}) -> if not comparable?(c, member) do fail(e, "in requires elements that support equality") else typed("boolean", after) end
+                  ok({_, after}) -> if not compare?(c, member) do fail(e, "in requires elements that support equality") else typed("boolean", after) end
                 end
             end
         end
@@ -1175,11 +1279,11 @@ defmodule AlchemTyping do
                   if op == "++" or op == "--" do
                     case list_elem(a) do
                       none -> fail(e, op <> " requires lists")
-                      some(member) -> if op == "--" and not comparable?(c, member) do fail(e, "-- requires elements that support equality") else typed(a, next) end
+                      some(member) -> if op == "--" and not compare?(c, member) do fail(e, "-- requires elements that support equality") else typed(a, next) end
                     end
                   else
                     if op == "**" do (if a != "integer" and a != "float" do fail(e, "** requires integers or floats") else typed(a, next) end) else
-                      if op == "==" or op == "!=" do (if not comparable?(c, a) do fail(e, "function values do not support equality") else typed("boolean", next) end) else
+                      if op == "==" or op == "!=" do (if not compare?(c, a) do fail(e, "function values do not support equality") else typed("boolean", next) end) else
                         if a != "integer" and a != "float" and a != "string" and a != "atom" do fail(e, "ordering requires integers, floats, strings or atoms") else typed("boolean", next) end
                       end
                     end
@@ -1619,14 +1723,14 @@ defmodule AlchemTyping do
   end
 
   # ~r: the pattern RegexSource makes of the text and modifiers, which
-  # must compile. One the native Regex refuses is not said here.
+  # must compile. Regex.compile says of one what Go's regexp says.
   def regex_literal(e: AlchemJson.J, text: string, f: Flow): result[tuple[string, Flow], tuple[string, string]] do
     case regex_source(text, tx(e, "Op")) do
       none -> fail(e, "~r accepts the modifiers i, m, s and u")
       some(source) ->
         case Regex.compile(source) do
           ok(_) -> typed("regex", f)
-          error(_) -> error(skip("an invalid regular expression"))
+          error(why) -> fail(e, "invalid regular expression: " <> why)
         end
     end
   end
@@ -2019,7 +2123,10 @@ defmodule AlchemTyping do
                         if names == [] do typed(t, f) else
                           case (if want == "" do none else unify(t, want, names, none_map()) end) do
                             none -> fail(e, "reference to generic function " <> tx(fun, "Name") <> " needs an expected function type")
-                            some(b) -> if not resolved?(t, names, b) do fail(e, "reference to generic function " <> tx(fun, "Name") <> " needs an expected function type") else typed(instantiate(t, names, b), f) end
+                            some(b) -> if not resolved?(t, names, b) do fail(e, "reference to generic function " <> tx(fun, "Name") <> " needs an expected function type") else
+                              used(c, e, fun, names, b)
+                              typed(instantiate(t, names, b), f)
+                            end
                           end
                         end
                       end
@@ -2443,7 +2550,7 @@ defmodule AlchemTyping do
   # unbound, a constraint a bound type does not meet.
   def library_problem(c: Ctx, entry: Lib, b: map[string, string]): string do
     if Enum.any?(entry.vars, fn v -> not Map.has_key?(b, v) end) do "cannot infer the result type of " <> entry.name <> " here; annotate the binding it is assigned to" else
-      equal = Enum.find(entry.equal, fn v -> not comparable?(c, Map.get(b, v, "")) end)
+      equal = Enum.find(entry.equal, fn v -> not compare?(c, Map.get(b, v, "")) end)
       order = Enum.find(entry.order, fn v -> not orderable?(Map.get(b, v, "")) end)
       show = Enum.find(entry.show, fn v -> not (Map.get(b, v, "") in ["string", "integer", "float", "boolean", "atom"]) end)
       keys = Enum.find(entry.keys, fn v -> not key_type?(Map.get(b, v, "")) end)
@@ -2557,7 +2664,10 @@ defmodule AlchemTyping do
     names = tvars(t, none_strings())
     case Enum.find(names, fn v -> not (v in given) end) do
       some(v) -> v
-      none -> unread(c, subst(t, Map.new(Enum.map(names, fn v -> {v, "integer"} end))))
+      none ->
+        blocked = unread(c, subst(t, Map.new(Enum.map(names, fn v -> {v, "integer"} end))))
+        if blocked == "" do Enum.each(names, fn v -> note(c, Note.reads(c.current, v)) end) end
+        blocked
     end
   end
 
@@ -2996,7 +3106,7 @@ defmodule AlchemTyping do
                   end
                 else
                   if n == "List.contains" do
-                    if not comparable?(c, elem) do fail(e, "List.contains requires elements that support equality") else
+                    if not compare?(c, elem) do fail(e, "List.contains requires elements that support equality") else
                       case one(c, a1, scope, elem, f1) do
                         error(s) -> error(s)
                         ok({_, f2}) -> typed("boolean", f2)
@@ -3183,7 +3293,9 @@ defmodule AlchemTyping do
                 else none_map() end
                 case arguments(c, args, scope, Enum.map(params, fn p -> tx(p, "Type") end), names, b0, tx(fun, "Name"), f) do
                   error(s) -> error(s)
-                  ok({b, next}) -> typed(instantiate(tx(fun, "Type"), names, b), next)
+                  ok({b, next}) ->
+                    used(c, e, fun, names, b)
+                    typed(instantiate(tx(fun, "Type"), names, b), next)
                 end
               end
           end
@@ -3810,7 +3922,9 @@ defmodule AlchemTyping do
           case declare(program, t) do
             error(stop) -> stop
             ok({types, variants}) ->
-              c = %Ctx{t: t, functions: Map.new(Enum.map(functions, fn fun -> {tx(fun, "Name"), fun} end)), types: types, variants: variants, vars: none_strings(), current: "", declared: declared, implementations: implementations}
+              nothing: list[Note] = []
+              notes = Agent.start(fn -> nothing end)
+              c = %Ctx{t: t, functions: Map.new(Enum.map(functions, fn fun -> {tx(fun, "Name"), fun} end)), types: types, variants: variants, vars: none_strings(), current: "", declared: declared, implementations: implementations, notes: notes}
               given: result[list[AlchemJson.J], tuple[string, string]] = case declarations(c, program) do
                 error(stop) -> error(stop)
                 ok(_) -> if Enum.any?(functions, fn fun -> tx(fun, "Test") != "" end) do contexts(c, program, functions) else ok(functions) end
@@ -3828,7 +3942,10 @@ defmodule AlchemTyping do
                   end)
                   case walked do
                     error(stop) -> stop
-                    ok(_) -> {"clean", ""}
+                    ok(_) ->
+                      wrong = required(walking)
+                      Agent.stop(notes)
+                      wrong
                   end
               end
           end
