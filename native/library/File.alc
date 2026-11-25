@@ -73,6 +73,32 @@
     r = Sys.mkdirs(p, 0o755)
     Sys.done(elem(r, 0), "mkdir", elem(r, 1))
   end
+# What the system holds of a descriptor, written to the disk. A disk that
+# cannot be told to write all it holds (macOS, where 74 asks for that) is
+# given the plain call.
+#: _sync/1
+  def _sync(fd: integer): integer do
+    r = Sys.call(74, fd)
+    if r == -4 do File._sync(fd) else if r == -95 do Sys.call(75, fd) else r end end
+  end
+# Windows writes out a file that is open for writing, and the names in a
+# directory itself.
+#: sync/1 needs _sync/1 dir?/1 Sys.done/3 Sys.open/3
+  def sync(p: string): result[tuple[], string] do
+    if Sys.windows() == 1 and File.dir?(p) do ok({}) else
+      fd = Sys.open(p, if Sys.windows() == 1 do 2 else 0 end, 0)
+      if fd < 0 do Sys.done(fd, "open", p) else
+        r = File._sync(fd)
+        Sys.call(3, fd)
+        Sys.done(r, "sync", p)
+      end
+    end
+  end
+#: sync/1 form 2 needs _sync/1 Sys.why/3
+  def sync(f: file): result[tuple[], string] do
+    r = if Sys.peek(f.at + 8) == 1 do 0 else File._sync(Sys.peek(f.at)) end
+    if Sys.peek(f.at + 8) == 1 do error("closed") else if r < 0 do error(Sys.why("sync", f.path, r)) else ok({}) end end
+  end
 #: rename/2 needs Sys.done/3 Sys.two/3
   def rename(a: string, b: string): result[tuple[], string] do
     Sys.done(Sys.two(82, a, b), "rename", a <> " " <> b)

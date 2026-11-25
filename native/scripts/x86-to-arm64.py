@@ -1484,7 +1484,7 @@ DARWIN_CALLS = [
     (49, '_bind', 'sain'), (50, '_listen', 'plain'), (51, '_getsockname', 'saout'), (52, '_getpeername', 'saout'),
     (54, '_setsockopt', 'sockopt'), (55, '_getsockopt', 'getsockopt'), (57, '_fork', 'plain'), (59, '_execve', 'plain'),
     (60, '_exit', 'plain'), (61, '_wait4', 'wait4'), (62, '_kill', 'kill'), (72, '_fcntl', 'fcntl'),
-    (74, '_fsync', 'plain'), (77, '_ftruncate', 'plain'), (79, '_getcwd', 'getcwd'), (80, '_chdir', 'plain'),
+    (74, '_fcntl', 'fullsync'), (75, '_fsync', 'plain'), (77, '_ftruncate', 'plain'), (79, '_getcwd', 'getcwd'), (80, '_chdir', 'plain'),
     (82, '_rename', 'plain'), (83, '_mkdir', 'plain'), (84, '_rmdir', 'plain'), (86, '_link', 'plain'),
     (87, '_unlink', 'plain'), (88, '_symlink', 'plain'), (89, '_readlink', 'plain'), (90, '_chmod', 'plain'),
     (217, '___getdirentries64', 'dents'), (228, '_clock_gettime', 'clock'), (231, '_exit', 'plain'),
@@ -1496,7 +1496,7 @@ DARWIN_CALLS = [
 DARWIN_KINDS = ['plain', 'mmap', 'open', 'openat', 'stat', 'lstat', 'fstat', 'fstatat', 'fcntl', 'getcwd', 'dents',
                 'clock', 'random', 'ppoll', 'pipe2', 'mremap', 'sigaction', 'memfd', 'kill', 'wait4', 'atfd',
                 'atflags', 'unlinkat', 'utimensat', 'socket', 'sain', 'saout', 'accept', 'accept4', 'sendto',
-                'recvfrom', 'sockopt', 'getsockopt']
+                'recvfrom', 'sockopt', 'getsockopt', 'fullsync']
 # What is done with a call's result once it is no -1 (X19 holds the index).
 DARWIN_POSTS = ['back', 'stat', 'getfl', 'getcwd', 'dents', 'wait4', 'sockfl', 'saout', 'accept4', 'sigact', 'pipe2',
                 'soerror']
@@ -1688,6 +1688,12 @@ xd_k_fcntl_2:
  mov x19,#@getfl
 xd_k_fcntl_3:
  str x2,[sp]
+ b xd_call
+// fsync writes all the disk holds: fcntl(fd, F_FULLFSYNC), as Go's File.Sync
+// is; a plain fsync of macOS stops at the disk's own memory.
+xd_k_fullsync:
+ mov x1,#51
+ str xzr,[sp]
  b xd_call
 xd_k_getcwd:
  mov x20,x0

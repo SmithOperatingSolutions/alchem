@@ -23,6 +23,10 @@
       Crypto.same(a + 1, b + 1, n - 1, v + d * d)
     end
   end
+#: crc32/1 needs Sys.crc/3
+  def crc32(data: string): integer do
+    Sys.crc(Sys.addr(data), byte_size(data), 0)
+  end
 # The number of an algorithm; f is the function that asks.
 #: alg/2
   def alg(a: atom, f: string): integer do

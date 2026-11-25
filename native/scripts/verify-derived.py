@@ -19,7 +19,6 @@ says why its output is not made again here, and every file that says it is
 generated must be one a generator here writes: a new one cannot be left out.
 """
 import argparse
-import os
 from pathlib import Path
 import re
 import shutil
@@ -121,10 +120,7 @@ def pinned_command(top):
     """The pinned command line, built from its module."""
     sys.path.insert(0, str(ROOT / 'scripts'))
     import reference
-    out = Path(top) / 'alchem-pinned'
-    env = dict(os.environ, GOFLAGS='-mod=mod', GOPROXY='off', GOTOOLCHAIN='local', GOMODCACHE=str(ROOT / '.cache/gomod'))
-    subprocess.run(['go', 'build', '-o', str(out), './cmd/alchem'], cwd=reference.tree(), env=env, check=True)
-    return out
+    return reference.command(Path(top) / 'alchem-pinned')
 
 
 def files(root):

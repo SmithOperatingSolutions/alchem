@@ -98,6 +98,7 @@ GATES={
     'commands':'verify(compiler)',
     'lsp':'verify(compiler)',
     'replaced':'verify(compiler)',
+    'binary':'verify(compiler)',
     'facts':'verify(compiler)',
     'front_end':'verify(compiler)',
     'testing':'verify(compiler)',

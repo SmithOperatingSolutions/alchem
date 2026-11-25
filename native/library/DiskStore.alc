@@ -101,7 +101,7 @@
     1 + DiskStore._varn(byte_size(key)) + byte_size(key) + (if del == 1 do 0 else DiskStore._varn(byte_size(value)) + byte_size(value) end)
   end
 # A record of changes is written at a: the address after it.
-#: _record/2 needs HTTP._crc/4 HTTP._k/0 _size/1 _var/2
+#: _record/2 needs Sys.crc/3 _size/1 _var/2
   def _record(a: integer, changes: list[tuple[integer, string, string]]): integer do
     size = Enum.reduce(changes, 0, fn c, acc -> acc + DiskStore._size(c) end)
     e = Enum.reduce(changes, a + 8, fn {del, key, value}, at ->
@@ -110,7 +110,7 @@
       if del == 1 do b else Sys.copy(DiskStore._var(b, byte_size(value)), Sys.addr(value), byte_size(value)) end
     end)
     Sys.poke(e, 0)
-    sum = HTTP._crc(HTTP._k(), a + 8, size, 0)
+    sum = Sys.crc(a + 8, size, 0)
     Sys.poke(a, size)
     Enum.reduce(0..3, sum, fn i, v ->
       Sys.poke(a + 4 + i, Sys.peek(a + 4 + i) - Sys.byte(a + 4 + i) + rem(v, 256))
@@ -139,12 +139,12 @@
 # The records of a log (n bytes at a) from the offset at are made in
 # memory, up to the first that is cut short or spoiled: the offset after
 # the last whole one.
-#: _load/4 needs HTTP._crc/4 HTTP._k/0 _replay/4
+#: _load/4 needs Sys.crc/3 _replay/4
   def _load(sb: integer, a: integer, n: integer, at: integer): integer do
     if n - at < 8 do at else
       size = Sys.byte(a + at) + Sys.byte(a + at + 1) * 256 + Sys.byte(a + at + 2) * 65536 + Sys.byte(a + at + 3) * 16777216
       sum = Sys.byte(a + at + 4) + Sys.byte(a + at + 5) * 256 + Sys.byte(a + at + 6) * 65536 + Sys.byte(a + at + 7) * 16777216
-      if size > n - at - 8 or HTTP._crc(HTTP._k(), a + at + 8, size, 0) != sum or DiskStore._replay(sb, a + at + 8, size, 1) == 0 do at else
+      if size > n - at - 8 or Sys.crc(a + at + 8, size, 0) != sum or DiskStore._replay(sb, a + at + 8, size, 1) == 0 do at else
         DiskStore._replay(sb, a + at + 8, size, 0)
         DiskStore._load(sb, a, n, at + 8 + size)
       end

@@ -10,6 +10,8 @@ import subprocess
 import sys
 import tempfile
 from run import ROOT
+sys.path.insert(0,str(ROOT/'scripts'))
+import reference as pinned  # noqa: E402
 from self_hosted_components import verify_legacy_program as verify_program
 
 
@@ -21,9 +23,7 @@ def literal(data):
 
 def reference(root):
     go=os.environ.get('ALCHEM_FRONTEND_GO','go')
-    module=subprocess.run([go,'list','-m','-f','{{.Dir}}','github.com/SmithOperatingSolutions/alchem'],cwd=ROOT/'adapters/alchem',capture_output=True,text=True,timeout=120)
-    assert module.returncode==0,module.stderr
-    text=(Path(module.stdout.strip())/'compiler/library.go.txt').read_text()
+    text=(pinned.tree()/'compiler/library.go.txt').read_text()
     section=text[text.index('type graphemeClass uint8'):text.index('func strGraphemes(')]
     snapshot=json.loads((ROOT/'spec/grapheme-ranges.json').read_text())
     assert hashlib.sha256(section.encode()).hexdigest()==snapshot['reference_sha256'],'pinned grapheme runtime changed'

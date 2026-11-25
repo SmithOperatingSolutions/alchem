@@ -769,7 +769,7 @@ defmodule NativeSourceCompiler do
     nc_word(source,pos,b[68,117,114,97,116,105,111,110])+nc_word(source,pos,b[76,111,103,103,101,114])+nc_word(source,pos,b[79,112,116,105,111,110,80,97,114,115,101,114])+nc_word(source,pos,b[65,116,111,109])+nc_word(source,pos,b[75,101,121,119,111,114,100])+nc_word(source,pos,b[80,111,114,116])+nc_word(source,pos,b[78,111,100,101])+nc_word(source,pos,b[82,101,103,105,115,116,114,121])+nc_word(source,pos,b[68,121,110,97,109,105,99,83,117,112,101,114,118,105,115,111,114])+nc_word(source,pos,b[84,67,80])
   end
   def nc_library_module_4(source: bytes, pos: integer): integer do
-    nc_word(source,pos,b[72,84,84,80])+nc_word(source,pos,b[85,68,80])+nc_word(source,pos,b[71,101,110])+nc_word(source,pos,b[80,111,114,116,69,118,101,110,116])+nc_word(source,pos,b[82,97,110,103,101])+nc_word(source,pos,b[87,101,98,83,111,99,107,101,116])+nc_word(source,pos,b[67,114,121,112,116,111])+nc_word(source,pos,b[77,97,114,107,117,112])+nc_word(source,pos,b[68,105,115,107,83,116,111,114,101])
+    nc_word(source,pos,b[72,84,84,80])+nc_word(source,pos,b[85,68,80])+nc_word(source,pos,b[71,101,110])+nc_word(source,pos,b[80,111,114,116,69,118,101,110,116])+nc_word(source,pos,b[82,97,110,103,101])+nc_word(source,pos,b[87,101,98,83,111,99,107,101,116])+nc_word(source,pos,b[67,114,121,112,116,111])+nc_word(source,pos,b[77,97,114,107,117,112])+nc_word(source,pos,b[68,105,115,107,83,116,111,114,101])+nc_word(source,pos,b[66,105,110,97,114,121])
   end
   def nc_imports_end(source: bytes, pos: integer): integer do
     if nc_word(source,pos,b[105,109,112,111,114,116]) != 1 do pos else

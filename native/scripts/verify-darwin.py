@@ -41,7 +41,7 @@ HERE = ROOT / 'build/darwin'
 # tools), core_tools (it builds Linux tools), test_driver (alchem run reaches
 # its standard input through /proc), and modules and gaps, whose programs of
 # megabytes take the compiler for macOS past their time (spec/darwin-arm64.md).
-GATES = ['atoms', 'boolean_library', 'clauses', 'closures', 'commands', 'comprehensions', 'core_modules', 'crypto',
+GATES = ['atoms', 'binary', 'boolean_library', 'clauses', 'closures', 'commands', 'comprehensions', 'core_modules', 'crypto',
          'described',
          'diskstore', 'front_end', 'equality', 'exceptions', 'facts', 'failures', 'fetch', 'floats', 'forms', 'gen', 'generics', 'graphemes',
          'inference', 'inspection', 'json_library', 'library', 'lists', 'literals', 'long_bodies', 'lsp', 'macros', 'maps',
@@ -89,10 +89,7 @@ def self_build(compiler):
 
 def corpus(compiler):
     examples = load(ROOT / 'scripts/upstream-examples.py', 'upstream_examples')
-    pinned = HERE / 'alchem-upstream'
-    if not pinned.exists():
-        HERE.mkdir(parents=True, exist_ok=True)
-        subprocess.run(['go', 'build', '-o', str(pinned), './cmd/alchem'], cwd=examples.U, env=examples.env, check=True)
+    pinned = examples.reference.command(HERE / 'alchem-upstream')
 
     def run(command, source, stdin):
         with tempfile.TemporaryDirectory(dir=HERE) as d:
@@ -117,16 +114,17 @@ def corpus(compiler):
     with ThreadPoolExecutor(8) as pool:
         wanted = list(pool.map(lambda c: run([str(pinned), 'run'], c[1], False), cases))
         got = list(pool.map(lambda c: run([str(compiler)], c[1], True), cases))
-    counted = failed = 0
+    counted = failed = refused = 0
     for (name, _), u, r in zip(cases, wanted, got):
         if u[1] != 0:
-            continue  # the pinned compiler refuses it standalone
+            refused += 1  # the pinned compiler refuses it standalone
+            continue
         counted += 1
         if r[1] != 0 or r[2] != u[2]:
             failed += 1
             print(f'FAIL {name}: {r[0]} {r[1]} wanted {u[2][:80]!r} got {r[2][:80]!r} {r[3][:120]!r}')
     assert failed == 0, f'{failed} of {counted} examples differ'
-    print(f'PASS corpus: {counted} examples print what the pinned compiler prints')
+    print(f'PASS corpus: {counted} examples print what the pinned compiler ({examples.reference.version()}) prints, {refused} it refuses standalone')
 
 
 def gate(compiler, name):

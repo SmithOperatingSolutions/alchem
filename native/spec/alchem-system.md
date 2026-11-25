@@ -51,7 +51,7 @@ its length, 16 its room, 24 where the monotonic clock started, 32
 collections counted, 40 and 48 bytes of standard input read ahead, 56/64/72
 the pad (a mapped buffer that grows and is reused: files, command output
 and lines are gathered there and copied to the arena once), 512 small
-results, 1024 a stat record, 4096 a buffer of 12288 bytes.
+results, 496 the table of the CRC-32 (`Sys.crc`), 1024 a stat record, 4096 a buffer of 12288 bytes.
 
 ### The environment
 

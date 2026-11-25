@@ -6,7 +6,7 @@ each function, without Go, a C compiler or LLVM in the compilation path. It comp
 compiler it builds from its own source builds the same bytes again
 (A1 = A2 = A3). The aim is an Alchem that is self-hosted.
 
-All 871 counted examples of the syntax and library references give the same
+All 878 counted examples of the syntax and library references give the same
 output, status and errors as programs built by the Go compiler of this
 repository. Where the two still differ, `spec/` says so and why.
 

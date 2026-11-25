@@ -1,0 +1,142 @@
+[
+ [
+  0,
+  "256\ntrue\n32640\n",
+  ""
+ ],
+ [
+  0,
+  "[0]\n0\n[1]\n1\n[2]\n2\n[127]\n127\n[128]\n128\n[254]\n254\n[255]\n255\n[0]\n0\n[1]\n1\n[2]\n2\n[127]\n127\n[128]\n128\n[254]\n254\n[255]\n255\n[0, 0]\n0\n[0, 1]\n1\n[0, 2]\n2\n[0, 127]\n127\n[0, 128]\n128\n[0, 254]\n254\n[0, 255]\n255\n[0, 0]\n0\n[1, 0]\n1\n[2, 0]\n2\n[127, 0]\n127\n[128, 0]\n128\n[254, 0]\n254\n[255, 0]\n255\n[0, 0, 0, 0]\n0\n[0, 0, 0, 1]\n1\n[0, 0, 0, 2]\n2\n[0, 0, 0, 127]\n127\n[0, 0, 0, 128]\n128\n[0, 0, 0, 254]\n254\n[0, 0, 0, 255]\n255\n[0, 0, 0, 0]\n0\n[1, 0, 0, 0]\n1\n[2, 0, 0, 0]\n2\n[127, 0, 0, 0]\n127\n[128, 0, 0, 0]\n128\n[254, 0, 0, 0]\n254\n[255, 0, 0, 0]\n255\n[0, 0, 0, 0, 0, 0, 0, 0]\n0\n[0, 0, 0, 0, 0, 0, 0, 1]\n1\n[0, 0, 0, 0, 0, 0, 0, 2]\n2\n[0, 0, 0, 0, 0, 0, 0, 127]\n127\n[0, 0, 0, 0, 0, 0, 0, 128]\n128\n[0, 0, 0, 0, 0, 0, 0, 254]\n254\n[0, 0, 0, 0, 0, 0, 0, 255]\n255\n[0, 0, 0, 0, 0, 0, 0, 0]\n0\n[1, 0, 0, 0, 0, 0, 0, 0]\n1\n[2, 0, 0, 0, 0, 0, 0, 0]\n2\n[127, 0, 0, 0, 0, 0, 0, 0]\n127\n[128, 0, 0, 0, 0, 0, 0, 0]\n128\n[254, 0, 0, 0, 0, 0, 0, 0]\n254\n[255, 0, 0, 0, 0, 0, 0, 0]\n255\n",
+  ""
+ ],
+ [
+  0,
+  "[127, 255, 255, 255, 255, 255, 255, 255]\n[255, 255, 255, 255, 255, 255, 255, 127]\n9223372036854775807\n-129\n[128, 0, 0, 0, 0, 0, 0, 0]\n[0, 0, 0, 0, 0, 0, 0, 128]\n-9223372036854775808\n128\n[255, 255, 255, 255, 255, 255, 255, 255]\n[255, 255, 255, 255, 255, 255, 255, 255]\n-1\n-1\n[255, 255, 255, 255, 255, 255, 255, 0]\n[0, 255, 255, 255, 255, 255, 255, 255]\n-256\n72057594037927935\n[1, 2, 3, 4, 5, 6, 7, 8]\n[8, 7, 6, 5, 4, 3, 2, 1]\n72623859790382856\n578437695752307201\n",
+  ""
+ ],
+ [
+  0,
+  "\"\\xff\\xff\"\n\"\\xff\\xff\\xff\\xff\"\n4294967295\n65279\n",
+  ""
+ ],
+ [
+  0,
+  "\"ABCDEF\"\n\"AB\"\n\"\"\n[]\n[104, 195, 169]\n",
+  ""
+ ],
+ [
+  2,
+  "before\n",
+  "main.alc:4:16: Binary.at: the position is outside the string\n  at Main.main (main.alc:4)\n"
+ ],
+ [
+  2,
+  "before\n",
+  "main.alc:4:16: Binary.at: the position is outside the string\n  at Main.main (main.alc:4)\n"
+ ],
+ [
+  2,
+  "before\n",
+  "main.alc:4:16: Binary.at: the position is outside the string\n  at Main.main (main.alc:4)\n"
+ ],
+ [
+  2,
+  "before\n",
+  "main.alc:4:16: Binary.from_list: a byte is a number from 0 to 255\n  at Main.main (main.alc:4)\n"
+ ],
+ [
+  2,
+  "before\n",
+  "main.alc:4:16: Binary.from_list: a byte is a number from 0 to 255\n  at Main.main (main.alc:4)\n"
+ ],
+ [
+  2,
+  "before\n",
+  "main.alc:4:16: Binary.encode: the number does not fit in the size\n  at Main.main (main.alc:4)\n"
+ ],
+ [
+  2,
+  "before\n",
+  "main.alc:4:16: Binary.encode: the number does not fit in the size\n  at Main.main (main.alc:4)\n"
+ ],
+ [
+  2,
+  "before\n",
+  "main.alc:4:16: Binary.encode: the number does not fit in the size\n  at Main.main (main.alc:4)\n"
+ ],
+ [
+  2,
+  "before\n",
+  "main.alc:4:16: Binary.encode: the size is 1, 2, 4 or 8 bytes\n  at Main.main (main.alc:4)\n"
+ ],
+ [
+  2,
+  "before\n",
+  "main.alc:4:16: Binary.encode: the order is :big or :little\n  at Main.main (main.alc:4)\n"
+ ],
+ [
+  2,
+  "before\n",
+  "main.alc:4:16: Binary.decode: the bytes are outside the string\n  at Main.main (main.alc:4)\n"
+ ],
+ [
+  2,
+  "before\n",
+  "main.alc:4:16: Binary.decode: the bytes are outside the string\n  at Main.main (main.alc:4)\n"
+ ],
+ [
+  2,
+  "before\n",
+  "main.alc:4:16: Binary.decode: the bytes are outside the string\n  at Main.main (main.alc:4)\n"
+ ],
+ [
+  2,
+  "before\n",
+  "main.alc:4:16: Binary.decode: the size is 1, 2, 4 or 8 bytes\n  at Main.main (main.alc:4)\n"
+ ],
+ [
+  2,
+  "before\n",
+  "main.alc:4:16: Binary.decode: the order is :big or :little\n  at Main.main (main.alc:4)\n"
+ ],
+ [
+  1,
+  "",
+  "main.alc:3:26: expected string, found integer\n"
+ ],
+ [
+  1,
+  "",
+  "main.alc:3:33: argument type mismatch for Binary.from_list: expected elements of integer, found string\n"
+ ],
+ [
+  1,
+  "",
+  "main.alc:3:36: expected atom, found string\n"
+ ],
+ [
+  1,
+  "",
+  "main.alc:3:16: undefined function Binary.size\n"
+ ],
+ [
+  1,
+  "",
+  "main.alc:3:26: expected string, found integer\n"
+ ],
+ [
+  1,
+  "",
+  "main.alc:1:11: reserved module name Binary\n"
+ ],
+ [
+  0,
+  "0\n3421780262\n3641873119\n549755813760\n",
+  ""
+ ],
+ [
+  0,
+  "ok({})\nok({})\nerror(\"open none.txt: no such file or directory\")\nok({})\ntrue\nerror(\"closed\")\nok(\"new\")\n",
+  ""
+ ]
+]
