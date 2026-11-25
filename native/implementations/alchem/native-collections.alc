@@ -22,7 +22,7 @@ defmodule NativeCollections do
     size = close-open
     groups = nc_units(size,4)
     data = if close < open do b[] else if size > 4096 do b[] else if groups*4 != size do b[] else if size == 0 do b[] else nl_groups(source,open,0,groups,groups) end end end end
-    if size == 0 do nc_value(close+1,nc_text_emit(b[]),b[1]) else if Enum.count(data) == 0 do b[] else nc_value(close+1,nc_text_emit(data),b[1]) end end
+    if size == 0 do nc_value(close+1,nc_literal_emit(b[]),b[1]) else if Enum.count(data) == 0 do b[] else nc_value(close+1,nc_literal_emit(data),b[1]) end end
   end
   def nl_groups(source: bytes, at: integer, first: integer, stop: integer, count: integer): bytes do
     if stop-first == 1 do nl_group(source,at+first*4,if stop == count do 1 else 0 end) else
