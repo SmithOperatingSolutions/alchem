@@ -244,7 +244,8 @@ def held(root):
 def scene(command,files,lines,pinned=False):
     """A scene run by a command: what each command line gave, and the files
     left. The pinned command finds a package with the Go toolchain, which it
-    is given (pinned); alchem is given none."""
+    is given (pinned); alchem is given none. What the Go toolchain counts of
+    its own runs under the home directory is no file of the scene."""
     with tempfile.TemporaryDirectory(prefix='alchem-commands-') as d:
         root=Path(d).resolve();lay(files,root);(root/'home').mkdir(exist_ok=True)
         runs=[]
@@ -252,7 +253,7 @@ def scene(command,files,lines,pinned=False):
             given=''.join(a[1:] for a in arguments if a.startswith('<')).encode()
             run=subprocess.run([str(command)]+[a for a in arguments if not a.startswith('<')],input=given,capture_output=True,cwd=root,env=surroundings(root/'home',pinned,arguments[:1]==['alx']),timeout=900)
             runs.append([run.returncode]+[text.decode('utf8','replace').replace(str(root)+os.sep,'.'+os.sep).replace(json.dumps(str(root)+os.sep)[1:-1],json.dumps('.'+os.sep)[1:-1]) for text in (run.stdout,run.stderr)])
-        return runs,held(root)
+        return runs,{path:text for path,text in held(root).items() if '/go/telemetry/' not in path}
 
 
 def surroundings(home,pinned=False,building=False):

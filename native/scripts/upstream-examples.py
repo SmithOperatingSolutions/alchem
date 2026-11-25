@@ -26,7 +26,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 REPO=str(Path(__file__).resolve().parents[1])
 CACHE=REPO+'/.cache/gomod'
-U=str(next(Path(CACHE+'/github.com/!smith!operating!solutions').glob('alchem@*')))
+# The version adapters/alchem/go.mod names: the cache may hold others.
+U=CACHE+'/github.com/!smith!operating!solutions/alchem@'+re.search(r'SmithOperatingSolutions/alchem (\S+)',Path(REPO+'/adapters/alchem/go.mod').read_text()).group(1)
 HERE=REPO+'/build/dev'
 UP=HERE+'/alchem-upstream'
 env=dict(os.environ,GOTOOLCHAIN='local',GOPROXY='off',GOFLAGS='-mod=mod',GOMODCACHE=CACHE)

@@ -1,22 +1,22 @@
 # Build and run the self-hosted Alchem compiler
 
-Requires Linux x86-64 and [mise](https://mise.jdx.dev), which installs the pinned
-Go, Rust and Python from mise.toml. Populate locked dependencies once:
+Requires Linux x86-64 and [mise](https://mise.jdx.dev), which installs the
+Python of mise.toml. A build needs neither Go nor Rust:
 
 ```sh
-mise install
-mise run fetch
+mise install python
 mise run build
 ```
 
-On other hosts (for example Apple Silicon) run the same steps in the linux/amd64
-container: `mise run linux:fetch` and `mise run linux:build`. Emulated x86-64 can
-build and run the compiler but cannot pass the ptrace/strace gates of the full
-suite.
+On other hosts (for example Apple Silicon) run the same step in the linux/amd64
+container: `mise run linux:build`. Emulated x86-64 can build and run the
+compiler but cannot pass the ptrace/strace gates of the full suite.
 
-The build itself runs offline. It builds the bootstrap tools, assembles the Alchem source, produces
-A1/A2/A3, requires equal bytes and an executable smoke, then publishes A3 as
-build/native/alchem-compiler. Generated binaries are ignored build artifacts.
+The build downloads the released compiler `pinned-compiler.json` names, once,
+and checks its sum. That compiler builds the current source (A1), A1 builds it
+again (A2) and A2 once more (A3); the three must be the same bytes. A3 is then
+published as build/native/alchem-compiler ([self-hosting](self-hosting.md)).
+Generated binaries are ignored build artifacts.
 
 ## Compile with Alchem
 
