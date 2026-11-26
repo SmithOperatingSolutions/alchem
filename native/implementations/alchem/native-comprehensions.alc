@@ -118,8 +118,16 @@ defmodule NativeComprehensions do
   end
   # A with used as a value is a closure in the pinned compiler: a trace shows
   # it running the with.
+  # A body that does not compile for want of a lambda's type waits for the
+  # type the else arms give, as the first branch of an if does (nf_hinting).
   def wc_value(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
-    zf_valued(source,table,env,nz_closure(source,table,wc_with(source,start,nj_valued(env),table,depth),start),start)
+    valued = nj_valued(env)
+    first = wc_with(source,start,valued,table,depth)
+    hinting = if nc_pos(first) >= 0 do b[] else nf_trial(source,start,valued,table) end
+    trial = if Enum.count(hinting) == 0 do b[] else wc_with(source,start,hinting,table,depth) end
+    settled = nf_settling(valued,trial)
+    made = if nc_pos(first) >= 0 do first else if Enum.count(settled) == 0 do b[] else wc_with(source,start,settled,table,depth) end end
+    zf_valued(source,table,env,nz_closure(source,table,made,start),start)
   end
   # The clause at pos and everything after it: a packet at the end of the body.
   def wc_clause(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, origin: integer): bytes do
@@ -156,11 +164,13 @@ defmodule NativeComprehensions do
     store = Enum.concat(nc_code(value),nc_slot(b[72,137,69],slot))
     other = nc_expect(source,nc_pos(inner),b[101,108,115,101])
     # What a value that does not match meets is a statement of its own in the pinned compiler, where the with stands.
-    missed = if wc_open(tree,0) == 1 do b[] else
-      if other < 0 do wc_unmatched(table,plan,nc_kind(value),inner) else
-        wc_arms(source,other,held,table,Enum.at(plan,3,0),nc_join(nc_slice(plan,0,7),b[0],nc_join(nc_u32(Enum.count(given)-Enum.count(held)),nc_slice(given,0,Enum.count(given)-Enum.count(held)),b[])))
-      end
+    arms = nc_join(nc_slice(plan,0,7),b[0],nc_join(nc_u32(Enum.count(given)-Enum.count(held)),nc_slice(given,0,Enum.count(given)-Enum.count(held)),b[]))
+    plain = if wc_open(tree,0) == 1 do b[] else
+      if other < 0 do wc_unmatched(table,plan,nc_kind(value),inner) else wc_arms(source,other,held,table,Enum.at(plan,3,0),arms) end
     end
+    # Else arms that do not compile are expected to give the body's type (nf_led).
+    led = if nc_pos(plain) >= 0 do b[] else if other < 0 do b[] else if wc_open(tree,0) == 1 do b[] else nf_led(source,held,table,inner,other) end end end
+    missed = if Enum.count(led) == 0 do plain else wc_arms(source,other,led,table,Enum.at(plan,3,0),arms) end
     miss = zf_counted(source,table,held,missed,nc_cursor(plan,4))
     if Enum.count(match) == 0 do b[] else
       if wc_open(tree,0) == 1 do nw_keep(nc_value(nc_pos(inner),nc_join(store,match,nc_code(inner)),nc_kind(inner)),inner,b[]) else
