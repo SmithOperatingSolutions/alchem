@@ -1878,5 +1878,45 @@
    "121600\n",
    ""
   ]
+ },
+ {
+  "source": "defmodule Joined do\n  def apply_to(x: a, f: fn[a, b]): b do\n    f.(x)\n  end\n\n  def pick(n: integer): string do\n    inspect(case n do\n      2 -> ok(1)\n      3 -> error(\"42\")\n      _ -> apply_to(100, fn v -> ok(v) end)\n    end)\n  end\n\n  def main() do\n    IO.puts(pick(2))\n    IO.puts(pick(3))\n    IO.puts(pick(4))\n    IO.inspect(if false do ok(1) else if false do error(\"s\") else apply_to(5, fn v -> ok(v + 1) end) end end)\n    IO.inspect(cond do\n      false -> ok(1)\n      false -> error(\"s\")\n      true -> apply_to(7, fn v -> error(Integer.to_string(v)) end)\n    end)\n  end\nend\n",
+  "result": [
+   0,
+   "ok(1)\nerror(\"42\")\nok(100)\nok(6)\nerror(\"7\")\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule Fields do\n  struct P do\n    x: integer\n    name: string = \"p\"\n    tags: list[string] = []\n  end\n\n  def apply_to(x: a, f: fn[a, b]): b do\n    f.(x)\n  end\n\n  def one(): result[integer, string] do\n    ok(1)\n  end\n\n  def main() do\n    IO.inspect(%P{x: Enum.max([3, 4]), name: Enum.max([\"a\", \"b\"]), tags: Enum.concat([], [])})\n    g = fn(acc: result[integer, string], item: string): result[integer, string] do\n      case acc do\n        ok(n) -> ok(n + String.length(item))\n        error(e) -> error(e)\n      end\n    end\n    IO.inspect(reduce([\"ab\", \"c\"], JSON.decode_as(\"5\"), g))\n    IO.inspect(reduce([\"ab\"], JSON.decode_as(\"<\"), g))\n    checks: list[fn[string, boolean]] = for v <- [1, 2] do fn s -> String.length(s) > v end end\n    IO.inspect(Enum.map(checks, fn f -> f.(\"ab\") end))\n    IO.inspect(Enum.count_until([\"a\", \"bc\"], hd(for v <- [1] do fn s -> String.length(s) > v end end), 100))\n    IO.inspect(Enum.max([1.0], ([fn -> -2.25 end, fn(): float do -2.25 end] |> hd())))\n    next: fn[integer, integer] = [fn n -> n + 1 end] |> hd()\n    IO.inspect(next.(1))\n    IO.inspect(one() == JSON.decode_as(\"1\"))\n    IO.inspect(apply_to(%P{x: 0}, fn p -> %P{p | x: 2} end))\n  end\nend\n",
+  "result": [
+   0,
+   "%P{x: 4, name: \"b\", tags: []}\nok(8)\nerror(\"invalid JSON: invalid character '<' looking for beginning of value\")\n[true, false]\n1\n1.0\n2\ntrue\n%P{x: 2, name: \"p\", tags: []}\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule Named do\n  def none(): string do\n    \"nothing\"\n  end\n\n  def some(x: integer): string do\n    \"some \" <> Integer.to_string(x)\n  end\n\n  def ok(x: integer): string do\n    \"ok \" <> Integer.to_string(x)\n  end\n\n  def error(x: string): string do\n    \"mine \" <> x\n  end\n\n  def main() do\n    IO.puts(none())\n    IO.puts(some(3))\n    IO.puts(ok(4))\n    IO.puts(error(\"e\"))\n    o: option[integer] = none\n    IO.inspect(o)\n    case Integer.parse(\"x\") do\n      ok(n) -> IO.inspect(n)\n      error(e) -> IO.puts(e)\n    end\n  end\nend\n",
+  "result": [
+   0,
+   "nothing\nsome 3\nok 4\nmine e\nnone\n\"x\" is not an integer\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule Padding do\n  def main() do\n    IO.inspect(String.pad_leading(\"a\", 9223372036854775807, \"\"))\n    IO.inspect(String.pad_trailing(\"ab\", 100000000000, \"\"))\n    IO.inspect(String.pad_leading(\"a\", 3, \"\"))\n    IO.inspect(String.pad_leading(\"a\", 3, \"xy\"))\n  end\nend\n",
+  "result": [
+   0,
+   "\"a\"\n\"ab\"\n\"a\"\n\"xya\"\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule Withs do\n  struct P do\n    x: integer\n  end\n\n  def res(n: integer): result[integer, string] do\n    if n > 0 do ok(n) else error(\"bad\") end\n  end\n\n  def apply_to(x: a, f: fn[a, b]): b do\n    f.(x)\n  end\n\n  def pick(n: integer): fn[atom, string] do\n    f = with ok(v) <- res(n) do\n      fn a -> Atom.to_string(a) <> Integer.to_string(v) end\n    else\n      error(_) -> fn(a: atom): string do \"no \" <> Atom.to_string(a) end\n    end\n    f\n  end\n\n  def main() do\n    IO.puts(pick(2).(:a))\n    IO.puts(pick(0).(:b))\n    y: result[boolean, string] = ok(true)\n    v = with ok(_) <- res(-1) do\n      y\n    else\n      error(e) -> (ok(e == \"bad\") |> tap(fn _ -> 0 end))\n    end\n    IO.inspect(v)\n    inside: boolean = (apply_to(%P{x: 2}, fn p -> p.x end) in Enum.dedup_by([2, 2], fn n -> n end))\n    IO.inspect(inside)\n  end\nend\n",
+  "result": [
+   0,
+   "a2\nno b\nok(true)\ntrue\n",
+   ""
+  ]
  }
 ]
