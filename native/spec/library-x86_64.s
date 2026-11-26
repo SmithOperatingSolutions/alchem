@@ -1348,8 +1348,9 @@
  test r9,r9
  jz 42f
  mov r10,[r9]
+# An empty with fills nothing, however much is missing: s as it is.
  test r10,r10
- jz 45f
+ jz 7f
  xor esi,esi
  xor edx,edx
 41:
