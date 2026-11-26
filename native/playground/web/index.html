@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alchem Playground</title>
+<style>
+  :root {
+    --bg: #fbfaf7; --panel: #ffffff; --ink: #1d1b18; --muted: #6b665e; --line: #e4e0d8;
+    --accent: #7a4fd6; --accent-ink: #ffffff; --err: #b3261e; --ok: #1f7a45;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #151412; --panel: #1d1c19; --ink: #ece8e1; --muted: #a39d93; --line: #34312c;
+      --accent: #a98bf0; --accent-ink: #151412; --err: #f2867d; --ok: #7fd3a0;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #151412; --panel: #1d1c19; --ink: #ece8e1; --muted: #a39d93; --line: #34312c;
+    --accent: #a98bf0; --accent-ink: #151412; --err: #f2867d; --ok: #7fd3a0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, sans-serif; }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 17px; margin: 0; }
+  header p { margin: 0; color: var(--muted); font-size: 13px; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 0; height: calc(100vh - 56px); }
+  section { display: flex; flex-direction: column; min-height: 0; }
+  section + section { border-left: 1px solid var(--line); }
+  .bar { display: flex; gap: 8px; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .bar label { color: var(--muted); font-size: 13px; }
+  textarea, pre { font: 13.5px/1.55 var(--mono); margin: 0; }
+  #source { flex: 1; resize: none; border: 0; padding: 14px 16px; background: var(--panel); color: var(--ink); outline: none; tab-size: 2; }
+  #args { flex: 1; min-width: 120px; font: 13px var(--mono); padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+  button { font: inherit; font-size: 14px; padding: 6px 16px; border-radius: 6px; border: 0; background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  select { font: inherit; font-size: 13px; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+  #output { flex: 1; overflow: auto; padding: 14px 16px; white-space: pre-wrap; word-break: break-word; background: var(--panel); }
+  #output .err { color: var(--err); }
+  #status { color: var(--muted); font-size: 13px; }
+  #status.ok { color: var(--ok); } #status.bad { color: var(--err); }
+  @media (max-width: 760px) {
+    main { grid-template-columns: 1fr; height: auto; }
+    section + section { border-left: 0; border-top: 1px solid var(--line); }
+    #source { min-height: 45vh; } #output { min-height: 30vh; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Alchem Playground</h1>
+  <p>The native compiler and your program, both running in this page on an x86-64 interpreter. Nothing is sent anywhere.</p>
+</header>
+<main>
+  <section>
+    <div class="bar">
+      <select id="examples" aria-label="Examples"></select>
+      <button id="run" disabled>Loading…</button>
+    </div>
+    <textarea id="source" spellcheck="false" wrap="off" aria-label="Program"></textarea>
+  </section>
+  <section>
+    <div class="bar">
+      <label for="args">Arguments</label>
+      <input id="args" placeholder="Ada Grace">
+      <span id="status">Fetching the compiler…</span>
+    </div>
+    <pre id="output" aria-live="polite"></pre>
+  </section>
+</main>
+<script>
+const examples = {
+  "Hello": `defmodule Hello do
+  def main() do
+    name = case System.argv() do
+      [first | _] -> first
+      [] -> "world"
+    end
+    IO.puts("Hello, #{name}!")
+  end
+end
+`,
+  "Structs and pipes": `defmodule Shop do
+  struct Item do
+    name: string
+    price: integer
+    qty: integer = 1
+  end
+
+  def total(items: list[Item]): integer do
+    items |> Enum.map(fn item -> item.price * item.qty end) |> Enum.sum()
+  end
+
+  def main() do
+    items = [%Item{name: "tea", price: 450, qty: 2}, %Item{name: "cake", price: 320}]
+    Enum.each(items, fn item -> IO.puts("#{item.name} x#{item.qty}") end)
+    IO.puts("total: #{total(items)}")
+  end
+end
+`,
+  "Results and with": `defmodule Parse do
+  def age(text: string): result[integer, string] do
+    with ok(n) <- Integer.parse(text),
+         true <- n >= 0 do
+      ok(n)
+    else
+      false -> error("an age is not negative")
+      error(why) -> error(why)
+    end
+  end
+
+  def main() do
+    for text <- ["42", "-1", "old"] do
+      IO.inspect(age(text))
+    end
+  end
+end
+`,
+  "Processes": `defmodule Squares do
+  def main() do
+    parent: pid[tuple[integer, integer]] = Process.self(16)
+    for n <- 1..5 do
+      Process.spawn(fn(_self: pid[integer]): integer do
+        Process.send(parent, {n, n * n}, 1000)
+        0
+      end, 1)
+    end
+    squares = for _ <- 1..5 do
+      {_, pair} = Process.receive(parent, 1000)
+      pair
+    end
+    IO.inspect(Enum.sort(squares))
+    IO.inspect(Task.async_stream(1..4, fn n -> n * 10 end) |> Enum.to_list())
+  end
+end
+`,
+};
+
+const source = document.getElementById("source");
+const output = document.getElementById("output");
+const status = document.getElementById("status");
+const button = document.getElementById("run");
+const args = document.getElementById("args");
+const picker = document.getElementById("examples");
+
+for (const name of Object.keys(examples)) picker.add(new Option(name, name));
+let saved = null;
+try { saved = localStorage.getItem("alchem-playground-source"); } catch (e) {}
+source.value = saved || examples.Hello;
+picker.onchange = () => { source.value = examples[picker.value]; };
+source.addEventListener("input", () => { try { localStorage.setItem("alchem-playground-source", source.value); } catch (e) {} });
+source.addEventListener("keydown", (e) => {
+  if (e.key === "Tab") { e.preventDefault(); source.setRangeText("  ", source.selectionStart, source.selectionEnd, "end"); }
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (!button.disabled) start(); }
+});
+
+function show(text, cls) {
+  const span = document.createElement("span");
+  if (cls) span.className = cls;
+  span.textContent = text;
+  output.appendChild(span);
+}
+
+const worker = new Worker("worker.js");
+worker.onmessage = ({ data }) => {
+  if (data.kind === "ready") {
+    button.disabled = false; button.textContent = "Run";
+    status.textContent = `Ready: the compiler is ${(data.size / 1048576).toFixed(1)} MB. Cmd/Ctrl-Enter runs.`;
+  } else if (data.kind === "phase") {
+    status.className = "";
+    status.textContent = data.phase === "build" ? "Compiling…" : `Compiled in ${(data.buildMs / 1000).toFixed(1)} s. Running…`;
+  } else if (data.kind === "out") {
+    show(data.text);
+  } else if (data.kind === "err") {
+    show(data.text, "err");
+  } else if (data.kind === "done") {
+    button.disabled = false;
+    if (data.phase === "load") { status.textContent = "Could not load: " + data.message; status.className = "bad"; button.textContent = "Unavailable"; button.disabled = true; return; }
+    if (data.message) show(data.message + "\n", "err");
+    const timing = data.phase === "run" ? `compiled in ${(data.buildMs / 1000).toFixed(1)} s, ran in ${(data.runMs / 1000).toFixed(2)} s` : `after ${(data.buildMs / 1000).toFixed(1)} s`;
+    status.textContent = data.phase === "build" ? `Not compiled (status ${data.status}), ${timing}` : `Exited with status ${data.status}: ${timing}`;
+    status.className = data.status === 0 ? "ok" : "bad";
+  }
+};
+
+function start() {
+  output.textContent = "";
+  button.disabled = true;
+  const given = args.value.trim() ? args.value.trim().split(/\s+/) : [];
+  worker.postMessage({ source: source.value, args: given, stdin: "" });
+}
+button.onclick = start;
+</script>
+</body>
+</html>
