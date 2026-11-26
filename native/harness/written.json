@@ -1918,5 +1918,37 @@
    "a2\nno b\nok(true)\ntrue\n",
    ""
   ]
+ },
+ {
+  "source": "defmodule Conditions do\n  def apply_to(x: a, f: fn[a, b]): b do\n    f.(x)\n  end\n\n  def main() do\n    v: atom = :a\n    s = MapSet.new([:a, :b])\n    kept = s |> MapSet.filter(if (MapSet.size(s) > 10) do apply_to(v, fn _ -> fn w -> w == :a end end) else fn w -> w != :a end end)\n    IO.puts(inspect(kept))\n    IO.puts(inspect(Enum.map([1, 2], if (true) do fn n -> n * 2 end else fn(n: integer): integer do n end end)))\n    IO.puts(inspect(Enum.filter([:x, :y], unless (false) do fn a -> a == :y end else fn _ -> true end end)))\n  end\nend\n",
+  "result": [
+   0,
+   "MapSet.new([:b])\n[2, 4]\n[:y]\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule Bracketed do\n  def res(n: integer): result[integer, string] do\n    if n > 0 do ok(n) else error(\"bad\") end\n  end\n\n  def apply_to(x: a, f: fn[a, b]): b do\n    f.(x)\n  end\n\n  def main() do\n    largest = Enum.max_by([:ok, :a, :zz], apply_to(1, fn n -> (with ok(_) <- res(n) do\n          fn v -> Atom.to_string(v) end\n        else\n          error(_) -> fn(v: atom): string do \"x\" end\n        end) end))\n    IO.puts(inspect(largest))\n    least = Enum.min_by([:ok, :a, :zz], apply_to(0, fn n -> ((with ok(_) <- res(n) do\n          fn v -> Atom.to_string(v) end\n        else\n          error(_) -> fn(v: atom): string do String.reverse(Atom.to_string(v)) end\n        end)) end))\n    IO.puts(inspect(least))\n  end\nend\n",
+  "result": [
+   0,
+   ":zz\n:a\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule Piped do\n  def apply_to(x: a, f: fn[a, b]): b do\n    f.(x)\n  end\n\n  def first_of(l: list[a]): a do\n    hd(l)\n  end\n\n  def pick(l: list[a], n: integer): a do\n    Enum.at(l, n, hd(l))\n  end\n\n  def main() do\n    IO.puts(inspect(List.foldr([\"a\", \"b\"], :ok, [fn _, acc -> acc end] |> first_of())))\n    IO.puts(inspect(List.foldl([1, 2, 3], 0, [fn _, acc -> acc end, fn n, acc -> n + acc end] |> pick(1))))\n    IO.puts(inspect(List.foldr([\"a\"], \"z\", [k: fn s, acc -> s <> acc end] |> Keyword.fetch!(:k))))\n    IO.puts(inspect(List.foldr([\"a\", \"b\"], \"\", apply_to(2, fn n -> [k: fn s, acc -> String.duplicate(s, n) <> acc end] end) |> Keyword.fetch!(:k))))\n    IO.puts(inspect(List.foldl([4, 5], 1, Piped.apply_to(0, fn _ -> [fn n, acc -> n * acc end] end) |> first_of())))\n  end\nend\n",
+  "result": [
+   0,
+   ":ok\n6\n\"az\"\n\"aabb\"\n20\n",
+   ""
+  ]
+ },
+ {
+  "source": "defmodule Tried do\n  def reduce_ok(r: result[integer, string]): result[integer, string] do\n    r\n  end\n\n  def main() do\n    kept = try do\n      tap(ok([1, 5, 42]), fn v -> IO.puts(inspect(v)) end)\n    rescue\n      _ -> [\"a\"] |> reduce(ok([5, 0]), fn(r: result[list[integer], string], _s: string): result[list[integer], string] do r end)\n    end\n    IO.puts(inspect(kept))\n    shown = inspect(try do\n      tap(error(\"no\"), fn _ -> raise(\"boom\") end)\n    rescue\n      m -> ok(String.length(m)) |> reduce_ok()\n    end)\n    IO.puts(shown)\n  end\nend\n",
+  "result": [
+   0,
+   "ok([1, 5, 42])\nok([1, 5, 42])\nok(4)\n",
+   ""
+  ]
  }
 ]

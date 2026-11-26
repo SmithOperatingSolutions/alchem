@@ -218,12 +218,13 @@ defmodule NativeFunctions do
     pending = nc_arg_kind(args,index)
     offset = nc_cursor(pending,4)
     # After the index (3 bytes): a zero and the type wanted, or the types of a function's parameters and result.
-    value = if Enum.at(target,3,1) == 0 do nf_valued(source,nc_cursor(pending,1),env,table,depth,nc_slice(target,4,Enum.count(target))) else nf_inferred(source,nc_cursor(pending,1),env,table,depth,nc_slice(target,3,Enum.count(target))) end
-    after = nc_pos(value)
-    code = nc_arg_code(args)
     # A piped value (an eighth byte: its slot and 1) stands before |>, and
     # passes through its slot, which says that the call took it.
     slot = nc_cursor(pending,7)-1
+    held = if slot < 0 do 0 else 1 end
+    value = if Enum.at(target,3,1) == 0 do nf_valued_held(source,nc_cursor(pending,1),env,table,depth,nc_slice(target,4,Enum.count(target)),held) else nf_inferred_held(source,nc_cursor(pending,1),env,table,depth,nc_slice(target,3,Enum.count(target)),held) end
+    after = nc_pos(value)
+    code = nc_arg_code(args)
     kept = if slot < 0 do b[] else Enum.concat(nc_slot(b[72,137,69],slot),nc_slot(b[72,139,69],slot)) end
     if after < 0 do b[] else if nc_word(source,after,b[44])+nc_word(source,after,b[41])+(if slot < 0 do 0 else 1 end) == 0 do b[] else
       kinds = nt_replace(nc_arg_types(args),index,nc_kind(value))
@@ -301,7 +302,10 @@ defmodule NativeFunctions do
   # want of a type, and a trial at each of 250 nested forms would cost the
   # cube of their number.
   def nf_trial(source: bytes, pos: integer, env: bytes, table: bytes): bytes do
-    stop = wc_scan(source,pos,0)
+    # From a form in parentheses the scan ends at its own end.
+    closing = wc_scan(source,pos,0)
+    opener = if closing >= 0 do -1 else wc_scan(source,pos,3) end
+    stop = if closing >= 0 do closing else if opener < 0 do -1 else wc_scan(source,nc_end(source,opener),0) end end
     if stop < 0 do b[] else if ny_has(source,pos,stop,b[102,110])+ny_has(source,pos,stop,b[38]) == 0 do b[] else nf_hinting(source,env,table) end end
   end
   # env for the branch held back, given what the others made; b[] when
@@ -342,9 +346,13 @@ defmodule NativeFunctions do
   # entry per parameter, then the result type expected of it, unknown (9)
   # when the body is to give it.
   def nf_inferred(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, given: bytes): bytes do
+    nf_inferred_held(source,pos,env,table,depth,given,0)
+  end
+  # held: 1 when the value at pos is held back by the pipe after it.
+  def nf_inferred_held(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, given: bytes, held: integer): bytes do
     last = nt_skip(given,0,nt_items(given,0)-1)
     words = nc_slice(given,0,last)
-    if nf_general(source,pos) == 1 do nf_valued(source,pos,env,table,depth,nt_function(given,nt_items(given,0)-1)) else
+    if nf_general(source,pos) == 1 do nf_valued_held(source,pos,env,table,depth,nt_function(given,nt_items(given,0)-1),held) else
     if byte_at(source,pos) == 38 do
       if nf_capture_form(source,pos) == 1 do nf_capture(source,pos,env,table,depth,given) else jd_referred(source,pos,env,table,depth,given) end
     else
@@ -364,11 +372,20 @@ defmodule NativeFunctions do
   # The value at pos where type kind is expected: a lambda takes its types
   # from it, any other expression gives it to the lambdas it holds.
   def nf_valued(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, kind: bytes): bytes do
+    nf_valued_held(source,pos,env,table,depth,kind,0)
+  end
+  # held: 1 when the value at pos is held back by the pipe after it, which
+  # it ends before; any other value is the whole expression, pipes and all.
+  def nf_valued_held(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, kind: bytes, held: integer): bytes do
     if Enum.count(kind) == 0 do b[] else
-      stop = nf_primary(source,nc_start(source,pos),env,table)
+      stop = if held == 0 do -1 else nf_primary(source,nc_start(source,pos),env,table) end
       piped = if stop < 0 do 0 else if byte_at(source,nc_start(source,stop))*256+byte_at(source,nc_start(source,stop)+1) == 31806 do 1 else 0 end end
-      # A value held back by a pipe ends before the pipe.
-      if nf_general(source,pos) == 0 do nf_expected(source,pos,env,table,depth,kind) else if piped == 1 do nc_unary(source,pos,nf_expecting(source,env,pos,kind),table,depth+1) else nc_expression(source,pos,if nw_last_call(source,pos) >= 0 do nw_expect(env,nw_last_call(source,pos),kind) else nf_expecting(source,env,pos,kind) end,table,depth+1) end end
+      # A value held back by a pipe ends before the pipe; one that is a
+      # call has the type expected of it at its "(".
+      start = nc_start(source,pos)
+      paren = if piped == 0 do -1 else if nx_form(source,start)+nc_word(source,start,b[102,110]) > 0 do -1 else nf_pipe_target(source,start) end end
+      called = if paren < 0 do -1 else if np_close(source,paren,0,16777216) != stop do -1 else paren end end
+      if nf_general(source,pos) == 0 do nf_expected(source,pos,env,table,depth,kind) else if piped == 1 do nc_unary(source,pos,if called >= 0 do nw_expect(env,called,kind) else nf_expecting(source,env,pos,kind) end,table,depth+1) else nc_expression(source,pos,if nw_last_call(source,pos) >= 0 do nw_expect(env,nw_last_call(source,pos),kind) else nf_expecting(source,env,pos,kind) end,table,depth+1) end end
     end
   end
   # An argument that did not compile and holds a lambda or capture: the
@@ -836,8 +853,14 @@ defmodule NativeFunctions do
   # lambda, a capture, or a list, tuple, map or parenthesized value that
   # holds one. It waits for the type of the call's first parameter.
   # The position after the value at start when it is one a pipe may hold
-  # back: a lambda, &(...), or a value in brackets; -1 for any other.
+  # back: a lambda, &(...), a value in brackets, or a call (which holds a
+  # lambda when it is held back); -1 for any other.
   def nf_primary(source: bytes, start: integer, env: bytes, table: bytes): integer do
+    value = byte_at(source,start)
+    paren = if nx_form(source,start)+nc_word(source,start,b[102,110]) > 0 do -1 else nf_pipe_target(source,start) end
+    if paren >= 0 do np_close(source,paren,0,16777216) else nf_primary_plain(source,start,env,table) end
+  end
+  def nf_primary_plain(source: bytes, start: integer, env: bytes, table: bytes): integer do
     value = byte_at(source,start)
     if (value-91)*(value-123)*(value-40) == 0 do np_close(source,start,0,16777216) else
       if (value-37)*(value-38) == 0 do if (byte_at(source,start+1)-123)*(byte_at(source,start+1)-40) == 0 do np_close(source,start+1,0,16777216) else -1 end else
