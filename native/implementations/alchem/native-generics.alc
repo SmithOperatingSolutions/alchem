@@ -479,7 +479,8 @@ defmodule NativeGenerics do
   def nw_last_call(source: bytes, pos: integer): integer do
     start = nc_start(source,pos)
     value = byte_at(source,start)
-    paren = nf_pipe_target(source,start)
+    # if (x) do ... and fn(v: t) ... are no calls.
+    paren = if nx_form(source,start)+nc_word(source,start,b[102,110]) > 0 do -1 else nf_pipe_target(source,start) end
     stop = if paren >= 0 do np_close(source,paren,0,16777216) else if (value-91)*(value-123)*(value-40) == 0 do np_close(source,start,0,16777216) else nc_end(source,start) end end
     found = nw_last_piped(source,paren,stop,1024)
     # ( call ) is the call.
