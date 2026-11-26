@@ -322,7 +322,46 @@ def verify(compiler):
         runs,_=scene(alchem,{},[['version'],['--version'],['version','--json'],['version','-json']])
         text=f'alchem v9.8.7-test {target}\n';data=json.dumps({'version':'v9.8.7-test','platform':target},indent=2)+'\n'
         assert runs==[[0,text,''],[0,text,''],[0,data,''],[0,data,'']],runs
-    print(f'PASS commands: {count} command lines of help, syntax, doc (the library, files, a project and its packages), docs, agent-guide, agent-install, alx, fmt, the refusals of check and the flags of build, run, check and new in {len(known)} scenes as the pinned command line prints them, with the files they write; version for {target}; a refusal named by its function and place')
+        scripts(alchem)
+    print(f'PASS commands: {count} command lines of help, syntax, doc (the library, files, a project and its packages), docs, agent-guide, agent-install, alx, fmt, the refusals of check and the flags of build, run, check and new in {len(known)} scenes as the pinned command line prints them, with the files they write; version for {target}; a refusal named by its function and place; scripts and the programs run keeps')
+
+
+def scripts(alchem):
+    """alchem FILE, which the pinned command does not have: a file of any
+    name runs with every argument after it its own, fmt keeps its #! line,
+    and run keeps the program it built for the next run of the same bundle."""
+    program=lambda said:'#!/usr/bin/env alchem\ndefmodule Hi do\n  def main() do\n    IO.puts("%s " <> Enum.join(System.argv(), ","))\n  end\nend\n'%said
+    lib='defmodule Lib do\n  def name(): string do\n    "lib"\n  end\nend\n'
+    uses='#!/usr/bin/env alchem\ndefmodule Uses do\n  import "lib.alc"\n  def main() do\n    IO.puts(Lib.name())\n  end\nend\n'
+    with tempfile.TemporaryDirectory(prefix='alchem-scripts-') as d:
+        root=Path(d).resolve();(root/'home').mkdir()
+        lay({'hi':program('hi'),'b.alc':program('b'),'uses.alc':uses,'lib.alc':lib},root)
+        env=dict(surroundings(root/'home'),ALCHEM_CACHE=str(root/'cache'))
+        def go(*arguments):
+            run=subprocess.run([str(alchem),*arguments],capture_output=True,text=True,cwd=root,env=env,timeout=900)
+            return [run.returncode,run.stdout,run.stderr]
+        assert go('hi','a','-h')==[0,'hi a,-h\n',''],go('hi','a','-h')
+        assert go('b.alc','--','x')==[0,'b --,x\n','']
+        assert go('run','b.alc','--','x')==[0,'b x\n','']
+        assert go('uses.alc')==[0,'lib\n','']
+        assert go('fmt','b.alc')[0]==0 and (root/'b.alc').read_text().startswith('#!/usr/bin/env alchem\n'),(root/'b.alc').read_text()
+        missing=go('gone.alc')
+        assert missing[0]==1 and 'gone.alc' in missing[2] and 'unknown command' not in missing[2],missing
+        kept=sorted(p for p in (root/'cache'/'programs').rglob('*') if p.is_file())
+        assert len(kept)==3 and len({p.parent for p in kept})==3,kept
+        if os.name!='nt':
+            # The program kept for hi is the one run: a stand-in says so.
+            said=''
+            for p in kept:
+                original=p.read_bytes();p.write_text('#!/bin/sh\necho kept "$@"\n');p.chmod(0o700)
+                said=go('hi','z')[1]
+                if said=='kept z\n':break
+                p.write_bytes(original);p.chmod(0o700)
+            assert said=='kept z\n',said
+            # Another text is another program, which takes the old one's place.
+            (root/'hi').write_text(program('hey'))
+            assert go('hi','z')==[0,'hey z\n','']
+            assert len([q for q in p.parent.iterdir()])==1,list(p.parent.iterdir())
 
 
 if __name__=='__main__':
