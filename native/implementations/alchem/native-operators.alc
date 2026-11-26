@@ -474,7 +474,7 @@ defmodule NativeOperators do
     piped = nc_kind(nf_piped_from(source,paren+1,env,2))
     slot = if nt_tag(piped) != 11 do -1 else nc_cursor(piped,7)-1 end
     at = if slot < 0 do paren+1 else nc_cursor(piped,1) end
-    value = if Enum.count(wanted) == 0 do b[] else nf_valued_held(source,at,env,table,Enum.at(plan,0,0)+1,kind,if slot < 0 do 0 else 1 end) end
+    value = if Enum.count(wanted) == 0 do b[] else nf_valued_held(source,at,env,table,kind,b[Enum.at(plan,0,0)+1,if slot < 0 do 0 else 1 end]) end
     close = if nc_pos(value) < 0 do -1 else nc_expect(source,if slot < 0 do nc_pos(value) else paren+1 end,b[41]) end
     kept = if slot < 0 do b[] else Enum.concat(nc_slot(b[72,137,69],slot),nc_slot(b[72,139,69],slot)) end
     if close < 0 do b[] else nc_arg_packet(close,1,nt_cell(nc_kind(value)),nc_join(nc_code(value),kept,b[80])) end

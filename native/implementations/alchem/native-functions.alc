@@ -222,7 +222,7 @@ defmodule NativeFunctions do
     # passes through its slot, which says that the call took it.
     slot = nc_cursor(pending,7)-1
     held = if slot < 0 do 0 else 1 end
-    value = if Enum.at(target,3,1) == 0 do nf_valued_held(source,nc_cursor(pending,1),env,table,depth,nc_slice(target,4,Enum.count(target)),held) else nf_inferred_held(source,nc_cursor(pending,1),env,table,depth,nc_slice(target,3,Enum.count(target)),held) end
+    value = if Enum.at(target,3,1) == 0 do nf_valued_held(source,nc_cursor(pending,1),env,table,nc_slice(target,4,Enum.count(target)),b[depth,held]) else nf_inferred_held(source,nc_cursor(pending,1),env,table,nc_slice(target,3,Enum.count(target)),b[depth,held]) end
     after = nc_pos(value)
     code = nc_arg_code(args)
     kept = if slot < 0 do b[] else Enum.concat(nc_slot(b[72,137,69],slot),nc_slot(b[72,139,69],slot)) end
@@ -346,13 +346,15 @@ defmodule NativeFunctions do
   # entry per parameter, then the result type expected of it, unknown (9)
   # when the body is to give it.
   def nf_inferred(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, given: bytes): bytes do
-    nf_inferred_held(source,pos,env,table,depth,given,0)
+    nf_inferred_held(source,pos,env,table,given,b[depth,0])
   end
-  # held: 1 when the value at pos is held back by the pipe after it.
-  def nf_inferred_held(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, given: bytes, held: integer): bytes do
+  # plan: the nesting, and 1 when the value at pos is held back by the
+  # pipe after it.
+  def nf_inferred_held(source: bytes, pos: integer, env: bytes, table: bytes, given: bytes, plan: bytes): bytes do
+    depth = Enum.at(plan,0,0)
     last = nt_skip(given,0,nt_items(given,0)-1)
     words = nc_slice(given,0,last)
-    if nf_general(source,pos) == 1 do nf_valued_held(source,pos,env,table,depth,nt_function(given,nt_items(given,0)-1),held) else
+    if nf_general(source,pos) == 1 do nf_valued_held(source,pos,env,table,nt_function(given,nt_items(given,0)-1),plan) else
     if byte_at(source,pos) == 38 do
       if nf_capture_form(source,pos) == 1 do nf_capture(source,pos,env,table,depth,given) else jd_referred(source,pos,env,table,depth,given) end
     else
@@ -372,11 +374,13 @@ defmodule NativeFunctions do
   # The value at pos where type kind is expected: a lambda takes its types
   # from it, any other expression gives it to the lambdas it holds.
   def nf_valued(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, kind: bytes): bytes do
-    nf_valued_held(source,pos,env,table,depth,kind,0)
+    nf_valued_held(source,pos,env,table,kind,b[depth,0])
   end
   # held: 1 when the value at pos is held back by the pipe after it, which
   # it ends before; any other value is the whole expression, pipes and all.
-  def nf_valued_held(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, kind: bytes, held: integer): bytes do
+  def nf_valued_held(source: bytes, pos: integer, env: bytes, table: bytes, kind: bytes, plan: bytes): bytes do
+    depth = Enum.at(plan,0,0)
+    held = Enum.at(plan,1,0)
     if Enum.count(kind) == 0 do b[] else
       stop = if held == 0 do -1 else nf_primary(source,nc_start(source,pos),env,table) end
       piped = if stop < 0 do 0 else if byte_at(source,nc_start(source,stop))*256+byte_at(source,nc_start(source,stop)+1) == 31806 do 1 else 0 end end

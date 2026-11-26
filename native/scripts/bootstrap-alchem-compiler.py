@@ -52,7 +52,9 @@ def compact_identifiers(text):
     reserved.update(re.findall(r'\.([A-Za-z_][A-Za-z_0-9]*)',text))
     reserved.update(word for word in words if word[0].isupper())
     names=sorted(set(words)-reserved,key=lambda word:(-words[word],word))
-    aliases=(''.join(parts) for size in range(1,5) for parts in itertools.product(string.ascii_lowercase,repeat=size) if ''.join(parts) not in reserved)
+    # Nor may a short name be a word the seed's frontend keeps for its builtins.
+    kept=reserved|set('get put has_key'.split())
+    aliases=(''.join(parts) for size in range(1,5) for parts in itertools.product(string.ascii_lowercase,repeat=size) if ''.join(parts) not in kept)
     mapping={word:next(aliases) for word in names}
     return token.sub(lambda match:mapping.get(match[0],match[0]),text)
 
