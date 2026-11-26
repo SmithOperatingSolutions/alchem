@@ -1942,5 +1942,13 @@
    ":ok\n6\n\"az\"\n\"aabb\"\n20\n",
    ""
   ]
+ },
+ {
+  "source": "defmodule Tried do\n  def reduce_ok(r: result[integer, string]): result[integer, string] do\n    r\n  end\n\n  def main() do\n    kept = try do\n      tap(ok([1, 5, 42]), fn v -> IO.puts(inspect(v)) end)\n    rescue\n      _ -> [\"a\"] |> reduce(ok([5, 0]), fn(r: result[list[integer], string], _s: string): result[list[integer], string] do r end)\n    end\n    IO.puts(inspect(kept))\n    shown = inspect(try do\n      tap(error(\"no\"), fn _ -> raise(\"boom\") end)\n    rescue\n      m -> ok(String.length(m)) |> reduce_ok()\n    end)\n    IO.puts(shown)\n  end\nend\n",
+  "result": [
+   0,
+   "ok([1, 5, 42])\nok([1, 5, 42])\nok(4)\n",
+   ""
+  ]
  }
 ]

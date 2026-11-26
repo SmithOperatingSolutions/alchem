@@ -164,7 +164,16 @@ defmodule NativeTry do
   # then the line the pinned compiler's handler starts on, the line a
   # handler's arm leaves the try's closure on and the line after the body (4
   # bytes each).
+  # A body that does not compile for want of a lambda's type waits for the
+  # type the arms give, as the first branch of an if does (nf_hinting).
   def ty_try(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, mode: integer): bytes do
+    first = ty_try_once(source,start,env,table,depth,mode)
+    hinting = if nc_pos(first) >= 0 do b[] else if ty_keyword(source,start,env) == 0 do b[] else nf_trial(source,start,env,table) end end
+    trial = if Enum.count(hinting) == 0 do b[] else ty_try_once(source,start,hinting,table,depth,mode) end
+    settled = nf_settling(env,trial)
+    if nc_pos(first) >= 0 do first else if Enum.count(settled) == 0 do b[] else ty_try_once(source,start,settled,table,depth,mode) end end
+  end
+  def ty_try_once(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, mode: integer): bytes do
     marks = if ty_keyword(source,start,env) == 0 do b[] else if depth > 190 do b[] else if nz_on(table) == 0 do b[] else ty_sections(source,nc_end(source,nc_end(source,start)),b[]) end end end
     stop = nc_end(source,nc_cursor(marks,12))
     dropped = if Enum.count(marks) != 15 do 0 else if mode == 0 do 0 else wf_dropped(source,stop,env,table) end end
