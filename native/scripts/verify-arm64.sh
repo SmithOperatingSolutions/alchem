@@ -16,7 +16,7 @@ if [[ "${1:-}" != --inside ]]; then
   ALCHEM_CONTAINER_MEMORY="${ALCHEM_CONTAINER_MEMORY:-12g}" ALCHEM_CONTAINER_PLATFORM=linux/arm64 exec bash scripts/linux-container.sh bash scripts/verify-arm64.sh --inside "$@"
 fi
 shift
-test -d .cache/gomod || (cd adapters/alchem && GOMODCACHE=/work/.cache/gomod go mod download)
+test -d .cache/gomod || (cd adapters/alchem && go mod download)
 python3 - <<'PY'
 import os, subprocess, sys
 from importlib.util import module_from_spec, spec_from_file_location
