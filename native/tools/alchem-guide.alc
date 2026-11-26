@@ -27,6 +27,9 @@ defmodule AlchemGuide do
 
   def version(): string do "devel" end
   def platform(): string do "linux/amd64" end
+  # What build-alchem.py made this alchem of, as a digest: a program kept
+  # by the cache of alchem run (tools/alchem.alc) is one this build made.
+  def build(): string do "devel" end
 
   def rows(table: string): list[list[string]] do
     if table == "" do [] else Enum.map(String.split(table, "\u{1E}"), fn row -> String.split(row, "\u{1F}") end) end
