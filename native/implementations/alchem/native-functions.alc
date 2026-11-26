@@ -377,7 +377,8 @@ defmodule NativeFunctions do
   def nf_late(source: bytes, pos: integer): integer do
     start = nc_start(source,pos)
     stop = nc_span(source,nc_span_state(start,0,0,0,0),16777216)
-    if stop <= start do 0 else if ny_has(source,start,stop,b[102,110])+ny_has(source,start,stop,b[38]) == 0 do 0 else stop end end
+    # So does one call, which takes its parameter's type as what it is to give (nf_valued).
+    if stop <= start do 0 else if ny_has(source,start,stop,b[102,110])+ny_has(source,start,stop,b[38]) == 0 do if nw_last_call(source,start) >= 0 do stop else 0 end else stop end end
   end
   # env with what a record there expects of the expression at pos as what
   # the surroundings expect: a literal gives it to its parts.
