@@ -3,8 +3,11 @@ defmodule NativeBooleans do
     if nc_word(source,pos,b[76,105,115,116]) == 1 do ny_or(no_list(source,pos,env,table,depth),source,pos,env,table,depth) else nb_option(source,pos,env,table,depth) end
   end
   def nb_option(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
-    # none and some may name bindings; a binding of that name hides the constructor.
-    bound = if nc_word(source,pos,b[110,111,110,101])+nc_word(source,pos,b[115,111,109,101]) == 0 do -1 else nc_lookup(source,nc_start(source,pos),env,2) end
+    # none and some may name bindings; a binding of that name hides the
+    # constructor, and so does a function of the module called by it.
+    named = nc_word(source,pos,b[110,111,110,101])+nc_word(source,pos,b[115,111,109,101])
+    called = if named == 0 do 0 else if byte_at(source,nc_start(source,nc_end(source,pos))) != 40 do 0 else if nc_find(source,nc_start(source,pos),table,nc_owner(table,nc_read(env,0))) < 0 do 0 else 1 end end end
+    bound = if named == 0 do -1 else if called == 1 do 0 else nc_lookup(source,nc_start(source,pos),env,2) end end
     if nc_word(source,pos,b[110,111,110,101])*(0-bound) == 1 do nc_value(nc_end(source,pos),b[49,192],b[4,9]) else
       if nc_word(source,pos,b[115,111,109,101])*(0-bound) == 1 do no_some(source,pos,env,table,depth) else
         if nc_word(source,pos,b[99,97,115,101]) == 1 do zf_valued(source,table,env,nz_closure(source,table,no_case(source,pos,nj_valued(env),table,depth),pos),pos) else if ty_keyword(source,pos,env) == 1 do ty_try(source,pos,env,table,depth,0) else if wc_keyword(source,pos,env) == 1 do wc_value(source,pos,env,table,depth) else if wf_keyword(source,pos,env) == 1 do wf_for(source,pos,env,table,depth,0) else
