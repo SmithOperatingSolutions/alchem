@@ -1,9 +1,95 @@
-# Toolchain versions for local development. Run `mise install` to fetch them.
+# Toolchain versions and tasks for local development, CI and the Linux
+# container. Run `mise install` to fetch the tools.
 #
-# Go builds the compiler and every Alchem program. Erlang and Elixir are only
-# needed for the Elixir baselines under benchmarks/.
+# The compiler of native/ builds from the released compiler
+# native/pinned-compiler.json names and needs none of these but Python. Go is
+# the reference the native gates compare against (and, with Rust, makes the
+# seed of verify-quick.py --seed and the complete suite); it also builds the
+# Go implementation at the root. One Go serves the reference backend and the
+# pinned Alchem frontend (which needs Go 1.27 for its Unicode 17 tables).
+# Erlang and Elixir are only needed for the Elixir baselines under
+# benchmarks/.
+min_version = "2026.7.0"
 
 [tools]
-go = "1.27.3"
+go = "1.27.4"
+rust = "1.100.0"
+python = "3.15.2"
 erlang = "29.1.2"
 elixir = "1.20.5-otp-29"
+
+[env]
+GOTOOLCHAIN = "local"
+# Project-local module cache: shared between the host and the Linux container.
+GOMODCACHE = "{{config_root}}/native/.cache/gomod"
+GOFLAGS = "-modcacherw"
+
+# --- Native tasks: require a Linux x86-64 host -------------------------------
+
+[tasks.fetch]
+dir = "{{config_root}}/native"
+description = "Download the locked Go dependencies of the reference"
+run = "cd adapters/alchem && go mod download"
+
+[tasks."fetch:seed"]
+dir = "{{config_root}}/native"
+description = "Download the locked Rust dependencies of the seed (verify-quick.py --seed, the complete suite)"
+run = "cargo fetch --locked --manifest-path implementations/rust/Cargo.toml"
+
+[tasks.verify]
+dir = "{{config_root}}/native"
+description = "Full local verification, including self-hosted stages"
+run = "bash scripts/verify-local.sh --with-source"
+
+[tasks."verify:quick"]
+dir = "{{config_root}}/native"
+description = "Fast iteration from the pinned release: A1==A2 fixpoint, stage gates once in parallel (pass gate filters as args)"
+run = "python3 scripts/verify-quick.py"
+
+[tasks."verify:go"]
+dir = "{{config_root}}/native"
+description = "Go reference backend baseline only"
+run = "bash scripts/verify-local.sh"
+
+[tasks."verify:rust"]
+dir = "{{config_root}}/native"
+description = "Go and Rust backends without source checks"
+run = "bash scripts/verify-local.sh --with-rust"
+
+[tasks.build]
+dir = "{{config_root}}/native"
+description = "Build the compiler, core tools and alchem from the pinned release into build/native"
+run = "bash scripts/build-native.sh"
+
+# --- Container tasks: run the above in linux/amd64 from any host -------------
+
+[tasks."linux:image"]
+dir = "{{config_root}}/native"
+description = "Build the linux/amd64 development image"
+run = "bash scripts/linux-container.sh --build-image"
+
+[tasks."linux:fetch"]
+dir = "{{config_root}}/native"
+description = "Download locked dependencies inside the container, the seed's too"
+run = ["bash scripts/linux-container.sh mise run fetch", "bash scripts/linux-container.sh mise run fetch:seed"]
+
+[tasks."linux:verify"]
+dir = "{{config_root}}/native"
+description = "Full verification inside the container"
+run = "bash scripts/linux-container.sh mise run verify"
+
+[tasks."linux:quick"]
+dir = "{{config_root}}/native"
+description = "Fast iteration check inside the container"
+run = "bash scripts/linux-container.sh mise run verify:quick"
+
+[tasks."linux:build"]
+dir = "{{config_root}}/native"
+description = "Build the self-hosted compiler inside the container"
+run = "bash scripts/linux-container.sh mise run build"
+
+[tasks."linux:shell"]
+dir = "{{config_root}}/native"
+description = "Interactive shell inside the container"
+run = "bash scripts/linux-container.sh bash"
+raw = true

@@ -1,7 +1,7 @@
 # Build and run the self-hosted Alchem compiler
 
 Requires Linux x86-64 and [mise](https://mise.jdx.dev), which installs the
-Python of mise.toml. A build needs neither Go nor Rust:
+Python of the repository's mise.toml. A build needs neither Go nor Rust:
 
 ```sh
 mise install python

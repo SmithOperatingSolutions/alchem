@@ -10,8 +10,8 @@
 #       repository (not of a fork) that recorded the key, or nothing. Anything
 #       unexpected prints nothing, so the checks run.
 #
-# The paths: native/, the workflow and its scripts, the toolchain file mise
-# reads above native/, and what the native jobs read outside native/ (the
+# The paths: native/, the workflow and its scripts, the toolchain file
+# (mise.toml at the root), and what the native jobs read outside native/ (the
 # Windows job's examples/testing, and the files harness/commands.py `tree`
 # reads).
 set -uo pipefail
