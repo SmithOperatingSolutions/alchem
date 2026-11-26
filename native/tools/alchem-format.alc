@@ -620,8 +620,18 @@ defmodule AlchemFormat do
 
   def format(source: string): result[string, string] do
     case AlchemParse.parse(source) do
-      ok(tree) -> ok(module_text(tree))
+      ok(tree) -> ok(shebang_kept(source, module_text(tree)))
       error(why) -> error(why)
+    end
+  end
+
+  # A first line #!... (a script's, run by the system) stays as it is
+  # written, where any other comment gets a space after its #.
+  def shebang_kept(source: string, text: string): string do
+    first = hd(String.split(source, "\n"))
+    if not String.starts_with?(first, "#!") do text else
+      lines = String.split(text, "\n")
+      if hd(lines) == trim_spaces_end("# " <> String.slice(first, 1, byte_size(first))) do Enum.join([String.trim_trailing(first, "\r") | tl(lines)], "\n") else text end
     end
   end
 

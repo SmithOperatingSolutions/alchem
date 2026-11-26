@@ -297,7 +297,9 @@ defmodule AlchemCheck do
   def visit(path: string, given: Loaded): result[Loaded, Problem] do
     if given.remote or path in given.done do ok(given) else
       if path in given.active do error(plain(shown(path) <> ": import cycle")) else
-        if not String.ends_with?(path, ".alc") do error(plain(shown(path) <> ": source must have .alc extension")) else
+        # The entry may be a script of any name (alchem FILE), a file that is
+        # there; what it imports is .alc.
+        if not String.ends_with?(path, ".alc") and (given.done ++ given.active != [] or not File.regular?(path)) do error(plain(shown(path) <> ": source must have .alc extension")) else
           case source(path, given.overlay) do
             error(why) -> error(plain(shown(path) <> ": read source: open " <> shown(path) <> ": " <> unopened(why)))
             ok(text) ->

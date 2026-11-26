@@ -374,10 +374,21 @@ defmodule NativeFunctions do
   # An argument that did not compile and holds a lambda or capture: the
   # position after it, to set it aside as a lambda is (nf_deferred); 0 for
   # any other.
-  def nf_late(source: bytes, pos: integer): integer do
+  # The deepest brackets between start and stop, as the scan reaches them.
+  def nf_nest(source: bytes, at: integer, stop: integer, open: integer, most: integer): integer do
+    value = byte_at(source,at)
+    next = if (value-40)*(value-91)*(value-123) == 0 do open+1 else if (value-41)*(value-93)*(value-125) == 0 do open-1 else open end end
+    if at >= stop do most else nf_nest(source,at+1,stop,next,if next > most do next else most end) end
+  end
+  def nf_late(source: bytes, pos: integer, depth: integer): integer do
     start = nc_start(source,pos)
     stop = nc_span(source,nc_span_state(start,0,0,0,0),16777216)
-    if stop <= start do 0 else if ny_has(source,start,stop,b[102,110])+ny_has(source,start,stop,b[38]) == 0 do 0 else stop end end
+    # So does one call, which takes its parameter's type as what it is to
+    # give (nf_valued), but not one nested so deep that it fails for that:
+    # compiled again where the call stands, it would count less depth than
+    # it has, and pass the nesting the pinned compiler refuses.
+    called = if stop <= start do 0 else if depth+2*nf_nest(source,start,stop,0,0) > 240 do 0 else if nw_last_call(source,start) >= 0 do stop else 0 end end end
+    if stop <= start do 0 else if ny_has(source,start,stop,b[102,110])+ny_has(source,start,stop,b[38]) == 0 do called else stop end end
   end
   # env with what a record there expects of the expression at pos as what
   # the surroundings expect: a literal gives it to its parts.

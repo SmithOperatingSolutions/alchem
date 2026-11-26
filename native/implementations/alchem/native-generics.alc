@@ -497,7 +497,7 @@ defmodule NativeGenerics do
   end
   def nw_operator(source: bytes, next: integer): integer do
     value = byte_at(source,next)
-    if nc_and((value-43)*(value-45)*(value-42)*(value-47)*(value-60)*(value-62)*(value-61),(value-33)*(value-124)*(value-46)*(value-40)*(value-38)*(value-94)) == 0 do 1 else nc_word(source,next,b[97,110,100])+nc_word(source,next,b[111,114]) end
+    if nc_and((value-43)*(value-45)*(value-42)*(value-47)*(value-60)*(value-62)*(value-61),(value-33)*(value-124)*(value-46)*(value-40)*(value-38)*(value-94)) == 0 do 1 else nc_word(source,next,b[97,110,100])+nc_word(source,next,b[111,114])+nc_word(source,next,b[105,110]) end
   end
   # The marks of an argument packet: bit i for argument i.
   def nw_marks(args: bytes): bytes do

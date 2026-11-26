@@ -94,12 +94,12 @@ def system_stamped(text, platform):
     return text.replace(line, '  def system(): string do "%s" end\n' % platform.split('/')[0])
 
 
-def guide_module(version, platform):
-    """tools/alchem-guide.alc saying the version it is and the system and
-    machine its programs are for."""
+def guide_module(version, platform, build='devel'):
+    """tools/alchem-guide.alc saying the version it is, the system and
+    machine its programs are for, and what it is built of."""
     text = (ROOT / 'tools/alchem-guide.alc').read_text()
-    for name, value in (('version', version), ('platform', platform)):
-        line = '  def %s(): string do "%s" end\n' % (name, {'version': 'devel', 'platform': 'linux/amd64'}[name])
+    for name, value in (('version', version), ('platform', platform), ('build', build)):
+        line = '  def %s(): string do "%s" end\n' % (name, {'version': 'devel', 'platform': 'linux/amd64', 'build': 'devel'}[name])
         if text.count(line) != 1:
             raise ValueError(f'tools/alchem-guide.alc has no single {name}()')
         if not re.fullmatch(r'[A-Za-z0-9._+/-]+', value):
@@ -143,6 +143,13 @@ def program(darwin=False, windows=False, version='devel', platform='linux/amd64'
         (work / 'alchem-fetch.alc').write_text(system_stamped((ROOT / 'tools/alchem-fetch.alc').read_text(), platform))
         for name in FRONT_END:
             (work / name).write_text((ROOT / 'tools' / name).read_text())
+        # The digest of everything else the alchem is made of names its build.
+        made = hashlib.sha256()
+        for path in sorted(work.iterdir()):
+            if path.name != 'alchem-guide.alc':
+                made.update(path.name.encode() + b'\0' + path.read_bytes() + b'\0')
+        made.update((ROOT / 'tools/alchem-guide.alc').read_bytes())
+        (work / 'alchem-guide.alc').write_text(guide_module(version, platform, made.hexdigest()[:32]))
         before = os.getcwd()
         os.chdir(work)
         try:

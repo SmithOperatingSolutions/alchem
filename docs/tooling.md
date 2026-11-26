@@ -60,6 +60,12 @@ alchem run main.alc -- Ada
 alchem test test
 ```
 
+## Scripts
+
+A program whose first line is `#!/usr/bin/env alchem` runs as a script: `chmod +x hello.alc`, then `./hello.alc Ada`. The system runs `alchem hello.alc Ada` for that line, and `alchem FILE arguments` runs the file as `alchem run` does, with every argument after the file the program's own, `-h` and `--` too. The file may have any name, `hello` as well as `hello.alc`; the files it imports end in `.alc`. A script is a program like any other: it has its module and `main`, and `run`, `build`, `test`, `fmt` and the language server take it as it is, keeping the `#!` line as written. On Windows, where a file has no `#!` line to be run by, `alchem hello.alc Ada` runs it the same way.
+
+`alchem run` and `alchem FILE` keep each program they build in the cache (`~/Library/Caches/alchem` on macOS, `$XDG_CACHE_HOME/alchem` or `~/.cache/alchem` on Linux, `%LocalAppData%\alchem` on Windows, or `$ALCHEM_CACHE`), named by a digest of the program with everything it imports, the alchem that built it and its target. A program run again unchanged starts without being compiled again, in a few milliseconds where building takes about half a second. One program is kept for each file, the last one built.
+
 ## The interactive shell
 
 `alchem alx`, the Alchem Language Executor, reads Alchem a line or a block at a time and prints what each input printed and then its value. A line that leaves a `do`, `fn`, bracket or string open continues on the next. `def`, `struct`, `type`, `defexception` and `import` lines are kept as definitions for the inputs after them; `h Enum.map` shows documentation, `:reset` forgets everything and `:quit` or ctrl-D leaves.

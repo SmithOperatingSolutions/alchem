@@ -3,8 +3,11 @@ defmodule NativeBooleans do
     if nc_word(source,pos,b[76,105,115,116]) == 1 do ny_or(no_list(source,pos,env,table,depth),source,pos,env,table,depth) else nb_option(source,pos,env,table,depth) end
   end
   def nb_option(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
-    # none and some may name bindings; a binding of that name hides the constructor.
-    bound = if nc_word(source,pos,b[110,111,110,101])+nc_word(source,pos,b[115,111,109,101]) == 0 do -1 else nc_lookup(source,nc_start(source,pos),env,2) end
+    # none and some may name bindings; a binding of that name hides the
+    # constructor, and so does a function of the module called by it.
+    named = nc_word(source,pos,b[110,111,110,101])+nc_word(source,pos,b[115,111,109,101])
+    called = if named == 0 do 0 else if byte_at(source,nc_start(source,nc_end(source,pos))) != 40 do 0 else if nc_find(source,nc_start(source,pos),table,nc_owner(table,nc_read(env,0))) < 0 do 0 else 1 end end end
+    bound = if named == 0 do -1 else if called == 1 do 0 else nc_lookup(source,nc_start(source,pos),env,2) end end
     if nc_word(source,pos,b[110,111,110,101])*(0-bound) == 1 do nc_value(nc_end(source,pos),b[49,192],b[4,9]) else
       if nc_word(source,pos,b[115,111,109,101])*(0-bound) == 1 do no_some(source,pos,env,table,depth) else
         if nc_word(source,pos,b[99,97,115,101]) == 1 do zf_valued(source,table,env,nz_closure(source,table,no_case(source,pos,nj_valued(env),table,depth),pos),pos) else if ty_keyword(source,pos,env) == 1 do ty_try(source,pos,env,table,depth,0) else if wc_keyword(source,pos,env) == 1 do wc_value(source,pos,env,table,depth) else if wf_keyword(source,pos,env) == 1 do wf_for(source,pos,env,table,depth,0) else
@@ -34,8 +37,11 @@ defmodule NativeBooleans do
       candidate = if value == 61 do 1 else if value == 33 do 1 else if value == 60 do 1 else if value == 62 do 1 else 0 end end end end
       cc = if candidate == 0 do 0 else nb_operator(source,op) end
       if value == 105 do nb_in(source,left,env,table,depth) else if cc == 0 do if nc_word(source,op,b[61,126]) == 1 do sg_match(source,left,env,table,depth) else left end else
-        right = nc_math(source,nc_end(source,op),env,table,depth)
-        # The left operand takes no type from the comparison; the right takes the left's.
+        plain = nc_math(source,nc_end(source,op),env,table,depth)
+        # The left operand takes no type from the comparison; the right takes
+        # the left's, and a right that is one call is expected to give it.
+        paren = if nc_pos(plain) >= 0 do -1 else if nw_open_operand(left) == 1 do -1 else nw_last_call(source,nc_end(source,op)) end end
+        right = if paren < 0 do plain else nc_math(source,nc_end(source,op),nw_expect(env,paren,nc_kind(left)),table,depth) end
         if nc_pos(right) < 0 do b[] else if nw_open_operand(left) == 1 do b[] else
           # Compound values compare by structure, and only with == and !=.
           if nt_tag(nt_merge(nc_kind(left),nc_kind(right))) < 4 do nb_comparison(left,right,cc) else if nc_tag(left) == 24 do ne_compare(left,right,cc) else if nt_tag(nt_merge(nc_kind(left),nc_kind(right))) == 22 do nb_string_equal(left,right,if (cc-148)*(cc-149) == 0 do 1 else 0 end,cc) else

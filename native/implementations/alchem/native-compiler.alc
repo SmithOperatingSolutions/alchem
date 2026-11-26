@@ -987,7 +987,7 @@ defmodule NativeSourceCompiler do
     deferred = if form <= 0 do form else if nc_word(source,form,b[44])+nc_word(source,form,b[41]) == 0 do 0 else form end end
     tried = if deferred == 0 do nc_expression(source,pos,nf_unexpected(source,env,table),table,depth+2) else b[] end
     # An argument that needs its parameter's type for a lambda inside it waits as a lambda does.
-    late = if deferred != 0 do deferred else if nc_pos(tried) >= 0 do 0 else nf_late(source,pos) end end
+    late = if deferred != 0 do deferred else if nc_pos(tried) >= 0 do 0 else nf_late(source,pos,depth) end end
     arg = if late == 0 do tried else if late < 0 do b[] else nc_value(late,b[],nc_join(b[11],nc_u24(nc_start(source,pos)),b[0,0,0])) end end
     stop = nc_pos(arg)
     last = if stop < 0 do 0 else nc_word(source,stop,b[41]) end
@@ -1447,6 +1447,11 @@ defmodule NativeSourceCompiler do
     nc_if_form(source,pos,env,table,depth,1)
   end
   def nc_if_form(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, negate: integer): bytes do
+    first = nc_if_once(source,pos,env,table,depth,negate)
+    again = np_again(source,env,table,first)
+    np_settled(first,if Enum.count(again) == 0 do b[] else nc_if_once(source,pos,again,table,depth,negate) end)
+  end
+  def nc_if_once(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, negate: integer): bytes do
     if depth > 251 do b[] else
       given = nc_condition(source,pos,env,table,depth)
       condition_code = if nc_pos(given) < 0 do b[] else if negate == 0 do given else nc_value(nc_pos(given),Enum.concat(nc_code(given),b[72,131,240,1]),b[3]) end end
