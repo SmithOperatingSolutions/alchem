@@ -28,6 +28,10 @@ RUN cd /etc/alchem-native \
  && mise exec -- go version \
  && mise exec -- cargo --version && mise exec -- python3 --version
 
+# The repository mounted at /work belongs to the host's user, not to root:
+# git (and the VCS stamp of go build) reads it as it does on the host.
+RUN git config --system --add safe.directory /work
+
 WORKDIR /work/native
 ENTRYPOINT ["mise", "exec", "--"]
 CMD ["bash"]
