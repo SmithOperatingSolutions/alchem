@@ -469,9 +469,15 @@ defmodule NativeOperators do
   def nk_head_wanted(source: bytes, paren: integer, env: bytes, table: bytes, plan: bytes): bytes do
     wanted = nw_expected(env,paren,2)
     kind = if Enum.at(plan,1,0) == 8 do wanted else nt_unary(7,wanted) end
-    value = if Enum.count(wanted) == 0 do b[] else nf_valued(source,paren+1,env,table,Enum.at(plan,0,0)+1,kind) end
-    close = if nc_pos(value) < 0 do -1 else nc_expect(source,nc_pos(value),b[41]) end
-    if close < 0 do b[] else nc_arg_packet(close,1,nt_cell(nc_kind(value)),Enum.concat(nc_code(value),b[80])) end
+    # A list piped in that waits for its type ([fn -> 1 end] |> hd()) is
+    # typed where it stands, and passes through its slot as nf_resolve has it.
+    piped = nc_kind(nf_piped_from(source,paren+1,env,2))
+    slot = if nt_tag(piped) != 11 do -1 else nc_cursor(piped,7)-1 end
+    at = if slot < 0 do paren+1 else nc_cursor(piped,1) end
+    value = if Enum.count(wanted) == 0 do b[] else nf_valued(source,at,env,table,Enum.at(plan,0,0)+1,kind) end
+    close = if nc_pos(value) < 0 do -1 else nc_expect(source,if slot < 0 do nc_pos(value) else paren+1 end,b[41]) end
+    kept = if slot < 0 do b[] else Enum.concat(nc_slot(b[72,137,69],slot),nc_slot(b[72,139,69],slot)) end
+    if close < 0 do b[] else nc_arg_packet(close,1,nt_cell(nc_kind(value)),nc_join(nc_code(value),kept,b[80])) end
   end
   # Kernel.name for a name that is no function of the library (elem, some,
   # byte_size, put_elem) is the name alone. plan: the nesting, the environment.
