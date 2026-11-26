@@ -1447,6 +1447,11 @@ defmodule NativeSourceCompiler do
     nc_if_form(source,pos,env,table,depth,1)
   end
   def nc_if_form(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, negate: integer): bytes do
+    first = nc_if_once(source,pos,env,table,depth,negate)
+    again = np_again(source,env,table,first)
+    np_settled(first,if Enum.count(again) == 0 do b[] else nc_if_once(source,pos,again,table,depth,negate) end)
+  end
+  def nc_if_once(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, negate: integer): bytes do
     if depth > 251 do b[] else
       given = nc_condition(source,pos,env,table,depth)
       condition_code = if nc_pos(given) < 0 do b[] else if negate == 0 do given else nc_value(nc_pos(given),Enum.concat(nc_code(given),b[72,131,240,1]),b[3]) end end

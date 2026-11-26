@@ -508,10 +508,29 @@ defmodule NativePatterns do
     slot = nc_env_count(env,2)
     begin = nc_expect(source,nc_pos(value),b[100,111])
     held = Enum.concat(env,nc_env_record(at,at,nc_kind(value)))
-    arms = if begin < 0 do b[] else pa_arms(source,held,table,nc_join(b[depth],nc_u24(slot),nc_u24(begin))) end
+    first = if begin < 0 do b[] else pa_arms(source,held,table,nc_join(b[depth],nc_u24(slot),nc_u24(begin))) end
+    again = np_again(source,held,table,first)
+    second = if Enum.count(again) == 0 do b[] else pa_arms(source,again,table,nc_join(b[depth],nc_u24(slot),nc_u24(begin))) end
+    arms = np_settled(first,second)
     if nc_pos(arms) < 0 do b[] else if nj_ended(arms) == 1 do b[] else
       nw_keep(nc_value(nc_pos(arms),nc_join(nc_code(value),nc_slot(b[72,137,69],slot),nc_code(arms)),nc_kind(arms)),arms,b[])
     end end
+  end
+  # env for an if, case or cond once more when what it gave is of a whole
+  # type but marked (a branch gave a part of it alone, as a generic function
+  # called where its result type was not yet known does): each branch is
+  # then expected to give that type, as the pinned compiler expects of a
+  # branch what the branches before it gave. b[] for any other.
+  def np_again(source: bytes, env: bytes, table: bytes, made: bytes): bytes do
+    kind = nc_kind(made)
+    if nc_pos(made) < 0 do b[] else if nw_marked(made) == 0 do b[] else if nu_holes(kind,0) == 1 do b[] else
+      if (nt_tag(kind)-9)*(nt_tag(kind)-12)*(nt_tag(kind)+1) == 0 do b[] else if nt_same(nf_ambient(source,env,table),kind) == 1 do b[] else nw_expect(env,0,kind) end end
+    end end end
+  end
+  # What the form gave the second time, expected to give its type: of that
+  # type, as a binding of a declared type is; else what it gave first.
+  def np_settled(first: bytes, second: bytes): bytes do
+    if nc_pos(second) < 0 do first else if nt_same(nc_kind(second),nc_kind(first)) == 0 do first else nc_value(nc_pos(second),nc_code(second),nc_kind(second)) end end
   end
   def np_arms(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
     slot = nc_cursor(state,0)

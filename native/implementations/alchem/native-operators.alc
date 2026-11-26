@@ -415,7 +415,11 @@ defmodule NativeOperators do
   def nk_cond(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
     begin = nc_expect(source,nc_end(source,start),b[100,111])
     if depth > 251 do b[] else if begin < 0 do b[] else
-      if nc_word(source,begin,b[101,110,100]) == 1 do b[] else pk_arms(source,env,table,nc_join(b[depth],nc_u24(start),nc_u24(begin))) end
+      if nc_word(source,begin,b[101,110,100]) == 1 do b[] else
+        first = pk_arms(source,env,table,nc_join(b[depth],nc_u24(start),nc_u24(begin)))
+        again = np_again(source,env,table,first)
+        np_settled(first,if Enum.count(again) == 0 do b[] else pk_arms(source,again,table,nc_join(b[depth],nc_u24(start),nc_u24(begin))) end)
+      end
     end end
   end
   def nk_cond_arms(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, origin: integer): bytes do
