@@ -98,7 +98,7 @@ compiler's frontend (`adapters/alchem`) and a backend written in Rust
 still be made without a released compiler:
 
 ```sh
-mise install && mise run fetch && mise run fetch:seed
+mise install go rust python && mise run fetch && mise run fetch:seed
 python3 scripts/verify-quick.py --seed
 ```
 

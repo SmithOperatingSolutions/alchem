@@ -13,7 +13,7 @@ repository. Where the two still differ, `spec/` says so and why.
 ## Build and run
 
 Requires Linux x86-64 and Python 3 ([mise](https://mise.jdx.dev) installs
-the one of `mise.toml`), and neither Go nor Rust. From this directory:
+the one of the repository's `mise.toml`), and neither Go nor Rust. From this directory:
 
 ```sh
 mise install python
@@ -74,9 +74,9 @@ long as it compiles it.
 **The seed.** Before there was a release the first stage was made from the
 source by the Go compiler's frontend (`adapters/alchem`) and a Rust backend
 (`implementations/rust`). `scripts/verify-quick.py --seed` and the complete
-suite still start so (`mise install`, `mise run fetch`, `mise run
-fetch:seed`), and the nightly run of CI checks that the compiler made from
-the seed is, byte for byte, the one made from the pinned release: the
+suite still start so (`mise install go rust python`, `mise run fetch`,
+`mise run fetch:seed`), and CI checks that the compiler made from the seed
+is, byte for byte, the one made from the pinned release: the
 first stage can still be made without a released compiler.
 
 ## Linux ARM64
