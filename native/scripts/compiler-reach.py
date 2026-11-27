@@ -72,10 +72,12 @@ def load(name, path):
     return module
 
 
-def assembled():
+def assembled(traced=False):
     """The compiler's source as one module, and where each file of it
     starts: [(line, file name)]. A line that names the file is put before
-    each file's text to find it, and taken out again."""
+    each file's text to find it, and taken out again. traced: as the
+    compiler that says where it ends (scripts/compiler-where.py), the
+    module and its entry left as they are."""
     bootstrap = load('bootstrap', ROOT / 'scripts/bootstrap-alchem-compiler.py')
     plain = Path.read_text
     def marked(self, *args, **kwargs):
@@ -86,7 +88,7 @@ def assembled():
         return text
     Path.read_text = marked
     try:
-        text = bootstrap.source_text('functions', False)
+        text = bootstrap.source_text('functions', False, traced=traced)
     finally:
         Path.read_text = plain
     lines, starts = [], []
@@ -97,6 +99,8 @@ def assembled():
             lines.append(line)
     if lines[0] != 'defmodule NativeSourceCompiler do':
         raise SystemExit('the compiler source is not one NativeSourceCompiler module')
+    if traced:
+        return '\n'.join(lines), starts
     # The module under test: no compiler entry and no main, each line kept
     # where it is.
     lines[0] = 'defmodule ReachCompiler do'

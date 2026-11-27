@@ -2705,7 +2705,7 @@ end
   end
 
   def parse_as(source: string, keep: boolean): result[AlchemJson.J, string] do
-    if byte_size(source) > 1048576 do error(problem(1, 1, "source exceeds 1048576 bytes")) else
+    if byte_size(source) > 16776191 do error(problem(1, 1, "source exceeds 16776191 bytes")) else
       case AlchemLexer.scan(source) do
         error(why) -> error(why)
         ok({tokens, comments}) ->

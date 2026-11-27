@@ -434,7 +434,7 @@ defmodule AlchemCommand do
           case File.read_binary(name) do
             error(code) -> error(name <> ": open " <> name <> ": " <> reason(code))
             ok(text) ->
-              if byte_size(text) > 1048576 do error(name <> ": source exceeds 1048576 bytes") else
+              if byte_size(text) > 16776191 do error(name <> ": source exceeds 16776191 bytes") else
                 case AlchemFormat.format(text) do
                   error(why) -> error(name <> ":" <> why)
                   ok(formatted) -> fmt_texts(rest, if formatted == text do changed else changed ++ [{name, formatted}] end)

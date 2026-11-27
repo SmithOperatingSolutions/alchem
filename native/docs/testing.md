@@ -157,6 +157,8 @@ position that is -1 into a record. `scripts/compiler-where.py` says where:
 python3 scripts/compiler-where.py build/dev/A2 build/fuzz/000123.alc --built build/work/where
 ```
 
-It builds the compiler's source as a test whose three functions that write
-a number into bytes refuse one that does not fit, and prints the functions
-that led there.
+It builds, in a few seconds, the compiler that is traced (its source with a
+function `native_traced`: `spec/alchem-failures.md`, "Bytes"), gives it the
+text, and prints the reason and the functions that led there, each with its
+file and line in `implementations/alchem`. The nightly job does so for
+every case that failed and keeps what it printed with the cases.

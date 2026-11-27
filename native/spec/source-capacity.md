@@ -11,7 +11,8 @@ them, as before.
 
 The pinned compiler refuses a source file past 1,048,576 bytes (`source
 exceeds 1048576 bytes`) but not a program: five files of a megabyte each build
-and run. The bundlers refuse such a file as it does (`alchem-modules.md`), and
+and run. The bundlers and `alchem` refused such a file as it does; they now
+read a file as long as a program may be (`alchem-modules.md`), and
 the compiler takes what a program of many files adds up to. A single source
 given to `alchem-compiler` directly may be larger than a megabyte because the
 compiler's own source has to pass through it; this is a deliberate
@@ -290,6 +291,22 @@ Measured on a machine busy with other work (bindings `x1 = x0 + 1`):
 Of the 890 MB about 770 MB is what 30,000 statements of that kind cost
 without any binding (the code of the runs, copied once a doubling, and
 the trace tables); the stores and windows are the rest.
+
+`alchem check` (the front end of `tools/alchem-parse.alc` and
+`tools/alchem-check.alc`, which `alchem run`, `build` and `test` go through)
+grows with the square of a file where the compiler does not. Functions
+`def fN(n: integer): integer do n + N end` in one module, under emulation:
+
+| Functions | Bytes | `alchem check` | The compiler alone |
+| --- | --- | --- | --- |
+| 2,000 | 107,865 | 4.3 s, 0.16 GB | 0.2 s |
+| 4,000 | 217,865 | 14.7 s, 0.42 GB | 0.3 s |
+| 8,000 | 437,865 | 51.9 s, 1.3 GB | 0.6 s |
+| 16,000 | 889,866 | 199 s, 4.5 GB | 1.3 s |
+
+A file may now be as long as a program (`alchem-modules.md`), but one of
+dense code past about a megabyte is beyond what `alchem check` does in the
+memory it has; the compiler given the same text directly takes it.
 
 What still grows with the square, with what the pinned compiler takes
 (each measured through its wrapper, 4 GB and 120 s):

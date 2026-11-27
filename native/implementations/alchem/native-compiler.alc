@@ -1242,7 +1242,7 @@ defmodule NativeSourceCompiler do
         spans = nc_code(state)
         count = nc_units(Enum.count(spans),6)
         code = if count > 128 do b[] else nc_compile_items(source,spans,env,table,depth,b[0,count]) end
-        if Enum.count(code) == 0 do b[] else nc_value(nc_pos(state),Enum.concat(code,nc_pack_emit(count)),b[1]) end
+        if Enum.count(code) == 0 do b[] else nc_value(nc_pos(state),Enum.concat(code,zf_packed(table,nc_start(source,pos),count)),b[1]) end
       end
     end
   end
@@ -1346,7 +1346,7 @@ defmodule NativeSourceCompiler do
           if nt_tag(nc_arg_kind(args,0)) == 8 do nw_library(nm_enum(args,op),args,shares) else
           if nt_tag(nc_arg_kind(args,0)) == 7 do nw_library(ne_summed(table,args,op,pos-4),args,shares) else
           if nc_builtin_types(op,args) == 0 do b[] else
-            code = if op == 2 do if nc_arg_count(args) == 2 do no_at_emit() else nc_builtin_code(op) end else nc_builtin_code(op) end
+            code = if op == 2 do if nc_arg_count(args) == 2 do no_at_emit() else nc_builtin_code(op) end else zf_restatus(nc_builtin_code(op),table,73,80,0) end
             kind = if op == 2 do if nc_arg_count(args) == 2 do b[4,0] else b[0] end else nc_builtin_kind(op) end
             nc_value(nc_pos(args),Enum.concat(nc_arg_code(args),code),kind)
           end end end end
@@ -1765,13 +1765,25 @@ defmodule NativeSourceCompiler do
      0,16,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
   end
   def nc_native_index(source: bytes, table: bytes, first: integer, stop: integer): integer do
+    nc_named_index(source,table,first,stop,b[110,97,116,105,118,101,95,99,111,109,112,105,108,101])
+  end
+  def nc_named_index(source: bytes, table: bytes, first: integer, stop: integer, name: bytes): integer do
     if first >= stop do -1 else
       middle = first+nc_half(stop-first)
-      if nc_word(source,nc_meta(table,middle,0),b[110,97,116,105,118,101,95,99,111,109,112,105,108,101]) == 1 do middle else
-        left = nc_native_index(source,table,first,middle)
-        if left >= 0 do left else nc_native_index(source,table,middle+1,stop) end
+      if nc_word(source,nc_meta(table,middle,0),name) == 1 do middle else
+        left = nc_named_index(source,table,first,middle,name)
+        if left >= 0 do left else nc_named_index(source,table,middle+1,stop,name) end
       end
     end
+  end
+  # The table of a compiler entry: not traced (nz_off), so that the
+  # compiler is as small and as fast as it can be, unless its source has a
+  # function native_traced. A compiler built so (scripts/compiler-where.py)
+  # ends as any program does on a failure of its own, with the place and
+  # the functions that led there, where the other ends with a status and
+  # no word.
+  def nc_entry_table(source: bytes, listed: bytes): bytes do
+    if nc_named_index(source,listed,0,nc_records(Enum.count(listed)),b[110,97,116,105,118,101,95,116,114,97,99,101,100]) < 0 do nz_off(listed) else listed end
   end
   # io: the table entry of a compiler entry's input and output on ARM64
   # (nc_io_function), -1 for none.
@@ -1848,7 +1860,7 @@ defmodule NativeSourceCompiler do
   def nc_check_all(source: bytes, first: integer, stop: integer): bytes do
     if mx_stop(source) > nc_limit() do b[] else
       listed = nc_module(source)
-      table = if Enum.count(listed) == 0 do b[] else if nc_native_index(source,listed,0,nc_records(Enum.count(listed))) < 0 do zf_covered(source,jd_settle(source,listed)) else nz_off(listed) end end
+      table = if Enum.count(listed) == 0 do b[] else if nc_native_index(source,listed,0,nc_records(Enum.count(listed))) < 0 do zf_covered(source,jd_settle(source,listed)) else nc_entry_table(source,listed) end end
       if Enum.count(table) == 0 do b[] else if Enum.count(nc_check_run(source,table,0,nc_records(Enum.count(table)),Enum.concat(nc_u24(first),nc_u24(stop)))) == 0 do b[1] else b[] end end
     end
   end
@@ -1868,7 +1880,7 @@ defmodule NativeSourceCompiler do
   def nc_explain_all(source: bytes): bytes do
     if mx_stop(source) > nc_limit() do b[] else
       listed = nc_module(source)
-      table = if Enum.count(listed) == 0 do b[] else if nc_native_index(source,listed,0,nc_records(Enum.count(listed))) < 0 do zf_covered(source,jd_settle(source,listed)) else nz_off(listed) end end
+      table = if Enum.count(listed) == 0 do b[] else if nc_native_index(source,listed,0,nc_records(Enum.count(listed))) < 0 do zf_covered(source,jd_settle(source,listed)) else nc_entry_table(source,listed) end end
       if Enum.count(table) == 0 do b[] else
         if nc_pos(nc_build(source,table,0,nc_records(Enum.count(table)))) >= 0 do b[] else nc_refused(source,table,0,nc_records(Enum.count(table))) end
       end
@@ -1897,7 +1909,7 @@ defmodule NativeSourceCompiler do
     if mx_stop(source) > nc_limit() do b[] else
       listed = nc_module(source)
       # A compiler entry is not traced.
-      table = if Enum.count(listed) == 0 do b[] else if nc_native_index(source,listed,0,nc_records(Enum.count(listed))) < 0 do zf_covered(source,jd_settle(source,listed)) else nz_off(listed) end end
+      table = if Enum.count(listed) == 0 do b[] else if nc_native_index(source,listed,0,nc_records(Enum.count(listed))) < 0 do zf_covered(source,jd_settle(source,listed)) else nc_entry_table(source,listed) end end
       if Enum.count(table) == 0 do b[] else
         bundle = nc_build(source,table,0,nc_records(Enum.count(table)))
         if nc_pos(bundle) < 0 do b[] else

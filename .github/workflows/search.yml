@@ -134,6 +134,16 @@ jobs:
           seed="${SEED:-$(date -u +%Y-%m-%d)}"
           echo "seed $seed, $COUNT cases"
           python3 scripts/fuzz-compiler.py build/dev/A2 "$COUNT" --seed "$seed" --keep build/fuzz
+      - name: Where the compiler ended
+        # The compiler built traced says where it ends on each case kept
+        # (native/scripts/compiler-where.py).
+        if: failure()
+        run: |
+          shopt -s nullglob
+          cases=(build/fuzz/*.alc)
+          if (( ${#cases[@]} )); then
+            python3 scripts/compiler-where.py build/dev/A2 "${cases[@]}" | tee build/fuzz/where.txt
+          fi
       - name: Cases that failed
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
