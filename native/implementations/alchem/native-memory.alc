@@ -368,14 +368,14 @@ defmodule NativeMemory do
   def gm_valued(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, value: bytes): bytes do
     if gm_any(env,2,53) == 0 do value else if byte_at(source,start) == 37 do gm_rebuilt(source,start,env,table,depth,value) else if byte_at(source,start) == 123 do gm_retupled(source,start,env,table,depth,value) else
       stop = nc_pos(value)
-      put = if byte_at(source,start) != 77 do -1 else gm_put_site(source,start,table,stop) end
-      at = if put >= 0 do put else start end
+      site = if byte_at(source,start) != 77 do -1 else gm_put_site(source,start,table,stop) end
+      at = if site >= 0 do site else start end
       local = if nc_identifier(source,at) == 0 do -1 else nc_lookup(source,at,env,2) end
       name = nc_cursor(env,nc_env_offset(env,local))
       after = nc_end(source,at)
       size = after-at
       fits = if local < 0 do 0 else if gm_direct(env,2,name,0) == 0 do 0 else
-        if put >= 0 do 1 else if nz_before(source,stop-1)+1 == after do 1 else nc_word(source,after,b[60,62]) end end
+        if site >= 0 do 1 else if nz_before(source,stop-1)+1 == after do 1 else nc_word(source,after,b[60,62]) end end
       end end
       again = if fits == 0 do b[] else if wf_dropped(source,stop,env,table) == 1 do b[] else nc_expression(source,start,gm_note(env,49,at),table,depth) end end
       if nc_pos(again) != stop do value else if nt_same(nc_kind(again),nc_kind(value)) == 0 do value else again end end
@@ -464,8 +464,8 @@ defmodule NativeMemory do
     found = gm_seek(source,first,stop,at,size)
     dot = nc_start(source,found+size)
     name = nc_start(source,dot+1)
-    length = nc_cursor(plan,3)
-    other = if byte_at(source,dot) != 46 do 0 else if byte_at(source,dot+1) == 46 do 0 else if classify_ascii(byte_at(source,name)) != 2 do 0 else if nc_end(source,name)-name != length do 1 else 1-nc_equal(source,name,nc_cursor(plan,0),length) end end end end
+    span = nc_cursor(plan,3)
+    other = if byte_at(source,dot) != 46 do 0 else if byte_at(source,dot+1) == 46 do 0 else if classify_ascii(byte_at(source,name)) != 2 do 0 else if nc_end(source,name)-name != span do 1 else 1-nc_equal(source,name,nc_cursor(plan,0),span) end end end end
     if found >= stop do 0 else if other == 0 do 1 else gm_again(source,found+size,stop,at,size,plan) end end
   end
   # Where the name at at stands next as a word from pos on; stop for nowhere.

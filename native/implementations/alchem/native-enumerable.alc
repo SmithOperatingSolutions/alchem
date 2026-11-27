@@ -11,10 +11,10 @@ defmodule NativeEnumerable do
   # The bits of the enum parameters of the function whose name stands from
   # start with size bytes and that takes arity arguments; 0 when it has none.
   def en_find(source: bytes, start: integer, size: integer, arity: integer, rows: bytes, at: integer): integer do
-    length = Enum.at(rows,at,0)
-    if length == 0 do 0 else
-      if length != size do en_find(source,start,size,arity,rows,at+3+length) else if Enum.at(rows,at+1+length,0) != arity do en_find(source,start,size,arity,rows,at+3+length) else
-        if nc_differ(rows,at+1,source,start,length) != 0 do en_find(source,start,size,arity,rows,at+3+length) else Enum.at(rows,at+2+length,0) end
+    span = Enum.at(rows,at,0)
+    if span == 0 do 0 else
+      if span != size do en_find(source,start,size,arity,rows,at+3+span) else if Enum.at(rows,at+1+span,0) != arity do en_find(source,start,size,arity,rows,at+3+span) else
+        if nc_differ(rows,at+1,source,start,span) != 0 do en_find(source,start,size,arity,rows,at+3+span) else Enum.at(rows,at+2+span,0) end
       end end
     end
   end

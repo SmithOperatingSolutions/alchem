@@ -115,9 +115,9 @@ defmodule NativeX86Arm do
     # A marker of ARM64 code covers that code too.
     raw = if Enum.at(spec,0,0) == 81 do nc_long(code,after+1) else 0 end
     data = if Enum.at(spec,0,0) == 80 do 4 else 0 end
-    length = if marker == 1 do after+5+data+raw-start else after+xf(imm,0)-start end
+    span = if marker == 1 do after+5+data+raw-start else after+xf(imm,0)-start end
     value = if marker == 1 do nc_long(code,after+1) else xf(imm,1) end
-    nc_join(nc_join(xw(length),xw(Enum.at(spec,0,0)),xw(size)),nc_join(xw(reg),nc_slice(m,16,56),xw(value)),nc_join(Enum.concat(xw(sub),xw(rex)),xw(pre),xw(Enum.at(spec,6,0))))
+    nc_join(nc_join(xw(span),xw(Enum.at(spec,0,0)),xw(size)),nc_join(xw(reg),nc_slice(m,16,56),xw(value)),nc_join(Enum.concat(xw(sub),xw(rex)),xw(pre),xw(Enum.at(spec,6,0))))
   end
   # The immediate: {its length, its value}.
   def xd_imm(code: bytes, p: integer, kind: integer, size: integer, w: integer): bytes do
@@ -200,8 +200,8 @@ defmodule NativeX86Arm do
       reg = a_div(modrm,8)-8*a_div(modrm,64)
       kind = if op == 22 do (if reg == 0 do (if size == 1 do 1 else 4 end) else 0 end) else Enum.at(spec,3,0) end
       sub = if Enum.at(spec,4,0) == 255 do reg else Enum.at(spec,4,0) end
-      length = if op == 80 do after+9-start else if op == 81 do after+5+nc_long(code,after+1)-start else after+xq_imm(kind,size,w)-start end end
-      op+256*sub+65536*last+16777216*length
+      span = if op == 80 do after+9-start else if op == 81 do after+5+nc_long(code,after+1)-start else after+xq_imm(kind,size,w)-start end end
+      op+256*sub+65536*last+16777216*span
     end
   end
   # The length of ModRM, SIB and displacement at q.
@@ -849,7 +849,7 @@ defmodule NativeX86Arm do
       xa_pack(nc_long(right,0),xa_scan_state(right),Enum.concat(xa_scan_list(left),xa_scan_list(right)))
     else xa_seq(code,p,limit,stop,st,b[]) end
   end
-  def xa_entry(p: integer, size: integer, flags: bytes, length: integer): bytes do nc_join(nc_u32(p),nc_u32(size),Enum.concat(flags,nc_u32(length))) end
+  def xa_entry(p: integer, size: integer, flags: bytes, span: integer): bytes do nc_join(nc_u32(p),nc_u32(size),Enum.concat(flags,nc_u32(span))) end
   def xa_seq(code: bytes, p: integer, limit: integer, stop: integer, st: bytes, acc: bytes): bytes do
     if p >= limit do xa_pack(p,st,acc) else if p >= stop do xa_pack(p,st,acc) else
       data = xa_pending_at(st,p,3)
@@ -926,9 +926,9 @@ defmodule NativeX86Arm do
   end
   # The data region the RIP-relative operand of the instruction at p names,
   # starting back bytes before what it points at: u32 its start, u32 length.
-  def xa_region(code: bytes, p: integer, length: integer, back: integer): bytes do
+  def xa_region(code: bytes, p: integer, span: integer, back: integer): bytes do
     rec = xd(code,p)
-    Enum.concat(nc_u32(p+xf(rec,0)+xf(rec,8)-back),nc_u32(length))
+    Enum.concat(nc_u32(p+xf(rec,0)+xf(rec,8)-back),nc_u32(span))
   end
   # The length of the data region that starts at p, -1 for none; the state
   # without it. offset: where the regions start in st (3).
@@ -999,9 +999,9 @@ defmodule NativeX86Arm do
     p = nc_long(mp,at)
     here = nc_long(mp,at+4)
     kind = Enum.at(mp,at+11,0)
-    length = nc_long(mp,at+12)
+    span = nc_long(mp,at+12)
     next = if at+16 < Enum.count(mp) do nc_long(mp,at+20) else -1 end
-    made = if kind == 1 do Enum.concat(nc_slice(code,p,p+length),nc_zeros(xa_pad(length))) else if kind == 2 do a4(Enum.at(code,p,0)+256*Enum.at(code,p+1,0)) else if kind == 3 do Enum.concat(nc_slice(code,p+7,p+length),nc_zeros(xa_pad(length-7))) else
+    made = if kind == 1 do Enum.concat(nc_slice(code,p,p+span),nc_zeros(xa_pad(span))) else if kind == 2 do a4(Enum.at(code,p,0)+256*Enum.at(code,p+1,0)) else if kind == 3 do Enum.concat(nc_slice(code,p+7,p+span),nc_zeros(xa_pad(span-7))) else
       xa_emit_insn(code,mp,at,here,kind,big)
     end end end
     # Each translation must come out at the size pass 1 measured; one that
@@ -1014,17 +1014,17 @@ defmodule NativeX86Arm do
     made = xa_insn(xd(code,nc_long(mp,at)),mp,here+Enum.count(before),b[Enum.at(mp,at+8,0),Enum.at(mp,at+9,0),Enum.at(mp,at+10,0),big])
     nc_join(before,made,if kind >= 8 do xa_flip() else b[] end)
   end
-  def xa_pad(length: integer): integer do 4*a_div(length+3,4)-length end
+  def xa_pad(span: integer): integer do 4*a_div(span+3,4)-span end
   # An instruction with a RIP-relative operand that names length bytes of
   # data in the code: in the ARM64 compiler it follows the marker 0F 0B 'D',
   # the length and how far before what the operand points at the data
   # starts, so that the translation copies those bytes (xa_region).
-  def xa_mark(length: integer, instruction: bytes): bytes do xa_mark_back(length,0,instruction) end
+  def xa_mark(span: integer, instruction: bytes): bytes do xa_mark_back(span,0,instruction) end
   # The bytes a marker adds: what a jump over a marked instruction adds to
   # its distance.
   def xa_mark_size(): integer do if nc_a64() == 1 do 11 else 0 end end
-  def xa_mark_back(length: integer, back: integer, instruction: bytes): bytes do
-    if nc_arm() == 0 do instruction else nc_join(b[15,11,68],Enum.concat(nc_u32(length),nc_u32(back)),instruction) end
+  def xa_mark_back(span: integer, back: integer, instruction: bytes): bytes do
+    if nc_arm() == 0 do instruction else nc_join(b[15,11,68],Enum.concat(nc_u32(span),nc_u32(back)),instruction) end
   end
   # ARM64 code among x86-64 code: in the ARM64 compiler, behind the marker
   # 0F 0B 'A' and its length, which the translation copies (kind 3).

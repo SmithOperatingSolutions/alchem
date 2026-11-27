@@ -72,9 +72,9 @@ defmodule NativeFast do
     sub = if Enum.at(spec,4,0) == 255 do field else Enum.at(spec,4,0) end
     named = if Enum.at(spec,5,0) == 1 do (Enum.at(spec,6,0) &&& 7)+b0 else reg end
     marker = if (op-80)*(op-81) == 0 do 1 else 0 end
-    length = if marker == 1 do after+5+(if op == 80 do 4 else nc_long(code,after+1) end)-start else after+taken-start end
+    span = if marker == 1 do after+5+(if op == 80 do 4 else nc_long(code,after+1) end)-start else after+taken-start end
     value = if marker == 1 do nc_long(code,after+1) else imm end
-    b[0,op,size,named,mode,base+1,index+1,scale,0,0,sub,rex,pre &&& 255,Enum.at(spec,6,0),pre >>> 8,0,length &&& 255,(length >>> 8) &&& 255,(length >>> 16) &&& 255,(length >>> 24) &&& 255,disp &&& 255,(disp >>> 8) &&& 255,(disp >>> 16) &&& 255,(disp >>> 24) &&& 255,value &&& 255,(value >>> 8) &&& 255,(value >>> 16) &&& 255,(value >>> 24) &&& 255,(value >>> 32) &&& 255,(value >>> 40) &&& 255,(value >>> 48) &&& 255,(value >>> 56) &&& 255,start &&& 255,(start >>> 8) &&& 255,(start >>> 16) &&& 255,(start >>> 24) &&& 255]
+    b[0,op,size,named,mode,base+1,index+1,scale,0,0,sub,rex,pre &&& 255,Enum.at(spec,6,0),pre >>> 8,0,span &&& 255,(span >>> 8) &&& 255,(span >>> 16) &&& 255,(span >>> 24) &&& 255,disp &&& 255,(disp >>> 8) &&& 255,(disp >>> 16) &&& 255,(disp >>> 24) &&& 255,value &&& 255,(value >>> 8) &&& 255,(value >>> 16) &&& 255,(value >>> 24) &&& 255,(value >>> 32) &&& 255,(value >>> 40) &&& 255,(value >>> 48) &&& 255,(value >>> 56) &&& 255,start &&& 255,(start >>> 8) &&& 255,(start >>> 16) &&& 255,(start >>> 24) &&& 255]
   end
   # Native smoke test; arithmetic.
   def main() do System.halt(0) end

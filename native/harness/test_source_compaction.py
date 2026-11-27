@@ -25,6 +25,14 @@ class SourceCompactionTests(unittest.TestCase):
         self.assertIn('"nc_compile source # text"',compact)
         self.assertNotIn('(source:',compact)
 
+    def test_identifier_compaction_keeps_builtin_names(self):
+        # A variable named for a builtin is refused; renamed, it would pass
+        # in the compacted source and nowhere else.
+        source='defmodule M do def pad(length: integer, put: integer): integer do length+put end end'
+        compact=bootstrap.compact_identifiers(source)
+        self.assertIn('(length: integer, put: integer)',compact)
+        self.assertIn('length+put',compact)
+
     def test_cr_only_comment_boundaries(self):
         self.assertEqual(bootstrap.compact_source('a=1 # comment\rb=2\r'),'a=1\nb=2\n')
 

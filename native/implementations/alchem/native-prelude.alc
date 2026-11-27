@@ -204,8 +204,8 @@ defmodule NativePrelude do
   # The name at pos against the name of an index record from byte done on:
   # negative when it sorts before, 0 when they are the same.
   def ny_compare(source: bytes, pos: integer, size: integer, index: bytes, record: integer, done: integer): integer do
-    length = Enum.at(index,record,0)
-    if done >= size do if done >= length do 0 else -1 end else if done >= length do 1 else
+    span = Enum.at(index,record,0)
+    if done >= size do if done >= span do 0 else -1 end else if done >= span do 1 else
       gap = Enum.at(source,pos+done,0)-Enum.at(index,record+1+done,0)
       if gap != 0 do gap else ny_compare(source,pos,size,index,record,done+1) end
     end end
