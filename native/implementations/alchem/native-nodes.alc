@@ -223,7 +223,8 @@ defmodule NativeNodes do
   # another is looked into, once, after its arguments.
   def dn_raw_named(source: bytes, table: bytes, owner: integer, kind: bytes, mode: bytes): integer do
     id = nd_named(source,nc_cursor(kind,1),table,owner)
-    inner = nc_join(b[1,1],nc_slice(mode,2,Enum.count(mode)),nc_u16(id))
+    # A name that is no declared type has no number to note.
+    inner = if id < 0 do b[] else nc_join(b[1,1],nc_slice(mode,2,Enum.count(mode)),nc_u16(id)) end
     start = if id < 0 do -1 else nc_meta(table,id,9) end
     if id < 0 do 1 else if Enum.at(mode,0,0) == 0 do 1 else if Enum.count(ac_shown(dn_name(source,table,id))) > 0 do 1 else if dn_seen(mode,id,2) == 1 do 1 else
       if (if nt_tag(kind) == 20 do dn_raws(source,table,nc_join(nc_u16(owner),nc_u24(0),nc_u24(nt_count(kind))),kind,mode) else 1 end) == 0 do 0 else

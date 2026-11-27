@@ -12,8 +12,10 @@ defmodule NativeFunctions do
       owner = nc_owner(table,nc_read(env,0))
       body = nc_expect(source,nc_pos(declared),b[100,111])
       inner = if body < 0 do b[] else nc_env(source,params,nc_u16(nc_read(env,0)),count,table) end
-      if Enum.count(inner) == 0 do b[] else
-        nf_finish(source,env,table,depth,nc_value(body,inner,nd_resolve(source,table,owner,nc_kind(declared))),nl_parameter_words(source,params,count,table,owner))
+      # A result type that is none (`fn(a: integer): Zed do`) leaves no spec.
+      spec = if Enum.count(inner) == 0 do b[] else nc_value(body,inner,nd_resolve(source,table,owner,nc_kind(declared))) end
+      if nc_pos(spec) < 0 do b[] else
+        nf_finish(source,env,table,depth,spec,nl_parameter_words(source,params,count,table,owner))
       end
     end
   end

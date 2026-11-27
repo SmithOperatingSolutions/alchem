@@ -6,16 +6,23 @@ cover file (ALCHEM_COVER_FILE, spec/alchem-failures.md) is reported as
 `alchem test -cover-functions` reports one, file by file of
 implementations/alchem.
 
-    compiler-reach.py COMPILER [--gates] [--search PINNED COUNT SEED]
+    compiler-reach.py COMPILER [--gates [WORD...]] [--search PINNED COUNT SEED]
                       [--programs DIR] [--jobs N] [--keep DIR]
+                      [--built FILE]
 
 COMPILER is the compiler that builds the test (build/dev/A2), with
 ALCHEM_REACH_BUILD_MEMORY (12G); each part runs with ALCHEM_MEMORY (8G). The programs:
---gates, those of the gates (harness/*.py RUNS, as windows-examples.py
-collects them) and the upstream examples; --search, the random cases
+--gates, every program the gates (scripts/verify-quick.py, those that take
+the compiler alone; all, or those whose names have one of the words given)
+give the compiler: each gate is run with a compiler that keeps what it is
+given and then compiles it, so a gate that fails counts what it compiled
+until then, and is named; --search, the random cases
 generate-program-cases.py makes with the pinned command; --programs, the
-.alc files of a directory. They are compiled in --jobs parts at once; a
-program the compiler refuses still counts what it reached.
+.alc files of a directory. A program met twice is compiled once, and one of
+more than ALCHEM_REACH_LARGEST bytes (1 MiB: the compiler's own source and
+the commands bundled with it) is left out and counted. They are compiled a hundred to a run of the test, --jobs runs at once; a
+program the compiler refuses still counts what it reached, and so does one
+that ends the test (it is found by running its part in halves, and named). --built FILE keeps the test there, and uses the one that is there.
 
 The compiler is one module of more than 1 MiB, which `alchem test` (the
 bundler and the front end, as the pinned command) does not take: the test
@@ -23,6 +30,7 @@ is bundled here. The code for other systems (ARM64, macOS, Windows) is
 reached only by compiling for them, and is reported apart.
 """
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -39,6 +47,8 @@ ROOT = Path(__file__).resolve().parents[1]
 # Code that only compiling for another system reaches.
 OTHER_SYSTEMS = {'native-x86arm.alc', 'native-arm64.alc', 'native-macho.alc', 'native-runtimes-arm64.alc',
                  'native-memory-data-arm64.alc', 'native-memory-data-darwin.alc', 'native-windows.alc', 'native-windows-data.alc'}
+# How many programs one run of the test compiles.
+PART = 100
 TEST = '''defmodule AlchemReach do
   import "module:ReachCompiler"
 
@@ -188,76 +198,130 @@ def report(counts, lines, starts):
     return '\n'.join(out) + '\n'
 
 
+def recorded(compiler, words, jobs, work):
+    """What the gates give the compiler: each gate is run with a command in
+    its place that keeps what it reads and gives it to the compiler."""
+    kept = work / 'given'
+    kept.mkdir()
+    shim = work / 'recording-compiler'
+    # A gate runs the compiler with an empty PATH: every command by its place.
+    tools = {name: shutil.which(name) for name in ('sh', 'mktemp', 'cat')}
+    shim.write_text(f'#!{tools["sh"]}\nf=$({tools["mktemp"]} {kept}/XXXXXXXXXXXX) || exit 70\n{tools["cat"]} > "$f"\nexec {compiler} "$@" < "$f"\n')
+    shim.chmod(0o700)
+    quick = load('verify_quick', ROOT / 'scripts/verify-quick.py')
+    names = [name for name, call in quick.GATES.items() if call == 'verify(compiler)' and (not words or any(w in name for w in words))]
+    if not names:
+        raise SystemExit(f'no gate has one of {words} in its name')
+    failed = []
+    with ThreadPoolExecutor(max(1, jobs)) as pool:
+        for name, status, elapsed, _ in pool.map(lambda name: quick.run_gate(name, None, None, shim), names):
+            print(f'{elapsed:7.1f}s {"ran " if status == 0 else "FAIL"} {name}', flush=True)
+            if status:
+                failed.append(name)
+    if failed:
+        print(f'{len(failed)} of {len(names)} gates failed, and count what they compiled until then: {" ".join(failed)}', flush=True)
+    return [path.read_bytes() for path in sorted(kept.iterdir())]
+
+
 def programs_of(args, directory):
     """The programs, written to directory as NNNNN.alc: how many."""
     texts = []
-    if args.gates:
-        examples = load('windows_examples', ROOT / 'scripts/windows-examples.py')
-        alike, otherwise, _ = examples.gate_cases()
-        texts += [c['source'] for c in alike + otherwise]
-        upstream = load('upstream_examples', ROOT / 'scripts/upstream-examples.py')
-        texts += [source for _, source in upstream.cases()]
+    if args.gates is not None:
+        texts += recorded(args.compiler.resolve(), args.gates, args.jobs, directory.parent)
     if args.search:
         pinned, count, seed = args.search
         generate = load('generate_program_cases', ROOT / 'scripts/generate-program-cases.py')
         made = generate.batches(Path(pinned).resolve(), int(count), seed)
-        texts += [generate.program(cases)[0] for cases, _ in made if cases]
+        texts += [generate.program(cases)[0].encode() for cases, _ in made if cases]
     if args.programs:
-        texts += [p.read_text() for p in sorted(Path(args.programs).glob('*.alc'))]
-    for i, text in enumerate(texts):
-        (directory / f'{i:05}.alc').write_text(text)
-    return len(texts)
+        texts += [p.read_bytes() for p in sorted(Path(args.programs).glob('*.alc'))]
+    largest = int(os.environ.get('ALCHEM_REACH_LARGEST', 1 << 20))
+    seen, large = set(), 0
+    for text in texts:
+        key = hashlib.sha256(text).digest()
+        if key in seen:
+            continue
+        seen.add(key)
+        if len(text) > largest:
+            large += 1
+            continue
+        (directory / f'{len(seen):05}.alc').write_bytes(text)
+    print(f'{len(texts)} programs given, {len(seen)} different, {large} of more than {largest} bytes left out', flush=True)
+    return len(seen) - large
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('compiler', type=Path)
-    parser.add_argument('--gates', action='store_true')
+    parser.add_argument('--gates', nargs='*', metavar='WORD')
     parser.add_argument('--search', nargs=3, metavar=('PINNED', 'COUNT', 'SEED'))
     parser.add_argument('--programs', type=Path)
     parser.add_argument('--jobs', type=int, default=os.cpu_count() or 4)
     parser.add_argument('--keep', type=Path, help='keep the cover file and the report here')
+    parser.add_argument('--built', type=Path, help='the test: made and kept there, or used when it is there')
     args = parser.parse_args()
-    if not (args.gates or args.search or args.programs):
+    if args.gates is None and not (args.search or args.programs):
         parser.error('name the programs: --gates, --search or --programs')
     source, starts = assembled()
     with tempfile.TemporaryDirectory(prefix='alchem-reach-') as top:
         work = Path(top)
         every = work / 'programs'
         every.mkdir()
-        count = programs_of(args, every)
-        print(f'{count} programs', flush=True)
+        programs_of(args, every)
         limited = [str(ROOT / 'scripts/limited')]
         env = dict(os.environ, ALCHEM_MEMORY=os.environ.get('ALCHEM_MEMORY', '8G'), ALCHEM_SECONDS=os.environ.get('ALCHEM_SECONDS', '3600'))
-        # Compiling the compiler with its statements counted takes some GiB.
-        built = subprocess.run(limited + [str(args.compiler.resolve())], input=bundle(source), capture_output=True, env=dict(env, ALCHEM_MEMORY=os.environ.get('ALCHEM_REACH_BUILD_MEMORY', '12G')))
-        if built.returncode or built.stderr:
-            raise SystemExit(f'the compiler did not build the test: {built.returncode} {built.stderr.decode(errors="replace")[:300]}')
         test = work / 'reach'
-        test.write_bytes(built.stdout)
+        if args.built and args.built.exists():
+            shutil.copyfile(args.built, test)
+        else:
+            # Compiling the compiler with its statements counted takes some GiB.
+            built = subprocess.run(limited + [str(args.compiler.resolve())], input=bundle(source), capture_output=True, env=dict(env, ALCHEM_MEMORY=os.environ.get('ALCHEM_REACH_BUILD_MEMORY', '12G')))
+            if built.returncode or built.stderr:
+                raise SystemExit(f'the compiler did not build the test: {built.returncode} {built.stderr.decode(errors="replace")[:300]}')
+            test.write_bytes(built.stdout)
+            if args.built:
+                args.built.parent.mkdir(parents=True, exist_ok=True)
+                args.built.write_bytes(built.stdout)
+                args.built.chmod(0o700)
         test.chmod(0o700)
         names = sorted(every.iterdir())
-        parts = [names[i::args.jobs] for i in range(args.jobs) if names[i::args.jobs]]
-        def run(k):
-            part = work / f'part{k}'
-            part.mkdir()
-            for name in parts[k]:
-                os.link(name, part / name.name)
+        serial = iter(range(1 << 30))
+        def run(part):
+            """The cover files of a part's programs, and the programs that
+            ended the test: a part that does not pass is run as two."""
+            k = next(serial)
+            place = work / f'part{k}'
+            place.mkdir()
+            for name in part:
+                os.link(name, place / name.name)
             cover = work / f'cover{k}'
-            subprocess.run(limited + [str(test)], cwd=work, capture_output=True,
-                           # One test compiles every program of the part: no deadline of its own.
-                           env=dict(env, REACH_PROGRAMS=str(part), ALCHEM_COVER_FILE=str(cover), ALCHEM_TEST_TIMEOUT='86400000'))
-            return cover.read_text() if cover.exists() else ''
-        with ThreadPoolExecutor(len(parts)) as pool:
-            covers = list(pool.map(run, range(len(parts))))
-        if not all(covers):
-            raise SystemExit(f'{sum(1 for c in covers if not c)} of {len(parts)} parts wrote no cover file')
+            done = subprocess.run(limited + [str(test)], cwd=work, capture_output=True,
+                                  # One test compiles every program of the part: no deadline of its own.
+                                  env=dict(env, REACH_PROGRAMS=str(place), ALCHEM_COVER_FILE=str(cover), ALCHEM_TEST_TIMEOUT='86400000'))
+            text = cover.read_text() if cover.exists() else ''
+            shutil.rmtree(place)
+            if done.returncode == 0 and text:
+                return [text], []
+            if len(part) == 1:
+                return ([text] if text else []), [part[0]]
+            half = len(part) // 2
+            first, second = run(part[:half]), run(part[half:])
+            return first[0] + second[0], first[1] + second[1]
+        parts = [names[i:i + PART] for i in range(0, len(names), PART)]
+        with ThreadPoolExecutor(max(1, args.jobs)) as pool:
+            results = list(pool.map(run, parts))
+        covers = [text for texts, _ in results for text in texts]
+        ended = [name for _, names_ in results for name in names_]
+        if not covers:
+            raise SystemExit('no part wrote a cover file')
         counts = defaultdict(int)
         for text in covers:
             for row in text.splitlines():
                 _, line, times = row.split('\t')
                 counts[int(line)] += int(times)
         text = report(counts, source.split('\n'), starts)
+        if ended:
+            text += f'\n{len(ended)} programs ended the test, and count what they reached until then:\n' + ''.join(f'  {name.name} ({name.stat().st_size} bytes): {name.read_bytes()[:60]!r}\n' for name in ended)
         print(text, end='')
         if args.keep:
             args.keep.mkdir(parents=True, exist_ok=True)

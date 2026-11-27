@@ -6,6 +6,11 @@ name: Random search
 # name its own seed and count. Every program that differs is kept as an
 # artifact, and the run fails. A pull request that changes this file runs
 # a shorter search, so the job is tried before it is merged.
+#
+# A second job asks no other compiler (native/scripts/fuzz-compiler.py):
+# changed programs, which the compiler must take or refuse and not end any
+# other way, and made ones that must print what they say. It has the same
+# seed and keeps what fails.
 on:
   pull_request:
     paths:
@@ -88,4 +93,51 @@ jobs:
         with:
           name: search-differences
           path: native/build/search
+          if-no-files-found: ignore
+
+  fuzz:
+    name: Take or refuse
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+        working-directory: native
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          working_directory: native
+          cache: false
+          # The compiler is made from the pinned release: no Go and no Rust.
+          install_args: python
+      - name: Memory limits
+        # scripts/limited, which runs the pinned compiler's programs, caps
+        # memory with a systemd user scope: start the user manager.
+        run: |
+          sudo loginctl enable-linger "$USER"
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          for _ in $(seq 30); do
+            systemd-run --user --scope --quiet -p MemoryMax=1G true && exit 0
+            sleep 1
+          done
+          echo 'no systemd user manager' >&2
+          exit 1
+      - name: Compiler
+        run: python3 scripts/verify-quick.py --build-only
+      - name: Search
+        env:
+          SEED: ${{ inputs.seed }}
+          COUNT: ${{ inputs.count || (github.event_name == 'pull_request' && '20000') || '500000' }}
+        run: |
+          seed="${SEED:-$(date -u +%Y-%m-%d)}"
+          echo "seed $seed, $COUNT cases"
+          python3 scripts/fuzz-compiler.py build/dev/A2 "$COUNT" --seed "$seed" --keep build/fuzz
+      - name: Cases that failed
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-failures
+          path: native/build/fuzz
           if-no-files-found: ignore

@@ -1,0 +1,82 @@
+[
+ {
+  "what": "an attribute that is a string without its end",
+  "text": "defmodule M do\n  @  \"\"\""
+ },
+ {
+  "what": "a range to a number no integer holds",
+  "text": "defmodule Main do\n  def main() do\nIO.inspect({Enum.zip(Stream.from_index(), [\"a\", \"b\"]), Enum.with_index(Stream.take(Stream.cycle([\"x\"]), 2)), Enum.zip(1..99999999999999999999999999, Stream.cycle([0]))})\n  end\nend"
+ },
+ {
+  "what": "a range without its last value before a comma",
+  "text": "defmodule Main do\n  struct Bag do\n  end\n  def evens(s: stream[integer]): stream[integer] do\n    Stream.filter(s, fn x -> rem(x, 2) == 0 end)\n  end\n  def firsts(s: stream[a], n: integer): list[a] do\n    Enum.take(s, n)\n  end\n  def both(a: set[integer], b: set[integer]): set[integer] do\n    MapSet.intersection(a, b)\n  end\n  def describe(s: set[integer]): string do\n    case MapSet.to_list(s) do\n      [] -> \"empty\"\n      [x | rest] -> \"#{x} and #{length(rest)} more\"\n    end\n  end\n  def main() do\n    o = some(MapSet.new([true]))\n    case o do\n      none -> IO.puts(\"none\")\n      Enum.take(Stream.map(1.., fn x -> if x == 2 do raise(\"boom\") else x end end), 3)\n    end\n  end\nend"
+ },
+ {
+  "what": "case with nothing after it, in a sum",
+  "text": "defmodule M do\n  def loop([], acc: integer): integer do acc end\n  def loop([h | t]: list[integer], acc: integer): integer do\n    y = 100case / (h - 2999)\n  end\n  def run(n: integer): integer do\n  end\n  def main() do\n  end\nend"
+ },
+ {
+  "what": "a bundle whose file is said to be longer than an integer holds",
+  "text": "#alchem-bundle 2\n# 9223372036854775807 /work/sig.alc\ndefmodule Main do import \"module:Sig\"\n  def main() do\n    IO.puts(~k(hi))\n  end\nend\ndefmodule Sig do\n  def sigil_q(text: string, mods: string): string do\n    \"<\" <> text <> \":\" <> mods <> \">\"\n  end\n  defp sigil_k(text: string, mods: string): string do\n    \"k\" <> text\n  end\nend"
+ },
+ {
+  "what": "case as a key",
+  "text": "defmodule Example do\n  def main() do\nAgent.start(fn -> 2 end, [nme: case:doc_agent])\n  end\nend"
+ },
+ {
+  "what": "case before the end of an unless",
+  "text": "defmodule M do\n  def main() do\nz = Enum.count(System.argv())\nunless z == 1 do IO.puts(\"u\")case end\nunless z == 0 do\nend\n  end\nend"
+ },
+ {
+  "what": "an if without do as the body of a for",
+  "text": "defmodule M do\n  def main() do\nxs = [1, 2, 3]\ntotal = for x <- xs, y <- xs, reduce: 0 do\n  acc -> acc + x * y\nend\npairs = for x <- xs, reduce: %{0 => [0]} do\n  acc ->if Map.put(acc, x, [x, x])\nend\n  end\nend"
+ },
+ {
+  "what": "a string without its end after an empty one, outside a module",
+  "text": "    IO.puts(try do\n      Integer.undigits([1], 1)\n      \"\"no failure\""
+ },
+ {
+  "what": "a quote after a list in a call",
+  "text": "IO.puts(to_string(z in [0]\") <> to_string(\"b\" in [\"a\"]) <> to_string({1, \"a\"} in [{1, \"a\"}]) <> to_string(z + 1 in [z + 1]))"
+ },
+ {
+  "what": "a string without its end after a rescue",
+  "text": "    IO.puts(try do\n      String.splitter(\"a\", [\"\"]) |> Enum.to_list()\n      \"no failure\"\n    rescue\n      m -> m\n    String.splitter(\"a\", [\"\"]) |> Enum.to_list()\n    IO.puts(\"\"after\")"
+ },
+ {
+  "what": "an if without do in a list",
+  "text": "defmodule Main do\n  def main() do\nIO.inspect(Enum.to_list(Stream.uniq([1,if 2])))\n  end\nend"
+ },
+ {
+  "what": "cond before the end of an if",
+  "text": "defmodule M do\n  def loop(n: integer, acc: integer \\\\ 0): integer do\n    if n == 0 do acc else loop(n - 10)cond end\n  end\n  def main() do\n    IO.puts(Integer.to_string(loop(300000)))\n  end\nend"
+ },
+ {
+  "what": "case as the value of an arm",
+  "text": "defmodule Example do\n  def main() do\nlimited = Task.Supervisor.start_link([max_children: 1])\nIO.puts(inspect(case Task.Supervisor.start_child(limited, fn -> 1 end) do\n  ok(_) -> case\nend))\n  end\nend"
+ },
+ {
+  "what": "a map pattern whose key is no expression",
+  "text": "defmodule M do\n  def main() do\n    %{:4 => 3} = %{:k => 3}\n  end\nend"
+ },
+ {
+  "what": "a map pattern with > for =>",
+  "text": "defmodule M do\n  def main() do\nr = with %{\"a\" => v} <- %{\"a\" => 1, \"b\" => 2} do\n  v\nelse\n  m -> map_size(m)\nend\nr2 = with %{\"z\" > v} <- %{\"a\" => 1, \"b\" => 2} do\nend\n  end\nend"
+ },
+ {
+  "what": "a quote among the parameters of a function",
+  "text": "defmodule Main do\n  def show(r: result[DateTime, string]): string do\n    case r do\n    end\n  end\n  def at(s: integer,\" z: string): string do\n    IO.puts(at(0, \"test/old\"))"
+ },
+ {
+  "what": "a map pattern with ==> for =>",
+  "text": "defmodule M do\n  def main() do\nr = with %{\"a\" => v} <- %{\"a\" => 1, \"b\" => 2} do\n  v\nelse\n  m -> map_size(m)\nend\nr2 = with %{\"z\" ==> v} <- %{\"a\" => 1, \"b\" => 2} do\nend\n  end\nend"
+ },
+ {
+  "what": "a function of a defimpl whose name is a string without its end",
+  "text": "defmodule T do\n  struct Circle do\n  end\n  defimpl Describe, for: integer do\n    def describe(n): string do\n    end\n  end\n  defimpl Describe, for: Circle do\n    def describe(circle): string do\n    end\n  end\n  defimpl Describe, for: list[a] do\n    def \"describe(items): string do"
+ },
+ {
+  "what": "a function value whose result type is two names",
+  "text": "defmodule Example do\n  def main() do\nb: pid[integer] = Process.spawn(fn(self: pid[integer]):IOinteger do Process.crash(\"second\") end, 1)\n  end\nend"
+ }
+]

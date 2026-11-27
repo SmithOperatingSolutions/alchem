@@ -1,0 +1,104 @@
+name: Compiler reach
+# What of the native compiler its gates reach
+# (native/scripts/compiler-reach.py --gates): every gate is run with a
+# compiler that keeps each text it is given, and the compiler's source,
+# built with its statements counted, compiles them all. The report, file by
+# file with the functions that never ran, is the job's summary and an
+# artifact: it says where a test is missing. Once a week and on request; a
+# pull request that changes this file or the script runs two gates only, so
+# the job is tried before it is merged.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/reach.yml'
+      - 'native/scripts/compiler-reach.py'
+  schedule:
+    - cron: '41 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      gates:
+        description: 'Words of the gates to run (empty: all)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  # A download of the toolchain that fails is tried again, over minutes.
+  MISE_HTTP_RETRIES: '10'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reach:
+    name: Reach
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    defaults:
+      run:
+        shell: bash
+        working-directory: native
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          working_directory: native
+          cache: false
+          # Go for the pinned command some gates compare with; no Rust, as
+          # the seed is not made.
+          install_args: go python
+      - name: Tools
+        # As the gates' job has them (native.yml): strace for the gates that
+        # make calls fail, QEMU and an ARM64 assembler for the ARM64 gates.
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q strace
+          bash scripts/fetch-arm64-tools.sh
+      - name: Memory limits
+        # scripts/limited caps memory with a systemd user scope: start the
+        # user manager.
+        run: |
+          sudo loginctl enable-linger "$USER"
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          for _ in $(seq 30); do
+            systemd-run --user --scope --quiet -p MemoryMax=1G true && exit 0
+            sleep 1
+          done
+          echo 'no systemd user manager' >&2
+          exit 1
+      - name: Dependencies
+        run: mise run fetch
+      - name: Compilers
+        # The native compiler from the pinned release (A2); the pinned Go
+        # command, build/dev/alchem-upstream, for the gates that take it.
+        run: |
+          python3 scripts/verify-quick.py --build-only
+          python3 -c "import importlib.util as u; s = u.spec_from_file_location('upstream', 'scripts/upstream-examples.py'); m = u.module_from_spec(s); s.loader.exec_module(m); m.build_upstream()"
+      - name: Reach
+        env:
+          GATES: ${{ inputs.gates || (github.event_name == 'pull_request' && 'statements wide') || '' }}
+          # The runner has 16 GiB: the test is built alone, then the parts
+          # run four at a time.
+          ALCHEM_REACH_BUILD_MEMORY: 13G
+          ALCHEM_MEMORY: 6G
+          ALCHEM_SECONDS: '14400'
+        run: |
+          python3 scripts/compiler-reach.py build/dev/A2 --gates $GATES --jobs 4 --keep build/reach | tee build/reach.log
+          {
+            echo '```'
+            sed -n '/^The compiler (for Linux x86-64)/,$p' build/reach.log | cut -c1-2000
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: compiler-reach
+          path: |
+            native/build/reach
+            native/build/reach.log
+          if-no-files-found: ignore

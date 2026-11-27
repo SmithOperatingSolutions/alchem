@@ -103,7 +103,8 @@ defmodule NativeTrace do
     nc_word_at(source,0,b[35,97,108,99,104,101,109,45,98,117,110,100,108,101,32],0)
   end
   def nz_digits(source: bytes, pos: integer, value: integer): integer do
-    if is_digit(byte_at(source,pos)) == 0 do value else nz_digits(source,pos+1,value*10+byte_at(source,pos)-48) end
+    # No file is longer than a source may be: more digits than that say no more.
+    if is_digit(byte_at(source,pos)) == 0 do value else if value > 16777216 do value else nz_digits(source,pos+1,value*10+byte_at(source,pos)-48) end end
   end
   def nz_digits_end(source: bytes, pos: integer): integer do
     if is_digit(byte_at(source,pos)) == 0 do pos else nz_digits_end(source,pos+1) end
@@ -117,9 +118,9 @@ defmodule NativeTrace do
     size = nz_digits_end(source,pos+2)
     stop = nz_line_end(source,size)
     if left == 0 do Enum.concat(nc_u24(pos),found) else
-      if byte_at(source,pos)*256+byte_at(source,pos+1) != 8992 do b[] else if byte_at(source,size) != 32 do b[] else if stop >= Enum.count(source) do b[] else
+      if byte_at(source,pos)*256+byte_at(source,pos+1) != 8992 do b[] else if byte_at(source,size) != 32 do b[] else if stop >= Enum.count(source) do b[] else if nz_digits(source,pos+2,0) > Enum.count(source) do b[] else
         nz_manifest(source,stop+1,left-1,nc_join(found,nc_u32(nz_digits(source,pos+2,0)),Enum.concat(nc_u24(size+1),nc_u24(stop))))
-      end end end
+      end end end end
     end
   end
   # Where each file starts, the length of its path and the path.
