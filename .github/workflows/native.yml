@@ -317,16 +317,6 @@ jobs:
         with:
           name: windows-compiler
           path: windows
-      - name: Measure sh start times (temporary)
-        run: |
-          python -c "
-          import subprocess, time
-          for i in range(8):
-              t = time.perf_counter(); subprocess.run(['sh', '-c', 'echo x'], capture_output=True); print('python sh', i, round(time.perf_counter() - t, 3))
-          "
-          printf 'defmodule P do\n  def main() do\n    for i <- 1..8 do\n      t = System.monotonic_time(:millisecond)\n      System.cmd("sh", ["-c", "echo x"])\n      IO.puts("alchem sh " <> inspect(i) <> " " <> inspect(System.monotonic_time(:millisecond) - t))\n    end\n  end\nend\n' > probe.alc
-          ./alchem-compiler-windows.exe < probe.alc > probe.exe
-          ./probe.exe
       - name: The compiler makes itself
         run: |
           tar -xzf examples.tar.gz
@@ -349,9 +339,48 @@ jobs:
       - name: The upstream examples and the gates' programs
         # Each prints on Windows what it prints on Linux (spec/windows.md).
         run: python windows-examples.py check examples ./alchem-compiler-windows.exe --jobs 4
-      - name: gate/processes/2 under load (temporary)
+      - name: Where a slow run of two tasks running sh spends its time (temporary)
         if: ${{ !cancelled() }}
-        run: python windows-examples.py check examples ./alchem-compiler-windows.exe --jobs 8 --only gate/processes/2 --repeat 300
+        run: |
+          cat > probe.alc <<'ALC'
+          defmodule P do
+            def now(): integer do System.monotonic_time(:millisecond) end
+
+            def main() do
+              t0 = now()
+              a = Task.async(fn ->
+                s = now()
+                r = System.cmd("sh", ["-c", "sleep 0.3; echo AAAA"])
+                {s - t0, now() - t0, elem(r, 1)}
+              end)
+              b = Task.async(fn ->
+                s = now()
+                r = System.cmd("sh", ["-c", "sleep 0.1; echo BBBB; sleep 0.4; echo bbbb"])
+                {s - t0, now() - t0, elem(r, 1)}
+              end)
+              t1 = now() - t0
+              x = Task.await(a, 60000)
+              t2 = now() - t0
+              y = Task.await(b, 60000)
+              IO.puts("spawned #{t1} a #{inspect(x)} awaited #{t2} b #{inspect(y)} done #{now() - t0}")
+            end
+          end
+          ALC
+          ./alchem-compiler-windows.exe < probe.alc > probe.exe
+          python - <<'PY'
+          import subprocess, time
+          from concurrent.futures import ThreadPoolExecutor
+          def one(i):
+              t = time.perf_counter()
+              r = subprocess.run(['./probe.exe'], capture_output=True, text=True)
+              return round(time.perf_counter() - t, 2), r.returncode, r.stdout.strip(), r.stderr.strip()[:200]
+          with ThreadPoolExecutor(8) as pool:
+              runs = list(pool.map(one, range(400)))
+          runs.sort(reverse=True)
+          print('slowest 15 of', len(runs), 'runs, 8 at once:')
+          for r in runs[:15]: print(r)
+          print('median', runs[len(runs) // 2][0], 'failed', sum(1 for r in runs if r[1]))
+          PY
       - name: The programs with processes, twenty times each
         # A result that depends on how processes fall in time shows as one
         # run in a few: none may.
