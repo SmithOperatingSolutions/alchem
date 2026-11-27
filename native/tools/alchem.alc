@@ -6,6 +6,7 @@ defmodule AlchemCommand do
   import "alchem-alx.alc"
   import "alchem-format.alc"
   import "alchem-check.alc"
+  import "alchem-parse.alc"
   import "alchem-fetch.alc"
   import "alchem-lsp.alc"
   # alchem COMMAND ...: the pinned command line's test, run, build, check
@@ -40,9 +41,15 @@ defmodule AlchemCommand do
   # message); a test program ended by a signal is reported as killed,
   # whatever the signal (System.cmd gives -1 for each); -jobs is read and
   # the files run one after another, which prints the same.
+  #
+  # Not in the pinned command at all: -cover-functions (the usage keeps the
+  # pinned command's text) is -cover with, after its table, how many
+  # functions of each file ran and those none of whose lines ran
+  # (function_report).
 
   struct Settings do
     cover: boolean
+    cover_functions: boolean
     cover_min: float
     exclude: string
     jobs: integer
@@ -73,7 +80,7 @@ defmodule AlchemCommand do
   end
 
   def defaults(): Settings do
-    %Settings{cover: false, cover_min: 0.0, exclude: "", jobs: 0, max_failures: 0, only: "", receive_ms: 100, seed: "0", tag: "", timeout_ms: 30000, trace: false, problem: "", rest: []}
+    %Settings{cover: false, cover_functions: false, cover_min: 0.0, exclude: "", jobs: 0, max_failures: 0, only: "", receive_ms: 100, seed: "0", tag: "", timeout_ms: 30000, trace: false, problem: "", rest: []}
   end
 
   def digits?(text: string): boolean do
@@ -205,7 +212,9 @@ defmodule AlchemCommand do
   end
 
   def switch(s: Settings, name: string, on: boolean): Settings do
-    if name == "cover" do %Settings{s | cover: on} else %Settings{s | trace: on} end
+    if name == "cover" do %Settings{s | cover: on} else
+      if name == "cover-functions" do %Settings{s | cover_functions: on, cover: s.cover or on} else %Settings{s | trace: on} end
+    end
   end
 
   # Go's flag.Parse: flags up to the first argument that is none, or --.
@@ -221,7 +230,7 @@ defmodule AlchemCommand do
               name = hd(parts)
               valued = length(parts) > 1
               value = Enum.join(tl(parts), "=")
-              if name == "cover" or name == "trace" do
+              if name == "cover" or name == "cover-functions" or name == "trace" do
                 if not valued do flags(rest, switch(s, name, true)) else
                   case truth(value) do
                     ok(on) -> flags(rest, switch(s, name, on))
@@ -660,7 +669,7 @@ defmodule AlchemCommand do
   end
 
   # report: the table, and the total.
-  def report(hits: map[string, map[integer, integer]]): float do
+  def report(hits: map[string, map[integer, integer]], functions: boolean): float do
     here = System.cwd!()
     files = Enum.sort(Enum.map(Map.to_list(hits), fn {file, counts} ->
       relative = Path.relative_to(file, here)
@@ -675,7 +684,84 @@ defmodule AlchemCommand do
     Enum.each(files, fn {name, count, ran, missed} -> IO.write(String.pad_leading(tenth(percent(ran, count)), 9) <> "% | " <> name <> "\n") end)
     IO.write("-----------|--------------------------\n" <> String.pad_leading(tenth(total), 9) <> "% | Total\n")
     Enum.each(files, fn {name, count, ran, missed} -> if missed != [] do IO.write("\n" <> name <> ": lines not run: " <> ranges(missed) <> "\n") end end)
+    if functions do function_report(hits, here) end
     total
+  end
+
+  # -cover-functions, not the pinned command's: for each file, how many of
+  # its functions ran (one of their lines), and those none of whose lines
+  # ran, Module.name/arity and the line it starts at. A counted line is a
+  # function's when that function is the last to start at or before it;
+  # the clauses of a function are one function. A function with no counted
+  # line is left out.
+  def function_report(hits: map[string, map[integer, integer]], here: string): tuple[] do
+    rows = Enum.sort(Enum.map(Map.to_list(hits), fn entry ->
+      file = elem(entry, 0)
+      relative = Path.relative_to(file, here)
+      {if relative == file do file else relative end, function_runs(file, elem(entry, 1))}
+    end))
+    IO.write("\nFunctions run | File\n--------------|--------------------------\n")
+    Enum.each(rows, fn row ->
+      found = elem(row, 1)
+      shown = if elem(found, 0) != "" do "?" else
+        fs = elem(found, 1)
+        "#{length(Enum.filter(fs, fn f -> elem(f, 2) end))}/#{length(fs)}"
+      end
+      IO.write(String.pad_leading(shown, 13) <> " | " <> elem(row, 0) <> "\n")
+    end)
+    Enum.each(rows, fn row ->
+      found = elem(row, 1)
+      if elem(found, 0) != "" do IO.write("\n" <> elem(row, 0) <> ": functions not known: " <> elem(found, 0) <> "\n") else
+        missed = Enum.filter(elem(found, 1), fn f -> not elem(f, 2) end)
+        if missed != [] do IO.write("\n" <> elem(row, 0) <> ": functions not run: " <> Enum.join(Enum.map(missed, fn f -> elem(f, 1) <> " (#{elem(f, 0)})" end), ", ") <> "\n") end
+      end
+    end)
+    {}
+  end
+
+  # The functions of a file: why they are not known, or "" and for each
+  # {the line it starts at, Module.name/arity, whether it ran}, in the
+  # order of the file.
+  def function_runs(file: string, counts: map[integer, integer]): tuple[string, list[tuple[integer, string, boolean]]] do
+    unknown: list[tuple[integer, string, boolean]] = []
+    case File.read(file) do
+      error(why) -> {why, unknown}
+      ok(text) ->
+        case AlchemParse.function_starts(text) do
+          error(why) -> {why, unknown}
+          ok(starts) -> {"", function_spans(starts, counts)}
+        end
+    end
+  end
+
+  def function_spans(starts: list[tuple[integer, string]], counts: map[integer, integer]): list[tuple[integer, string, boolean]] do
+    nothing: map[string, integer] = %{}
+    # The first line of each function: its first clause's.
+    first = Enum.reduce(starts, nothing, fn s, m -> if Map.has_key?(m, elem(s, 1)) do m else Map.put(m, elem(s, 1), elem(s, 0)) end end)
+    none: map[string, integer] = %{}
+    ran = Enum.reduce(owned_lines(starts, "", Enum.sort(Map.to_list(counts)), []), none, fn o, m -> Map.put(m, elem(o, 0), Map.get(m, elem(o, 0), 0) + elem(o, 1)) end)
+    Enum.sort(Enum.map(Map.to_list(ran), fn r -> {Map.get(first, elem(r, 0), 0), elem(r, 0), elem(r, 1) > 0} end))
+  end
+
+  # Each counted line with the function it falls in: {Module.name/arity,
+  # times}; lines before the first function are no function's.
+  def owned_lines(ahead: list[tuple[integer, string]], owner: string, lines: list[tuple[integer, integer]], acc: list[tuple[string, integer]]): list[tuple[string, integer]] do
+    case lines do
+      [] -> acc
+      [c | rest] ->
+        at = owner_at(ahead, owner, elem(c, 0))
+        who = elem(at, 1)
+        owned_lines(elem(at, 0), who, rest, if who == "" do acc else [{who, elem(c, 1)} | acc] end)
+    end
+  end
+
+  # The function that a line falls in: the last of the starts at or before
+  # it, and the starts still ahead.
+  def owner_at(ahead: list[tuple[integer, string]], owner: string, line: integer): tuple[list[tuple[integer, string]], string] do
+    case ahead do
+      [s | rest] -> if elem(s, 0) <= line do owner_at(rest, elem(s, 1), line) else {ahead, owner} end
+      [] -> {ahead, owner}
+    end
   end
 
   def ended(status: integer): string do
@@ -751,7 +837,7 @@ defmodule AlchemCommand do
     if skipped > 0 do IO.write(", #{skipped} skipped") end
     if broken > 0 do IO.write(", " <> counted(broken, "file") <> " not run") end
     IO.write("\n\nRandomized with seed " <> seed <> "\n")
-    total = if s.cover do report(hits) else 100.0 end
+    total = if s.cover do report(hits, s.cover_functions) else 100.0 end
     if failures > 0 or broken > 0 do 1 else
       if s.cover and total < s.cover_min do
         IO.puts(:stderr, "coverage " <> tenth(total) <> "% is below the required " <> tenth(s.cover_min) <> "%")

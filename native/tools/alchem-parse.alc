@@ -2691,6 +2691,19 @@ end
   # the comments the formatter keeps: its message, or the tree.
   def parse_module(source: string): result[AlchemJson.J, string] do parse_as(source, false) end
 
+  # Where each function of a source file starts, {line, Module.name/arity},
+  # its clauses each, tests and setups left out, in the order of the file
+  # (alchem test -cover-functions).
+  def function_starts(source: string): result[list[tuple[integer, string]], string] do
+    case parse_module(source) do
+      error(why) -> error(why)
+      ok(tree) ->
+        module = text(tree, "Module")
+        defs = Enum.filter(AlchemJson.items_of(get(tree, "Functions")), fn f -> text(f, "Test") == "" and not AlchemJson.truth_of(get(f, "Setup")) end)
+        ok(Enum.sort(Enum.map(defs, fn f -> {AlchemJson.int_of(get(f, "Line")), module <> "." <> text(f, "Name") <> "/#{length(AlchemJson.items_of(get(f, "Params")))}"} end)))
+    end
+  end
+
   def parse_as(source: string, keep: boolean): result[AlchemJson.J, string] do
     if byte_size(source) > 1048576 do error(problem(1, 1, "source exceeds 1048576 bytes")) else
       case AlchemLexer.scan(source) do

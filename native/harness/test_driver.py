@@ -74,6 +74,18 @@ def covered(compiler,made,root,temporary,test):
     return cover.read_text().replace(str(root)+'/','') if cover.exists() else ''
 
 
+# -cover-functions, which the pinned command has not: the functions of each
+# file that ran, and those none of whose lines ran, by name and line (the
+# clauses of label/1 are one function).
+FUNCTIONS={'cart.alc':'defmodule Cart do\n  def total(items: list[integer]): integer do\n    Enum.sum(items)\n  end\n\n  def empty?(items: list[integer]): boolean do\n    items == []\n  end\n\n  def kind(n: integer): string do\n    if n > 10 do\n      "big"\n    else\n      "small"\n    end\n  end\n\n  def label(0): string do\n    "none"\n  end\n\n  def label(n: integer): string do\n    "#{n} items"\n  end\nend\n',
+           'cart_test.alc':'defmodule CartTest do\n  import "cart.alc"\n\n  test "total" do\n    assert(Cart.total([1, 2]) == 3)\n    assert(Cart.kind(3) == "small")\n  end\nend\n'}
+FUNCTIONS_OUT=('.\n\nFinished in X seconds\n1 test, 0 failures\n\nRandomized with seed 1\n\n'
+    'Percentage | File\n-----------|--------------------------\n     37.5% | cart.alc\n'
+    '-----------|--------------------------\n     37.5% | Total\n\ncart.alc: lines not run: 7, 12, 18-19, 23\n\n'
+    'Functions run | File\n--------------|--------------------------\n          2/4 | cart.alc\n\n'
+    'cart.alc: functions not run: Cart.empty?/1 (6), Cart.label/1 (18)\n')
+
+
 def verify(compiler):
     held=cases()
     with tempfile.TemporaryDirectory(prefix='alchem-test-driver-') as top:
@@ -96,9 +108,12 @@ def verify(compiler):
         for project,test,text in held['covers']:
             seen=covered(compiler,made,roots[project],temporary,test)
             assert seen==text,(project,test,seen,text)
+        root=base/'projects'/'functions';root.mkdir(parents=True);lay(FUNCTIONS,root)
+        seen=driven(compiler,made,root,temporary,'test',['-seed','1','-cover-functions','.'],'')
+        assert seen==[0,FUNCTIONS_OUT,''],('-cover-functions',seen)
         left=[p.name for p in temporary.iterdir() if p.name.startswith('alchem-')]
         assert not left,('the driver left its work behind',left)
-    print(f"PASS test_driver: {len(held['runs'])} runs of alchem test, run, build, check and new in {len(held['projects'])} projects as the pinned command line prints them, {len(held['covers'])} cover files line for line")
+    print(f"PASS test_driver: {len(held['runs'])} runs of alchem test, run, build, check and new in {len(held['projects'])} projects as the pinned command line prints them, {len(held['covers'])} cover files line for line, and -cover-functions")
 
 
 if __name__=='__main__':verify(Path(sys.argv[1]).resolve())

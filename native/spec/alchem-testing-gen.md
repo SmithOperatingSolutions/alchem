@@ -258,6 +258,16 @@ where the entry's arena grows past 2 GB.
   1 when a test failed or a file was not run, or the total is below
   `-cover-min` (`coverage N% is below the required N%`); 2 for a wrong
   command line.
+- **`-cover-functions`**, which the pinned command has not (its usage text
+  is left as the pinned command's): `-cover`, and after the table and
+  `lines not run:` a table `Functions run | File` (`ran/all` for each
+  file) and, for each file with any, `functions not run:` as
+  `Module.name/arity (line)`, in the order of the file. A counted line
+  is the function's that starts last at or before it; the clauses of a
+  function are one function, at its first clause's line; tests and
+  setups are left out, and so is a function with no counted line. A file
+  the front end cannot read is `?` and `functions not known:` with its
+  message. The aim is to say what no test reaches, function by function.
 - A directory that holds programs and no test file is run as **fixtures**
   (`testrunner.RunContext`): each `name.alc` is built and run in a
   directory of its own, and its standard output, status and standard error

@@ -2219,6 +2219,16 @@ RUNS.append(({'bits_test.alc': 'defmodule BitsTest do\n'
  b' -2\n          right: 1\n       at test shift and complement (bits_test.alc:17)\n'),
  b'', b''))
 
+# The word native_compile, in a comment and a string, makes no compiler
+# entry: the file is a test file as any other (the pinned runner runs it).
+RUNS.append(({'entry_test.alc': 'defmodule EntryTest do\n'
+                  '  # Not a compiler: it has no native_compile.\n'
+                  '  test "a word is no entry" do\n'
+                  '    assert(String.length("native_compile") == 14)\n'
+                  '  end\n'
+                  'end\n'},
+ 'entry_test.alc', {}, 'stdin', 0, b'.\n', b'', b''))
+
 
 def verify(compiler):
     with tempfile.TemporaryDirectory(prefix='alchem-testing-') as top:
