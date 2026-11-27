@@ -755,12 +755,14 @@ defmodule AlchemFormat do
     end
   end
 
+  # done: the text of each function so far, the last one first (added at
+  # its end the list was copied for every function).
   def functions_text(p: AlchemJson.J, functions: list[AlchemJson.J], i: integer, before: boolean, open: list[string], implementing: string, done: list[string]): string do
     case functions do
       [] ->
         ending = if implementing != "" do remarks(note(p, "ends:impl:" <> implementing), 2) <> "  end\n" else "" end
         {closed, _} = close_to(p, open, 0, [])
-        join(done, "") <> ending <> closed
+        join(Enum.reverse(done), "") <> ending <> closed
       [f | rest] ->
         path = groups(tx(f, "Group"))
         shared = shared_count(open, path, 0)
@@ -774,7 +776,7 @@ defmodule AlchemFormat do
         d = length(open2) + 1 + inner
         lead = remarks(lines_of(f, "Comments"), d) <> docstring("doc", tx(f, "Doc"), d) <> remarks(note(p, line_key("documented:", f)), d)
         text = closed <> ended <> gap <> started <> described <> lead <> function_text(f, length(open2) + 1)
-        functions_text(p, rest, i + 1, before, open2, block_name, done ++ [text])
+        functions_text(p, rest, i + 1, before, open2, block_name, [text | done])
     end
   end
 

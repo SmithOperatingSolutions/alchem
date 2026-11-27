@@ -34,8 +34,14 @@ defmodule AlchemAnalyze do
   # forms of it, the later named name#2, name#3; a test or a setup block
   # stays as it is.
   def forms_of(functions: list[AlchemJson.J]): list[tuple[string, AlchemJson.J, string]] do
+    nothing: list[tuple[string, AlchemJson.J, string]] = []
+    forms_onto(functions, nothing)
+  end
+  # done: the forms so far, the last one first; a loop, as
+  # AlchemLower.merged_onto is.
+  def forms_onto(functions: list[AlchemJson.J], done: list[tuple[string, AlchemJson.J, string]]): list[tuple[string, AlchemJson.J, string]] do
     case functions do
-      [] -> []
+      [] -> Enum.reverse(done)
       [first | rest] ->
         count = AlchemLower.group_end(functions, first, rest, 0)
         group = [first | Enum.take(rest, count)]
@@ -53,7 +59,7 @@ defmodule AlchemAnalyze do
             {if n > 0 do tx(first, "Name") <> "#" <> Integer.to_string(n + 1) else tx(first, "Name") end, clause, returns}
           end)
         end
-        made ++ forms_of(left)
+        forms_onto(left, Enum.reduce(made, done, fn one, sofar -> [one | sofar] end))
     end
   end
 
@@ -104,11 +110,13 @@ defmodule AlchemAnalyze do
   # The pass over every function before any body: a name defined twice, a
   # name no function may have, main's form, a return type that is none.
   def first_pass(all: list[Defined]): string do
-    nothing: list[string] = []
+    # seen: the names so far, a map (a list was read and copied for every
+    # function).
+    nothing: map[string, boolean] = %{}
     {found, _} = Enum.reduce(all, {"", nothing}, fn f, {wrong, seen} ->
       if wrong != "" do {wrong, seen} else
-        if f.name in seen do {at(f, "duplicate function " <> AlchemLexer.go_quote(f.name)), seen} else
-          {checked(f), seen ++ [f.name]}
+        if Map.get(seen, f.name, false) do {at(f, "duplicate function " <> AlchemLexer.go_quote(f.name)), seen} else
+          {checked(f), Map.put(seen, f.name, true)}
         end
       end
     end)

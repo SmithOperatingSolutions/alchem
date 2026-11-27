@@ -2,7 +2,6 @@ defmodule NativeOptions do
   def no_compatible(expected: bytes, actual: bytes): integer do
     if Enum.count(expected) == 0 do 0 else if Enum.count(actual) == 0 do 0 else nt_same(expected,nt_merge(expected,actual)) end end
   end
-  def no_merge(a: bytes, b: bytes): bytes do nt_merge(a,b) end
   def no_some(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
     begin = nc_expect(source,nc_end(source,pos),b[40])
     args = if begin < 0 do b[] else nc_arguments(source,begin,env,table,depth) end

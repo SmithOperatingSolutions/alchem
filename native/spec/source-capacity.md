@@ -292,22 +292,6 @@ Of the 890 MB about 770 MB is what 30,000 statements of that kind cost
 without any binding (the code of the runs, copied once a doubling, and
 the trace tables); the stores and windows are the rest.
 
-`alchem check` (the front end of `tools/alchem-parse.alc` and
-`tools/alchem-check.alc`, which `alchem run`, `build` and `test` go through)
-grows with the square of a file where the compiler does not. Functions
-`def fN(n: integer): integer do n + N end` in one module, under emulation:
-
-| Functions | Bytes | `alchem check` | The compiler alone |
-| --- | --- | --- | --- |
-| 2,000 | 107,865 | 4.3 s, 0.16 GB | 0.2 s |
-| 4,000 | 217,865 | 14.7 s, 0.42 GB | 0.3 s |
-| 8,000 | 437,865 | 51.9 s, 1.3 GB | 0.6 s |
-| 16,000 | 889,866 | 199 s, 4.5 GB | 1.3 s |
-
-A file may now be as long as a program (`alchem-modules.md`), but one of
-dense code past about a megabyte is beyond what `alchem check` does in the
-memory it has; the compiler given the same text directly takes it.
-
 What still grows with the square, with what the pinned compiler takes
 (each measured through its wrapper, 4 GB and 120 s):
 
@@ -321,6 +305,66 @@ What still grows with the square, with what the pinned compiler takes
 | Type variables of one generic function | 300 in 0.7 GB | 40,000 (5 s) | substitutions are lists searched from the first and the list of names is cut once a variable (`nu_comparators`, `nu_arguments`, `nu_apply`) |
 | Arguments of one call | 5,000 in 0.9 GB | 40,000 (3 s) | the types of a call's arguments are found by index, each from the first |
 | Arms over a sum type whose variants have fields | 1,000 in 7 s | 1,000 (86 s), not 3,000 | each arm walks the declaration to its variant; within what the pinned compiler takes |
+
+## The alchem command
+
+`alchem check` (the front end of `tools/alchem-parse.alc`,
+`alchem-lower.alc`, `alchem-analyze.alc` and `alchem-check.alc`, which
+`alchem run`, `build` and `test` go through) and `alchem fmt` grew with the
+square of a file where the compiler does not: 16,000 functions, 0.9 MB,
+took `alchem check` 199 s and 4.5 GB and the compiler alone 1.3 s. A list
+was searched, or copied to add to its end, once for every function:
+
+- the parser added each function to the end of the module's list and
+  counted the list for each note and `@doc` (`declarations`), and gave
+  each note and `@doc` to its function by going through all of them
+  (`documented`). The functions, the notes and the `@doc` texts are now
+  gathered last first with a count, turned round once, and given in one
+  pass (`noted`);
+- the checks before lowering kept the names seen in a list
+  (`AlchemLower.merge_from`, `AlchemAnalyze.first_pass`): a map;
+- `separate_arities` added each function to the end of its list, and
+  `arities_problem` called it again for every function of the program;
+- the functions of a module were looked for in a list for every call
+  (`resolve_names`, `unit_problem`), and each function's own name in the
+  list of all of them (`assembled`): maps;
+- `merged_list` and `forms_of` were a call inside the one before for every
+  function, each joining its list to the rest: loops (`merged_onto`,
+  `forms_onto`) that put each function before the rest, so a module is not
+  bounded by how deep calls may nest. `a ++ b` copies `b` as well as `a`;
+- the formatter added each function's text to the end of a list
+  (`functions_text`).
+- the lexer copied the rest of the source to find where a heredoc ends
+  (`AlchemLexer.find`), once for every `@doc """`: 16,000 functions with
+  one on every fifth took it 8 s, and take 0.4 s.
+
+A field of a tree was read by listing every field of that name
+(`AlchemJson.get`) and several were set by passing the object once for
+each (`put_all`): the first is now a walk to the field and the second one
+pass, which halved the time of the passes that rebuild the tree.
+
+Functions `def fN(n: integer): integer do fN-1(n) + N end` in one module,
+under emulation:
+
+| Functions | Bytes | `alchem check` | Was | `alchem fmt --check` |
+| --- | --- | --- | --- | --- |
+| 4,000 | 244,744 | 2.4 s, 0.3 GB | 14.7 s, 0.4 GB | 0.3 s |
+| 16,000 | 1,006,744 | 9.7 s, 1.2 GB | 199 s, 4.5 GB | 1.4 s |
+| 32,000 | 2,046,744 | 19.5 s, 2.0 GB | 137 s, 11.7 GB after the first mending | 3.1 s |
+| 64,000 | 4,126,744 | 40.2 s, 4.3 GB | the arena used up (status 71) | 6.6 s |
+
+`harness/check_scaling.py` (the gate `check_scaling`) holds 4,000 and
+32,000 functions with notes and `@doc` to that: eight times the functions
+in less than twenty-four times the processor's time and under 4 GiB, and
+the formatter finding nothing to change.
+
+What remains is linear and large: about 0.6 ms and 70 KB a function,
+nearly all of it in rebuilding the tree, an object of some thirty fields
+for every statement and expression, once for each of the ten passes of
+`AlchemLower.lowered`. And the compiler takes 65,535 functions ("Limits
+that remain"): a
+module of 120,000 passes `alchem check`'s own checks in 68 s and is then
+refused by the compiler.
 
 ## Time
 

@@ -10,8 +10,6 @@ defmodule NativeMemory do
   def gm_hook(): bytes do b[255,20,37,120,4,64,0,15,31,68,0,0] end
   # Sys.call's system call, with the mappings it makes noted.
   def gm_syscall(): bytes do b[255,20,37,104,4,64,0] end
-  # From the entry, once the arena and the stack are there.
-  def gm_start(): bytes do b[255,20,37,96,4,64,0] end
   def gm_word(value: integer): bytes do Enum.concat(nc_u32(value),b[0,0,0,0]) end
   # The words the entry ends in: for maps of many entries the collector's
   # routines for Map.get, put, delete, the entries, new and one leaf of a

@@ -123,14 +123,48 @@ python3 scripts/compiler-reach.py build/dev/A2 --search build/dev/alchem-upstrea
 ```
 
 `--gates` runs the gates with a compiler that keeps every text it is given
-and counts all of them (`--gates maps sets` only the gates so named); a
-text of more than 1 MiB, the compiler's own source and the commands bundled
-with it, is left out and counted. On a Mac the gates that emulation fails
-stop early and count only what they compiled until then: the figure to
-go by is that of a Linux x86-64 machine, which
-`.github/workflows/reach.yml` gives once a week and on request, as the
-job's summary and an artifact. Code only compiling for another
-system reaches (ARM64, macOS, Windows) is reported apart.
+and counts all of them (`--gates maps sets` only the gates so named): those
+of `verify-quick.py`, `core_modules` and `core_tools` of the complete
+suite, and with `--seed FRONTEND BACKEND` the gates that take the seed's
+two as well. A text of more than 1 MiB, the compiler's own source and the
+commands bundled with it, is left out and counted. The test asks what the
+`alchem` command asks of the compiler: the program, why it is refused when
+it is, and of one program in ten whether it would be taken.
+
+The code for ARM64, macOS and Windows is reached only by a compiler for
+them. `--others N` builds the test for each of the five systems and gives
+the four others one program in N: the first table is Linux x86-64 alone,
+the second every system together, and the functions listed are those that
+no system ran.
+
+On a Mac the gates that emulation fails stop early and count only what
+they compiled until then: the figure to go by is that of a Linux x86-64
+machine, which `.github/workflows/reach.yml` gives once a week and on
+request (`--others 4`, with the seed's gates), as the job's summary and an
+artifact.
+
+What the gates did not reach of what a program can reach has programs of
+its own in `harness/reached.py` (the gate `reached`), each with what the
+pinned command prints for it. The report still lists functions that
+compiling a program does not run, for four reasons:
+
+- the ARM64 instruction encoders the compiler itself does not use
+  (`a_eor`, `a_ret`, `a_csel` and others of `native-arm64.alc`):
+  `harness/arm64.py` calls each and compares its words with the
+  assembler's;
+- the arithmetic and the SHA-256 written by steps for the seed's
+  frontend, in whose place every other build has `native-fast.alc` and
+  `native-sha.alc` (`nc_quot256`, the `sh_` functions of
+  `native-macho.alc`, the decoder of `native-x86arm.alc`): the seed's
+  build runs the arithmetic, and CI holds the compiler it makes to the one
+  the pinned release makes. No check runs the SHA-256 by steps;
+- forms of x86-64 code the translator to ARM64 has and the compiler does
+  not write (`xa_carry_op`, `xa_add_image`): `harness/x86_to_arm64.py`
+  translates instructions of its own;
+- four for which no program was found: the lookups in a table that has no
+  index yet (`nc_find_range`, `nd_find_range`, `ny_module_plain`) and
+  where a quoted part of a regular expression with a byte that is no
+  UTF-8 ends (`rx_qe`: such a source is refused before it).
 
 ## Fuzzing
 

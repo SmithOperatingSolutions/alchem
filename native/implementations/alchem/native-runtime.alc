@@ -119,7 +119,7 @@ defmodule NativeByteRuntimeEmitter do
   # Its limit, 64 KiB above its lowest byte, is kept just below the initial
   # stack pointer in R14; R15 counts active calls and RBP starts at 0. The
   # word below the limit is the innermost handler of a try, 0 for none.
-  # Its last instruction starts the collector (gm_start, native-memory.alc).
+  # Its last instruction starts the collector (native-memory.alc).
   # A Windows program maps its stack with MAP_STACK as well, which its
   # layer commits as it is used (spec/windows.md).
   def nc_stack_init(): bytes do

@@ -2055,7 +2055,13 @@ end
     requires: list[AlchemJson.J]
     imports: list[string]
     import_positions: list[AlchemJson.J]
+    # While the declarations are read the functions, the notes above them
+    # and their @doc texts are each a list with the last one first, and
+    # made is how many functions there are: a list added to at its end, and
+    # counted, for each of n functions took n times n. documented turns
+    # the three round.
     functions: list[AlchemJson.J]
+    made: integer
     docs: list[tuple[integer, integer, list[string]]]
     docstrings: list[tuple[integer, integer, list[string]]]
   end
@@ -2111,10 +2117,10 @@ end
               end
             end
           else
-            f3 = set(f2, [{"Setup", b(setup)}, {"All", b(keyword.text == "setup_all")}, {"Tags", made_strs(tags)}, {"Name", s(keyword.text <> "$#{length(m.functions) + 1}")}])
+            f3 = set(f2, [{"Setup", b(setup)}, {"All", b(keyword.text == "setup_all")}, {"Tags", made_strs(tags)}, {"Name", s(keyword.text <> "$#{m.made + 1}")}])
             with ok({body, p6}) <- block(p5, false),
                  ok({_, p7}) <- expect(p6, "identifier", "end") do
-              ok({%M{m | functions: m.functions ++ [set(f3, [{"Body", made(body)}])]}, p7})
+              ok({%M{m | functions: [set(f3, [{"Body", made(body)}]) | m.functions], made: m.made + 1}, p7})
             else
               error(why) -> error(why)
             end
@@ -2492,14 +2498,14 @@ end
   # attach gives them instead to a part that is neither a type nor a
   # function, to stay above it.
   def attach(p: P, m: M, doc: list[string], key: string): tuple[P, M] do
-    if doc == [] do {p, m} else {note_as(p, key, doc), %M{m | docs: Enum.take(m.docs, length(m.docs) - 1)}} end
+    if doc == [] do {p, m} else {note_as(p, key, doc), %M{m | docs: Enum.drop(m.docs, 1)}} end
   end
 
   def declarations(p: P, m: M, after_doc: boolean): result[tuple[M, P], string] do
     keyword = peek(p)
     {found_doc, p0} = before(p, keyword)
     {doc, p1} = if after_doc do {[], note_as(p0, "documented:#{keyword.line}", found_doc)} else {found_doc, p0} end
-    m0 = if doc != [] do %M{m | docs: m.docs ++ [{length(m.types), length(m.functions), doc}]} else m end
+    m0 = if doc != [] do %M{m | docs: [{length(m.types), m.made, doc} | m.docs]} else m end
     next = ahead(p1, 1)
     if keyword.text == "import" and next.kind == "string" do
       value = unquote(next.text)
@@ -2527,7 +2533,7 @@ end
                 declarations(p2, %M{m1 | doctests: m1.doctests ++ [next.text]}, false)
               else
                 if keyword.kind == "identifier" and keyword.text in ["test", "describe", "setup", "setup_all"] and (next.kind == "string" or keyword.text == "setup" or keyword.text == "setup_all") do
-                  {p2, m1} = if keyword.text == "describe" and doc != [] do {%P{p1 | carry: doc}, %M{m0 | docs: Enum.take(m0.docs, length(m0.docs) - 1)}} else {p1, m0} end
+                  {p2, m1} = if keyword.text == "describe" and doc != [] do {%P{p1 | carry: doc}, %M{m0 | docs: Enum.drop(m0.docs, 1)}} else {p1, m0} end
                   with ok({m2, p3}) <- tests_decl(p2, m1, "") do declarations(p3, m2, false) else
   error(why) -> error(why)
 end
@@ -2572,20 +2578,20 @@ end
           end
         else
           if keyword.text == "defimpl" do
-            with ok({functions, p1}) <- implementation_decl(p, length(m.functions)) do
+            with ok({functions, p1}) <- implementation_decl(p, m.made) do
               first_name = text(hd(functions), "Name")
               suffix = case String.split(first_name, "$", [parts: 2]) do
                 [_, after_dollar] -> "$" <> after_dollar
                 _ -> ""
               end
               {p2, m1} = attach(p1, m, doc, "impl:" <> suffix)
-              declarations(p2, %M{m1 | functions: m1.functions ++ functions}, false)
+              declarations(p2, %M{m1 | functions: Enum.reduce(functions, m1.functions, fn one, sofar -> [one | sofar] end), made: m1.made + length(functions)}, false)
             else
               error(why) -> error(why)
             end
           else
             if keyword.text in ["def", "defp", "extern"] do
-              with ok({f, p1}) <- function_decl(p) do declarations(p1, %M{m | functions: m.functions ++ [f]}, false) else
+              with ok({f, p1}) <- function_decl(p) do declarations(p1, %M{m | functions: [f | m.functions], made: m.made + 1}, false) else
   error(why) -> error(why)
 end
             else ok({m, p}) end
@@ -2626,7 +2632,7 @@ end
           {p3, m1} = attach(p2, m, doc, "moduledoc")
           declarations(p3, %M{m1 | module_doc: value}, false)
         else
-          declarations(p2, %M{m | docstrings: m.docstrings ++ [{length(m.types), length(m.functions), [value, kind.text, Integer.to_string(kind.line), Integer.to_string(kind.column)]}]}, true)
+          declarations(p2, %M{m | docstrings: [{length(m.types), m.made, [value, kind.text, Integer.to_string(kind.line), Integer.to_string(kind.column)]} | m.docstrings]}, true)
         end
       else
         error(why) -> error(why)
@@ -2634,7 +2640,7 @@ end
     else
       if kind.kind == "identifier" and not (kind.text in ["moduledoc", "doc", "typedoc", "tag", "moduletag", "describetag"]) do
         with ok({constant, p1}) <- constant_decl(p, m.constants) do
-          {with_doc, m1} = if doc != [] do {set(constant, [{"Comments", strs(doc)}]), %M{m | docs: Enum.take(m.docs, length(m.docs) - 1)}} else {constant, m} end
+          {with_doc, m1} = if doc != [] do {set(constant, [{"Comments", strs(doc)}]), %M{m | docs: Enum.drop(m.docs, 1)}} else {constant, m} end
           declarations(p1, %M{m1 | constants: m1.constants ++ [with_doc]}, false)
         else
           error(why) -> error(why)
@@ -2648,33 +2654,54 @@ end
     end
   end
 
-  # The documentation waiting given to what it documents.
-  def documented(m: M): result[M, string] do
-    count = length(m.docs)
-    with_comments = Enum.reduce(Enum.with_index(m.docs), m, fn {{types, functions, doc}, k}, sofar ->
-      {limit_types, limit_functions} = if k + 1 < count do
-        {t2, f2, _} = Enum.at(m.docs, k + 1, {0, 0, []})
-        {t2, f2}
-      else {length(m.types), length(m.functions)} end
-      if types < limit_types do %M{sofar | types: replace_at(sofar.types, types, fn t -> set(t, [{"Comments", strs(doc)}]) end)} else
-        if functions < limit_functions do %M{sofar | functions: replace_at(sofar.functions, functions, fn f -> set(f, [{"Comments", strs(doc)}]) end)} else
-          %M{sofar | trailing: sofar.trailing ++ doc}
+  # The documentation waiting given to what it documents: a note to the
+  # type or the function that follows it before the next note, else to the
+  # end of the module, and an @doc text to the type or the function after
+  # it, whichever stands first. What each is given is noted by its number
+  # and all are given in one pass.
+  def documented(given: M): result[M, string] do
+    m = %M{given | functions: Enum.reverse(given.functions), docs: Enum.reverse(given.docs), docstrings: Enum.reverse(given.docstrings)}
+    type_count = length(m.types)
+    function_count = length(m.functions)
+    limits = Enum.drop(Enum.map(m.docs, fn {t, f, _} -> {t, f} end), 1) ++ [{type_count, function_count}]
+    no_notes: map[integer, list[string]] = %{}
+    no_rest: list[list[string]] = []
+    {type_notes, function_notes, rest} = Enum.reduce(Enum.zip(m.docs, limits), {no_notes, no_notes, no_rest}, fn {{types, functions, doc}, {limit_types, limit_functions}}, {ts, fs, left} ->
+      if types < limit_types do {Map.put(ts, types, doc), fs, left} else
+        if functions < limit_functions do {ts, Map.put(fs, functions, doc), left} else {ts, fs, [doc | left]} end
+      end
+    end)
+    type_lines = if m.docstrings == [] do %{} else Map.new(Enum.map(Enum.with_index(m.types), fn {t, k} -> {k, line_of(t)} end)) end
+    function_lines = if m.docstrings == [] do %{} else Map.new(Enum.map(Enum.with_index(m.functions), fn {f, k} -> {k, line_of(f)} end)) end
+    no_texts: map[integer, string] = %{}
+    {type_texts, function_texts, wrong} = Enum.reduce(m.docstrings, {no_texts, no_texts, ""}, fn {types, functions, entry}, {ts, fs, found} ->
+      if found != "" do {ts, fs, found} else
+        text_value = Enum.at(entry, 0, "")
+        type_first = types < type_count and (functions >= function_count or Map.get(type_lines, types, 0) < Map.get(function_lines, functions, 0))
+        if type_first do {Map.put(ts, types, text_value), fs, ""} else
+          if functions < function_count do {ts, Map.put(fs, functions, text_value), ""} else
+            if text_value != "" do {ts, fs, problem(String.to_integer(Enum.at(entry, 2, "0")), String.to_integer(Enum.at(entry, 3, "0")), "@" <> Enum.at(entry, 1, "") <> " is not followed by anything to document")} else {ts, fs, ""} end
+          end
         end
       end
     end)
-    Enum.reduce(with_comments.docstrings, ok(with_comments), fn {types, functions, entry}, sofar ->
-      case sofar do
-        error(why) -> error(why)
-        ok(done) ->
-          text_value = Enum.at(entry, 0, "")
-          type_first = types < length(done.types) and (functions >= length(done.functions) or line_of(Enum.at(done.types, types, nul())) < line_of(Enum.at(done.functions, functions, nul())))
-          if type_first do ok(%M{done | types: replace_at(done.types, types, fn t -> set(t, [{"Doc", s(text_value)}]) end)}) else
-            if functions < length(done.functions) do ok(%M{done | functions: replace_at(done.functions, functions, fn f -> set(f, [{"Doc", s(text_value)}]) end)}) else
-              if text_value != "" do error(problem(String.to_integer(Enum.at(entry, 2, "0")), String.to_integer(Enum.at(entry, 3, "0")), "@" <> Enum.at(entry, 1, "") <> " is not followed by anything to document")) else ok(done) end
-            end
-          end
-      end
-    end)
+    if wrong != "" do error(wrong) else
+      ok(%M{m | types: noted(m.types, type_notes, type_texts), functions: noted(m.functions, function_notes, function_texts), trailing: m.trailing ++ Enum.flat_map(Enum.reverse(rest), fn doc -> doc end)})
+    end
+  end
+  def noted(items: list[AlchemJson.J], notes: map[integer, list[string]], texts: map[integer, string]): list[AlchemJson.J] do
+    if map_size(notes) + map_size(texts) == 0 do items else
+      Enum.map(Enum.with_index(items), fn {v, k} ->
+        with_note = case Map.get(notes, k) do
+          some(doc) -> set(v, [{"Comments", strs(doc)}])
+          none -> v
+        end
+        case Map.get(texts, k) do
+          some(text_value) -> set(with_note, [{"Doc", s(text_value)}])
+          none -> with_note
+        end
+      end)
+    end
   end
   def replace_at(list: list[AlchemJson.J], index: integer, change: fn[AlchemJson.J, AlchemJson.J]): list[AlchemJson.J] do
     Enum.map(Enum.with_index(list), fn {v, k} -> if k == index do change.(v) else v end end)
@@ -2715,7 +2742,7 @@ end
                ok({module, p2}) <- expect(p1, "identifier", "") do
             if module.text == "" or not upper_first?(module.text) do error(problem(module.line, module.column, "module must begin with uppercase letter")) else
               with ok({_, p3}) <- expect(p2, "identifier", "do") do
-                m = %M{name: module.text, line: module.line, column: module.column, leading: leading, trailing: [], doctests: [], module_doc: "", protocols: [], macros: [], uses: [], group_tags: [], constants: [], types: [], requires: [], imports: [], import_positions: [], functions: [], docs: [], docstrings: []}
+                m = %M{name: module.text, line: module.line, column: module.column, leading: leading, trailing: [], doctests: [], module_doc: "", protocols: [], macros: [], uses: [], group_tags: [], constants: [], types: [], requires: [], imports: [], import_positions: [], functions: [], made: 0, docs: [], docstrings: []}
                 with ok({m1, p4}) <- declarations(p3, m, false),
                      ok(m2) <- documented(m1) do
                   {trail, p5} = before(p4, peek(p4))

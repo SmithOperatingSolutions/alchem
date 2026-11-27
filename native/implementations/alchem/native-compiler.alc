@@ -109,14 +109,6 @@ defmodule NativeSourceCompiler do
   def nc_join(a: bytes, b: bytes, c: bytes): bytes do
     Enum.concat(Enum.concat(a, b), c)
   end
-  def nc_chunk(data: bytes, start: integer): bytes do
-    b[ Enum.at(data,start+0,0),Enum.at(data,start+1,0),Enum.at(data,start+2,0),Enum.at(data,start+3,0),Enum.at(data,start+4,0),Enum.at(data,start+5,0),Enum.at(data,start+6,0),Enum.at(data,start+7,0),Enum.at(data,start+8,0),Enum.at(data,start+9,0),Enum.at(data,start+10,0),Enum.at(data,start+11,0),Enum.at(data,start+12,0),Enum.at(data,start+13,0),Enum.at(data,start+14,0),Enum.at(data,start+15,0) ]
-  end
-  def nc_block(data: bytes, start: integer): bytes do
-    left = nc_join(nc_chunk(data,start),nc_chunk(data,start+16),nc_chunk(data,start+32))
-    middle = nc_join(nc_chunk(data,start+48),nc_chunk(data,start+64),nc_chunk(data,start+80))
-    nc_join(left,middle,Enum.concat(nc_chunk(data,start+96),nc_chunk(data,start+112)))
-  end
   def nc_slice(data: bytes, start: integer, stop: integer): bytes do
     if start >= stop do b[] else Enum.slice(data,start,stop-start) end
   end
@@ -1525,9 +1517,6 @@ defmodule NativeSourceCompiler do
   end
   def nc_sum(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
     nk_sum_tail(source,nc_product(source,pos,env,table,depth),env,table,depth,1024)
-  end
-  def nc_sum_tail(source: bytes, left: bytes, env: bytes, table: bytes, depth: integer, budget: integer): bytes do
-    nk_join_tail(source,nk_sum_tail(source,left,env,table,depth,budget),env,table,depth,budget)
   end
   def nc_expression(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
     if Enum.count(env) > ev_plain() do ev_expression(source,pos,env,table,depth) else nb_expression(source,pos,env,table,depth) end

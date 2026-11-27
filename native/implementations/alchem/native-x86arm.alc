@@ -425,9 +425,6 @@ defmodule NativeX86Arm do
       end
     end
   end
-  # 1 when rec sets the flags, 2 when it reads them (3 when it reads the
-  # carry), 4 when it ends what can be known (a jump, call or return).
-  def xa_flags(rec: bytes): integer do xa_flagsq(xf(rec,1),xf(rec,10),xf(rec,13)) end
   def xa_flagsq(op: integer, sub: integer, last: integer): integer do
     # loopne, loope read Z; loop and jrcxz read nothing but go on to code
     # that may: all four are counted as reading every flag.

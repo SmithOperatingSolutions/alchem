@@ -4,9 +4,11 @@ name: Compiler reach
 # compiler that keeps each text it is given, and the compiler's source,
 # built with its statements counted, compiles them all. The report, file by
 # file with the functions that never ran, is the job's summary and an
-# artifact: it says where a test is missing. Once a week and on request; a
-# pull request that changes this file or the script runs two gates only, so
-# the job is tried before it is merged.
+# artifact. The code for ARM64, macOS and Windows is reached by the
+# compilers for them, which are given one program in four. It says where
+# a test is missing. Once a week and on request; a pull request that
+# changes this file or the script runs two gates only, so the job is tried
+# before it is merged.
 on:
   pull_request:
     paths:
@@ -47,9 +49,10 @@ jobs:
         with:
           working_directory: native
           cache: false
-          # Go for the pinned command some gates compare with; no Rust, as
-          # the seed is not made.
-          install_args: go python
+          # Go for the pinned command some gates compare with and for the
+          # seed's frontend, Rust for its backend: the gates that take the
+          # two are counted as well.
+          install_args: go rust python
       - name: Tools
         # As the gates' job has them (native.yml): strace for the gates that
         # make calls fail, QEMU and an ARM64 assembler for the ARM64 gates.
@@ -71,12 +74,15 @@ jobs:
           echo 'no systemd user manager' >&2
           exit 1
       - name: Dependencies
-        run: mise run fetch
+        run: |
+          mise run fetch
+          mise run fetch:seed
       - name: Compilers
-        # The native compiler from the pinned release (A2); the pinned Go
+        # The seed's frontend and backend and the native compiler they make
+        # (A2, which is the one the pinned release makes); the pinned Go
         # command, build/dev/alchem-upstream, for the gates that take it.
         run: |
-          python3 scripts/verify-quick.py --build-only
+          python3 scripts/verify-quick.py --seed --build-only
           python3 -c "import importlib.util as u; s = u.spec_from_file_location('upstream', 'scripts/upstream-examples.py'); m = u.module_from_spec(s); s.loader.exec_module(m); m.build_upstream()"
       - name: Reach
         env:
@@ -87,10 +93,13 @@ jobs:
           ALCHEM_MEMORY: 6G
           ALCHEM_SECONDS: '14400'
         run: |
-          python3 scripts/compiler-reach.py build/dev/A2 --gates $GATES --jobs 4 --keep build/reach | tee build/reach.log
+          # Every program for Linux x86-64, and one in four for each of the
+          # other systems.
+          python3 scripts/compiler-reach.py build/dev/A2 --gates $GATES --others 4 --jobs 4 --keep build/reach \
+            --seed build/dev/alchem-source-probe "${CARGO_TARGET_DIR:-implementations/rust/target}/debug/alchem-native-rust" | tee build/reach.log
           {
             echo '```'
-            sed -n '/^The compiler (for Linux x86-64)/,$p' build/reach.log | cut -c1-2000
+            sed -n '/^Compiling for Linux x86-64$/,$p' build/reach.log | cut -c1-2000
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Report

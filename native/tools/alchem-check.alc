@@ -218,15 +218,17 @@ defmodule AlchemCheck do
 
   # The calls of a body, each named as the loader names it: Kernel.name is
   # the builtin, and a function of the module its name in the program.
-  def resolve_names(e: AlchemJson.J, locals: list[tuple[string, string]]): AlchemJson.J do
+  # locals: the functions of the module by their names there, a map: a list
+  # searched for every call made a module of n functions take n times n.
+  def resolve_names(e: AlchemJson.J, locals: map[string, string]): AlchemJson.J do
     if AlchemJson.null?(e) do e else
       kind = tx(e, "Kind")
       named = if kind == "call" or kind == "funcref" do
         name = tx(e, "Name")
         if String.starts_with?(name, "Kernel.") and not String.contains?(binary_part(name, 7, byte_size(name) - 7), ".") do AlchemJson.put(e, "Name", text_j(binary_part(name, 7, byte_size(name) - 7))) else
-          case Enum.filter(locals, fn {local, _} -> local == name end) do
-            [{_, key} | _] -> AlchemJson.put(e, "Name", text_j(key))
-            [] -> e
+          case Map.get(locals, name) do
+            some(key) -> AlchemJson.put(e, "Name", text_j(key))
+            none -> e
           end
         end
       else e end
@@ -235,7 +237,7 @@ defmodule AlchemCheck do
         {"Body", resolve_body(AlchemJson.get(named, "Body"), locals)}])
     end
   end
-  def resolve_body(body: AlchemJson.J, locals: list[tuple[string, string]]): AlchemJson.J do
+  def resolve_body(body: AlchemJson.J, locals: map[string, string]): AlchemJson.J do
     AlchemLower.q_map(body, fn s ->
       arms = AlchemLower.q_map(AlchemJson.get(s, "Arms"), fn arm -> AlchemJson.put_all(arm, [{"Guard", resolve_names(AlchemJson.get(arm, "Guard"), locals)}, {"Body", resolve_body(AlchemJson.get(arm, "Body"), locals)}]) end)
       AlchemJson.put_all(s, [{"Expr", resolve_names(AlchemJson.get(s, "Expr"), locals)}, {"Then", resolve_body(AlchemJson.get(s, "Then"), locals)}, {"Else", resolve_body(AlchemJson.get(s, "Else"), locals)}, {"Arms", arms}])
@@ -246,9 +248,10 @@ defmodule AlchemCheck do
     lowered = Enum.map(loaded.order, fn u -> {u, AlchemLower.lowered(u.tree)} end)
     functions = Enum.flat_map(lowered, fn {u, tree} ->
       module = tx(tree, "Module")
-      locals = Enum.map(its(tree, "Functions"), fn f -> {tx(f, "Name"), if u.path == entry and tx(f, "Name") == "main" do "main" else module <> "." <> tx(f, "Name") end} end)
+      keyed = fn(name: string): string do if u.path == entry and name == "main" do "main" else module <> "." <> name end end
+      locals = Map.new(Enum.map(its(tree, "Functions"), fn f -> {tx(f, "Name"), keyed(tx(f, "Name"))} end))
       Enum.map(its(tree, "Functions"), fn f ->
-        key = elem(hd(Enum.filter(locals, fn {local, _} -> local == tx(f, "Name") end)), 1)
+        key = keyed(tx(f, "Name"))
         source = if tx(f, "Source") == "" do text_j(shown(u.path)) else AlchemJson.get(f, "Source") end
         AlchemJson.put_all(f, [{"LocalName", text_j(tx(f, "Name"))}, {"Name", text_j(key)}, {"Module", text_j(module)}, {"Source", source}, {"Body", resolve_body(AlchemJson.get(f, "Body"), locals)}])
       end)
@@ -456,7 +459,7 @@ defmodule AlchemCheck do
       none ->
         protocols = Enum.flat_map(trees, fn t -> Enum.map(its(t, "Protocols"), fn p -> tx(p, "Name") end) end)
         renamed = Enum.map(loaded.order, fn u -> {u, elem(AlchemLower.separate_arities(u.tree), 0)} end)
-        private = Enum.flat_map(renamed, fn {u, functions} -> Enum.flat_map(functions, fn f -> if AlchemJson.truth_of(AlchemJson.get(f, "Private")) do [tx(u.tree, "Module") <> "." <> tx(f, "Name")] else [] end end) end)
+        private = Map.new(Enum.flat_map(renamed, fn {u, functions} -> Enum.flat_map(functions, fn f -> if AlchemJson.truth_of(AlchemJson.get(f, "Private")) do [{tx(u.tree, "Module") <> "." <> tx(f, "Name"), true}] else [] end end) end))
         module_of = Enum.map(loaded.order, fn u -> {u.path, tx(u.tree, "Module")} end)
         found = Enum.reduce(renamed, "", fn {u, functions}, sofar ->
           if sofar != "" do sofar else unit_problem(u, functions, entry, protocols, private, module_of) end
@@ -527,12 +530,14 @@ defmodule AlchemCheck do
     Enum.filter(Enum.reverse(walked), fn e -> tx(e, "Kind") == "call" or tx(e, "Kind") == "funcref" end)
   end
 
-  def unit_problem(u: Unit, functions: list[AlchemJson.J], entry: string, protocols: list[string], private: list[string], module_of: list[tuple[string, string]]): string do
+  def unit_problem(u: Unit, functions: list[AlchemJson.J], entry: string, protocols: list[string], private: map[string, boolean], module_of: list[tuple[string, string]]): string do
     module = tx(u.tree, "Module")
     types = Enum.map(its(u.tree, "Types"), fn d -> tx(d, "Local") end)
     imported_modules = Enum.flat_map(u.targets, fn {_, target} -> Enum.flat_map(module_of, fn {p, m} -> if p == target do [m] else [] end end) end)
     allowed = [module | imported_modules]
-    locals = Enum.map(functions, fn f -> tx(f, "Name") end)
+    # The module's functions and the private ones of the program by name, maps:
+    # as lists they were read for every call.
+    locals = Map.new(Enum.map(functions, fn f -> {tx(f, "Name"), true} end))
     Enum.reduce(functions, "", fn f, sofar ->
       if sofar != "" do sofar else
         if u.path != entry and tx(f, "Name") == "main" do at_text(u.path, f, "imported modules cannot define main") else
@@ -540,12 +545,12 @@ defmodule AlchemCheck do
           Enum.reduce(calls_of(resolve_block(its(f, "Body"), none_yet)), "", fn e, wrong ->
             if wrong != "" do wrong else
               name = resolved_name(e, module, types)
-              if name in locals or not String.contains?(name, ".") do "" else
+              if Map.get(locals, name, false) or not String.contains?(name, ".") do "" else
                 parts = String.split(name, ".")
                 namespace = Enum.join(Enum.take(parts, length(parts) - 1), ".")
                 visible = Enum.any?(allowed, fn a -> String.starts_with?(name, a <> ".") end)
                 if not reserved?(namespace) and not visible and not (namespace in protocols) do at_text(u.path, e, "module " <> namespace <> " is not imported") else
-                  if name in private do at_text(u.path, e, name <> " is private to its module") else "" end
+                  if Map.get(private, name, false) do at_text(u.path, e, name <> " is private to its module") else "" end
                 end
               end
             end
@@ -572,15 +577,19 @@ defmodule AlchemCheck do
     end)
     if spans == [] do "" else
       private = Enum.flat_map(named, fn {u, f, name} -> if AlchemJson.truth_of(AlchemJson.get(f, "Private")) do [{name, tx(u.tree, "Module")}] else [] end end)
+      # Each file's functions by name, once (they were named again, by
+      # separate_arities, for every function of the program).
+      no_names: map[string, boolean] = %{}
+      locals_of = Map.new(Enum.map(renamed, fn {u, functions} -> {u.path, Map.new(Enum.map(functions, fn g -> {tx(g, "Name"), true} end))} end))
       Enum.reduce(named, "", fn {u, f, _}, sofar ->
         if sofar != "" do sofar else
           module = tx(u.tree, "Module")
           types = Enum.map(its(u.tree, "Types"), fn d -> tx(d, "Local") end)
           none_yet: list[AlchemJson.J] = []
-          locals = Enum.map(elem(AlchemLower.separate_arities(u.tree), 0), fn g -> tx(g, "Name") end)
+          locals = Map.get(locals_of, u.path, no_names)
           Enum.reduce(calls_of(AlchemLower.walk_function(f, none_yet)), "", fn e, wrong ->
             name = resolved_name(e, module, types)
-            candidates = if name in locals do [] else AlchemLower.spans_for(spans, name) end
+            candidates = if Map.get(locals, name, false) do [] else AlchemLower.spans_for(spans, name) end
             if wrong != "" or candidates == [] do wrong else
               count = if tx(e, "Kind") == "funcref" do (case Integer.parse(tx(e, "Op")) do
                 ok(n) -> n

@@ -298,7 +298,7 @@ defmodule NativeArms do
       if fresh+Enum.at(run,4,0) == 0 do b[] else np_arms(source,nc_cursor(plan,4),env,table,Enum.at(plan,0,0),nc_slice(plan,1,4)) end
     end end
   end
-  # The clauses of a function are put together the same way (nj_clauses
+  # The clauses of a function are put together the same way (they were
   # compiled each inside the one before it). ctx: the function (2 bytes),
   # then behind their lengths (4 bytes each) the plan of nj_slots (the
   # parameters' types, read once for all clauses) and the names of the
@@ -312,7 +312,7 @@ defmodule NativeArms do
   def pc_plan(ctx: bytes): bytes do nc_slice(ctx,6,6+nc_long(ctx,2)) end
   def pc_names(ctx: bytes): bytes do nc_slice(ctx,10+nc_long(ctx,2),10+nc_long(ctx,2)+nc_long(ctx,6+nc_long(ctx,2))) end
   def pc_extra(ctx: bytes): bytes do nc_slice(ctx,10+nc_long(ctx,2)+nc_long(ctx,6+nc_long(ctx,2)),Enum.count(ctx)) end
-  # A clause's parameters matched (nj_shape).
+  # A clause's parameters matched.
   def pc_shape(source: bytes, table: bytes, ctx: bytes, clause: integer): bytes do
     named = nj_slots(source,nc_meta(table,clause,6),nc_slice(ctx,0,2),pc_plan(ctx))
     wide = if Enum.count(named) == 0 do b[] else nu_barring(nu_hidden(named,pc_names(ctx),0),pc_extra(ctx)) end
@@ -414,7 +414,7 @@ defmodule NativeArms do
       if pa_sound(source,one,marks,total) == 0 do 0 else pa_whole(source,one,marks,total) end
     end
   end
-  # The clauses of function head as one value (nj_clauses).
+  # The clauses of function head as one value.
   def pc_clauses(source: bytes, table: bytes, head: integer, extra: bytes): bytes do
     ctx = pc_ctx(source,table,head,extra)
     run = pc_grow(source,table,ctx,pc_step(source,table,ctx,nc_u24(head)),0)

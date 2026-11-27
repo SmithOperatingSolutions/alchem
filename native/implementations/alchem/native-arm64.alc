@@ -202,25 +202,6 @@ defmodule NativeArm64 do
   # Conditions: eq 0, ne 1, hs 2, lo 3, mi 4, pl 5, vs 6, vc 7, hi 8, ls 9,
   # ge 10, lt 11, gt 12, le 13.
 
-  # Linux system calls: the number of the ARM64 call for an x86-64 one, -1
-  # for one ARM64 does not have (fork, dup2: clone and dup3 take other
-  # arguments, so their callers say them).
-  def a_sysno(n: integer): integer do
-    if n == 0 do 63 else if n == 1 do 64 else if n == 3 do 57 else if n == 9 do 222 else if n == 11 do 215 else if n == 60 do 93 else if n == 231 do 94 else if n == 10 do 226 else if n == 12 do 214 else if n == 13 do 134 else if n == 14 do 135 else if n == 39 do 172 else if n == 62 do 129 else a_sysno_more(n) end end end end end end end end end end end end end
-  end
-  def a_sysno_more(n: integer): integer do
-    if n == 257 do 56 else if n == 262 do 79 else if n == 263 do 35 else if n == 293 do 59 else if n == 59 do 221 else if n == 61 do 260 else if n == 72 do 25 else if n == 80 do 49 else if n == 228 do 113 else if n == 35 do 101 else if n == 230 do 115 else -1 end end end end end end end end end end end
-  end
-  # A system call whose x86-64 number is known: the arguments moved from
-  # RDI, RSI, RDX, R10, R8, R9 to X0 to X5, the registers x86-64 keeps
-  # (RCX and R11 aside, which it does not) held in X19 to X24, and the
-  # result in RAX.
-  def a_syscall(n: integer): bytes do
-    save = nc_join(Enum.concat(a_mov(19,1),a_mov(20,2)),Enum.concat(a_mov(21,3),a_mov(22,4)),Enum.concat(a_mov(23,5),a_mov(24,8)))
-    args = nc_join(Enum.concat(a_mov(0,5),a_mov(1,4)),Enum.concat(a_mov(3,10),a_mov(4,8)),Enum.concat(a_mov(5,9),a_mov_imm(8,a_sysno(n))))
-    back = nc_join(Enum.concat(a_mov(2,20),a_mov(3,21)),Enum.concat(a_mov(4,22),a_mov(5,23)),a_mov(8,24))
-    nc_join(save,Enum.concat(args,a_svc()),Enum.concat(back,a_mov(1,19)))
-  end
   def a_lsr_imm(rd: integer, rn: integer, shift: integer): bytes do a4(3544186880+shift*65536+64512+rn*32+rd) end
   # exit(status).
   def a_exit(status: integer): bytes do if nc_darwin() == 1 do Enum.concat(a_mov_imm(0,status),a_libc(0)) else nc_join(a_mov_imm(0,status),a_mov_imm(8,93),a_svc()) end end
