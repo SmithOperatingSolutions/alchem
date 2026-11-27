@@ -315,8 +315,50 @@ defmodule AlchemLower do
     statements = [fn(b: list[AlchemJson.J]): list[AlchemJson.J] do desugar_unless(b) end, fn(b: list[AlchemJson.J]): list[AlchemJson.J] do desugar_receives(b) end,
       fn(b: list[AlchemJson.J]): list[AlchemJson.J] do desugar_clauses(b) end, fn(b: list[AlchemJson.J]): list[AlchemJson.J] do desugar_conds(b) end,
       fn(b: list[AlchemJson.J]): list[AlchemJson.J] do desugar_withs(b) end, fn(b: list[AlchemJson.J]): list[AlchemJson.J] do desugar_checks(b) end]
-    desugared = Enum.reduce(statements, merged, fn visit, sofar -> rewrite_bodies(sofar, visit) end)
-    qualify(desugar_bitwise(desugared))
+    # A rewrite goes through every statement and expression of the module
+    # and makes each again. One that has nothing to rewrite is left out:
+    # the module is read once for what it has (kinds_of), and a rewrite
+    # runs when its kind is there or a rewrite before it ran, whose
+    # statements it has not seen.
+    found = kinds_of(merged)
+    kinds = ["unless", "receive", "clauses", "cond", "with", "check"]
+    {desugared, ran} = Enum.reduce(Enum.zip(kinds, statements), {merged, false}, fn {kind, visit}, {sofar, before} ->
+      if before or Map.get(found, kind, false) do {rewrite_bodies(sofar, visit), true} else {sofar, false} end
+    end)
+    qualify(if ran or Map.get(found, "bitwise", false) do desugar_bitwise(desugared) else desugared end)
+  end
+
+  # What of the kinds the rewrites of lowered look for a module has: the
+  # statements unless, receive, clauses, cond, with and check, and
+  # "bitwise" for an operator desugar_bitwise makes a call. Every
+  # statement and expression the rewrites reach is read, and nothing made.
+  def kinds_of(tree: AlchemJson.J): map[string, boolean] do
+    nothing: map[string, boolean] = %{}
+    Enum.reduce(its(tree, "Functions"), nothing, fn f, sofar ->
+      kinds_block(g(f, "Body"), kinds_expr(g(f, "Guard"), kinds_params(g(f, "Params"), sofar)))
+    end)
+  end
+  def kinds_params(params: AlchemJson.J, sofar: map[string, boolean]): map[string, boolean] do
+    Enum.reduce(AlchemJson.items_of(params), sofar, fn p, more -> kinds_expr(g(p, "Default"), more) end)
+  end
+  def kinds_expr(e: AlchemJson.J, sofar: map[string, boolean]): map[string, boolean] do
+    if AlchemJson.null?(e) do sofar else
+      noted = if tx(e, "Op") in ["&&&", "|||", "^^^", "<<<", ">>>", "~~~"] do Map.put(sofar, "bitwise", true) else sofar end
+      sides = kinds_expr(g(e, "Right"), kinds_expr(g(e, "Left"), noted))
+      args = Enum.reduce(its(e, "Args"), sides, fn a, more -> kinds_expr(a, more) end)
+      keys = Enum.reduce(its(e, "Keys"), args, fn k, more -> kinds_expr(k, more) end)
+      kinds_block(g(e, "Body"), kinds_params(g(e, "Params"), keys))
+    end
+  end
+  def kinds_block(body: AlchemJson.J, sofar: map[string, boolean]): map[string, boolean] do
+    Enum.reduce(AlchemJson.items_of(body), sofar, fn s, more ->
+      kind = tx(s, "Kind")
+      noted = if kind == "if" do (if tx(s, "Name") == "unless" do Map.put(more, "unless", true) else more end) else
+        if kind in ["receive", "clauses", "cond", "with", "check"] do Map.put(more, kind, true) else more end
+      end
+      arms = Enum.reduce(its(s, "Arms"), noted, fn arm, sofar_arms -> kinds_block(g(arm, "Body"), kinds_expr(g(arm, "Guard"), sofar_arms)) end)
+      kinds_block(g(s, "Else"), kinds_block(g(s, "Then"), kinds_expr(g(s, "Expr"), arms)))
+    end)
   end
 
   # --- the pieces of the tree the rewrites make --------------------------------------------
@@ -350,8 +392,14 @@ defmodule AlchemLower do
       AlchemJson.put_all(f, [{"Guard", rewrite_expr(g(f, "Guard"), visit)}, {"Body", rewrite_block(g(f, "Body"), visit)}])
     end))
   end
+  # An expression that holds no other, no arguments, no keys and no body: a
+  # name or a literal, as most are. A walk that would only set those five
+  # to what they are leaves it as it is, where it made it again.
+  def bare?(e: AlchemJson.J): boolean do
+    AlchemJson.null?(g(e, "Left")) and AlchemJson.null?(g(e, "Right")) and AlchemJson.null?(g(e, "Args")) and AlchemJson.null?(g(e, "Keys")) and AlchemJson.null?(g(e, "Body"))
+  end
   def rewrite_expr(e: AlchemJson.J, visit: fn[list[AlchemJson.J], list[AlchemJson.J]]): AlchemJson.J do
-    if AlchemJson.null?(e) do e else
+    if AlchemJson.null?(e) or bare?(e) do e else
       AlchemJson.put_all(e, [{"Left", rewrite_expr(g(e, "Left"), visit)}, {"Right", rewrite_expr(g(e, "Right"), visit)},
         {"Args", q_map(g(e, "Args"), fn a -> rewrite_expr(a, visit) end)}, {"Keys", q_map(g(e, "Keys"), fn k -> rewrite_expr(k, visit) end)},
         {"Body", rewrite_block(g(e, "Body"), visit)}])
@@ -448,10 +496,12 @@ defmodule AlchemLower do
   def each_expr(e: AlchemJson.J, f: fn[AlchemJson.J, AlchemJson.J]): AlchemJson.J do
     if AlchemJson.null?(e) do e else
       d = f.(e)
+      if bare?(d) and AlchemJson.null?(g(d, "Params")) do d else
       AlchemJson.put_all(d, [{"Left", each_expr(g(d, "Left"), f)}, {"Right", each_expr(g(d, "Right"), f)},
         {"Args", q_map(g(d, "Args"), fn a -> each_expr(a, f) end)}, {"Keys", q_map(g(d, "Keys"), fn k -> each_expr(k, f) end)},
         {"Params", q_map(g(d, "Params"), fn p -> AlchemJson.put(p, "Default", each_expr(g(p, "Default"), f)) end)},
         {"Body", each_block(g(d, "Body"), f)}])
+      end
     end
   end
   def each_block(body: AlchemJson.J, f: fn[AlchemJson.J, AlchemJson.J]): AlchemJson.J do
@@ -760,9 +810,11 @@ defmodule AlchemLower do
       name = tx(e, "Name")
       renamed = if kind == "struct" or ((kind == "call" or kind == "name" or kind == "funcref") and name != "" and upper_first?(name)) do AlchemJson.put(e, "Name", AlchemJson.J.text(q_name(n, name))) else e end
       typed = if kind == "closure" do AlchemJson.put_all(renamed, [{"Params", q_params(n, g(renamed, "Params"))}, {"ReturnType", AlchemJson.J.text(q_type(n, tx(renamed, "ReturnType")))}]) else renamed end
-      AlchemJson.put_all(typed, [{"Left", q_expr(n, g(typed, "Left"))}, {"Right", q_expr(n, g(typed, "Right"))},
-        {"Args", q_map(g(typed, "Args"), fn a -> q_expr(n, a) end)}, {"Keys", q_map(g(typed, "Keys"), fn k -> q_expr(n, k) end)},
-        {"Body", q_block(n, g(typed, "Body"))}])
+      if bare?(typed) do typed else
+        AlchemJson.put_all(typed, [{"Left", q_expr(n, g(typed, "Left"))}, {"Right", q_expr(n, g(typed, "Right"))},
+          {"Args", q_map(g(typed, "Args"), fn a -> q_expr(n, a) end)}, {"Keys", q_map(g(typed, "Keys"), fn k -> q_expr(n, k) end)},
+          {"Body", q_block(n, g(typed, "Body"))}])
+      end
     end
   end
   def q_block(n: Names, body: AlchemJson.J): AlchemJson.J do

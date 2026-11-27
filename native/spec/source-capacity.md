@@ -358,13 +358,28 @@ under emulation:
 in less than twenty-four times the processor's time and under 4 GiB, and
 the formatter finding nothing to change.
 
-What remains is linear and large: about 0.6 ms and 70 KB a function,
-nearly all of it in rebuilding the tree, an object of some thirty fields
-for every statement and expression, once for each of the ten passes of
-`AlchemLower.lowered`. And the compiler takes 65,535 functions ("Limits
-that remain"): a
-module of 120,000 passes `alchem check`'s own checks in 68 s and is then
-refused by the compiler.
+A pass of `AlchemLower.lowered` goes through every statement and
+expression of a module and makes each again, an object of some thirty
+fields, and there were ten. Six rewrite one kind of statement each
+(`unless`, `receive`, the clauses of a `fn`, `cond`, `with`, `check`) and
+one the bitwise operators: the module is now read once for which of those
+it has (`kinds_of`), and a rewrite runs only when its kind is there or a
+rewrite before it ran. An expression that holds no other, a name or a
+literal, is left as it is by the walks that would set its five parts to
+what they are (`bare?`).
+
+| Functions | `alchem check` | Before these two |
+| --- | --- | --- |
+| 4,000 | 1.4 s, 0.17 GB | 2.4 s, 0.3 GB |
+| 16,000 | 6.1 s, 0.64 GB | 9.7 s, 1.2 GB |
+| 64,000 | 25.1 s, 2.6 GB | 40.2 s, 4.3 GB |
+
+What remains is linear: about 0.4 ms and 40 KB a function, a third of it
+the lexer and the parser, the rest the passes that still make the tree
+again (`qualify`, the names of `assembled`) and the reads of a field,
+which pass the fields before it. And the compiler takes 65,535 functions
+("Limits that remain"): a module of 120,000 passes `alchem check`'s own
+checks and is then refused by the compiler.
 
 ## Time
 
