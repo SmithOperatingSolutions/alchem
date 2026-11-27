@@ -560,7 +560,8 @@ defmodule NativeSourceCompiler do
       if start < 0 do b[] else
         if start >= Enum.count(source) do b[] else
           if nc_word(source,start,b[101,110,100]) == 1 do
-            if nesting == 1 do Enum.concat(nc_u24(start),b[0,0]) else nc_body_chunk(source,nc_end(source,start),nesting-1,count-1) end
+            # An end with no block open (`case end`): nothing it closes.
+            if nesting == 1 do Enum.concat(nc_u24(start),b[0,0]) else if nesting < 1 do b[] else nc_body_chunk(source,nc_end(source,start),nesting-1,count-1) end end
           else
             # do opens a block; so does an unannotated fn x -> ... end.
             next = if nc_opens(source,start)+nf_untyped(source,start) > 0 do nesting+1 else nesting end
@@ -656,7 +657,8 @@ defmodule NativeSourceCompiler do
     first = nc_start(source,nc_end(source,start))
     if start < 0 do -1 else if budget == 0 do -1 else
       if byte_at(source,start) == 64 do
-        if sg_attribute(source,first,nk_value_end(source,nc_end(source,first))) == 0 do -1 else nc_table_skip(source,nc_start(source,nk_value_end(source,nc_end(source,first))),budget-1) end
+        # An attribute has a name: `@ "text"` is none.
+        if first < 0 do -1 else if first >= Enum.count(source) do -1 else if classify_ascii(byte_at(source,first)) != 2 do -1 else if sg_attribute(source,first,nk_value_end(source,nc_end(source,first))) == 0 do -1 else nc_table_skip(source,nc_start(source,nk_value_end(source,nc_end(source,first))),budget-1) end end end end
       else
         if nc_word(source,start,b[114,101,113,117,105,114,101]) != 1 do start else
           nc_table_skip(source,nc_start(source,nc_text_end(source,nc_start(source,nc_text_end(source,first)))),budget-1)
@@ -1130,7 +1132,9 @@ defmodule NativeSourceCompiler do
     end
   end
   def nc_span_chunk(source: bytes, pos: integer, parens: integer, brackets: integer, blocks: integer, count: integer): bytes do
-    if count == 0 do nc_span_state(pos,parens,brackets,blocks,0) else
+    # pos is -1 after a token that does not end: a string without its
+    # closing quote.
+    if pos < 0 do b[] else if count == 0 do nc_span_state(pos,parens,brackets,blocks,0) else
       start = nc_start(source,pos)
       if start < 0 do b[] else
         if start >= Enum.count(source) do b[] else
@@ -1141,7 +1145,7 @@ defmodule NativeSourceCompiler do
           else nc_span_token(source,start,parens,brackets,blocks,count) end
         end
       end
-    end
+    end end
   end
   def nc_span(source: bytes, state: bytes, budget: integer): integer do
     if budget <= 0 do -1 else

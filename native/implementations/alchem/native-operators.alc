@@ -99,7 +99,9 @@ defmodule NativeOperators do
     op = nc_start(source,nc_pos(left))
     right = nc_sum(source,nc_end(source,op),env,table,depth)
     stepped = if nc_pos(right) < 0 do 0 else nc_word(source,nc_pos(right),b[47,47]) end
-    step = if stepped == 0 do nc_value(nc_pos(right),b[49,192],b[0]) else nc_sum(source,nc_end(source,nc_pos(right)),env,table,depth) end
+    # No last value (`1..,`, a number no integer holds): there is no place
+    # for a step to stand at.
+    step = if nc_pos(right) < 0 do b[] else if stepped == 0 do nc_value(nc_pos(right),b[49,192],b[0]) else nc_sum(source,nc_end(source,nc_pos(right)),env,table,depth) end end
     if nc_pos(step) < 0 do b[] else if nc_tag(left)+nc_tag(right)+nc_tag(step) != 0 do b[] else
       nc_value(nc_pos(step),nc_join(nc_join(nc_code(left),b[80],nc_code(right)),nc_join(b[80],nc_code(step),Enum.concat(b[80,65,185],nc_u32(if stepped == 0 do 0 else op end))),nn_range_emit()),b[23])
     end end

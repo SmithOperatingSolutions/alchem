@@ -108,10 +108,11 @@ defmodule NativeProtocols do
     result = nc_expect(work,close,b[58])
     body = if result < 0 do -1 else nc_expect(work,nc_pos(nc_type(work,result)),b[100,111]) end
     last = if body < 0 do -1 else nc_body_end(work,body,16777216) end
-    told = mx_record(6,nc_read(plan,0),nc_join(mx_two(name,stop),nc_slice(plan,2,14),nc_slice(plan,14,17)),b[])
-    if mx_name(work,name)*mx_name(work,first)*fits == 0 do b[] else if last < 0 do b[] else if mp_named(work,nc_start(work,nc_expect(work,if typed < 0 do named else nc_pos(given) end,b[44])),16) == 0 do b[] else
+    # stop is -1 when what stands for the name does not end (`def "name(`).
+    told = if stop < 0 do b[] else mx_record(6,nc_read(plan,0),nc_join(mx_two(name,stop),nc_slice(plan,2,14),nc_slice(plan,14,17)),b[]) end
+    if stop < 0 do b[] else if mx_name(work,name)*mx_name(work,first)*fits == 0 do b[] else if last < 0 do b[] else if mp_named(work,nc_start(work,nc_expect(work,if typed < 0 do named else nc_pos(given) end,b[44])),16) == 0 do b[] else
       nc_join(Enum.concat(nc_u24(nc_end(work,last)),told),mx_record(8,nc_read(plan,0),mx_two(stop,stop),Enum.concat(nc_slice(plan,2,8),nc_slice(plan,14,17))),if typed < 0 do mx_record(9,nc_read(plan,0),mx_two(named,named),nc_slice(plan,8,14)) else b[] end)
-    end end end
+    end end end end
   end
   # 1 when the parameters from pos on (after the first) are names with their
   # types: a pattern there makes clauses of the function, which the pinned

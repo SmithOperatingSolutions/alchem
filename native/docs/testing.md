@@ -49,6 +49,7 @@ container. A change to `check.sh` or to those jobs is made to both.
 | macOS ARM64, 4 parts | pull requests | `python3 scripts/verify-darwin.py build/dev/alchem-compiler-macos` on a Mac, after building it ([README](../README.md#macos-arm64)) |
 | Windows x64 | pull requests | on Windows only ([spec/windows.md](../spec/windows.md)) |
 | Complete suite | nightly, on request | `mise run linux:verify` (`verify-local.sh --with-source`) |
+| Fuzzing | nightly, on request; the gate `fuzz` on pull requests | `fuzz-compiler.py build/dev/A2 COUNT --seed S` (`.github/workflows/search.yml`) |
 | Random search | nightly, on request | `generate-program-cases.py build/dev/alchem-upstream --search build/dev/alchem COUNT --seed S` (`.github/workflows/search.yml`) |
 
 A pull request whose inputs passed these jobs before is not checked again
@@ -121,7 +122,41 @@ bash scripts/linux-container.sh python3 scripts/compiler-reach.py build/dev/A2 -
 python3 scripts/compiler-reach.py build/dev/A2 --search build/dev/alchem-upstream 2000 1   # the random search's cases
 ```
 
-`--gates` takes the gates' single-file programs and the upstream examples
-(about 3,000; an hour in the container on a Mac, four at a time). Code
-only compiling for another system reaches (ARM64, macOS, Windows) is
-reported apart.
+`--gates` runs the gates with a compiler that keeps every text it is given
+and counts all of them (`--gates maps sets` only the gates so named); a
+text of more than 1 MiB, the compiler's own source and the commands bundled
+with it, is left out and counted. On a Mac the gates that emulation fails
+stop early and count only what they compiled until then: the figure to
+go by is that of a Linux x86-64 machine, which
+`.github/workflows/reach.yml` gives once a week and on request, as the
+job's summary and an artifact. Code only compiling for another
+system reaches (ARM64, macOS, Windows) is reported apart.
+
+## Fuzzing
+
+`scripts/fuzz-compiler.py COMPILER COUNT --seed S` asks of the compiler
+what no other compiler is needed to judge. A program of the gates with a
+few small changes, which is mostly no program any more, must be taken
+(status 0, an executable) or refused (status 65, nothing): any other
+status, a signal, more than two minutes or more than 2 GiB is a failure.
+A program made with what it prints (thousands of bindings, long sums,
+nested conditions, many functions and clauses, long lists) must be taken,
+twice alike, and print that. The cases of a seed are the same every time;
+`--keep DIR` writes those that fail, a changed one made smaller first.
+
+The gate `fuzz` runs 2,250 cases of one seed and the texts of
+`harness/fuzz-cases.json`, each of which once ended the compiler. Every
+night `.github/workflows/search.yml` runs 500,000 with the date as the
+seed. A case that fails is mended in the compiler and its text added to
+`fuzz-cases.json`.
+
+The compiler ends with status 72 and says nothing when it writes a
+position that is -1 into a record. `scripts/compiler-where.py` says where:
+
+```sh
+python3 scripts/compiler-where.py build/dev/A2 build/fuzz/000123.alc --built build/work/where
+```
+
+It builds the compiler's source as a test whose three functions that write
+a number into bytes refuse one that does not fit, and prints the functions
+that led there.

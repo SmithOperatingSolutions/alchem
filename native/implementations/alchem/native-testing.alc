@@ -109,7 +109,8 @@ defmodule NativeTesting do
   # Whatever else stands in a module: a block is passed whole.
   def tm_passed(source: bytes, cur: bytes, start: integer, guard: integer): bytes do
     stop = if nc_opens(source,start)+nf_untyped(source,start) == 0 do start else nc_body_end(source,nc_end(source,start),16777216) end
-    if stop < 0 do tm_fail(cur) else tm_cursor(nc_end(source,stop),nc_cursor(cur,3),0,tm_guarded(cur,guard)) end
+    # The token at stop does not end when it is a string without its closing quote.
+    if stop < 0 do tm_fail(cur) else if nc_end(source,stop) < 0 do tm_fail(cur) else tm_cursor(nc_end(source,stop),nc_cursor(cur,3),0,tm_guarded(cur,guard)) end end
   end
   # Between modules: the next defmodule, or the end of the text.
   def tm_between(source: bytes, cur: bytes, start: integer): bytes do

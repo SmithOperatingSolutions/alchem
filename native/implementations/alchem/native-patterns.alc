@@ -285,7 +285,8 @@ defmodule NativePatterns do
     arrow = nc_expect(source,nc_pos(key),b[61,62])
     child = if arrow < 0 do b[] else if no_compatible(nt_child(kind,0),nc_kind(key)) == 0 do b[] else np_parse(source,arrow,env,table,nt_child(kind,1)) end end
     next = nc_pos(child)
-    span = Enum.concat(nc_u24(nc_start(source,pos)),nc_u24(nc_pos(key)))
+    # A key that is no expression (`%{:4 => x}`) has no place: next is -1 then.
+    span = if nc_pos(key) < 0 do b[] else Enum.concat(nc_u24(nc_start(source,pos)),nc_u24(nc_pos(key))) end
     if next < 0 do b[] else
       if nc_word(source,next,b[125]) == 1 do nc_value(nc_end(source,next),nc_code(np_pack(0,np_tree(child),np_env(child))),Enum.concat(b[nt_tag(nt_child(kind,0))],span)) else
         rest = if nc_word(source,next,b[44]) != 1 do b[] else np_entries(source,nc_end(source,next),np_env(child),table,kind) end
@@ -604,7 +605,8 @@ defmodule NativePatterns do
   # there is none. The tokens are walked by halves, so that a call of ten
   # thousand tokens costs no depth of calls.
   def np_close(source: bytes, pos: integer, depth: integer, budget: integer): integer do
-    state = np_close_run(source,nk_state(pos,depth,2),budget)
+    # pos is -1 where the text before it was not what it should be.
+    state = if pos < 0 do nk_state(0,0,0) else np_close_run(source,nk_state(pos,depth,2),budget) end
     if Enum.at(state,5,0) == 1 do nc_cursor(state,0) else -1 end
   end
   def np_close_run(source: bytes, state: bytes, size: integer): bytes do

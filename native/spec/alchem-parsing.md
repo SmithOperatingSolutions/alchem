@@ -38,12 +38,19 @@
 - A string without its closing quote in a function body, and a variant
   that its type does not have in a `case`, are compile errors (they ended
   the compiler with status 72).
+- So are twenty more texts a search found (`scripts/fuzz-compiler.py`,
+  `harness/fuzz-cases.json`), each of which wrote a position that was -1
+  into a record and ended the compiler with status 72: `case` or `cond`
+  with no block before an `end`, an `if` without `do` in a list or an arm,
+  a string without its closing quote in a call, after `rescue`, among a
+  function's parameters or as the name of a `defimpl`'s function, `@`
+  before a string, a range with no last value or one no integer holds, a
+  map pattern whose key is no expression or whose `=>` is another
+  operator, `fn(...): Name do` with a result type that is none, a
+  variant's or a struct's field of a type that is none, and a bundle whose
+  manifest gives a length of more digits than an integer has.
 
 ## Differences from the pinned compiler that remain
-
-- A struct field or a variant's field whose type is a type variable the
-  declaration does not have (`struct C do t: b end`) ends the compiler with
-  status 72, not 65. This is older than this work and not in it.
 
 - A function that returns a `fn` returning another `fn`, written without
   types (`fn x -> fn y -> ... end end` under an annotation), is still
