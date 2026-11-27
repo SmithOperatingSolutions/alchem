@@ -526,8 +526,14 @@ defmodule NativeTesting do
   def tm_prepare(given: bytes): bytes do
     size = Enum.count(given)
     if mx_raw(given,0,size,b[116,101,115,116]) == 0 do b[0] else
-      if ny_has(given,0,size,b[110,97,116,105,118,101,95,99,111,109,112,105,108,101]) == 1 do b[0] else tm_found(given,tm_walk(given,tm_cursor(0,0,3,nc_zeros(41)))) end
+      if tm_entry(given,0) == 1 do b[0] else tm_found(given,tm_walk(given,tm_cursor(0,0,3,nc_zeros(41)))) end
     end
+  end
+  # 1 when the program defines native_compile, a compiler entry, which has
+  # no tests: the word elsewhere (a comment, a string) makes no entry.
+  def tm_entry(given: bytes, from: integer): integer do
+    hit = ac_seek(given,from,Enum.count(given),b[100,101,102,32,110,97,116,105,118,101,95,99,111,109,112,105,108,101,40])
+    if hit < 0 do 0 else if ac_leading(given,hit) == 1 do 1 else tm_entry(given,hit+1) end end
   end
   def tm_found(given: bytes, walked: bytes): bytes do
     recs = nc_slice(walked,48,Enum.count(walked))
