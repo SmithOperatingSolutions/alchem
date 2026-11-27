@@ -49,6 +49,9 @@ def compact_identifiers(text):
     token=re.compile(r'"(?:\\.|[^"\\])*"|[A-Za-z_][A-Za-z_0-9]*')
     words=Counter(m[0] for m in token.finditer(text) if not m[0].startswith('"'))
     reserved=set('div bytes b defmodule def defp do end if else case integer list string boolean option some none true false not and or main native_compile nc_compile nc_explain nc_checked fn in as is on of when with for receive after rescue try catch raise throw use alias import require quote unquote cond unless struct enum protocol impl extern type return void float atom map tuple stream result ok error nil module super self while reduce async await spawn send'.split())
+    # The builtins' names, which no parameter or binding may have: kept, a
+    # source that gives one to a variable is refused as it would be unrenamed.
+    reserved.update('length prepend concat map filter reduce put get has_key'.split())
     reserved.update(re.findall(r'\.([A-Za-z_][A-Za-z_0-9]*)',text))
     reserved.update(word for word in words if word[0].isupper())
     names=sorted(set(words)-reserved,key=lambda word:(-words[word],word))
