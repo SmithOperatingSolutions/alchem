@@ -224,7 +224,10 @@
 #: pack/3
   def pack(at: integer, stop: integer, out: integer): integer do
     if at >= stop do out else
-      next = at + rem(Sys.peek(at + 16), 65536)
+      # The record's length is its two bytes at 16: a word read there
+      # holds the padding after a short name too, bytes the kernel leaves
+      # as they were, and one of 128 or more makes the word negative.
+      next = at + Sys.byte(at + 16) + 256 * Sys.byte(at + 17)
       n = Sys.len(at + 19)
       if (n == 1 or (n == 2 and Sys.byte(at + 20) == 46)) and Sys.byte(at + 19) == 46 do Sys.pack(next, stop, out) else
         e = Sys.copy(out, at + 19, n)
