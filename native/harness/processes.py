@@ -43,13 +43,15 @@ RUNS=[('defmodule Example do\n'
   0,
   b'<stdin>:3:68: first\n  at Example.main <closure> (<stdin>:3)\n<stdin>:4:68: second\n  at Example.main <closure> (<stdin>:4)\n',
   b''),
- # Two commands at once: each gets its own output.
+ # Two commands at once: each gets its own output. The waits are long: on
+ # a runner busy with other programs, Windows once took more than 5 s to
+ # finish a command of half a second (#162), which is no fault of either.
  ('defmodule Example do\n'
   '  def main() do\n'
   'a = Task.async(fn -> System.cmd("sh", ["-c", "sleep 0.3; echo AAAA"]) end)\n'
   'b = Task.async(fn -> System.cmd("sh", ["-c", "sleep 0.1; echo BBBB; sleep 0.4; echo bbbb"]) end)\n'
-  'IO.puts(inspect(Task.await(a, 5000)))\n'
-  'IO.puts(inspect(Task.await(b, 5000)))\n'
+  'IO.puts(inspect(Task.await(a, 60000)))\n'
+  'IO.puts(inspect(Task.await(b, 60000)))\n'
   '  end\n'
   'end\n',
   0,
