@@ -102,3 +102,26 @@ where you are, CI is the check.
 A check that passes and fails on the same input is a defect, not bad luck.
 Run it again with the same seed and the same `--jobs` until the rate is
 known (`--repeat` where the script has it), and fix the cause.
+
+## Coverage
+
+`alchem test -cover` reports the lines of the code under test that ran;
+`-cover-functions` adds, for each file, how many functions ran and those
+none of whose lines ran (`spec/alchem-testing-gen.md`). The aim is to
+reach every function with a test, so that the native compiler needs no
+other implementation to be trusted.
+
+The compiler itself is one module of more than 1 MiB, which `alchem test`
+does not take; `scripts/compiler-reach.py` builds the test that compiles
+programs with it and prints the same report, file by file of
+`implementations/alchem`:
+
+```sh
+bash scripts/linux-container.sh python3 scripts/compiler-reach.py build/dev/A2 --gates --jobs 4 --keep build/work/reach
+python3 scripts/compiler-reach.py build/dev/A2 --search build/dev/alchem-upstream 2000 1   # the random search's cases
+```
+
+`--gates` takes the gates' single-file programs and the upstream examples
+(about 3,000; an hour in the container on a Mac, four at a time). Code
+only compiling for another system reaches (ARM64, macOS, Windows) is
+reported apart.
