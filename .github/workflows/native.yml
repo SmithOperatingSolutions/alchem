@@ -317,6 +317,16 @@ jobs:
         with:
           name: windows-compiler
           path: windows
+      - name: Measure sh start times (temporary)
+        run: |
+          python -c "
+          import subprocess, time
+          for i in range(8):
+              t = time.perf_counter(); subprocess.run(['sh', '-c', 'echo x'], capture_output=True); print('python sh', i, round(time.perf_counter() - t, 3))
+          "
+          printf 'defmodule P do\n  def main() do\n    for i <- 1..8 do\n      t = System.monotonic_time(:millisecond)\n      System.cmd("sh", ["-c", "echo x"])\n      IO.puts("alchem sh " <> inspect(i) <> " " <> inspect(System.monotonic_time(:millisecond) - t))\n    end\n  end\nend\n' > probe.alc
+          ./alchem-compiler-windows.exe < probe.alc > probe.exe
+          ./probe.exe
       - name: The compiler makes itself
         run: |
           tar -xzf examples.tar.gz
@@ -339,6 +349,9 @@ jobs:
       - name: The upstream examples and the gates' programs
         # Each prints on Windows what it prints on Linux (spec/windows.md).
         run: python windows-examples.py check examples ./alchem-compiler-windows.exe --jobs 4
+      - name: gate/processes/2 under load (temporary)
+        if: ${{ !cancelled() }}
+        run: python windows-examples.py check examples ./alchem-compiler-windows.exe --jobs 8 --only gate/processes/2 --repeat 300
       - name: The programs with processes, twenty times each
         # A result that depends on how processes fall in time shows as one
         # run in a few: none may.
