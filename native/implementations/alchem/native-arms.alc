@@ -280,7 +280,7 @@ defmodule NativeArms do
     plain = if sound == 0 do b[] else pa_tail(source,env,table,plan,run,ends) end
     led = if sound == 0 do b[] else pa_led(source,env,table,run,sizes,plain) end
     tail = if Enum.count(led) == 0 do plain else pa_tail(source,led,table,plan,run,ends) end
-    value = pa_fold(pa_part(run,2),pa_sums(sizes,1,0,count,0),count-1,nc_slice(tail,0,nt_after(tail,4)),if nf_open_end(env,2,0) == 3 do 1 else 0 end)
+    value = pa_fold(pa_part(run,2),pa_sums(sizes,1,0,count,0),count-1,nc_slice(tail,0,nt_after(tail,4)),if nf_open_end(env,3,0) == 3 do 1 else 0 end)
     if nc_pos(value) < 0 do b[] else
       nc_join(value,pa_assemble(pa_part(run,0),pa_sums(sizes,0,0,count,0),0,count,Enum.count(nc_code(tail))),nc_code(tail))
     end
@@ -299,7 +299,7 @@ defmodule NativeArms do
     end end
   end
   # The clauses of a function are put together the same way (they were
-  # compiled each inside the one before it). ctx: the function (2 bytes),
+  # compiled each inside the one before it). ctx: the function (3 bytes),
   # then behind their lengths (4 bytes each) the plan of nj_slots (the
   # parameters' types, read once for all clauses) and the names of the
   # function's type variables, then the records its environment starts
@@ -307,14 +307,14 @@ defmodule NativeArms do
   def pc_ctx(source: bytes, table: bytes, head: integer, extra: bytes): bytes do
     cells = nj_cells(source,table,head)
     names = jd_names(table,head,nu_names(nc_return_kind(source,table,head),0,nu_cell_names(cells,0,b[])))
-    nc_join(nc_join(nc_u16(head),nc_u32(6+Enum.count(cells)),nc_join(nc_u24(0),nc_u24(nc_argc(table,head)),cells)),Enum.concat(nc_u32(Enum.count(names)),names),extra)
+    nc_join(nc_join(nc_u24(head),nc_u32(6+Enum.count(cells)),nc_join(nc_u24(0),nc_u24(nc_argc(table,head)),cells)),Enum.concat(nc_u32(Enum.count(names)),names),extra)
   end
-  def pc_plan(ctx: bytes): bytes do nc_slice(ctx,6,6+nc_long(ctx,2)) end
-  def pc_names(ctx: bytes): bytes do nc_slice(ctx,10+nc_long(ctx,2),10+nc_long(ctx,2)+nc_long(ctx,6+nc_long(ctx,2))) end
-  def pc_extra(ctx: bytes): bytes do nc_slice(ctx,10+nc_long(ctx,2)+nc_long(ctx,6+nc_long(ctx,2)),Enum.count(ctx)) end
+  def pc_plan(ctx: bytes): bytes do nc_slice(ctx,7,7+nc_long(ctx,3)) end
+  def pc_names(ctx: bytes): bytes do nc_slice(ctx,11+nc_long(ctx,3),11+nc_long(ctx,3)+nc_long(ctx,7+nc_long(ctx,3))) end
+  def pc_extra(ctx: bytes): bytes do nc_slice(ctx,11+nc_long(ctx,3)+nc_long(ctx,7+nc_long(ctx,3)),Enum.count(ctx)) end
   # A clause's parameters matched.
   def pc_shape(source: bytes, table: bytes, ctx: bytes, clause: integer): bytes do
-    named = nj_slots(source,nc_meta(table,clause,6),nc_slice(ctx,0,2),pc_plan(ctx))
+    named = nj_slots(source,nc_meta(table,clause,6),nc_slice(ctx,0,3),pc_plan(ctx))
     wide = if Enum.count(named) == 0 do b[] else nu_barring(nu_hidden(named,pc_names(ctx),0),pc_extra(ctx)) end
     if Enum.count(wide) == 0 do b[] else nj_patterns(source,nc_meta(table,clause,6),wide,table,pc_plan(ctx)) end
   end
@@ -323,11 +323,11 @@ defmodule NativeArms do
   def pc_step(source: bytes, table: bytes, ctx: bytes, before: bytes): bytes do
     clause = nc_cursor(before,0)
     shaped = pc_shape(source,table,ctx,clause)
-    at = nc_cursor(table,clause*27+21)
+    at = nc_cursor(table,clause*28+21)
     guard = if nc_pos(shaped) < 0 do b[] else if at == 0 do nc_value(0,b[],b[3]) else nc_condition(source,at,np_env(shaped),table,1) end end
     opened = if nc_pos(guard) < 0 do 0 else if at == 0 do 1 else if nc_expect(source,nc_pos(guard),b[100,111]) == nc_meta(table,clause,9) do 1 else 0 end end end
-    body = if opened == 0 do b[] else nj_body(source,table,Enum.concat(nc_slice(ctx,0,2),nc_u16(clause)),np_env(shaped)) end
-    check = if at == 0 do b[] else nc_join(nz_at(table,nc_meta(table,nc_read(ctx,0),0)),nc_code(guard),b[72,133,192,15,132]) end
+    body = if opened == 0 do b[] else nj_body(source,table,Enum.concat(nc_slice(ctx,0,3),nc_u24(clause)),np_env(shaped)) end
+    check = if at == 0 do b[] else nc_join(nz_at(table,nc_meta(table,nc_cursor(ctx,0),0)),nc_code(guard),b[72,133,192,15,132]) end
     if nc_pos(body) < 0 do b[] else pc_made(table,clause,nj_trees(np_tree(shaped)),nc_join(nc_u32(Enum.count(nj_match(np_tree(shaped)))),nj_match(np_tree(shaped)),check),nc_code(body)) end
   end
   # tests: the match of the parameters behind its length (4 bytes), then
@@ -423,7 +423,7 @@ defmodule NativeArms do
     if Enum.count(run) == 0 do b[] else
       if pc_sound(source,pa_part(run,3),pa_sums(sizes,2,0,total,0),Enum.concat(nc_u24(total),nc_u24(nc_argc(table,head)))) == 0 do b[] else
         # No clause matches a nil among the arguments (zf_zero): the failure names the function.
-        fail = zf_clauses(table,head,nc_slice(pc_plan(ctx),6,nc_long(ctx,2)))
+        fail = zf_clauses(table,head,nc_slice(pc_plan(ctx),6,nc_long(ctx,3)))
         nc_value(0,Enum.concat(pa_assemble(pa_part(run,0),pa_sums(sizes,0,0,total,0),0,total,Enum.count(fail)),fail),b[0])
       end
     end
@@ -463,7 +463,7 @@ defmodule NativeArms do
     plain = if Enum.at(run,3,0) == 1 do nc_value(nc_cursor(run,0),nz_fail(table,nc_cursor(plan,1),8),b[9,2]) else nk_cond_arms(source,nc_cursor(run,0),env,table,Enum.at(plan,0,0),nc_cursor(plan,1)) end
     led = pa_led(source,env,table,run,sizes,plain)
     tail = if Enum.count(led) == 0 do plain else nk_cond_arms(source,nc_cursor(run,0),led,table,Enum.at(plan,0,0),nc_cursor(plan,1)) end
-    value = pa_fold(pa_part(run,2),pa_sums(sizes,1,0,count,0),count-1,nc_slice(tail,0,nt_after(tail,4)),if nf_open_end(env,2,0) == 3 do 1 else 0 end)
+    value = pa_fold(pa_part(run,2),pa_sums(sizes,1,0,count,0),count-1,nc_slice(tail,0,nt_after(tail,4)),if nf_open_end(env,3,0) == 3 do 1 else 0 end)
     if nc_pos(value) < 0 do b[] else
       nc_join(value,pa_assemble(pa_part(run,0),pa_sums(sizes,0,0,count,0),0,count,Enum.count(nc_code(tail))),nc_code(tail))
     end

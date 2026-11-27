@@ -104,7 +104,7 @@ defmodule NativeBlocks do
   end
   def nx_binding(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
     value = nf_bound(source,start,env,table,depth)
-    slot = nc_env_count(env,2)
+    slot = nc_env_count(env,3)
     bound = if nc_pos(value) < 0 do b[] else if nc_tag(value) == 12 do b[] else nc_bind(source,start,env,nc_kind(value)) end end
     if Enum.count(bound) == 0 do b[] else
       # On ARM64 a product bound to a name keeps its factors in the two slots
@@ -172,7 +172,7 @@ defmodule NativeBlocks do
     marked = nj_mark(env,b[45])
     # Not past 32 levels of nesting either: a failure at the bottom of 250
     # nested forms would be tried again at every one of them.
-    if depth > 32 do b[] else if nx_tries(env,2,0) >= 1 do b[] else if Enum.count(marked) == Enum.count(env) do b[] else nc_expression(source,start,marked,table,depth) end end end
+    if depth > 32 do b[] else if nx_tries(env,3,0) >= 1 do b[] else if Enum.count(marked) == Enum.count(env) do b[] else nc_expression(source,start,marked,table,depth) end end end
   end
   def nx_tries(env: bytes, offset: integer, found: integer): integer do
     if offset >= Enum.count(env) do found else nx_tries(env,nc_env_next(env,offset),if nt_tag(nt_read(env,offset+7)) == 45 do found+1 else found end) end

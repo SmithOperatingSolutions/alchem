@@ -40,7 +40,7 @@ defmodule NativeComprehensions do
   # 1 when with stands at pos and names no binding (the library written in
   # Alchem has parameters of that name).
   def wc_keyword(source: bytes, pos: integer, env: bytes): integer do
-    if nc_word(source,pos,b[119,105,116,104]) == 0 do 0 else if nc_lookup(source,nc_start(source,pos),env,2) >= 0 do 0 else 1 end end
+    if nc_word(source,pos,b[119,105,116,104]) == 0 do 0 else if nc_lookup(source,nc_start(source,pos),env,3) >= 0 do 0 else 1 end end
   end
   # 1 when "<-" stands at pos.
   def wc_arrow(source: bytes, pos: integer): integer do
@@ -133,7 +133,7 @@ defmodule NativeComprehensions do
   def wc_clause(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, origin: integer): bytes do
     arrow = wc_skip(source,pos)
     value = if wc_arrow(source,arrow) == 0 do b[] else nw_settled(nc_expression(source,nc_start(source,arrow)+2,env,table,depth)) end
-    slot = nc_env_count(env,2)
+    slot = nc_env_count(env,3)
     mark = if arrow < 0 do 0 else arrow end
     held = Enum.concat(env,nc_env_record(mark,mark,nc_kind(value)))
     parsed = if nc_pos(value) < 0 do b[] else if nc_tag(value) == 12 do b[] else np_parse(source,pos,held,table,nc_kind(value)) end end
@@ -294,7 +294,7 @@ defmodule NativeComprehensions do
   #
   # 1 when for stands at pos and names no binding.
   def wf_keyword(source: bytes, pos: integer, env: bytes): integer do
-    if nc_word(source,pos,b[102,111,114]) == 0 do 0 else if nc_lookup(source,nc_start(source,pos),env,2) >= 0 do 0 else 1 end end
+    if nc_word(source,pos,b[102,111,114]) == 0 do 0 else if nc_lookup(source,nc_start(source,pos),env,3) >= 0 do 0 else 1 end end
   end
   # The environment with one more slot that has no name.
   def wf_record(env: bytes, pos: integer, kind: bytes): bytes do
@@ -315,13 +315,13 @@ defmodule NativeComprehensions do
     after = nc_end(source,start)
     paren = nc_word(source,after,b[40])
     first = if paren == 1 do nc_end(source,after) else after end
-    slot = nc_env_count(env,2)
+    slot = nc_env_count(env,3)
     whole = wf_pair(wf_record(wf_record(wf_record(env,start,b[0]),start,b[0]),start,b[0]),start)
     pair = wf_pair(whole,start)
     # A for is a closure of the pinned compiler: no return stands in it, and
     # a call in it is not the function's result (nj_valued, tl_allowed).
     held = nj_valued(pair)
-    state = nc_join(nc_join(Enum.concat(b[mode],nc_u24(slot)),nc_u24(Enum.count(held)),b[0,0,0,0,paren]),nc_join(nc_u24(start),nc_u24(0),nc_u24(2)),nc_join(nc_u24(nc_env_count(whole,2)-1),nc_u24(nc_env_count(whole,2)-2),nc_u24(nc_env_count(pair,2)-2)))
+    state = nc_join(nc_join(Enum.concat(b[mode],nc_u24(slot)),nc_u24(Enum.count(held)),b[0,0,0,0,paren]),nc_join(nc_u24(start),nc_u24(0),nc_u24(2)),nc_join(nc_u24(nc_env_count(whole,3)-1),nc_u24(nc_env_count(whole,3)-2),nc_u24(nc_env_count(pair,3)-2)))
     made = if depth > 190 do b[] else wf_items(source,first,held,table,depth+1,state) end
     parts = nc_code(made)
     if nc_pos(made) < 0 do b[] else
@@ -332,7 +332,7 @@ defmodule NativeComprehensions do
   # chain in the second and below it in memory, the line in the first.
   # Slots 15 and 16 are apart.
   def wf_pair(env: bytes, pos: integer): bytes do
-    base = if nc_env_count(env,2) == 15 do wf_record(env,pos,b[0]) else env end
+    base = if nc_env_count(env,3) == 15 do wf_record(env,pos,b[0]) else env end
     wf_record(wf_record(base,pos,b[0]),pos,b[0])
   end
   # What a trace shows of a for is what the pinned compiler makes of it: a
@@ -426,7 +426,7 @@ defmodule NativeComprehensions do
   # dropped (noted in the environment under that form's end), or it ends a
   # function that declares no result.
   def wf_dropped(source: bytes, stop: integer, env: bytes, table: bytes): integer do
-    if ty_ends(source,stop,env) == 0 do 1 else if wf_marked(env,wc_scan(source,nc_start(source,stop),0),2) == 1 do 1 else wf_closes(source,nc_start(source,stop),env,table) end end
+    if ty_ends(source,stop,env) == 0 do 1 else if wf_marked(env,wc_scan(source,nc_start(source,stop),0),3) == 1 do 1 else wf_closes(source,nc_start(source,stop),env,table) end end
   end
   # The environment for the blocks of the if, unless, case, cond or with
   # that is the statement at start: when its value is dropped, so is that of
@@ -440,7 +440,7 @@ defmodule NativeComprehensions do
   # The environment with one more end noted. The ends are the type of a
   # record with no name, behind tag 24: one slot holds about eighty.
   def wf_mark(env: bytes, pos: integer): bytes do
-    at = wf_noted(env,2,-1)
+    at = wf_noted(env,3,-1)
     held = nt_read(env,at+7)
     if pos < 0 do env else if at < 0 do wf_record(env,pos,Enum.concat(b[24],nc_u24(pos))) else if Enum.count(held) > 250 do wf_record(env,pos,Enum.concat(b[24],nc_u24(pos))) else
       nc_join(nc_slice(env,0,at+7),nt_cell(Enum.concat(held,nc_u24(pos))),nc_slice(env,nt_after(env,at+7),Enum.count(env)))
@@ -460,7 +460,7 @@ defmodule NativeComprehensions do
   # 1 when the end at pos closes the function the environment is of and that
   # function declares no result: its last statement is run for its effect.
   def wf_closes(source: bytes, pos: integer, env: bytes, table: bytes): integer do
-    id = nc_read(env,0)
+    id = nc_cursor(env,0)
     if nj_result(table,id) != 0 do 0 else if nc_meta(table,id,12) == pos do 1 else 0 end end
   end
   # 1 when the end at pos is noted in the environment from offset on.
@@ -527,14 +527,14 @@ defmodule NativeComprehensions do
     tag = nc_tag(value)
     kind = nc_kind(value)
     item = nn_element(kind)
-    slot = nc_env_count(env,2)
+    slot = nc_env_count(env,3)
     held = wf_pair(wf_record(wf_record(env,start,b[0]),start,b[0]),start)
     parsed = if Enum.count(item) == 0 do b[] else np_parse(source,start,held,table,item) end
     fits = if nc_pos(parsed) < 0 do 0 else if nc_start(source,nc_pos(parsed)) == nc_start(source,arrow) do 1 else 0 end end
     match = if fits == 0 do b[] else np_emit(source,np_env(parsed),table,np_tree(parsed),0) end
-    names = nc_env_count(np_env(parsed),2)-nc_env_count(held,2)
+    names = nc_env_count(np_env(parsed),3)-nc_env_count(held,3)
     past = nc_cursor(state,18)+2+names
-    record = nc_env_count(held,2)-2
+    record = nc_env_count(held,3)-2
     inner = if Enum.count(match) == 0 do b[] else wf_next(source,nc_pos(value),np_env(parsed),table,depth,nc_join(nc_join(nc_slice(state,0,15),nc_u24(nc_cursor(state,15)+1),nc_u24(past)),nc_u24(record+1),nc_slice(state,24,30))) end
     lazy = if (tag-23)*(tag-26) == 0 do 1 else 0 end
     head = nc_join(wf_at(table,state,nc_cursor(state,18),nc_cursor(state,21)),nc_code(value),if lazy == 0 do nn_convert(kind,7) else nn_convert(kind,26) end)
@@ -579,7 +579,7 @@ defmodule NativeComprehensions do
     marked = if Enum.at(state,0,0)*plain*(1-line) == 0 do env else wf_mark(env,wc_scan(source,first,0)) end
     # The body of a for whose list is expected gives the element's type: a
     # lambda there takes its types from it (nf_expecting).
-    wanted = nw_expected(env,nc_cursor(state,12),2)
+    wanted = nw_expected(env,nc_cursor(state,12),3)
     element = if nt_tag(wanted) != 7 do b[] else nt_child(wanted,0) end
     inside = if Enum.count(element) == 0 do marked else if nf_worth(element) == 0 do marked else nw_expect(marked,0,element) end end
     block = if line+paren > 0 do b[] else if Enum.at(state,7,0) == 3 do b[] else wf_block(source,first,inside,table,depth) end end
@@ -726,7 +726,7 @@ defmodule NativeComprehensions do
   def wf_tail(source: bytes, table: bytes, env: bytes, state: bytes, item: bytes): bytes do
     choice = Enum.at(state,7,0)
     list = nt_unary(7,item)
-    compare = if choice != 2 do b[] else if nq_comparable(source,table,item,b[]) == 0 do b[] else nq_code(source,table,item,nu_vars(env,2)) end end
+    compare = if choice != 2 do b[] else if nq_comparable(source,table,item,b[]) == 0 do b[] else nq_code(source,table,item,nu_vars(env,3)) end end
     if choice == 1 do wf_into(source,table,env,state,item) else
       if choice != 2 do nc_value(0,b[],list) else
         if Enum.count(compare) == 0 do b[] else
@@ -748,7 +748,7 @@ defmodule NativeComprehensions do
     tag = nc_tag(target)
     pair = if nt_tag(item) != 5 do b[] else if nt_count(item) != 2 do b[] else nt_binary(8,nt_child(item,0),nt_child(item,1)) end end
     kind = if tag == 7 do nt_merge(nc_kind(target),nt_unary(7,item)) else if tag == 8 do nt_merge(nc_kind(target),pair) else if tag == 25 do nt_merge(nc_kind(target),nt_unary(25,item)) else if tag != 2 do b[] else if nt_tag(item) == 2 do b[2] else b[] end end end end end
-    tagged = if (tag-8)*(tag-25) != 0 do b[] else nm_tagged(nt_child(kind,0),nu_vars(env,2)) end
+    tagged = if (tag-8)*(tag-25) != 0 do b[] else nm_tagged(nt_child(kind,0),nu_vars(env,3)) end
     swap = Enum.concat(nc_code(target),b[89,80,81])
     if nc_pos(target) < 0 do b[] else if nt_tag(kind) < 0 do b[] else
       if tag == 7 do nc_value(0,nc_join(b[80],swap,nl_concat_emit()),kind) else
@@ -771,13 +771,13 @@ defmodule NativeComprehensions do
   def wf_reduce_in(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
     slot = nc_cursor(state,1)
     initial = nc_expression(source,nc_cursor(state,8),wf_outer(env,state),table,depth)
-    wanted = nw_expected(env,nc_cursor(state,12),2)
+    wanted = nw_expected(env,nc_cursor(state,12),3)
     given = if Enum.count(wanted) == 0 do nc_kind(initial) else nt_merge(nc_kind(initial),wanted) end
     load = nc_slot(b[72,139,69],slot)
     plain = if nc_pos(initial) < 0 do b[] else if nt_tag(given) < 0 do b[] else np_case(source,nc_value(start,load,given),env,table,depth,start) end end
     # Arms that cannot be typed over an open accumulator are tried with the
     # result type of the function the for stands in.
-    guess = if nc_pos(plain) >= 0 do b[] else if nc_pos(initial) < 0 do b[] else if nu_holes(given,0) == 0 do b[] else nt_merge(given,nc_return_kind(source,table,nc_read(env,0))) end end end
+    guess = if nc_pos(plain) >= 0 do b[] else if nc_pos(initial) < 0 do b[] else if nu_holes(given,0) == 0 do b[] else nt_merge(given,nc_return_kind(source,table,nc_cursor(env,0))) end end end
     base = if nt_tag(guess) < 0 do given else guess end
     first = if nt_tag(guess) < 0 do plain else np_case(source,nc_value(start,load,guess),env,table,depth,start) end
     kind = nt_merge(base,nc_kind(first))

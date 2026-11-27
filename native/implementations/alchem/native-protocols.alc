@@ -225,7 +225,7 @@ defmodule NativeProtocols do
     size = nc_end(source,name)-name
     wide = nc_end(source,pos)-pos
     start = nc_meta(table,index,0)
-    if Enum.at(table,index*27+16,0) >= 32 do 0 else if nc_meta(table,index,3)-start < size+wide+3 do 0 else
+    if Enum.at(table,index*28+16,0) >= 32 do 0 else if nc_meta(table,index,3)-start < size+wide+3 do 0 else
       if byte_at(source,start+size) != 127 do 0 else if byte_at(source,start+size+1+wide) != 127 do 0 else
         nc_equal(source,start,name,size)*nc_equal(source,start+size+1,pos,wide)
       end end
@@ -265,7 +265,7 @@ defmodule NativeProtocols do
   end
   # Where the records of a module stop, from record at on.
   def mp_module_end(table: bytes, at: integer): integer do
-    if at >= nc_records(Enum.count(table)) do at else if Enum.at(table,at*27+16,0) == 32 do at else mp_module_end(table,at+1) end end
+    if at >= nc_records(Enum.count(table)) do at else if Enum.at(table,at*28+16,0) == 32 do at else mp_module_end(table,at+1) end end
   end
   # The first implementation from first up to stop whose type the argument
   # of type kind fits.

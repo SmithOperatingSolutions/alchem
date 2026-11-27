@@ -121,7 +121,7 @@ defmodule NativeOrdering do
   def od_compare(source: bytes, table: bytes, left: bytes, right: bytes, plan: bytes): bytes do
     env = nc_slice(plan,1,Enum.count(plan))
     kind = nt_merge(nc_kind(left),nc_kind(right))
-    code = if od_library(source,table,nc_read(env,0)) == 0 do b[] else if od_orderable(kind,1) == 0 do b[] else od_code(kind,nu_vars(env,2)) end end
+    code = if od_library(source,table,nc_cursor(env,0)) == 0 do b[] else if od_orderable(kind,1) == 0 do b[] else od_code(kind,nu_vars(env,3)) end end
     if Enum.count(code) == 0 do b[] else
       nc_value(nc_pos(right),nc_join(nc_join(nc_code(left),b[80],nc_code(right)),Enum.concat(b[72,137,198,95],code),b[72,133,192,15,Enum.at(plan,0,0),192,15,182,192]),b[3])
     end
@@ -136,7 +136,7 @@ defmodule NativeOrdering do
   def od_builtin(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
     name = nc_start(source,nc_expect(source,nc_end(source,pos),b[46]))
     kind = if nc_word(source,name,b[111,95,115,116,97,98,108,101]) == 1 do 1 else if nc_word(source,name,b[111,95,117,110,115,116,97,98,108,101]) == 1 do 2 else if nc_word(source,name,b[111,95,114,111,111,109]) == 1 do 3 else if nc_word(source,name,b[111,95,116,117,114,110]) == 1 do 4 else 0 end end end end
-    if kind*od_library(source,table,nc_read(env,0)) == 0 do nc_builtin(source,nc_end(source,pos),env,table,depth) else
+    if kind*od_library(source,table,nc_cursor(env,0)) == 0 do nc_builtin(source,nc_end(source,pos),env,table,depth) else
       begin = nc_expect(source,nc_end(source,name),b[40])
       args = if begin < 0 do b[] else nc_arguments(source,begin,env,table,depth) end
       routine = if kind == 1 do so_blob() else sp_blob() end

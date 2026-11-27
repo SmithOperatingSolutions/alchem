@@ -303,7 +303,7 @@ defmodule NativeSets do
   end
   # 1 inside a module of the library written in Alchem.
   def nn_library(source: bytes, env: bytes, table: bytes): integer do
-    nc_ours(source,nc_meta(table,nc_owner(table,nc_read(env,0)),0))
+    nc_ours(source,nc_meta(table,nc_owner(table,nc_cursor(env,0)),0))
   end
   # What the library is written with, and only it may call. A stream is a
   # function from a context to an iterator, and an iterator a function of

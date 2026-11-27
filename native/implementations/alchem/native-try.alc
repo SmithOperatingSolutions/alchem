@@ -41,19 +41,19 @@ defmodule NativeTry do
   end
   # 1 when the block ends at pos (nx_ends), also at a word of the try it is in.
   def ty_ends(source: bytes, pos: integer, env: bytes): integer do
-    if nx_ends(source,pos) == 1 do 1 else if ty_word(source,pos) == 0 do 0 else ty_trying(env,2,0) end end
+    if nx_ends(source,pos) == 1 do 1 else if ty_word(source,pos) == 0 do 0 else ty_trying(env,3,0) end end
   end
   # 1 when try do stands at pos and try names no binding.
   def ty_keyword(source: bytes, pos: integer, env: bytes): integer do
     if nc_word(source,pos,b[116,114,121]) == 0 do 0 else if nc_opens(source,nc_end(source,pos)) == 0 do 0 else
-      if nc_lookup(source,nc_start(source,pos),env,2) >= 0 do 0 else 1 end
+      if nc_lookup(source,nc_start(source,pos),env,3) >= 0 do 0 else 1 end
     end end
   end
   # defexception Name do field: type ... end declares a struct that has a
   # field message: string and no type parameters.
   def ty_declare(source: bytes, pos: integer, owner: integer): bytes do
     record = nd_declare(source,pos,owner,64)
-    if Enum.count(record) != 27 do b[] else if nc_argc(record,0) != 0 do b[] else
+    if Enum.count(record) != 28 do b[] else if nc_argc(record,0) != 0 do b[] else
       if ty_messaged(source,nc_cursor(record,9),nc_cursor(record,12),16777216) == 0 do b[] else record end
     end end
   end
@@ -69,7 +69,7 @@ defmodule NativeTry do
   # 1 when declaration id was written with defexception.
   def ty_exception(source: bytes, table: bytes, id: integer): integer do
     stop = if id < 0 do -1 else nz_before(source,nc_meta(table,id,0)-1) end
-    if stop < 11 do 0 else if Enum.at(table,id*27+16,0) != 64 do 0 else nc_word_at(source,stop-11,b[100,101,102,101,120,99,101,112,116,105,111,110],0) end end
+    if stop < 11 do 0 else if Enum.at(table,id*28+16,0) != 64 do 0 else nc_word_at(source,stop-11,b[100,101,102,101,120,99,101,112,116,105,111,110],0) end end
   end
   # The index of the field message of exception id.
   def ty_message(source: bytes, table: bytes, id: integer, index: integer): integer do
@@ -99,7 +99,7 @@ defmodule NativeTry do
     begin = nc_expect(source,nc_end(source,pos),b[40])
     first = nc_start(source,begin)
     value = if begin < 0 do b[] else if byte_at(source,first) == 37 do nc_expression(source,begin,env,table,depth+1) else
-      if nc_lookup(source,first,env,2) < 0 do b[] else if nc_word(source,nc_end(source,first),b[41]) == 0 do b[] else nc_expression(source,begin,env,table,depth+1) end end
+      if nc_lookup(source,first,env,3) < 0 do b[] else if nc_word(source,nc_end(source,first),b[41]) == 0 do b[] else nc_expression(source,begin,env,table,depth+1) end end
     end end
     id = nd_id(table,nc_kind(value))
     index = if ty_exception(source,table,id) == 0 do -1 else ty_message(source,table,id,0) end
@@ -178,7 +178,7 @@ defmodule NativeTry do
     stop = nc_end(source,nc_cursor(marks,12))
     dropped = if Enum.count(marks) != 15 do 0 else if mode == 0 do 0 else wf_dropped(source,stop,env,table) end end
     base = if dropped == 1 do wf_mark(env,nc_cursor(marks,12)) else env end
-    slot = nc_env_count(base,2)
+    slot = nc_env_count(base,3)
     held = nj_valued(wf_record(wf_record(base,start,b[0]),start,b[0]))
     if Enum.count(marks) != 15 do b[] else if nc_cursor(marks,0)+nc_cursor(marks,3)+nc_cursor(marks,9) == 0 do b[] else if slot < 0 do b[] else
       ty_build(source,table,nc_join(Enum.concat(b[depth],nc_u24(slot)),Enum.concat(b[dropped],nc_u24(start)),marks),held)
@@ -323,7 +323,7 @@ defmodule NativeTry do
   def ty_head(source: bytes, start: integer, env: bytes, table: bytes, state: bytes): bytes do
     mode = Enum.at(state,0,0)
     next = nc_end(source,start)
-    owner = nc_owner(table,nc_read(env,0))
+    owner = nc_owner(table,nc_cursor(env,0))
     given = nt_read(state,9)
     named = Enum.at(state,1,0)*(nc_identifier(source,start)+nc_word(source,start,b[95]))
     if mode == 2 do wc_both(np_parse(source,start,env,table,given),given) else
@@ -341,7 +341,7 @@ defmodule NativeTry do
     end
   end
   def ty_caught(source: bytes, start: integer, env: bytes, table: bytes, given: bytes): bytes do
-    kind = if Enum.count(given) > 0 do if Enum.at(given,0,0) == 255 do b[] else given end else ty_literal(source,start,table,nc_owner(table,nc_read(env,0))) end
+    kind = if Enum.count(given) > 0 do if Enum.at(given,0,0) == 255 do b[] else given end else ty_literal(source,start,table,nc_owner(table,nc_cursor(env,0))) end
     wc_both(np_parse(source,start,env,table,kind),kind)
   end
   # The exception named at pos, as a type; b[] for anything else.
@@ -380,7 +380,7 @@ defmodule NativeTry do
     after = if nc_pos(wc_first(block)) < 0 do 0 else wf_after(source,wc_second(block),table,depth+1) end
     next = if mode == 2 do ty_past(after,2) else ty_past(after,3+typed+(if nc_cursor(plan,14) == 0 do 0 else 1 end)) end
     rest = if nc_pos(wc_first(block)) < 0 do b[] else ty_arms(source,nc_pos(wc_first(block)),env,table,plan,nc_join(b[mode,0],nc_u32(next),nc_slice(state,6,Enum.count(state)))) end
-    spec = nc_join(b[mode,typed,guarded,nc_env_count(scope,2)-nc_env_count(env,2)],nc_u32(ty_u32(state,2)),nc_u32(after))
+    spec = nc_join(b[mode,typed,guarded,nc_env_count(scope,3)-nc_env_count(env,3)],nc_u32(ty_u32(state,2)),nc_u32(after))
     ended = if Enum.at(plan,4,0) == 0 do wc_first(block) else zf_unit(source,table,scope,wc_first(block),nc_pos(wc_second(block))) end
     if nc_pos(rest) < 0 do b[] else ty_joined(source,table,plan,spec,wc_both(head,wc_both(guard,ended)),rest) end
   end

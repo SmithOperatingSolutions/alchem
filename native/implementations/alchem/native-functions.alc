@@ -9,9 +9,9 @@ defmodule NativeFunctions do
     if nc_pos(shape) < 0 do b[] else
       count = nc_cursor(shape,3)
       declared = nc_type(source,nc_expect(source,nc_pos(shape),b[58]))
-      owner = nc_owner(table,nc_read(env,0))
+      owner = nc_owner(table,nc_cursor(env,0))
       body = nc_expect(source,nc_pos(declared),b[100,111])
-      inner = if body < 0 do b[] else nc_env(source,params,nc_u16(nc_read(env,0)),count,table) end
+      inner = if body < 0 do b[] else nc_env(source,params,nc_u24(nc_cursor(env,0)),count,table) end
       # A result type that is none (`fn(a: integer): Zed do`) leaves no spec.
       spec = if Enum.count(inner) == 0 do b[] else nc_value(body,inner,nd_resolve(source,table,owner,nc_kind(declared))) end
       if nc_pos(spec) < 0 do b[] else
@@ -38,10 +38,10 @@ defmodule NativeFunctions do
     begin = nc_start(source,nc_pos(spec))
     enter = if form == 0 do tl_fn_enter(source,env,table,begin) else nz_enter_plain(if nc_cursor(table,21) == 0 do begin else nc_cursor(table,21) end) end
     value = if nc_pos(inner) < 0 do b[] else nc_value(nc_pos(inner),nc_join(nc_join(enter,zf_cover_fn(source,table,env,nc_join(b[form],nc_u24(begin),nc_u24(if nc_tag(spec) != 9 do 0 else nc_cursor(nc_kind(spec),2) end)),Enum.count(np_tree(shaped))),np_tree(shaped)),nc_code(inner),Enum.concat(if unit == 1 do nc_join(nc_allocate_emit(0),b[72,199,2,0,0,0,0],b[72,137,208]) else b[] end,if form == 0 do tl_fn_leave(source,env,table) else b[] end)),if unit == 1 do b[5,0] else nc_kind(inner) end) end
-    gm_shed(source,env,table,if form != 0 do 0 else if nc_tag(spec) == 9 do nc_cursor(nc_kind(spec),2) else nc_pos(spec) end end,nf_seal(source,spec,if nw_marked(inner) == 1 do nw_mark(value) else value end,words,gm_held(env,2),form))
+    gm_shed(source,env,table,if form != 0 do 0 else if nc_tag(spec) == 9 do nc_cursor(nc_kind(spec),2) else nc_pos(spec) end end,nf_seal(source,spec,if nw_marked(inner) == 1 do nw_mark(value) else value end,words,gm_held(env,3),form))
   end
   def nf_seal(source: bytes, spec: bytes, value: bytes, words: bytes, captures: bytes, form: integer): bytes do
-    count = nc_env_count(nc_code(spec),2)
+    count = nc_env_count(nc_code(spec),3)
     stop = nc_pos(value)
     after = if form == 0 do nc_expect(source,stop,b[101,110,100]) else if form == 2 do nc_expect(source,stop,b[41]) else stop end end
     # A capture has as many parameters as its highest placeholder.
@@ -131,13 +131,13 @@ defmodule NativeFunctions do
   # The function that name or Module.name at pos refers to, for a function of
   # the module or a public one of a module it imports directly; -1 otherwise.
   def nf_target(source: bytes, pos: integer, env: bytes, table: bytes): integer do
-    owner = nc_owner(table,nc_read(env,0))
+    owner = nc_owner(table,nc_cursor(env,0))
     stop = nc_end(source,pos)
     home = nc_find(source,pos,table,-1)
     name = nc_start(source,nc_end(source,stop))
     if nc_word(source,stop,b[46]) != 1 do nc_find(source,pos,table,owner) else
       target = if home < 0 do -1 else if nc_imported(source,table,owner,home) == 0 do -1 else nc_find(source,name,table,home) end end
-      if target < 0 do -1 else if home == owner do target else if Enum.at(table,target*27+16,0) != 0 do -1 else target end end end
+      if target < 0 do -1 else if home == owner do target else if Enum.at(table,target*28+16,0) != 0 do -1 else target end end end
     end
   end
   # "&1,&2" for count placeholders.
@@ -160,13 +160,13 @@ defmodule NativeFunctions do
     form = nf_library_form(source,pos,env,table)
     count = nt_items(words,0)
     captures = nf_captures(env,2)
-    scope = nf_capture_env(source,env,nf_unnamed(nc_u16(nc_read(env,0)),words,0),captures,0)
+    scope = nf_capture_env(source,env,nf_unnamed(nc_u24(nc_cursor(env,0)),words,0),captures,0)
     packet = nc_arg_packet(0,count,Enum.concat(words,nt_cell(nc_zeros(count))),nf_pushes(count,0))
     # Of a function of several forms, the form these parameter types fit.
     fit = nj_form(source,table,nj_aimed(source,table,target,count),packet)
     value = if nc_pos(form) < 0 do b[] else if nc_tag(form) != count do b[] else if Enum.count(scope) == 0 do b[] else if fit < 0 do b[] else nu_call(source,scope,table,0,packet,nc_u16(fit)) end end end end
     kind = nt_function(Enum.concat(words,nt_cell(nc_kind(value))),count)
-    if nc_pos(value) < 0 do b[] else nc_value(nc_pos(form)+1,nf_code(count,gm_held(env,2),Enum.concat(nz_enter_plain(nc_start(source,pos)),nc_code(value))),kind) end
+    if nc_pos(value) < 0 do b[] else nc_value(nc_pos(form)+1,nf_code(count,gm_held(env,3),Enum.concat(nz_enter_plain(nc_start(source,pos)),nc_code(value))),kind) end
   end
   # Parameters without names, one per type in words.
   def nf_unnamed(inner: bytes, words: bytes, index: integer): bytes do
@@ -180,8 +180,8 @@ defmodule NativeFunctions do
     form = nf_library_form(source,pos,env,table)
     count = nt_items(words,0)
     text = nc_join(nc_code(form),Enum.concat(b[40],nf_holes(count,0)),b[41])
-    scope = nc_u16(nc_read(env,0))
-    if nc_pos(form) < 0 do b[] else if nc_tag(form) != count do b[] else if nf_nested(source,env,2) == 1 do b[] else
+    scope = nc_u24(nc_cursor(env,0))
+    if nc_pos(form) < 0 do b[] else if nc_tag(form) != count do b[] else if nf_nested(source,env,3) == 1 do b[] else
       # A failure in the function names the reference, as does its closure.
       value = nf_finish(text,jd_carried_scope(scope,env),zf_cover_text(source,nj_from(table,nc_start(source,pos)),env,nc_start(source,pos)),depth,nc_value(1,nf_placeholders(0,scope,words,0),b[9,3]),words)
       if nc_pos(value) != Enum.count(text) do b[] else nc_value(nc_pos(form)+1,nc_code(value),nc_kind(value)) end
@@ -244,7 +244,7 @@ defmodule NativeFunctions do
   # and the accumulator its type for reduce.
   def nf_enum_args(source: bytes, env: bytes, table: bytes, depth: integer, args: bytes, plan: integer): bytes do
     op = nt_mod(plan,256)
-    wanted = if plan < 256 do b[] else nw_expected(env,nt_div(plan,256)-1,2) end
+    wanted = if plan < 256 do b[] else nw_expected(env,nt_div(plan,256)-1,3) end
     if nf_is_pending(args) == 0 do nf_settled(args) else if Enum.count(wanted) == 0 do nf_enum_typed(source,env,table,depth,args,b[op,if op == 13 do 3 else 9 end]) else
       seen = if op == 12 do 1 else 0 end
       merged = if (op-12)*(op-13) != 0 do b[] else nt_merge(nc_arg_kind(args,seen),wanted) end
@@ -326,7 +326,7 @@ defmodule NativeFunctions do
     # fn -> value end bound without a type is a function nothing gives a type, as one with parameters is.
     if nc_word(source,next,b[61]) == 1 do if nc_word(source,nc_end(source,next),b[102,110])*nc_word(source,nc_end(source,nc_end(source,next)),b[45,62]) == 1 do b[] else nw_settled(nc_expression(source,nc_end(source,next),nf_unexpected(source,env,table),table,depth)) end else
       declared = nc_type(source,nc_end(source,next))
-      kind = nd_resolve(source,table,nc_owner(table,nc_read(env,0)),nc_kind(declared))
+      kind = nd_resolve(source,table,nc_owner(table,nc_cursor(env,0)),nc_kind(declared))
       begin = nc_expect(source,nc_pos(declared),b[61])
       value = if begin < 0 do b[] else
         # A value that is one call gets the declared type as what the call is expected to give.
@@ -361,7 +361,7 @@ defmodule NativeFunctions do
       if nf_capture_form(source,pos) == 1 do nf_capture(source,pos,env,table,depth,given) else jd_referred(source,pos,env,table,depth,given) end
     else
       first = nc_end(source,nc_start(source,pos))
-      names = nf_names(source,first,nc_u16(nc_read(env,0)),words)
+      names = nf_names(source,first,nc_u24(nc_cursor(env,0)),words)
       if Enum.count(given) == 0 do b[] else if nc_pos(names) < 0 do b[] else nf_finish(source,env,table,depth,nc_value(nc_pos(names),nc_code(names),nc_join(b[9,0],nc_u24(first),nf_asked(nt_read(given,last)))),words) end end
     end
     end
@@ -416,7 +416,7 @@ defmodule NativeFunctions do
   # env with what a record there expects of the expression at pos as what
   # the surroundings expect: a literal gives it to its parts.
   def nf_inward(source: bytes, pos: integer, env: bytes): bytes do
-    placed = nw_expected(env,pos,2)
+    placed = nw_expected(env,pos,3)
     if Enum.count(placed) == 0 do env else nw_expect(env,0,placed) end
   end
   # The type expected of an element of the list, a value of the map or part
@@ -468,8 +468,8 @@ defmodule NativeFunctions do
     held = nf_ambient(source,env,table)
     # In a trial (type 30) the call stands for a value of unknown type.
     stop = if nt_tag(held) != 30 do -1 else if paren < 0 do -1 else np_close(source,paren,0,16777216) end end
-    wanted = if Enum.count(held) > 0 do held else nc_return_kind(source,table,nc_read(env,0)) end
-    usable = if paren < 0 do 0 else if (nt_tag(wanted)-9)*(nt_tag(wanted)-30)*(nt_tag(wanted)+1) == 0 do 0 else if Enum.count(nw_expected(env,paren,2)) > 0 do 0 else 1 end end end
+    wanted = if Enum.count(held) > 0 do held else nc_return_kind(source,table,nc_cursor(env,0)) end
+    usable = if paren < 0 do 0 else if (nt_tag(wanted)-9)*(nt_tag(wanted)-30)*(nt_tag(wanted)+1) == 0 do 0 else if Enum.count(nw_expected(env,paren,3)) > 0 do 0 else 1 end end end
     value = if usable == 0 do b[] else nx_expression(source,start,nw_expect(env,paren,wanted),table,depth) end
     if stop >= 0 do if ty_ends(source,stop,env) == 0 do b[] else nw_mark(nc_value(stop,b[],b[9])) end else if nc_pos(value) < 0 do b[] else if ty_ends(source,nc_pos(value),env) == 0 do b[] else value end end end
   end
@@ -490,7 +490,7 @@ defmodule NativeFunctions do
     if offset >= Enum.count(env) do if state >= 4 do state-4 else state end else nf_open_end(env,nc_env_next(env,offset),next) end
   end
   def nf_both_open(env: bytes, first: bytes, second: bytes): integer do
-    if nf_open_end(env,2,0) != 3 do 0 else if nc_tag(first) == 9 do 0 else if nc_tag(second) == 9 do 0 else nu_holes(nc_kind(first),0)*nu_holes(nc_kind(second),0) end end end
+    if nf_open_end(env,3,0) != 3 do 0 else if nc_tag(first) == 9 do 0 else if nc_tag(second) == 9 do 0 else nu_holes(nc_kind(first),0)*nu_holes(nc_kind(second),0) end end end
   end
   # How many parameters fn a, b -> ... at pos is written with; -1 for
   # anything else (a capture's number is the highest placeholder it uses,
@@ -522,9 +522,9 @@ defmodule NativeFunctions do
   # expected there, else what the body is to give, else (outside a fn) the
   # function's result type.
   def nf_goal(source: bytes, pos: integer, env: bytes, table: bytes): bytes do
-    placed = nw_expected(env,pos,2)
-    held = nf_ambient_from(env,2,b[])
-    if Enum.count(placed) > 0 do placed else if Enum.count(held) > 0 do nc_slice(held,1,Enum.count(held)) else nc_return_kind(source,table,nc_read(env,0)) end end
+    placed = nw_expected(env,pos,3)
+    held = nf_ambient_from(env,3,b[])
+    if Enum.count(placed) > 0 do placed else if Enum.count(held) > 0 do nc_slice(held,1,Enum.count(held)) else nc_return_kind(source,table,nc_cursor(env,0)) end end
   end
   # 1 when the parts of the literal being compiled are expected to hold functions.
   def nf_parted(source: bytes, env: bytes, table: bytes): integer do
@@ -546,8 +546,8 @@ defmodule NativeFunctions do
     body = if paren == 1 do nc_end(source,open) else open end
     last = nt_skip(given,0,nt_items(given,0)-1)
     words = nc_slice(given,0,last)
-    if Enum.count(words) == 0 do b[] else if nf_nested(source,env,2) == 1 do b[] else
-      nf_finish(source,env,table,depth,nc_value(body,nf_placeholders(pos,nc_u16(nc_read(env,0)),words,0),nc_join(b[9,1+paren],b[0,0,0],nf_asked(nt_read(given,last)))),words)
+    if Enum.count(words) == 0 do b[] else if nf_nested(source,env,3) == 1 do b[] else
+      nf_finish(source,env,table,depth,nc_value(body,nf_placeholders(pos,nc_u24(nc_cursor(env,0)),words,0),nc_join(b[9,1+paren],b[0,0,0],nf_asked(nt_read(given,last)))),words)
     end end
   end
   def nf_placeholders(pos: integer, inner: bytes, words: bytes, index: integer): bytes do
@@ -612,7 +612,7 @@ defmodule NativeFunctions do
   end
   # &name, &Module.name and either with /arity: the function's table slot.
   def nf_reference(source: bytes, pos: integer, env: bytes, table: bytes): bytes do
-    owner = nc_owner(table,nc_read(env,0))
+    owner = nc_owner(table,nc_cursor(env,0))
     stop = nc_end(source,pos)
     if nc_word(source,stop,b[46]) != 1 do nf_slot(source,stop,table,nc_find(source,pos,table,owner),0) else
       home = nc_find(source,pos,table,-1)
@@ -631,13 +631,13 @@ defmodule NativeFunctions do
     id = if named < 0 do -1 else if slashed == 1 do nj_fit_from(source,table,named,given,b[0,0,0,1]) else if nj_alone(source,table,named) == 1 do named else -1 end end end
     stop = if slashed == 1 do nc_end(source,nc_end(source,pos)) else pos end
     # A generic function has no plain reference: its comparators come with each use.
-    if id < 0 do b[] else if Enum.at(table,id*27+16,0) == 1 do b[] else if strict*Enum.at(table,id*27+16,0) != 0 do b[] else if nu_generic(source,table,id) == 1 do b[] else
+    if id < 0 do b[] else if Enum.at(table,id*28+16,0) == 1 do b[] else if strict*Enum.at(table,id*28+16,0) != 0 do b[] else if nu_generic(source,table,id) == 1 do b[] else
       kind = nt_function(Enum.concat(nj_cells(source,table,id),nt_cell(nc_return_kind(source,table,id))),nc_argc(table,id))
       if nt_tag(kind) < 0 do b[] else nc_value(stop,Enum.concat(b[184],nc_u32(4195456+id*8)),kind) end
     end end end end
   end
   def nf_names(source: bytes, pos: integer, inner: bytes, words: bytes): bytes do
-    index = nc_env_count(inner,2)
+    index = nc_env_count(inner,3)
     if nc_word(source,pos,b[45,62]) == 1 do
       if index != nt_items(words,0) do b[] else nc_value(nc_end(source,pos),inner,b[0]) end
     else
@@ -661,7 +661,7 @@ defmodule NativeFunctions do
   # with no name there says (type 21 and the type), else what its
   # surroundings expect of their value.
   def nf_want(source: bytes, pos: integer, env: bytes, table: bytes): bytes do
-    placed = nw_expected(env,pos,2)
+    placed = nw_expected(env,pos,3)
     if Enum.count(placed) > 0 do placed else nf_ambient(source,env,table) end
   end
   # What the body being compiled is to give: the result type of the fn it
@@ -669,7 +669,7 @@ defmodule NativeFunctions do
   # says, whichever comes last. A function whose result type holds a
   # function type starts its body with such a record (nf_bodied).
   def nf_ambient(source: bytes, env: bytes, table: bytes): bytes do
-    found = nf_ambient_from(env,2,b[])
+    found = nf_ambient_from(env,3,b[])
     nc_slice(found,1,Enum.count(found))
   end
   def nf_bodied(source: bytes, table: bytes, id: integer, env: bytes): bytes do
@@ -698,7 +698,7 @@ defmodule NativeFunctions do
   # env for a value its surroundings give no type: a binding without
   # annotation, an argument.
   def nf_unexpected(source: bytes, env: bytes, table: bytes): bytes do
-    found = nf_ambient_from(env,2,b[])
+    found = nf_ambient_from(env,3,b[])
     kind = nc_slice(found,1,Enum.count(found))
     # What branches are held to (tag 21) is no business of a value inside one.
     led = if Enum.at(found,0,0) != 21 do 0 else (nt_tag(kind)-9)*(nt_tag(kind)-30) end
@@ -714,7 +714,7 @@ defmodule NativeFunctions do
     start = nc_cursor(env,offset)
     if offset >= Enum.count(env) do 0 else
       if byte_at(source,start) == 38 do nf_clashes(source,env,inner,nc_env_next(env,offset)) else if nc_cursor(env,offset+3) == start do nf_clashes(source,env,inner,nc_env_next(env,offset)) else
-        if nc_lookup(source,start,inner,2) >= 0 do 1 else nf_clashes(source,env,inner,nc_env_next(env,offset)) end
+        if nc_lookup(source,start,inner,3) >= 0 do 1 else nf_clashes(source,env,inner,nc_env_next(env,offset)) end
       end end
     end
   end
@@ -738,7 +738,7 @@ defmodule NativeFunctions do
     # visible inside a nested function), as are the nameless records of piped
     # values and of case subjects. A name the function has already (a
     # parameter) may not be captured too.
-    if Enum.count(inner) == 0 do b[] else if nf_clashes(source,env,inner,2) == 1 do b[] else Enum.concat(inner,nf_carried(source,env,2)) end end
+    if Enum.count(inner) == 0 do b[] else if nf_clashes(source,env,inner,3) == 1 do b[] else Enum.concat(inner,nf_carried(source,env,3)) end end
   end
   # Lambda entry: copy capture j from the record in R10 to slot count+j.
   def nf_loads(captures: bytes, count: integer, index: integer): bytes do
@@ -784,7 +784,7 @@ defmodule NativeFunctions do
   end
   # name(args) or name.(args) through a function-valued binding; open is the "(".
   def nf_call_value(source: bytes, pos: integer, open: integer, env: bytes, table: bytes, depth: integer): bytes do
-    slot = nc_lookup(source,pos,env,2)
+    slot = nc_lookup(source,pos,env,3)
     kind = if slot < 0 do b[] else nt_read(env,nc_env_offset(env,slot)+7) end
     args = nf_call_args(source,open,env,table,depth,kind)
     count = nc_arg_count(args)
@@ -881,7 +881,7 @@ defmodule NativeFunctions do
     if nc_pos(left) < 0 do left else
       target = nc_start(source,pos+2)
       paren = nf_pipe_target(source,target)
-      slot = nc_env_count(env,2)
+      slot = nc_env_count(env,3)
       mark = if paren < 0 do 0 else paren end
       record = nc_env_record(mark,mark,if nc_tag(left) == 11 do Enum.concat(nc_kind(left),nc_u24(slot+1)) else nn_waiting(left) end)
       # The target is a call: value.(arguments) after it is no part of it.
@@ -924,7 +924,7 @@ defmodule NativeFunctions do
   # The piped value for the argument list that opens just before pos, as a
   # packet with the code that loads it; b[] when nothing is piped into it.
   def nf_piped(source: bytes, pos: integer, env: bytes): bytes do
-    nn_plain(nf_piped_from(source,pos,env,2))
+    nn_plain(nf_piped_from(source,pos,env,3))
   end
   def nf_piped_from(source: bytes, pos: integer, env: bytes, offset: integer): bytes do
     nf_piped_at(source,pos,env,offset,0)

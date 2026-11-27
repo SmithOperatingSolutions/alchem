@@ -21,10 +21,10 @@ defmodule NativeDescribed do
   # byte of entry id is the byte of record id, whatever record the entry
   # names.
   def jd_byte(table: bytes, id: integer): integer do
-    if nc_indexed(table) == 0 do 0 else Enum.at(table,nc_records(Enum.count(table))*27+30+id*4,0) end
+    if nc_indexed(table) == 0 do 0 else Enum.at(table,nc_records(Enum.count(table))*28+31+id*4,0) end
   end
   def jd_put(table: bytes, id: integer, value: integer): bytes do
-    at = nc_records(Enum.count(table))*27+30+id*4
+    at = nc_records(Enum.count(table))*28+31+id*4
     nc_join(nc_slice(table,0,at),b[value],nc_slice(table,at+1,Enum.count(table)))
   end
   def jd_on(table: bytes, id: integer): integer do
@@ -169,7 +169,7 @@ defmodule NativeDescribed do
   # type but for the comparators and twins. The records stand in the order
   # of the function's own, so each keeps its slot.
   def jd_carried_scope(scope: bytes, env: bytes): bytes do
-    if Enum.count(jd_seed(nu_vars(env,2),0)) == 0 do scope else Enum.concat(scope,jd_carried(env,2)) end
+    if Enum.count(jd_seed(nu_vars(env,3),0)) == 0 do scope else Enum.concat(scope,jd_carried(env,3)) end
   end
   # A record that stands for no value (gm_held) stays one that says
   # nothing here: a type expected at position 1, which no call stands at.
@@ -197,14 +197,14 @@ defmodule NativeDescribed do
     wanted = nt_read(given,nt_skip(given,0,count))
     form = nf_library_form(source,pos,env,table)
     captures = nf_captures(env,2)
-    scope = nf_capture_env(source,env,nf_unnamed(nc_u16(nc_read(env,0)),words,0),captures,0)
+    scope = nf_capture_env(source,env,nf_unnamed(nc_u24(nc_cursor(env,0)),words,0),captures,0)
     target = if op != 3 do nt_item(words,0) else if nt_tag(wanted) != 6 do b[] else if nt_tag(nt_child(wanted,1)) != 2 do b[] else nt_child(wanted,0) end end end
     fits = if nc_pos(form) < 0 do 0 else if nc_tag(form) != count do 0 else if Enum.count(scope) == 0 do 0 else if nu_holes(target,0) == 1 do 0 else if op == 3 do if count != 1 do 0 else nq_comparable(source,table,target,b[])*(1-jd_poisoned(source,table,target)) end else if count == 1 do 1 else if op == 1 do if count == 2 do 1 else 0 end else 0 end end end end end end end
-    described = if fits == 0 do b[] else ni_describe(source,table,target,0,Enum.concat(if op == 3 do b[1,255,0,0] else b[1,254,0,0] end,jd_seed(nu_vars(scope,2),0))) end
+    described = if fits == 0 do b[] else ni_describe(source,table,target,0,Enum.concat(if op == 3 do b[1,255,0,0] else b[1,254,0,0] end,jd_seed(nu_vars(scope,3),0))) end
     node = if op != 3 do described else if Enum.count(described) == 0 do b[] else if jn_keyed(described,0) == 1 do b[] else described end end end
     value = if Enum.count(node) == 0 do b[] else jd_json_call(source,pos,scope,table,nc_join(b[Enum.at(plan,0,0),op,count],nt_cell(wanted),Enum.concat(nt_cell(words),node))) end
     kind = nt_function(Enum.concat(words,nt_cell(nc_kind(value))),count)
-    if nc_pos(value) < 0 do b[] else nc_value(nc_pos(form)+1,nf_code(count,gm_held(env,2),nc_join(nz_enter_plain(nc_start(source,pos)),zf_cover(source,table,env,nc_start(source,pos)),nc_code(value))),kind) end
+    if nc_pos(value) < 0 do b[] else nc_value(nc_pos(form)+1,nf_code(count,gm_held(env,3),nc_join(nz_enter_plain(nc_start(source,pos)),zf_cover(source,table,env,nc_start(source,pos)),nc_code(value))),kind) end
   end
   # The call itself, in the scope of the function value. plan: the depth,
   # which of the three, the number of parameters, the result type wanted
@@ -217,7 +217,7 @@ defmodule NativeDescribed do
     node = nc_slice(plan,nt_after(plan,nt_after(plan,3)),Enum.count(plan))
     name = nc_start(source,nc_end(source,pos))
     kinds = nc_join(nt_cell(if op == 3 do nt_item(words,0) else b[0] end),if count == 2 do nt_cell(nt_item(words,1)) else b[] end,Enum.concat(b[1,0],nt_cell(nc_zeros(count+1))))
-    packet = nc_arg_packet(0,count+1,kinds,nc_join(nf_pushes(count,0),jd_placed(node,nu_vars(scope,2)),b[80]))
+    packet = nc_arg_packet(0,count+1,kinds,nc_join(nf_pushes(count,0),jd_placed(node,nu_vars(scope,3)),b[80]))
     home = Enum.concat(b[65,108,99,104,127,109,74,83,79,78],ny_digits(count+1))
     made = nn_passes(source,name,sg_referred(source,pos),scope,table,nc_join(b[Enum.at(plan,0,0),1,0,Enum.count(home)],home,packet))
     if nc_pos(made) < 0 do b[] else nh_placed(table,if op == 3 do nc_join(nc_slice(made,0,4),nt_cell(wanted),nc_code(made)) else made end,nc_start(source,pos)) end
@@ -275,7 +275,7 @@ defmodule NativeDescribed do
   end
   # The table after function id was tried.
   def jd_record(source: bytes, since: bytes, table: bytes, id: integer, mode: integer): bytes do
-    flags = Enum.at(table,id*27+16,0)
+    flags = Enum.at(table,id*28+16,0)
     due = if flags*(flags-16) != 0 do 0 else if mode < 2 do jd_open(source,table,id) else jd_on(table,id) end end
     more = if due == 0 do 0 else if jd_touched(source,since,table,id,0,nc_records(Enum.count(table))) == 0 do 0 else
       if mode < 2 do if Enum.count(nc_function(source,table,id)) > 0 do 0 else 128 end else jd_probes(source,table,id,0,jd_bits(nu_name_count(jd_base(source,table,id),0))) end
@@ -288,7 +288,7 @@ defmodule NativeDescribed do
   def jd_touched(source: bytes, since: bytes, table: bytes, id: integer, first: integer, stop: integer): integer do
     if Enum.count(since) == 0 do 1 else if first >= stop do 0 else
       if stop-first == 1 do
-        if (1-jd_bit(jd_byte(table,first),6))*(if jd_byte(table,first) == jd_byte(since,first) do 1 else 0 end) == 1 do 0 else if Enum.at(table,first*27+16,0)*(Enum.at(table,first*27+16,0)-16) != 0 do 0 else
+        if (1-jd_bit(jd_byte(table,first),6))*(if jd_byte(table,first) == jd_byte(since,first) do 1 else 0 end) == 1 do 0 else if Enum.at(table,first*28+16,0)*(Enum.at(table,first*28+16,0)-16) != 0 do 0 else
           mx_raw(source,nc_meta(table,id,9),jd_text_end(table,id),nc_slice(source,nc_meta(table,first,0),jd_plain_end(source,nc_meta(table,first,0),nc_meta(table,first,3))))
         end end
       else
@@ -313,7 +313,7 @@ defmodule NativeDescribed do
   end
   def jd_total(table: bytes, first: integer, stop: integer): integer do
     if first >= stop do 0 else
-      if stop-first == 1 do if (Enum.at(table,first*27+16,0))*(Enum.at(table,first*27+16,0)-16) != 0 do 0 else jd_byte(table,first) end else
+      if stop-first == 1 do if (Enum.at(table,first*28+16,0))*(Enum.at(table,first*28+16,0)-16) != 0 do 0 else jd_byte(table,first) end else
         middle = first+nc_half(stop-first)
         jd_total(table,first,middle)+jd_total(table,middle,stop)
       end
@@ -332,9 +332,9 @@ defmodule NativeDescribed do
   end
   # The table with function id being compiled for what.
   def jd_push(table: bytes, id: integer, what: integer): bytes do
-    zero = nc_records(Enum.count(table))*27
+    zero = nc_records(Enum.count(table))*28
     depth = Enum.at(table,zero+1,0)
-    nc_join(nc_join(nc_slice(table,0,zero+1),b[depth+1],nc_slice(table,zero+2,zero+2+depth*3)),Enum.concat(nc_u16(id),b[what]),nc_slice(table,zero+5+depth*3,Enum.count(table)))
+    nc_join(nc_join(nc_slice(table,0,zero+1),b[depth+1],nc_slice(table,zero+2,zero+2+depth*4)),Enum.concat(nc_u24(id),b[what]),nc_slice(table,zero+6+depth*4,Enum.count(table)))
   end
   # 1 when function id reads what from JSON: it does not compile with that poisoned.
   def jd_reads(source: bytes, table: bytes, id: integer, what: integer): integer do
@@ -349,9 +349,9 @@ defmodule NativeDescribed do
   end
   # 1 when the compilation of function id for what is under way, from entry index on.
   def jd_under(table: bytes, id: integer, what: integer, index: integer): integer do
-    at = nc_records(Enum.count(table))*27+2+index*3
-    if index >= Enum.at(table,at-2-index*3+1,0) do 0 else
-      if nc_read(table,at) == id do if Enum.at(table,at+2,0) == what do 1 else jd_under(table,id,what,index+1) end else jd_under(table,id,what,index+1) end
+    at = nc_records(Enum.count(table))*28+2+index*4
+    if index >= Enum.at(table,at-2-index*4+1,0) do 0 else
+      if nc_cursor(table,at) == id do if Enum.at(table,at+3,0) == what do 1 else jd_under(table,id,what,index+1) end else jd_under(table,id,what,index+1) end
     end
   end
   # 1 when function target reads its variable index, past the sixth: asked
@@ -359,16 +359,16 @@ defmodule NativeDescribed do
   # nothing) or four are (then it is taken to read: the record's bytes from
   # 14 on, its flags among them, stay zero).
   def jd_late(source: bytes, table: bytes, target: integer, index: integer): integer do
-    depth = Enum.at(table,nc_records(Enum.count(table))*27+1,0)
+    depth = Enum.at(table,nc_records(Enum.count(table))*28+1,0)
     if jd_bit(jd_byte(table,target),6) == 0 do 0 else if jd_under(table,target,index+1,0) == 1 do 0 else if depth >= 4 do 1 else jd_reads(source,table,target,index+1) end end end
   end
   # 1 when kind mentions a poisoned type variable of the function being
   # compiled for that.
   def jd_poisoned(source: bytes, table: bytes, kind: bytes): integer do
-    zero = nc_records(Enum.count(table))*27
+    zero = nc_records(Enum.count(table))*28
     depth = if nc_indexed(table) == 0 do 0 else Enum.at(table,zero+1,0) end
     if depth == 0 do 0 else if nu_has(kind,16,0,Enum.count(kind)) == 0 do 0 else
-      jd_meets(nu_names(kind,0,b[]),jd_base(source,table,nc_read(table,zero+depth*3-1)),b[Enum.at(table,zero+depth*3+1,0),0,0,0])
+      jd_meets(nu_names(kind,0,b[]),jd_base(source,table,nc_cursor(table,zero+depth*4-2)),b[Enum.at(table,zero+depth*4+1,0),0,0,0])
     end end
   end
   # 1 when one of names is a variable among all that what covers. state:
@@ -422,7 +422,7 @@ defmodule NativeDescribed do
     end
   end
   def jd_mentions(source: bytes, table: bytes, id: integer): integer do
-    flags = Enum.at(table,id*27+16,0)
+    flags = Enum.at(table,id*28+16,0)
     if flags*(flags-1)*(flags-16)*(flags-40) != 0 do 0 else if od_library(source,table,id) == 1 do 0 else jd_text(source,nc_meta(table,id,9),nc_meta(table,id,12)) end end
   end
   def jd_text(source: bytes, first: integer, stop: integer): integer do
