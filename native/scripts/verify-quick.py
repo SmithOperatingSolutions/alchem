@@ -54,6 +54,7 @@ GATES={
     'inference':'verify(compiler)',
     'long_bodies':'verify(compiler)',
     'fuzz':'verify(compiler)',
+    'reached':'verify(compiler)',
     'check_scaling':'verify(compiler)',
     'statements':'verify(compiler)',
     'traces':'verify(compiler)',

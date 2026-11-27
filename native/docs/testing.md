@@ -143,6 +143,29 @@ machine, which `.github/workflows/reach.yml` gives once a week and on
 request (`--others 4`, with the seed's gates), as the job's summary and an
 artifact.
 
+What the gates did not reach of what a program can reach has programs of
+its own in `harness/reached.py` (the gate `reached`), each with what the
+pinned command prints for it. The report still lists functions that
+compiling a program does not run, for four reasons:
+
+- the ARM64 instruction encoders the compiler itself does not use
+  (`a_eor`, `a_ret`, `a_csel` and others of `native-arm64.alc`):
+  `harness/arm64.py` calls each and compares its words with the
+  assembler's;
+- the arithmetic and the SHA-256 written by steps for the seed's
+  frontend, in whose place every other build has `native-fast.alc` and
+  `native-sha.alc` (`nc_quot256`, the `sh_` functions of
+  `native-macho.alc`, the decoder of `native-x86arm.alc`): the seed's
+  build runs the arithmetic, and CI holds the compiler it makes to the one
+  the pinned release makes. No check runs the SHA-256 by steps;
+- forms of x86-64 code the translator to ARM64 has and the compiler does
+  not write (`xa_carry_op`, `xa_add_image`): `harness/x86_to_arm64.py`
+  translates instructions of its own;
+- four for which no program was found: the lookups in a table that has no
+  index yet (`nc_find_range`, `nd_find_range`, `ny_module_plain`) and
+  where a quoted part of a regular expression with a byte that is no
+  UTF-8 ends (`rx_qe`: such a source is refused before it).
+
 ## Fuzzing
 
 `scripts/fuzz-compiler.py COMPILER COUNT --seed S` asks of the compiler
