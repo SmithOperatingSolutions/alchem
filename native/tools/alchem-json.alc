@@ -25,12 +25,17 @@ defmodule AlchemJson do
   # The field of an object, or null.
   def get(value: J, name: string): J do
     case value do
-      J.object(fields) ->
-        case Enum.filter(fields, fn {key, _} -> key == name end) do
-          [{_, found} | _] -> found
-          [] -> J.null
-        end
+      J.object(fields) -> first_named(fields, name)
       _ -> J.null
+    end
+  end
+  # The first field of the name: the fields are passed up to it and no
+  # list is made of them (every field was tried and those of the name
+  # listed, for each field that was read).
+  def first_named(fields: list[tuple[string, J]], name: string): J do
+    case fields do
+      [] -> J.null
+      [{key, found} | rest] -> if key == name do found else first_named(rest, name) end
     end
   end
 
@@ -42,9 +47,20 @@ defmodule AlchemJson do
     end
   end
 
-  # The object with several fields given other values.
+  # The object with several fields given other values: the last value
+  # given to a field is its value. The fields are passed once, not once for
+  # each change.
   def put_all(value: J, changes: list[tuple[string, J]]): J do
-    Enum.reduce(changes, value, fn {name, given}, sofar -> put(sofar, name, given) end)
+    case value do
+      J.object(fields) -> J.object(Enum.map(fields, fn {key, old} -> {key, last_given(changes, key, old)} end))
+      other -> other
+    end
+  end
+  def last_given(changes: list[tuple[string, J]], key: string, value: J): J do
+    case changes do
+      [] -> value
+      [{name, given} | rest] -> last_given(rest, key, if name == key do given else value end)
+    end
   end
 
   def text_of(value: J): string do

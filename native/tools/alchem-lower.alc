@@ -138,9 +138,11 @@ defmodule AlchemLower do
     end)
     nothing: list[tuple[string, list[Span]]] = []
     renamed_none: list[AlchemJson.J] = []
-    {renamed, spans, problem} = Enum.reduce(functions, {renamed_none, nothing, ""}, fn f, {done, sofar, found} ->
+    # done: the functions so far, the last one first (added at its end the
+    # list was copied for every function).
+    {turned, spans, problem} = Enum.reduce(functions, {renamed_none, nothing, ""}, fn f, {done, sofar, found} ->
       original = tx(f, "Name")
-      if found != "" or not overloadable?(f) or length(Map.get(counts, original, [])) <= 1 do {done ++ [f], sofar, found} else
+      if found != "" or not overloadable?(f) or length(Map.get(counts, original, [])) <= 1 do {[f | done], sofar, found} else
         name = original <> "/" <> Integer.to_string(length(its(f, "Params")))
         s = span_of(name, f)
         known = spans_for(sofar, original)
@@ -151,10 +153,11 @@ defmodule AlchemLower do
           [] ->
             grown = if known == [] or Enum.at(Enum.reverse(known), 0, s).name != s.name do known ++ [s] else known end
             kept = Enum.filter(sofar, fn {key, _} -> key != original end) ++ [{original, grown}]
-            {done ++ [AlchemJson.put(f, "Name", AlchemJson.J.text(name))], kept, found}
+            {[AlchemJson.put(f, "Name", AlchemJson.J.text(name)) | done], kept, found}
         end
       end
     end)
+    renamed = Enum.reverse(turned)
     if problem != "" or spans == [] do {renamed, problem} else
       none_yet: list[AlchemJson.J] = []
       walked = Enum.reduce(its(tree, "Macros"), Enum.reduce(functions, none_yet, fn f, sofar -> walk_function(f, sofar) end), fn m, sofar -> walk_block(its(m, "Body"), sofar) end)
@@ -259,10 +262,12 @@ defmodule AlchemLower do
   end
 
   def merge_problem(functions: list[AlchemJson.J]): string do
-    nothing: list[string] = []
+    nothing: map[string, boolean] = %{}
     merge_from(functions, nothing)
   end
-  def merge_from(functions: list[AlchemJson.J], seen: list[string]): string do
+  # seen: the names of the functions before these, a map (a list was read
+  # and copied for every function).
+  def merge_from(functions: list[AlchemJson.J], seen: map[string, boolean]): string do
     case functions do
       [] -> ""
       [first | rest] ->
@@ -271,7 +276,7 @@ defmodule AlchemLower do
         left = Enum.drop(rest, count)
         name = tx(first, "Name")
         if tx(first, "Test") != "" or truth(first, "Setup") do merge_from(left, seen) else
-          if name in seen and tx(first, "Extern") == "" and its(first, "Params") != [] do at(first, "clauses of " <> name <> " must be adjacent") else
+          if Map.get(seen, name, false) and tx(first, "Extern") == "" and its(first, "Params") != [] do at(first, "clauses of " <> name <> " must be adjacent") else
             earlier: list[string] = []
             found = Enum.reduce(forms(group), {"", earlier}, fn form, {wrong, before} ->
               if wrong != "" do {wrong, before} else
@@ -286,7 +291,7 @@ defmodule AlchemLower do
                 end
               end
             end)
-            if elem(found, 0) != "" do elem(found, 0) else merge_from(left, seen ++ [name]) end
+            if elem(found, 0) != "" do elem(found, 0) else merge_from(left, Map.put(seen, name, true)) end
           end
         end
     end
@@ -509,8 +514,16 @@ defmodule AlchemLower do
     AlchemJson.put(tree, "Functions", slice_of(merged_list(its(tree, "Functions"))))
   end
   def merged_list(functions: list[AlchemJson.J]): list[AlchemJson.J] do
+    nothing: list[AlchemJson.J] = []
+    merged_onto(functions, nothing)
+  end
+  # done: the functions made so far, the last one first. The call is the
+  # function's whole value, so a module of any number of functions is a
+  # loop (each function was a call inside the one before it, and its list
+  # joined to the rest).
+  def merged_onto(functions: list[AlchemJson.J], done: list[AlchemJson.J]): list[AlchemJson.J] do
     case functions do
-      [] -> []
+      [] -> Enum.reverse(done)
       [first | rest] ->
         count = group_end(functions, first, rest, 0)
         group = [first | Enum.take(rest, count)]
@@ -523,7 +536,8 @@ defmodule AlchemLower do
             if k > 0 do AlchemJson.put(merged, "Name", AlchemJson.J.text(tx(first, "Name") <> "#" <> Integer.to_string(k + 1))) else merged end
           end)
         end
-        made ++ merged_list(left)
+        # Each put before the rest: ++ would copy the rest as well.
+        merged_onto(left, Enum.reduce(made, done, fn one, sofar -> [one | sofar] end))
     end
   end
 

@@ -54,6 +54,7 @@ GATES={
     'inference':'verify(compiler)',
     'long_bodies':'verify(compiler)',
     'fuzz':'verify(compiler)',
+    'check_scaling':'verify(compiler)',
     'statements':'verify(compiler)',
     'traces':'verify(compiler)',
     'packages':'verify(compiler)',
@@ -182,7 +183,7 @@ def build(from_source=False,converge=False):
 
 
 # Gates that measure time or memory, or wait for one another's programs.
-TIMED={'speed','long_bodies','fuzz','nodes','memory_reclaim','collection_memory','compiler_memory','tls','network','processes'}
+TIMED={'speed','long_bodies','fuzz','check_scaling','nodes','memory_reclaim','collection_memory','compiler_memory','tls','network','processes'}
 
 
 def run_gate(name,frontend,backend,compiler):
