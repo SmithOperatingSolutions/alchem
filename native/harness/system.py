@@ -928,6 +928,25 @@ RUNS=[('defmodule T do\n'
   1,
   0,
   b'{31, 15, 5, 65535, -16, 9223372036854775807, -9223372036854775808}\n',
+  b''),
+ # A directory read after one with a long name that is not ASCII: the
+ # padding after each short name holds bytes of that name.
+ ('defmodule T do\n'
+  '  def main() do\n'
+  'File.mkdir_p("a")\n'
+  'File.write!("a/" <> String.duplicate("é", 100), "")\n'
+  'File.mkdir_p("b")\n'
+  'File.write!("b/x", "")\n'
+  'IO.puts(inspect(byte_size(inspect(File.ls("a")))))\n'
+  'IO.puts(inspect(File.ls("b")))\n'
+  'IO.puts(inspect(File.rm_rf("b")))\n'
+  'IO.puts(inspect(File.ls(".")))\n'
+  '  end\n'
+  'end\n',
+  b'',
+  1,
+  0,
+  b'208\nok(["x"])\nok({})\nok(["a"])\n',
   b'')]
 # The pinned compiler rejects these too.
 REJECTED=['x = File.rename("a")','x = File.stat(1)','x = File.open("a")','x = File.open("a", ["read"])','x = File.close("a")','x = File.cp("a")','x = File.chmod("a", "b")',
