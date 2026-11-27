@@ -37,6 +37,12 @@ set -m
   while kill -0 "$CLIENT" 2>/dev/null; do sleep 2; done
   "$DOCKER" kill "$NAME" >/dev/null 2>&1 || true ) </dev/null >/dev/null 2>&1 &
 set +m
+# Each platform has a build directory of its own: native/build in the
+# container is native/build/container-ARCH on the host, so what one machine
+# builds (build/dev, the pinned command, the compilers) is never found by
+# another, nor by the host, whose native/build stays its own.
+BUILD="$ROOT/build/container-${PLATFORM##*/}"
+mkdir -p "$BUILD"
 # The command runs as the user who runs this script (docker/enter.sh).
 # SYS_PTRACE/seccomp: the harness uses strace and ptrace for fault injection and
 # arena measurements. Named volumes keep build caches off the bind mount.
@@ -45,6 +51,7 @@ exec "$DOCKER" run --rm --name "$NAME" "${TTY[@]}" --platform "$PLATFORM" \
   -e ALCHEM_UID="$(id -u)" -e ALCHEM_GID="$(id -g)" \
   --cap-add SYS_PTRACE --security-opt seccomp=unconfined \
   -v "$REPOSITORY:/work" \
+  -v "$BUILD:/work/native/build" \
   -v "alchem-native-cache-${PLATFORM##*/}:/var/cache/alchem-native" \
   -v alchem-native-cargo-registry:/opt/cargo/registry \
   "$IMAGE" "${@:-bash}"
