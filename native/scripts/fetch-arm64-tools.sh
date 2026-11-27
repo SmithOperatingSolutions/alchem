@@ -11,7 +11,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 tools="$root/build/arm64-tools"
 # The development container has them installed and no package lists to
 # download them with (docker/Dockerfile): those are linked.
-lists="$(find /var/lib/apt/lists -maxdepth 1 -type f ! -name lock 2>/dev/null | head -1)"
+lists="$(find /var/lib/apt/lists -maxdepth 1 -type f ! -name lock -print -quit 2>/dev/null || true)"
 if [[ -z "$lists" ]] && command -v aarch64-linux-gnu-as >/dev/null && command -v qemu-aarch64-static >/dev/null; then
   rm -rf "$tools.new" && mkdir -p "$tools.new/bin"
   for name in as ld objcopy objdump; do ln -s "$(command -v aarch64-linux-gnu-$name)" "$tools.new/bin/aarch64-linux-gnu-$name"; done
