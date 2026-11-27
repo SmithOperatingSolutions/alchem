@@ -2,7 +2,7 @@
 """alchem check and alchem fmt take a large file in time and memory that
 grow as the file does (spec/source-capacity.md, "The alchem command").
 
-A module of 4,000 functions and one of 16,000, each function calling the
+A module of 4,000 functions and one of 32,000, each function calling the
 one before it, a note above every third and an @doc on every fifth, written
 as the formatter writes it:
 
@@ -10,10 +10,14 @@ as the formatter writes it:
   @doc is where it was written: the parser gathers them last first and
   turns them round;
 - `alchem check` takes both, and `alchem run` of the smaller prints its sum;
-- four times the functions take less than eight times the time (they took
-  fourteen times: lists were searched and copied for every function, in
-  the parser, the checker's passes and the formatter), and 16,000 take
-  less than 2.5 GiB (they took 4.5; 1.2 now).
+- eight times the functions take less than twenty-four times the
+  processor's time (lists were searched and copied for every function, in
+  the parser, the checker's passes and the formatter: twice the functions
+  took four times as long, so eight times would take sixty-four), and
+  32,000 take less than 4 GiB (2 now; the arena was used up before).
+
+The time is what the processor spent on the command, not the clock's: the
+gates run side by side, and a clock would measure the others too.
 """
 import os
 from importlib.util import module_from_spec, spec_from_file_location
@@ -21,7 +25,6 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import time
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -49,15 +52,14 @@ def verify(compiler):
         builder.build(compiler, alchem, builder.platform_of(compiler).startswith('darwin/'))
 
         def run(*arguments):
-            """(status, standard output and error, seconds, the most memory in bytes)."""
-            started = time.monotonic()
+            """(status, standard output and error, the processor's seconds, the most memory in bytes)."""
             child = subprocess.Popen([str(alchem), *arguments], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=top, env={'PATH': '', 'HOME': top})
             said = child.stdout.read()
             _, status, usage = os.wait4(child.pid, 0)
-            return os.waitstatus_to_exitcode(status), said, time.monotonic() - started, usage.ru_maxrss * (1 if sys.platform == 'darwin' else 1024)
+            return os.waitstatus_to_exitcode(status), said, usage.ru_utime, usage.ru_maxrss * (1 if sys.platform == 'darwin' else 1024)
 
         taken = {}
-        for count in (4000, 16000):
+        for count in (4000, 32000):
             file = Path(top) / f'many{count}.alc'
             file.write_text(module(count))
             status, said, _, _ = run('fmt', '--check', file.name)
@@ -67,10 +69,10 @@ def verify(compiler):
             taken[count] = (seconds, memory)
         status, said, _, _ = run('run', 'many4000.alc')
         assert (status, said) == (0, b'%d\n' % (1 + sum(range(4000)))), ('run', status, said[:200])
-        (small, _), (large, memory) = taken[4000], taken[16000]
-        assert large < 8 * small + 2, f'16,000 functions took {large:.1f} s and 4,000 {small:.1f} s: more than eight times'
-        assert memory < 5 << 29, f'16,000 functions took {memory >> 20} MiB'
-    print(f'PASS check scaling: alchem fmt and check of 4,000 and 16,000 functions with notes and @doc; check {small:.1f} s and {large:.1f} s, {memory >> 20} MiB')
+        (small, _), (large, memory) = taken[4000], taken[32000]
+        assert large < 24 * small + 2, f'32,000 functions took {large:.1f} s of the processor and 4,000 {small:.1f} s: more than twenty-four times'
+        assert memory < 4 << 30, f'32,000 functions took {memory >> 20} MiB'
+    print(f'PASS check scaling: alchem fmt and check of 4,000 and 32,000 functions with notes and @doc; check {small:.1f} s and {large:.1f} s of the processor, {memory >> 20} MiB')
 
 
 if __name__ == '__main__':

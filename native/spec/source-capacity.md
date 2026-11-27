@@ -334,6 +334,9 @@ was searched, or copied to add to its end, once for every function:
   bounded by how deep calls may nest. `a ++ b` copies `b` as well as `a`;
 - the formatter added each function's text to the end of a list
   (`functions_text`).
+- the lexer copied the rest of the source to find where a heredoc ends
+  (`AlchemLexer.find`), once for every `@doc """`: 16,000 functions with
+  one on every fifth took it 8 s, and take 0.4 s.
 
 A field of a tree was read by listing every field of that name
 (`AlchemJson.get`) and several were set by passing the object once for
@@ -351,9 +354,9 @@ under emulation:
 | 64,000 | 4,126,744 | 40.2 s, 4.3 GB | the arena used up (status 71) | 6.6 s |
 
 `harness/check_scaling.py` (the gate `check_scaling`) holds 4,000 and
-16,000 functions with notes and `@doc` to that: four times the functions
-in less than eight times the time and under 2.5 GiB, and the formatter
-finding nothing to change.
+32,000 functions with notes and `@doc` to that: eight times the functions
+in less than twenty-four times the processor's time and under 4 GiB, and
+the formatter finding nothing to change.
 
 What remains is linear and large: about 0.6 ms and 70 KB a function,
 nearly all of it in rebuilding the tree, an object of some thirty fields
