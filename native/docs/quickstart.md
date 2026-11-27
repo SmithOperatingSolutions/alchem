@@ -113,12 +113,11 @@ python3 scripts/benchmark-self-host.py \
 ```
 
 For iteration, `mise run verify:quick` (scripts/verify-quick.py) bootstraps A0,
-requires the A1==A2 fixpoint and runs the 14 self-hosted stage gates once against
-A2 in parallel: about 8s here against roughly 5.6 minutes for the full suite.
+requires the A1==A2 fixpoint and runs every gate once against A2 in parallel.
 Pass name filters to narrow it (`mise run verify:quick -- maps graphemes`;
-`--list` shows gates). It omits A3, the Go seed, backend comparison, legacy
-component gates, publication preservation and core tools, so it is not a
-verification result: run `mise run verify` before committing.
+`--list` shows gates). Before a pull request, `bash scripts/check.sh` runs
+what its CI checks, with CI's settings; [testing](testing.md) says what each
+check covers and where it runs.
 
 The full suite checks native profiles, source/components, A1/A2/A3, all generated
 stages' correctness/rejections and measured arena limits. Ptrace/strace permission

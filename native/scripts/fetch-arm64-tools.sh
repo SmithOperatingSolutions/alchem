@@ -9,6 +9,18 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 tools="$root/build/arm64-tools"
+# The development container has them installed and no package lists to
+# download them with (docker/Dockerfile): those are linked.
+lists="$(find /var/lib/apt/lists -maxdepth 1 -type f ! -name lock -print -quit 2>/dev/null || true)"
+if [[ -z "$lists" ]] && command -v aarch64-linux-gnu-as >/dev/null && command -v qemu-aarch64-static >/dev/null; then
+  rm -rf "$tools.new" && mkdir -p "$tools.new/bin"
+  for name in as ld objcopy objdump; do ln -s "$(command -v aarch64-linux-gnu-$name)" "$tools.new/bin/aarch64-linux-gnu-$name"; done
+  ln -s "$(command -v qemu-aarch64-static)" "$tools.new/bin/qemu-aarch64-static"
+  rm -rf "$tools" && mv "$tools.new" "$tools"
+  "$tools/bin/aarch64-linux-gnu-as" --version | head -1
+  "$tools/bin/qemu-aarch64-static" --version | head -1
+  exit 0
+fi
 rm -rf "$tools.new" && mkdir -p "$tools.new/debs" "$tools.new/root"
 (cd "$tools.new/debs" && apt-get download qemu-user-static binutils-aarch64-linux-gnu)
 for deb in "$tools.new"/debs/*.deb; do dpkg-deb -x "$deb" "$tools.new/root"; done

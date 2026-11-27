@@ -112,6 +112,10 @@ compiler print there (`scripts/windows-examples.py`).
 
 ## Verification
 
+[docs/testing.md](docs/testing.md) says which check to run where so that it
+gives the answer CI gives; on Linux x86-64, `bash scripts/check.sh` runs a
+pull request's checks.
+
 ```sh
 python3 scripts/verify-quick.py             # the fixpoint and the gates, in parallel, from the pinned release
 python3 scripts/verify-quick.py --seed      # the same from the seed, with the gates that take the seed's parts

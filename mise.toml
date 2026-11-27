@@ -83,6 +83,11 @@ dir = "{{config_root}}/native"
 description = "Fast iteration check inside the container"
 run = "bash scripts/linux-container.sh mise run verify:quick"
 
+[tasks."linux:check"]
+dir = "{{config_root}}/native"
+description = "What a pull request's x86-64 and Derived files jobs check, with CI's settings (pass gate filters as args)"
+run = "bash scripts/linux-container.sh bash scripts/check.sh"
+
 [tasks."linux:build"]
 dir = "{{config_root}}/native"
 description = "Build the self-hosted compiler inside the container"
