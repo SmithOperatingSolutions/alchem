@@ -75,7 +75,6 @@ defmodule NativeMacros do
     if index == 0 do at+3 else mx_section(ctx,at+3+nc_cursor(ctx,at),index-1) end
   end
   def mx_sec(ctx: bytes, index: integer): integer do mx_section(ctx,12,index) end
-  def mx_sec_size(ctx: bytes, index: integer): integer do nc_cursor(ctx,mx_sec(ctx,index)-3) end
   def mx_sec_data(ctx: bytes, index: integer): bytes do
     first = mx_sec(ctx,index)
     nc_slice(ctx,first,first+nc_cursor(ctx,first-3))

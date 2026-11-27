@@ -123,14 +123,25 @@ python3 scripts/compiler-reach.py build/dev/A2 --search build/dev/alchem-upstrea
 ```
 
 `--gates` runs the gates with a compiler that keeps every text it is given
-and counts all of them (`--gates maps sets` only the gates so named); a
-text of more than 1 MiB, the compiler's own source and the commands bundled
-with it, is left out and counted. On a Mac the gates that emulation fails
-stop early and count only what they compiled until then: the figure to
-go by is that of a Linux x86-64 machine, which
-`.github/workflows/reach.yml` gives once a week and on request, as the
-job's summary and an artifact. Code only compiling for another
-system reaches (ARM64, macOS, Windows) is reported apart.
+and counts all of them (`--gates maps sets` only the gates so named): those
+of `verify-quick.py`, `core_modules` and `core_tools` of the complete
+suite, and with `--seed FRONTEND BACKEND` the gates that take the seed's
+two as well. A text of more than 1 MiB, the compiler's own source and the
+commands bundled with it, is left out and counted. The test asks what the
+`alchem` command asks of the compiler: the program, why it is refused when
+it is, and of one program in ten whether it would be taken.
+
+The code for ARM64, macOS and Windows is reached only by a compiler for
+them. `--others N` builds the test for each of the five systems and gives
+the four others one program in N: the first table is Linux x86-64 alone,
+the second every system together, and the functions listed are those that
+no system ran.
+
+On a Mac the gates that emulation fails stop early and count only what
+they compiled until then: the figure to go by is that of a Linux x86-64
+machine, which `.github/workflows/reach.yml` gives once a week and on
+request (`--others 4`, with the seed's gates), as the job's summary and an
+artifact.
 
 ## Fuzzing
 

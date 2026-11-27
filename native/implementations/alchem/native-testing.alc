@@ -21,7 +21,6 @@ defmodule NativeTesting do
     nc_join(nc_u24(pos),Enum.concat(nc_u24(pending),b[status]),rest)
   end
   def tm_rest(cur: bytes): bytes do nc_slice(cur,7,48) end
-  def tm_group(cur: bytes): integer do nc_read(cur,7) end
   def tm_depth(cur: bytes): integer do Enum.at(cur,9,0) end
   def tm_count(cur: bytes): integer do nc_read(cur,12) end
   # The rest of a cursor with its guard set, or one record more.

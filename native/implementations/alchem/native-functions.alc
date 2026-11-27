@@ -709,12 +709,6 @@ defmodule NativeFunctions do
   def nf_captures(env: bytes, offset: integer): bytes do
     b[]
   end
-  # The slots first up to stop, three bytes each, made by halves.
-  def nf_slots(first: integer, stop: integer): bytes do
-    if stop-first <= 0 do b[] else if stop-first == 1 do nc_u24(first) else
-      Enum.concat(nf_slots(first,first+nc_half(stop-first)),nf_slots(first+nc_half(stop-first),stop))
-    end end
-  end
   # 1 when a named record of env from offset on has a name that inner has.
   def nf_clashes(source: bytes, env: bytes, inner: bytes, offset: integer): integer do
     start = nc_cursor(env,offset)
@@ -850,10 +844,6 @@ defmodule NativeFunctions do
     if kind == 0 do b[] else if stop < 0 do b[] else if nc_tag(left) != 2 do b[] else
       nc_value(stop,Enum.concat(nc_code(left),ns_output_emit(kind)),b[12])
     end end end
-  end
-  # A statement of no type, then the rest of its body.
-  def nf_then(first: bytes, rest: bytes): bytes do
-    if nc_pos(rest) < 0 do b[] else nc_value(nc_pos(rest),Enum.concat(nc_code(first),nc_code(rest)),nc_kind(rest)) end
   end
   # left |> call(...) where left did not compile for want of a type: a
   # lambda, a capture, or a list, tuple, map or parenthesized value that
