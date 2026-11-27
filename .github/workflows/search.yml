@@ -1,0 +1,91 @@
+name: Random search
+# Random programs against the Go compiler native/ is pinned to
+# (native/scripts/generate-program-cases.py --search): each night with a
+# new seed, the date's, so a difference is seen the day it appears and the
+# gates' recorded cases are not all that is checked. A run on request may
+# name its own seed and count. Every program that differs is kept as an
+# artifact, and the run fails. A pull request that changes this file runs
+# a shorter search, so the job is tried before it is merged.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/search.yml'
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: 'Seed (empty: the date)'
+        required: false
+        default: ''
+      count:
+        description: 'Cases'
+        required: false
+        default: '6000'
+
+permissions:
+  contents: read
+
+env:
+  # A download of the toolchain that fails is tried again, over minutes.
+  MISE_HTTP_RETRIES: '10'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  search:
+    name: Search
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+        working-directory: native
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          working_directory: native
+          cache: false
+          # Go for the pinned compiler; no Rust, as the seed is not made.
+          install_args: go python
+      - name: Memory limits
+        # scripts/limited, which runs the pinned compiler's programs, caps
+        # memory with a systemd user scope: start the user manager.
+        run: |
+          sudo loginctl enable-linger "$USER"
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          for _ in $(seq 30); do
+            systemd-run --user --scope --quiet -p MemoryMax=1G true && exit 0
+            sleep 1
+          done
+          echo 'no systemd user manager' >&2
+          exit 1
+      - name: Dependencies
+        run: mise run fetch
+      - name: Compilers
+        # The native compiler from the pinned release (A2) and its alchem
+        # command; the pinned Go command, build/dev/alchem-upstream.
+        run: |
+          python3 scripts/verify-quick.py --build-only
+          python3 scripts/build-alchem.py --compiler build/dev/A2 --output build/dev/alchem
+          python3 -c "import importlib.util as u; s = u.spec_from_file_location('upstream', 'scripts/upstream-examples.py'); m = u.module_from_spec(s); s.loader.exec_module(m); m.build_upstream()"
+      - name: Search
+        env:
+          SEED: ${{ inputs.seed }}
+          COUNT: ${{ inputs.count || (github.event_name == 'pull_request' && '600') || '6000' }}
+        run: |
+          seed="${SEED:-$(date -u +%Y-%m-%d)}"
+          echo "seed $seed, $COUNT cases"
+          python3 scripts/generate-program-cases.py build/dev/alchem-upstream \
+            --search build/dev/alchem "$COUNT" --seed "$seed" --keep build/search
+      - name: Programs that differ
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: search-differences
+          path: native/build/search
+          if-no-files-found: ignore
