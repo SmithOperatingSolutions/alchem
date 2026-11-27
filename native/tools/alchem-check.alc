@@ -232,9 +232,11 @@ defmodule AlchemCheck do
           end
         end
       else e end
-      AlchemJson.put_all(named, [{"Left", resolve_names(AlchemJson.get(named, "Left"), locals)}, {"Right", resolve_names(AlchemJson.get(named, "Right"), locals)},
-        {"Args", AlchemLower.q_map(AlchemJson.get(named, "Args"), fn a -> resolve_names(a, locals) end)}, {"Keys", AlchemLower.q_map(AlchemJson.get(named, "Keys"), fn k -> resolve_names(k, locals) end)},
-        {"Body", resolve_body(AlchemJson.get(named, "Body"), locals)}])
+      if AlchemLower.bare?(named) do named else
+        AlchemJson.put_all(named, [{"Left", resolve_names(AlchemJson.get(named, "Left"), locals)}, {"Right", resolve_names(AlchemJson.get(named, "Right"), locals)},
+          {"Args", AlchemLower.q_map(AlchemJson.get(named, "Args"), fn a -> resolve_names(a, locals) end)}, {"Keys", AlchemLower.q_map(AlchemJson.get(named, "Keys"), fn k -> resolve_names(k, locals) end)},
+          {"Body", resolve_body(AlchemJson.get(named, "Body"), locals)}])
+      end
     end
   end
   def resolve_body(body: AlchemJson.J, locals: map[string, string]): AlchemJson.J do
