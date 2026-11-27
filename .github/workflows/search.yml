@@ -21,7 +21,7 @@ on:
       count:
         description: 'Cases'
         required: false
-        default: '6000'
+        default: '50000'
 
 permissions:
   contents: read
@@ -76,7 +76,7 @@ jobs:
       - name: Search
         env:
           SEED: ${{ inputs.seed }}
-          COUNT: ${{ inputs.count || (github.event_name == 'pull_request' && '600') || '6000' }}
+          COUNT: ${{ inputs.count || (github.event_name == 'pull_request' && '2000') || '50000' }}
         run: |
           seed="${SEED:-$(date -u +%Y-%m-%d)}"
           echo "seed $seed, $COUNT cases"
