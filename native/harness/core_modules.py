@@ -47,7 +47,8 @@ def verify(compiler):
         base=prefix('encoder.alc')
         for value in list(range(256))+[-1,256,-(1<<63),(1<<63)-1]:
             source=base+f'  def main() do image=emit_elf_exit({value})\n System.halt(Enum.count(image)-140) end\nend\n'
-            programs.append((source,('encoder',value),0 if 0<=value<=255 else 72));count['encoder']+=1
+            # A value that is no byte fails where the byte is made (spec/alchem-failures.md, "Bytes").
+            programs.append((source,('encoder',value),0 if 0<=value<=255 else (2,b'byte must be between 0 and 255')));count['encoder']+=1
     # The fixtures are in the old byte spelling.
     verify_programs([(native_bytes(source),label,status) for source,label,status in programs],compiler)
     print('PASS self-hosted core component oracles:',count)

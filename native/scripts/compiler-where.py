@@ -3,23 +3,22 @@
 
     compiler-where.py COMPILER FILE... [--built FILE]
 
-The compiler ends with status 72 and no word when it makes a byte of a
-number that is none: nearly always a position that is -1, of something that
-was not found, written into a record. Here its source is compiled as the
-module of a test (scripts/compiler-reach.py does the same to count what
-runs), with the three functions that write a number into bytes (nc_u16,
-nc_u24, nc_u32) refusing one that does not fit: the test then fails where
-the number was written, with the functions that led there, and that is
-printed for each FILE. A text the compiler takes or refuses prints
-nothing but its name.
+The compiler is not traced: on a failure of its own (nearly always a
+position that is -1, of something that was not found, written into a
+record as a byte) it ends with status 72 and no word. Its source with a
+function native_traced makes a compiler that is traced (nc_entry_table),
+a quarter larger and a sixth slower, which ends as any program does: with
+the reason and the functions that led there. COMPILER (build/dev/A2) builds
+that compiler here, in a few seconds, from the source as it is written, so
+that the functions have their names; each FILE is given to it, and what it
+says is printed with each function's file and line in
+implementations/alchem. A text it takes or refuses prints its status alone.
 
-COMPILER (build/dev/A2) builds the test, which takes three minutes and
-some GiB (ALCHEM_REACH_BUILD_MEMORY, 12G); --built keeps it, and uses the
-one that is there: name a new file after the compiler's source changes.
-The lines are those of the assembled source, the functions those of
-implementations/alchem.
+--built keeps the traced compiler, and uses the one that is there: name a
+new file after the compiler's source changes.
 """
 import argparse
+import bisect
 import importlib.util
 import os
 from pathlib import Path
@@ -30,31 +29,6 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-CHECKED = '''  def nc_checked16(v: integer): bytes do
-    if v < 0 do nc_unfit(v) else if v > 65535 do nc_unfit(v) else nc_u16(v) end end
-  end
-  def nc_checked24(v: integer): bytes do
-    if v < 0 do nc_unfit(v) else if v > 16777215 do nc_unfit(v) else nc_u24(v) end end
-  end
-  def nc_checked32(v: integer): bytes do
-    if v < -2147483648 do nc_unfit(v) else if v > 4294967295 do nc_unfit(v) else nc_u32(v) end end
-  end
-  def nc_unfit(v: integer): bytes do
-    raise("no bytes of " <> Integer.to_string(v))
-  end
-'''
-
-
-def checked(source):
-    """The source with every call of the three functions checked, but those
-    they make of each other."""
-    head, body = source.split('\n', 1)
-    inside = re.compile(r'(  def nc_u(?:16|24|32)\(.*?\n  end\n)', re.S)
-    parts = inside.split(body)
-    for k in range(0, len(parts), 2):
-        for bits in ('16', '24', '32'):
-            parts[k] = re.sub(r'(?<![A-Za-z0-9_])nc_u%s\(' % bits, 'nc_checked%s(' % bits, parts[k])
-    return head + '\n' + CHECKED + ''.join(parts)
 
 
 def main():
@@ -66,31 +40,42 @@ def main():
     spec = importlib.util.spec_from_file_location('compiler_reach', ROOT / 'scripts/compiler-reach.py')
     reach = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(reach)
+    source, starts = reach.assembled(traced=True)
+    defs = reach.functions(source.split('\n'), starts)
+    firsts = [d[0] for d in defs]
+
+    def placed(match):
+        """A line of the assembled source as its file and line there."""
+        line = int(match.group(1))
+        k = bisect.bisect_right(firsts, line) - 1
+        if k < 0:
+            return match.group(0)
+        first, _, file, at = defs[k]
+        return f'{file}:{at + line - first}'
+
     with tempfile.TemporaryDirectory(prefix='alchem-where-') as top:
-        work = Path(top)
-        test = work / 'where'
+        traced = Path(top) / 'traced'
         if args.built and args.built.exists():
-            shutil.copyfile(args.built, test)
+            shutil.copyfile(args.built, traced)
         else:
-            source, _ = reach.assembled()
-            env = dict(os.environ, ALCHEM_MEMORY=os.environ.get('ALCHEM_REACH_BUILD_MEMORY', '12G'), ALCHEM_SECONDS='3600')
-            built = subprocess.run([str(ROOT / 'scripts/limited'), str(args.compiler.resolve())], input=reach.bundle(checked(source)), capture_output=True, env=env)
+            env = dict(os.environ, ALCHEM_MEMORY=os.environ.get('ALCHEM_MEMORY', '8G'), ALCHEM_SECONDS='600')
+            built = subprocess.run([str(ROOT / 'scripts/limited'), str(args.compiler.resolve())], input=source.encode(), capture_output=True, env=env)
             if built.returncode or built.stderr:
-                raise SystemExit(f'the compiler did not build the test: {built.returncode} {built.stderr.decode(errors="replace")[:300]}')
-            test.write_bytes(built.stdout)
+                raise SystemExit(f'the compiler did not build the traced one: {built.returncode} {built.stderr.decode(errors="replace")[:300]}')
+            traced.write_bytes(built.stdout)
             if args.built:
                 args.built.parent.mkdir(parents=True, exist_ok=True)
                 args.built.write_bytes(built.stdout)
-        test.chmod(0o700)
-        for k, file in enumerate(args.files):
-            place = work / f'text{k}'
-            place.mkdir()
-            shutil.copyfile(file, place / 'text.alc')
-            done = subprocess.run([str(test)], cwd=work, capture_output=True, env=dict(os.environ, REACH_PROGRAMS=str(place), ALCHEM_TEST_TIMEOUT='3600000'))
-            print(f'{file}: {"taken or refused" if done.returncode == 0 else f"status {done.returncode}"}')
-            if done.returncode:
-                lines = [line for line in done.stdout.decode(errors='replace').splitlines() if 'compiler.alc' in line and 'nc_checked' not in line and 'nc_unfit (' not in line]
-                print('\n'.join(lines[:12]) if lines else '  (nothing said: not a number written into bytes)')
+                args.built.chmod(0o700)
+        traced.chmod(0o700)
+        for file in args.files:
+            done = subprocess.run([str(traced)], input=file.read_bytes(), capture_output=True, env={'PATH': ''}, timeout=3600)
+            said = done.stderr.decode(errors='replace')
+            if done.returncode in (0, 65):
+                print(f'{file}: {"taken" if done.returncode == 0 else "refused"}')
+            else:
+                print(f'{file}: status {done.returncode}')
+                print(re.sub(r'<stdin>:(\d+)', placed, said), end='')
     return 0
 
 

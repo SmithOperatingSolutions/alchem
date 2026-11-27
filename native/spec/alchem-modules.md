@@ -18,9 +18,13 @@ accepts a bundle of several modules.
 - Imported modules cannot define `main`; a program has exactly one.
 - Import cycles and duplicate module names are errors. Importing a file twice,
   or along several paths, includes it once.
-- No file, the entry or an imported one, may be over 1 MiB (1,048,576 bytes):
-  `PATH: read source: source exceeds 1048576 bytes`, as the pinned compiler
-  reports it. The limit is per file; a program of several files may be larger.
+- No file, the entry or an imported one, may be longer than a program may
+  be, 16,776,191 bytes (`nc_limit`, `source-capacity.md`):
+  `PATH: read source: source exceeds 16776191 bytes`. The pinned compiler
+  reads no file over 1 MiB (`source exceeds 1048576 bytes`), though it
+  builds a program of several such files: this is a deliberate difference,
+  in the bundlers, `alchem check`, `alchem fmt` and the parser of
+  `tools/alchem-parse.alc`.
 - Module names cannot be library namespaces: the pinned ReservedModule list
   (IO, List, Map, String, Integer, File, System, Enum, Path, Base, JSON, ...).
 
@@ -64,7 +68,7 @@ The compiler accepts `import` only in that position and form; a raw file import
 that was not bundled is rejected. An import naming a module that is absent from
 the bundle is harmless unless it is called. The bundler reports missing files,
 cycles, duplicate module names, imported modules that define main and files
-over 1 MiB; packages
+longer than a program may be; packages
 (`host/owner/repo@version/...`) are not supported.
 
 ## Compiler representation

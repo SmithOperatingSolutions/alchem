@@ -7015,6 +7015,26 @@ COVER=[({'lib/extra.alc': 'defmodule Extra do\n  def twice(n: integer): integer 
   b'\n\nlib/lam.alc: lines not run: 41\n')]
 
 
+# The same, of what the native compiler has alone (spec/alchem-failures.md,
+# "Bytes"): the pinned language has no bytes. A value of b[...] that is no
+# byte and a slice of bytes of a negative count fail with the place and the
+# calls, and are rescued; they ended the program with status 72 and 73 and
+# no word.
+def own(body,more=''):
+    return 'defmodule M do\n'+more+'  def main() do\n'+''.join('    '+line+'\n' for line in body)+'  end\nend\n'
+OWN=[(own(['x = String.length("abc") + 297','y = b[1, x]','IO.puts(Integer.to_string(Enum.count(y)))']),2,b'',b'<stdin>:4:11: byte must be between 0 and 255\n  at M.main (<stdin>:4)\n'),
+     (own(['x = String.length("abc") - 4','y = b[x]','IO.puts(Integer.to_string(Enum.count(y)))']),2,b'',b'<stdin>:4:11: byte must be between 0 and 255\n  at M.main (<stdin>:4)\n'),
+     (own(['y = b[300]','IO.puts(Integer.to_string(Enum.count(y)))']),2,b'',b'<stdin>:3:11: byte must be between 0 and 255\n  at M.main (<stdin>:3)\n'),
+     (own(['IO.puts(Integer.to_string(Enum.count(f(300))))'],'  def f(x: integer): bytes do\n    b[x]\n  end\n'),2,b'',b'<stdin>:3:7: byte must be between 0 and 255\n  at M.f (<stdin>:3)\n  at M.main (<stdin>:6)\n'),
+     (own(['x = String.length("abc") - 5','y = Enum.slice(b[1,2,3], 1, x)','IO.puts(Integer.to_string(Enum.count(y)))']),2,b'',b'<stdin>:4:9: slice needs a nonnegative amount\n  at M.main (<stdin>:4)\n'),
+     (own(['x = String.length("abc") + 297','r = try do','  Enum.count(b[x])','rescue','  m -> 0 - String.length(m)','end','IO.puts(Integer.to_string(r))',
+           's = try do','  Enum.count(Enum.slice(b[1,2,3], 1, 3 - x))','rescue','  m -> 0 - String.length(m)','end','IO.puts(Integer.to_string(s))',
+           'IO.puts(Integer.to_string(Enum.count(b[x - 45, 0, 7, x - 300])))']),0,b'-30\n-32\n4\n',b''),
+     # 128 values, the most a b[...] of values takes, the last no byte.
+     (own(['x = String.length("abc")','y = b['+', '.join(['x']*127)+', x + 253]','IO.puts(Integer.to_string(Enum.count(y)))']),2,b'',b'<stdin>:4:11: byte must be between 0 and 255\n  at M.main (<stdin>:4)\n'),
+     (own(['x = String.length("abc")','y = b['+', '.join(['x']*127)+', x + 252]','IO.puts(Integer.to_string(Enum.count(y)))']),0,b'128\n',b'')]
+
+
 def ranges(lines):
     parts=[];i=0
     while i<len(lines):
@@ -7054,7 +7074,7 @@ def build(compiler,source,out):
 def verify(compiler):
     with tempfile.TemporaryDirectory(prefix='alchem-failures-') as top:
         out=Path(top)/'out'
-        for source,status,stdout,stderr in RUNS:
+        for source,status,stdout,stderr in RUNS+OWN:
             build(compiler,source.encode(),out)
             run=subprocess.run([str(out)],capture_output=True,stdin=subprocess.DEVNULL,env={'PATH':''},timeout=120)
             assert (run.returncode,run.stdout,run.stderr)==(status,stdout,stderr),(source,run)
@@ -7078,7 +7098,7 @@ def verify(compiler):
             assert run.returncode==0 and (d/'cover').stat().st_mode&0o777==0o600,(entry,run)
             seen=report((d/'cover').read_text(),d).encode()
             assert seen==wanted,(entry,seen,wanted)
-    print(f'PASS failures: {len(RUNS)} programs of library failures rescued and traced, zero values and ranges, {len(TESTS)} test files with assertion texts, {len(COVER)} coverage reports as the pinned runner prints them')
+    print(f'PASS failures: {len(RUNS)} programs of library failures rescued and traced, {len(OWN)} of bytes, zero values and ranges, {len(TESTS)} test files with assertion texts, {len(COVER)} coverage reports as the pinned runner prints them')
 
 
 if __name__=='__main__':verify(Path(sys.argv[1]).resolve())

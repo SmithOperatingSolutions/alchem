@@ -46,6 +46,46 @@ that spells its length twice (`nc_literal_emit`, `nc_text_emit`,
 | 98 | `panic: strings: negative Repeat count` | `String.pad_leading`, `pad_trailing`: a width whose difference from the length wraps |
 | 99 | `panic: runtime error: makeslice: len out of range` | the same, for a fill past 2^48 bytes |
 
+## Bytes
+
+The pinned language has no bytes; the compiler is written with them, and a
+program may be. Two of their failures ended a program with a status and no
+word, which is how every failure of the compiler itself looked:
+
+| Status | Message | Raised by |
+| --- | --- | --- |
+| 92 (was 72) | `byte must be between 0 and 255` | a value of `b[...]` that is no byte |
+| 80 (was 73) | `slice needs a nonnegative amount` | `Enum.slice(bytes, start, count)` with a negative count |
+
+In a traced program the routine's exit is given the status of the failure
+(`zf_restatus`) and made a failure at the list or the call as the others
+are (`zf_packed` for the values of a list, each of which has an exit, and
+`zf_wrap` for the call): it names the place and the calls, and a `try`
+rescues it. `harness/failures.py` holds the programs (`OWN`).
+
+A compiler entry is not traced and keeps the exits with statuses 72 and
+73, so the compiler is what it was, byte for byte. One whose source has a
+function `native_traced` is traced (`nc_entry_table`):
+`scripts/compiler-where.py` builds the compiler so, in a few seconds and
+from the source as it is written, and gives it a text that ends the
+compiler, which then says where:
+
+```
+native-compiler.alc:16:7: byte must be between 0 and 255
+  at NativeSourceCompiler.nc_u16 (native-compiler.alc:16)
+  at NativeSourceCompiler.nc_u24 (native-compiler.alc:92)
+  at NativeSourceCompiler.nc_value (native-compiler.alc:134)
+  at NativeSourceCompiler.nk_range (native-operators.alc:104)
+  ...
+```
+
+The traced compiler makes of a program what the compiler makes of it. It
+is 4,601,129 bytes where the compiler is 3,594,207 (28% more) and compiles
+the compiler's source in 5.6 s where the compiler takes 4.9 s (16% more;
+both under emulation), and it reaches its own fixpoint (A2 = A3). Releasing
+the compiler traced is one line of `scripts/bootstrap-alchem-compiler.py`
+and a new pinned release (README, "Moving the pin").
+
 `String.to_integer` calls the parse runtime as `Integer.parse` does and
 fails with the error it gives; the base is checked before the call.
 

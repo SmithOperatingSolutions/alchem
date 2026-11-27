@@ -102,8 +102,8 @@ def sync_lock(entry_lexical,packages,locked):
     else:Path(path).unlink()
 
 
-def bundle(entry,locked=False,limit=1048576):
-    """limit: the most bytes a file may have, as the pinned compiler reads files; None for none."""
+def bundle(entry,locked=False,limit=16776191):
+    """limit: the most bytes a file may have, which is what a program may have (nc_limit; the pinned compiler reads no file over 1 MiB); None for none."""
     modules=[];names={};loaded={};versions={};packages={}
     def package(path,target):
         """The directory of the package a remote import names, noting its version and hash."""

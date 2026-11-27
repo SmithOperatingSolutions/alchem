@@ -47,8 +47,9 @@ PROJECTS=[
       'a.alc':'defmodule A do\n  import "tagger.alc"\n\n  def name(): string do\n    "a" <> Tagger.tag()\n  end\nend\n',
       'b.alc':'defmodule B do\n  import "tagger.alc"\n\n  def name(): string do\n    "b" <> Tagger.tag()\n  end\nend\n',
       'tagger.alc':'defmodule Tagger do\n  def tag(): string do\n    "!"\n  end\nend\n'},b'a!b!\n'),
-    # A file of exactly 1 MiB is read; one byte more is not (UNBUNDLED).
+    # A file of 1 MiB, the most the pinned compiler reads, and one of 3 MiB: a file may be as long as a program (UNBUNDLED).
     ({'app.alc':app(['big.alc'],['IO.puts(Integer.to_string(Util.twice(1)))']),'big.alc':padded(UTIL,1048576)},b'2\n'),
+    ({'app.alc':app(['big.alc'],['IO.puts(Integer.to_string(Util.twice(2)))']),'big.alc':padded(UTIL,3145728)},b'4\n'),
 ]
 # Compiler rejections (exit65) for bundles that break a visibility rule.
 REJECTED=[
@@ -68,9 +69,10 @@ UNBUNDLED=[
     ({'app.alc':app(['lib/cyc.alc'],['IO.puts("x")']),'lib/cyc.alc':'defmodule Cyc do\n  import "../app.alc"\n\n  def f(n: integer): integer do\n    n\n  end\nend\n'},'import cycle'),
     ({'app.alc':app(['util.alc','other.alc'],['IO.puts("x")']),'util.alc':UTIL,'other.alc':UTIL},'duplicate module Util'),
     ({'app.alc':app(['tool.alc'],['IO.puts("x")']),'tool.alc':'defmodule Tool do\n  def main() do\n    System.halt(1)\n  end\nend\n'},'imported modules cannot define main'),
-    # The pinned compiler reads no file over 1 MiB, imported or the entry.
-    ({'app.alc':app(['big.alc'],['IO.puts("x")']),'big.alc':padded(UTIL,1048577)},'read source: source exceeds 1048576 bytes'),
-    ({'app.alc':padded(app([],['IO.puts("x")']),1048577)},'read source: source exceeds 1048576 bytes'),
+    # No file is longer than a program may be (16,776,191 bytes: the pinned
+    # compiler reads none over 1 MiB), imported or the entry.
+    ({'app.alc':app(['big.alc'],['IO.puts("x")']),'big.alc':padded(UTIL,16776192)},'read source: source exceeds 16776191 bytes'),
+    ({'app.alc':padded(app([],['IO.puts("x")']),16776192)},'read source: source exceeds 16776191 bytes'),
 ]
 ONE='defmodule Util do def twice(n: integer): integer do n * 2 end end'
 # Raw bundle text the compiler must reject.
@@ -92,7 +94,7 @@ INVALID=[
 
 
 # What tools/alchem-bundle.alc reports on standard error for each UNBUNDLED project.
-NATIVE_ERRORS=['no such file or directory','import cycle','duplicate module Util','imported modules cannot define main','big.alc: read source: source exceeds 1048576 bytes','app.alc: read source: source exceeds 1048576 bytes']
+NATIVE_ERRORS=['no such file or directory','import cycle','duplicate module Util','imported modules cannot define main','big.alc: read source: source exceeds 16776191 bytes','app.alc: read source: source exceeds 16776191 bytes']
 
 
 def native_bundler(compiler,base):
