@@ -70,14 +70,16 @@ def verify(frontend,backends,saved_compilers=None):
         'b=Enum.map([1])\n System.halt(0)','b=[true]\n System.halt(0)',
         'b=if 1 == 1 do x=[1]\n x else [2] end\n System.halt(Enum.count(x))',
     ]]
-    errors=[(module('','a=[256]\n System.halt(0)'),72),(module('','a=[-1]\n System.halt(0)'),72)]
+    # A value that is no byte and a slice of a negative count fail with the
+    # place and the calls (spec/alchem-failures.md, "Bytes"): (2, reason).
+    errors=[(module('','a=[256]\n System.halt(0)'),(2,b'byte must be between 0 and 255')),(module('','a=[-1]\n System.halt(0)'),(2,b'byte must be between 0 and 255'))]
     invalid += [module('',body) for body in [
         'b=Enum.slice(1,0,1)\n System.halt(0)',
         'b=Enum.slice([1],[],1)\n System.halt(0)',
         'b=Enum.slice([1],0,[])\n System.halt(0)',
     ]]
-    errors.append((module('','b=Enum.slice([1],0,-1)\n System.halt(0)'),73))
-    errors += [(module(factory,'b=make('+str(value)+')\n System.halt(0)'),72) for value in [-(1<<63),(1<<63)-1]]
+    errors.append((module('','b=Enum.slice([1],0,-1)\n System.halt(0)'),(2,b'slice needs a nonnegative amount')))
+    errors += [(module(factory,'b=make('+str(value)+')\n System.halt(0)'),(2,b'byte must be between 0 and 255')) for value in [-(1<<63),(1<<63)-1]]
     fill='def fill(n: integer): integer do if n == 0 do b=[1]\n 0 else fill(n-1)+fill(n-1) end end '
     empty='def fill(n: integer): integer do if n == 0 do b=[]\n 0 else fill(n-1)+fill(n-1) end end '
     grow='def grow(n: integer): list[integer] do if n == 0 do [1] else a=grow(n-1)\n Enum.concat(a,a) end end '
@@ -90,7 +92,7 @@ def verify(frontend,backends,saved_compilers=None):
         # gives it back and runs to its end (spec/alchem-memory.md). grow, below,
         # keeps what it makes and still exhausts the arena.
         (module(fill,'x=fill(18)\n b=[]\n System.halt(x)'),0),
-        (module(fill,'x=fill(18)\n b=[256]\n System.halt(x)'),72),
+        (module(fill,'x=fill(18)\n b=[256]\n System.halt(x)'),(2,b'byte must be between 0 and 255')),
         (module(empty,'System.halt(fill(19))'),0),
         (module(empty,'x=fill(19)\n b=[]\n System.halt(x)'),0),
         (module(grow,'System.halt(Enum.count(grow(20))-1048534)'),42),
@@ -170,7 +172,9 @@ def verify(frontend,backends,saved_compilers=None):
                 target=root/'bad';target.unlink(missing_ok=True);target.write_bytes(result.stdout);target.chmod(0o700)
                 run=subprocess.run([str(target)],capture_output=True,env={'PATH':''},timeout=120,preexec_fn=floor_arena(target) if 'fill(' in source or 'grow(' in source else None)
                 # Status 2: the runtime stopped a call nested past the depth limit.
-                stopped=run.stderr.split(b'\n')[0].endswith(b': call depth exceeded') if status==2 else run.stderr==b''
+                reason=b'call depth exceeded'
+                if isinstance(status,tuple):status,reason=status
+                stopped=run.stderr.split(b'\n')[0].endswith(b': '+reason) if status==2 else run.stderr==b''
                 assert (run.returncode,run.stdout)==(status,b'') and stopped,(source,run.returncode,run.stderr[:200])
             source=module(factory+inspect,'System.halt(inspect(make(42)))')
             result=subprocess.run([str(compiler)],input=native_bytes(source.encode()),capture_output=True,env={'PATH':''},timeout=120)
