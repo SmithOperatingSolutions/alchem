@@ -1,7 +1,9 @@
 # Linux x86-64 development image. Toolchain versions come from the repository's
 # mise.toml, so the container and a native Linux host use exactly the same
-# pins. scripts/linux-container.sh builds it with that file as the context and
-# mounts the repository at /work.
+# pins. scripts/linux-container.sh builds it with that file and docker/enter.sh
+# as the context, mounts the repository at /work and runs the command as the
+# repository's owner (docker/enter.sh). The tools are installed outside /root
+# so that user can run them.
 FROM debian:trixie-slim
 
 RUN apt-get -o Acquire::Retries=5 update \
@@ -13,6 +15,11 @@ ARG MISE_VERSION=2026.7.3
 ENV MISE_INSTALL_PATH=/usr/local/bin/mise \
     MISE_YES=1 \
     MISE_TRUSTED_CONFIG_PATHS=/work:/etc/alchem-native \
+    MISE_DATA_DIR=/opt/mise \
+    MISE_CACHE_DIR=/var/cache/alchem-native/mise \
+    MISE_STATE_DIR=/var/cache/alchem-native/mise-state \
+    RUSTUP_HOME=/opt/rustup \
+    CARGO_HOME=/opt/cargo \
     MISE_DISABLE_TOOLS=erlang,elixir \
     CARGO_TARGET_DIR=/var/cache/alchem-native/rust-target \
     GOCACHE=/var/cache/alchem-native/go-build
@@ -28,10 +35,11 @@ RUN cd /etc/alchem-native \
  && mise exec -- go version \
  && mise exec -- cargo --version && mise exec -- python3 --version
 
-# The repository mounted at /work belongs to the host's user, not to root:
-# git (and the VCS stamp of go build) reads it as it does on the host.
+# The repository mounted at /work belongs to the host's user: git (and the
+# VCS stamp of go build) reads it as it does on the host, also as root.
 RUN git config --system --add safe.directory /work
 
+COPY enter.sh /usr/local/bin/alchem-enter
 WORKDIR /work/native
-ENTRYPOINT ["mise", "exec", "--"]
+ENTRYPOINT ["/usr/local/bin/alchem-enter"]
 CMD ["bash"]

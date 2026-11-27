@@ -48,9 +48,6 @@ if made[1] != made[2]:
     sys.exit('the compiler does not make itself')
 os.replace(compiler, work / 'alchem-compiler-linux-arm64')
 PY
-# As a user who is not root, for whom a file without write permission is one:
-# what the toolchain needs of root's is opened to it.
-chmod a+rx /root /root/.local /root/.local/share 2>/dev/null || true
-export HOME=/tmp/alchem-user GOCACHE=/tmp/alchem-user/go-build
-mkdir -p "$HOME" && chown -R 1000:1000 "$HOME"
-exec setpriv --reuid 1000 --regid 1000 --clear-groups env ALCHEM_VERIFY_JOBS="${ALCHEM_VERIFY_JOBS:-7}" ALCHEM_VERIFY_WITHOUT=boolean_library,lists,options python3 scripts/verify-darwin.py build/dev/alchem-compiler-linux-arm64 "$@"
+# The container runs this as the repository's owner, not as root
+# (docker/enter.sh): a file without write permission is one to it.
+exec env ALCHEM_VERIFY_JOBS="${ALCHEM_VERIFY_JOBS:-7}" ALCHEM_VERIFY_WITHOUT=boolean_library,lists,options python3 scripts/verify-darwin.py build/dev/alchem-compiler-linux-arm64 "$@"
