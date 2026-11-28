@@ -607,8 +607,8 @@ defmodule NativeSourceCompiler do
     name = nc_start(source,nc_end(source,pos))
     # A function may have the name of a type (Gen.integer), as a variant and a field may.
     params = if nv_member(source,name) == 0 do -1 else nc_expect(source,nc_end(source,name),b[40]) end
-    shape = if params < 0 do b[] else if nc_word(source,params,b[41]) == 1 do Enum.concat(nc_u24(nc_end(source,params)),b[0,0,0,0,0,0]) else nj_params(source,params,0,0) end end
-    if nc_pos(shape) < 0 do b[] else nj_signature(source,pos,owner,nc_join(nc_join(nc_u24(name),nc_u24(nc_end(source,name)),nc_u24(params)),shape,b[])) end
+    shape = if params < 0 do b[] else if nc_word(source,params,b[41]) == 1 do Enum.concat(nc_u32(nc_end(source,params)),b[0,0,0,0,0,0]) else nj_params(source,params,0,0) end end
+    if nc_at(shape) < 0 do b[] else nj_signature(source,pos,owner,nc_join(nc_join(nc_u32(name),nc_u32(nc_end(source,name)),nc_u32(params)),shape,b[])) end
   end
   def nc_main_index(table: bytes, index: integer): integer do
     nc_main_range(table,index,nc_records(Enum.count(table)))

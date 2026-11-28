@@ -68,13 +68,13 @@ defmodule NativeTail do
   end
   def tl_run(source: bytes, state: bytes, size: integer, close: integer): bytes do
     half = nc_half(size)
-    if Enum.at(state,5,0) != 2 do state else
-      if size == 1 do tl_step(source,nc_cursor(state,0),close) else tl_run(source,tl_run(source,state,half,close),size-half,close) end
+    if Enum.at(state,6,0) != 2 do state else
+      if size == 1 do tl_step(source,nc_long(state,0),close) else tl_run(source,tl_run(source,state,half,close),size-half,close) end
     end
   end
   def tl_open(source: bytes, start: integer, close: integer): integer do
     state = tl_run(source,nk_state(start,0,2),16777216,close)
-    if Enum.at(state,5,0) == 1 do nc_cursor(state,0) else -1 end
+    if Enum.at(state,6,0) == 1 do nc_long(state,0) else -1 end
   end
   # The expression from start to the ")" at close, once the parentheses
   # around the whole of it are taken off: where it then starts and its last

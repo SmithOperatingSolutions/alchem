@@ -160,7 +160,7 @@ defmodule NativeArms do
   # a literal (two literals are one when their texts are), else of its
   # layout and id.
   def pa_hash(source: bytes, trees: bytes, at: integer): integer do
-    plain = if np_layout(trees,at) == 8 do pa_mixed(source,nc_cursor(trees,at+11),nc_cursor(trees,at+14),300+Enum.at(trees,at+17,0)) else pa_mixed(trees,at+7,np_below(trees,at),7) end
+    plain = if np_layout(trees,at) == 8 do pa_mixed(source,nc_long(trees,at+11),nc_long(trees,at+15),300+Enum.at(trees,at+19,0)) else pa_mixed(trees,at+7,np_below(trees,at),7) end
     # Scattered, so that keys in the order of their texts split evenly.
     plain*2654435761-nt_div(plain*2654435761,2147483648)*2147483648
   end

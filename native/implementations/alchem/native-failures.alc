@@ -243,17 +243,17 @@ defmodule NativeFailures do
   # Where the last part of the pipeline from start up to stop begins.
   def zf_last(source: bytes, start: integer, stop: integer): integer do
     state = zf_pipe_run(source,nk_state(start,0,2),16777216,stop)
-    if Enum.at(state,5,0) != 1 do start else zf_last(source,nc_start(source,nc_cursor(state,0)),stop) end
+    if Enum.at(state,6,0) != 1 do start else zf_last(source,nc_start(source,nc_long(state,0)),stop) end
   end
   # As nk_pipe_step, with the position after the |> it finds.
   def zf_pipe_step(source: bytes, pos: integer, depth: integer, stop: integer): bytes do
     found = nk_pipe_step(source,pos,depth,stop)
-    if Enum.at(found,5,0) != 1 do found else nk_state(nc_start(source,pos)+2,0,1) end
+    if Enum.at(found,6,0) != 1 do found else nk_state(nc_start(source,pos)+2,0,1) end
   end
   def zf_pipe_run(source: bytes, state: bytes, size: integer, stop: integer): bytes do
     half = nc_half(size)
-    if Enum.at(state,5,0) != 2 do state else
-      if size == 1 do zf_pipe_step(source,nc_cursor(state,0),nc_read(state,3),stop) else
+    if Enum.at(state,6,0) != 2 do state else
+      if size == 1 do zf_pipe_step(source,nc_long(state,0),nc_read(state,4),stop) else
         zf_pipe_run(source,zf_pipe_run(source,state,half,stop),size-half,stop)
       end
     end

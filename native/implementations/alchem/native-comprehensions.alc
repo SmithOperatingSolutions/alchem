@@ -81,15 +81,15 @@ defmodule NativeComprehensions do
   end
   def wc_scan_run(source: bytes, state: bytes, size: integer, mode: integer): bytes do
     half = nc_half(size)
-    if Enum.at(state,5,0) != 2 do state else
-      if size == 1 do wc_scan_step(source,nc_cursor(state,0),nc_read(state,3),mode) else
+    if Enum.at(state,6,0) != 2 do state else
+      if size == 1 do wc_scan_step(source,nc_long(state,0),nc_read(state,4),mode) else
         wc_scan_run(source,wc_scan_run(source,state,half,mode),size-half,mode)
       end
     end
   end
   def wc_scan(source: bytes, pos: integer, mode: integer): integer do
     state = if pos < 0 do b[] else wc_scan_run(source,nk_state(pos,0,2),16777216,mode) end
-    if Enum.at(state,5,0) == 1 do nc_cursor(state,0) else -1 end
+    if Enum.at(state,6,0) == 1 do nc_long(state,0) else -1 end
   end
   # 1 when the pattern tree at offset matches every value by its form alone:
   # a name, _, or a tuple or struct of such.

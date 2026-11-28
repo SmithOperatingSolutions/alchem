@@ -297,32 +297,32 @@ defmodule NativeScope do
   # state: the position after the last token, the nesting, 2 while reading
   # (1 found, 0 lost), and where the last token started.
   def ev_state(pos: integer, depth: integer, verdict: integer, last: integer): bytes do
-    Enum.concat(nk_state(pos,depth,verdict),nc_u24(last))
+    Enum.concat(nk_state(pos,depth,verdict),nc_u32(last))
   end
   def ev_extent(source: bytes, start: integer): integer do
-    state = if start < 0 do b[] else ev_extent_grow(source,ev_state(start,0,2,16777215),1,0) end
-    if Enum.at(state,5,0) == 1 do nc_cursor(state,0) else -1 end
+    state = if start < 0 do b[] else ev_extent_grow(source,ev_state(start,0,2,4294967295),1,0) end
+    if Enum.at(state,6,0) == 1 do nc_long(state,0) else -1 end
   end
   # The same for an expression, which also ends at a comma or a do outside
   # brackets, but for one that starts with a word whose form has them.
   def ev_reach(source: bytes, start: integer): integer do
     wordy = nc_word(source,start,b[105,102])+nc_word(source,start,b[117,110,108,101,115,115])+nc_word(source,start,b[99,97,115,101])+nc_word(source,start,b[99,111,110,100])+nc_word(source,start,b[119,105,116,104])+nc_word(source,start,b[102,111,114])+nc_word(source,start,b[116,114,121])+nc_word(source,start,b[102,110])+nc_word(source,start,b[114,97,105,115,101])
-    state = if start < 0 do b[] else ev_extent_grow(source,ev_state(start,0,2,16777215),1,if wordy > 0 do 0 else 1 end) end
-    if Enum.at(state,5,0) == 1 do nc_cursor(state,0) else -1 end
+    state = if start < 0 do b[] else ev_extent_grow(source,ev_state(start,0,2,4294967295),1,if wordy > 0 do 0 else 1 end) end
+    if Enum.at(state,6,0) == 1 do nc_long(state,0) else -1 end
   end
   def ev_extent_grow(source: bytes, state: bytes, size: integer, mode: integer): bytes do
-    if Enum.at(state,5,0) != 2 do state else if size > 16777216 do b[] else ev_extent_grow(source,ev_extent_run(source,state,size,mode),size*2,mode) end end
+    if Enum.at(state,6,0) != 2 do state else if size > 16777216 do b[] else ev_extent_grow(source,ev_extent_run(source,state,size,mode),size*2,mode) end end
   end
   def ev_extent_run(source: bytes, state: bytes, size: integer, mode: integer): bytes do
     half = nc_half(size)
-    if Enum.at(state,5,0) != 2 do state else
+    if Enum.at(state,6,0) != 2 do state else
       if size == 1 do ev_extent_one(source,state,mode) else ev_extent_run(source,ev_extent_run(source,state,half,mode),size-half,mode) end
     end
   end
   def ev_extent_one(source: bytes, state: bytes, mode: integer): bytes do
-    start = nc_start(source,nc_cursor(state,0))
-    if mode*(1-nc_read(state,3)) != 1 do ev_extent_step(source,nc_cursor(state,0),nc_read(state,3),nc_cursor(state,6)) else
-      if byte_at(source,start) == 44 do ev_state(start,0,1,0) else if nc_opens(source,start) == 1 do ev_state(start,0,1,0) else ev_extent_step(source,nc_cursor(state,0),nc_read(state,3),nc_cursor(state,6)) end end
+    start = nc_start(source,nc_long(state,0))
+    if mode*(1-nc_read(state,4)) != 1 do ev_extent_step(source,nc_long(state,0),nc_read(state,4),nc_long(state,7)) else
+      if byte_at(source,start) == 44 do ev_state(start,0,1,0) else if nc_opens(source,start) == 1 do ev_state(start,0,1,0) else ev_extent_step(source,nc_long(state,0),nc_read(state,4),nc_long(state,7)) end end
     end
   end
   def ev_extent_step(source: bytes, pos: integer, depth: integer, last: integer): bytes do
@@ -334,7 +334,7 @@ defmodule NativeScope do
     if stop < 0 do ev_state(0,0,0,0) else if start >= Enum.count(source) do ev_state(Enum.count(source),0,1,0) else
       if depth > 0 do ev_state(stop,depth+opens-closes,2,start) else
         if closes+wc_other(source,start)+ty_word(source,start) > 0 do ev_state(start,0,1,0) else
-          if last == 16777215 do ev_state(stop,opens,2,start) else if nf_same_line(source,pos,start) == 1 do ev_state(stop,opens,2,start) else
+          if last == 4294967295 do ev_state(stop,opens,2,start) else if nf_same_line(source,pos,start) == 1 do ev_state(stop,opens,2,start) else
             if ev_continues(source,last,pos,start) == 1 do ev_state(stop,opens,2,start) else ev_state(stop,0,1,0) end
           end end
         end

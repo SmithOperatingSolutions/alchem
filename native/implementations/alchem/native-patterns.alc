@@ -104,7 +104,7 @@ defmodule NativePatterns do
     valid = if plain == 0 do 0 else if text == 2 do 1-negative else is_digit(byte_at(source,token)) end end
     float = if text == 2 do 0 else if valid == 0 do 0 else ne_is(source,token,stop) end end
     if valid == 0 do b[] else if nt_tag(kind) != text+atom*20+float*24 do b[] else if stop < 0 do b[] else
-      np_pack(stop,np_node(0,0,8,nc_join(nc_u24(start),nc_u24(stop),b[text+float*3])),env)
+      np_pack(stop,np_node(0,0,8,nc_join(nc_u32(start),nc_u32(stop),b[text+float*3])),env)
     end end end
   end
   # ^name matches the value of an existing binding.
@@ -140,32 +140,32 @@ defmodule NativePatterns do
   # cells, the slots bound so far, 1 after the last part, the length of the
   # trees; then the trees and the records bound.
   def np_children(source: bytes, pos: integer, env: bytes, table: bytes, cells: bytes, plan: bytes): bytes do
-    all = np_parts_grow(source,env,table,cells,nc_join(nc_slice(plan,0,7),b[0],b[]),np_part(source,env,table,cells,plan,nc_join(nc_u24(pos),nc_zeros(15),b[])))
-    size = nc_long(all,14)
-    bound = nc_slice(all,18+size,Enum.count(all))
+    all = np_parts_grow(source,env,table,cells,nc_join(nc_slice(plan,0,7),b[0],b[]),np_part(source,env,table,cells,plan,nc_join(nc_u32(pos),nc_zeros(15),b[])))
+    size = nc_long(all,15)
+    bound = nc_slice(all,19+size,Enum.count(all))
     entries = ev_scan(bound,nc_zeros(8),ev_count(bound,0,0),0)
     count = nc_units(Enum.count(entries)-8,15)
     if Enum.count(all) == 0 do b[] else if nc_cursor(plan,3) == 0 do b[] else
-      if Enum.count(ev_pick(source,entries,8,count,1))+Enum.count(ev_pick(source,entries,8,count,0)) != count*15 do b[] else np_pack(nc_cursor(all,0),nc_slice(all,18,18+size),Enum.concat(env,bound)) end
+      if Enum.count(ev_pick(source,entries,8,count,1))+Enum.count(ev_pick(source,entries,8,count,0)) != count*15 do b[] else np_pack(nc_long(all,0),nc_slice(all,19,19+size),Enum.concat(env,bound)) end
     end end
   end
   def np_part(source: bytes, env: bytes, table: bytes, cells: bytes, plan: bytes, state: bytes): bytes do
-    index = nc_cursor(state,3)
-    cell = nc_long(state,6)
-    scope = Enum.concat(env,nc_env_left(nc_cursor(state,10)))
-    child = np_parse(source,nc_cursor(state,0),scope,table,nt_read(cells,cell))
+    index = nc_cursor(state,4)
+    cell = nc_long(state,7)
+    scope = Enum.concat(env,nc_env_left(nc_cursor(state,11)))
+    child = np_parse(source,nc_long(state,0),scope,table,nt_read(cells,cell))
     last = if index+1 == nc_cursor(plan,3) do 1 else 0 end
     after = if last == 1 do nc_expect(source,nc_pos(child),b[Enum.at(plan,6,0)]) else nc_expect(source,nc_pos(child),b[44]) end
     bound = nc_slice(np_env(child),Enum.count(scope),Enum.count(np_env(child)))
     if after < 0 do b[] else
-      nc_join(nc_join(nc_u24(after),nc_u24(index+1),nc_u32(nt_after(cells,cell))),nc_join(nc_u24(nc_cursor(state,10)+nc_env_counted(bound,0,0)),b[last],nc_u32(Enum.count(np_tree(child)))),Enum.concat(np_tree(child),bound))
+      nc_join(nc_join(nc_u32(after),nc_u24(index+1),nc_u32(nt_after(cells,cell))),nc_join(nc_u24(nc_cursor(state,11)+nc_env_counted(bound,0,0)),b[last],nc_u32(Enum.count(np_tree(child)))),Enum.concat(np_tree(child),bound))
     end
   end
   def np_parts_joined(first: bytes, second: bytes): bytes do
-    size = nc_long(first,14)
-    more = nc_long(second,14)
+    size = nc_long(first,15)
+    more = nc_long(second,15)
     if Enum.count(first) == 0 do b[] else if Enum.count(second) == 0 do b[] else
-      nc_join(Enum.concat(nc_slice(second,0,14),nc_u32(size+more)),Enum.concat(nc_slice(first,18,18+size),nc_slice(second,18,18+more)),Enum.concat(nc_slice(first,18+size,Enum.count(first)),nc_slice(second,18+more,Enum.count(second))))
+      nc_join(Enum.concat(nc_slice(second,0,15),nc_u32(size+more)),Enum.concat(nc_slice(first,19,19+size),nc_slice(second,19,19+more)),Enum.concat(nc_slice(first,19+size,Enum.count(first)),nc_slice(second,19+more,Enum.count(second))))
     end end
   end
   # plan: as np_children has it, then the level.
@@ -173,11 +173,11 @@ defmodule NativePatterns do
     level = Enum.at(plan,7,0)
     first = if level == 0 do b[] else np_parts_more(source,env,table,cells,nc_join(nc_slice(plan,0,7),b[level-1],b[]),before) end
     if level == 0 do np_part(source,env,table,cells,plan,before) else
-      if Enum.count(first) == 0 do b[] else if Enum.at(first,13,0) == 1 do first else np_parts_joined(first,np_parts_more(source,env,table,cells,nc_join(nc_slice(plan,0,7),b[level-1],b[]),first)) end end
+      if Enum.count(first) == 0 do b[] else if Enum.at(first,14,0) == 1 do first else np_parts_joined(first,np_parts_more(source,env,table,cells,nc_join(nc_slice(plan,0,7),b[level-1],b[]),first)) end end
     end
   end
   def np_parts_grow(source: bytes, env: bytes, table: bytes, cells: bytes, plan: bytes, done: bytes): bytes do
-    if Enum.count(done) == 0 do b[] else if Enum.at(done,13,0) == 1 do done else
+    if Enum.count(done) == 0 do b[] else if Enum.at(done,14,0) == 1 do done else
       np_parts_grow(source,env,table,cells,nc_join(nc_slice(plan,0,7),b[Enum.at(plan,7,0)+1],b[]),np_parts_joined(done,np_parts_more(source,env,table,cells,plan,done)))
     end end
   end
@@ -274,7 +274,7 @@ defmodule NativePatterns do
     if nt_tag(kind) != 8 do b[] else
       if nc_word(source,pos,b[125]) == 1 do np_pack(nc_end(source,pos),b[0],env) else
         entries = np_entries(source,pos,env,table,kind)
-        count = nc_units(Enum.count(nc_kind(entries))-1,6)
+        count = nc_units(Enum.count(nc_kind(entries))-1,8)
         if nc_pos(entries) < 0 do b[] else np_pack(nc_pos(entries),Enum.concat(np_node(count,0,10,nc_kind(entries)),np_tree(entries)),np_env(entries)) end
       end
     end
@@ -286,7 +286,7 @@ defmodule NativePatterns do
     child = if arrow < 0 do b[] else if no_compatible(nt_child(kind,0),nc_kind(key)) == 0 do b[] else np_parse(source,arrow,env,table,nt_child(kind,1)) end end
     next = nc_pos(child)
     # A key that is no expression (`%{:4 => x}`) has no place: next is -1 then.
-    span = if nc_pos(key) < 0 do b[] else Enum.concat(nc_u24(nc_start(source,pos)),nc_u24(nc_pos(key))) end
+    span = if nc_pos(key) < 0 do b[] else Enum.concat(nc_u32(nc_start(source,pos)),nc_u32(nc_pos(key))) end
     if next < 0 do b[] else
       if nc_word(source,next,b[125]) == 1 do nc_value(nc_end(source,next),nc_code(np_pack(0,np_tree(child),np_env(child))),Enum.concat(b[nt_tag(nt_child(kind,0))],span)) else
         rest = if nc_word(source,next,b[44]) != 1 do b[] else np_entries(source,nc_end(source,next),np_env(child),table,kind) end
@@ -310,7 +310,7 @@ defmodule NativePatterns do
     index = nc_cursor(plan,4)
     count = nc_cursor(plan,7)
     at = nc_long(plan,10)
-    key = nc_expression(source,nc_cursor(tree,node+12+index*6),env,table,0)
+    key = nc_expression(source,nc_long(tree,node+12+index*8),env,table,0)
     same = if (Enum.at(tree,node+11,0)-2)*(Enum.at(tree,node+11,0)-22) == 0 do nq_code(source,table,b[2],b[]) else b[72,57,247,15,148,192] end
     child = np_emit(source,env,table,tree,at)
     size = Enum.count(same)+Enum.count(child)
@@ -362,9 +362,9 @@ defmodule NativePatterns do
     if Enum.count(compare) == 0 do b[] else nc_join(load,b[72,137,199],compare) end
   end
   def np_emit_literal(source: bytes, env: bytes, table: bytes, id: bytes): bytes do
-    value = nc_unary(source,nc_cursor(id,0),env,table,0)
-    compare = if Enum.at(id,6,0) == 2 do nq_code(source,table,b[2],b[]) else if Enum.at(id,6,0) == 3 do ne_equal() else b[72,57,247,15,148,192] end end
-    if nc_pos(value) != nc_cursor(id,3) do b[] else nc_join(Enum.concat(b[80],nc_code(value)),b[72,137,198,95],compare) end
+    value = nc_unary(source,nc_long(id,0),env,table,0)
+    compare = if Enum.at(id,8,0) == 2 do nq_code(source,table,b[2],b[]) else if Enum.at(id,8,0) == 3 do ne_equal() else b[72,57,247,15,148,192] end end
+    if nc_pos(value) != nc_long(id,4) do b[] else nc_join(Enum.concat(b[80],nc_code(value)),b[72,137,198,95],compare) end
   end
   # The test of a constructor, then its sub-patterns over the value's parts.
   def np_emit_node(source: bytes, env: bytes, table: bytes, tree: bytes, offset: integer): bytes do
@@ -421,9 +421,9 @@ defmodule NativePatterns do
     end
   end
   def np_same_text(source: bytes, left: bytes, right: bytes): integer do
-    size = nc_cursor(left,3)-nc_cursor(left,0)
-    if Enum.at(left,6,0) != Enum.at(right,6,0) do 0 else
-      if nc_cursor(right,3)-nc_cursor(right,0) != size do 0 else nc_equal(source,nc_cursor(left,0),nc_cursor(right,0),size) end
+    size = nc_long(left,4)-nc_long(left,0)
+    if Enum.at(left,8,0) != Enum.at(right,8,0) do 0 else
+      if nc_long(right,4)-nc_long(right,0) != size do 0 else nc_equal(source,nc_long(left,0),nc_long(right,0),size) end
     end
   end
   # The rows that can match a value built by the constructor at at in row,
@@ -607,12 +607,12 @@ defmodule NativePatterns do
   def np_close(source: bytes, pos: integer, depth: integer, budget: integer): integer do
     # pos is -1 where the text before it was not what it should be.
     state = if pos < 0 do nk_state(0,0,0) else np_close_run(source,nk_state(pos,depth,2),budget) end
-    if Enum.at(state,5,0) == 1 do nc_cursor(state,0) else -1 end
+    if Enum.at(state,6,0) == 1 do nc_long(state,0) else -1 end
   end
   def np_close_run(source: bytes, state: bytes, size: integer): bytes do
     half = nc_half(size)
-    if Enum.at(state,5,0) != 2 do state else if size <= 0 do nk_state(0,0,0) else
-      if size == 1 do np_close_step(source,nc_cursor(state,0),nc_read(state,3)) else
+    if Enum.at(state,6,0) != 2 do state else if size <= 0 do nk_state(0,0,0) else
+      if size == 1 do np_close_step(source,nc_long(state,0),nc_read(state,4)) else
         np_close_run(source,np_close_run(source,state,half),size-half)
       end
     end end
