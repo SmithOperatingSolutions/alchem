@@ -5,7 +5,8 @@ two bytes, in the record of its module, in an environment and in the plans
 the compiler's parts hand each other; it is three bytes now. Each program
 here has 66,000 functions before its own, so that every function, struct
 and sum type it declares has a number past the old limit, and does what it
-does without them:
+does without them. Linux x86-64 only: the compilers for the other systems
+keep the old limit (nc_wide).
 
 - calls, a function of several clauses, a struct and a sum type made,
   matched and printed, a fn that holds a binding, a reference, a generic
