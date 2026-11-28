@@ -8,7 +8,7 @@ memory as the input comes (`nc_io_prefix`). `nc_compile` checks the same
 bound on what it is given, and `nc_compile_all` on the source with the
 library functions written in Alchem appended; a program too close to the
 limit to hold them is compiled without them, as before. It was 16,776,191
-bytes while a position was three bytes (issue #19), and 4,194,303 and
+bytes while a position was three bytes (issue #72), and 4,194,303 and
 1,048,576 before that.
 
 Three things keep their own, smaller bound:
