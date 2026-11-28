@@ -128,7 +128,7 @@ defmodule NativeSystem do
   def nh_single(source: bytes, pos: integer): integer do
     paren = nc_expect(source,pos,b[40])
     spans = if paren < 0 do b[] else if nc_word(source,paren,b[41]) == 1 do b[] else nc_list_collect(source,paren,b[],0,41) end end
-    if nc_pos(spans) < 0 do 1 else if nc_units(Enum.count(nc_code(spans)),6) > 1 do 0 else 1 end end
+    if nc_pos(spans) < 0 do 1 else if nc_units(Enum.count(nc_code(spans)),8) > 1 do 0 else 1 end end
   end
   # A struct a library file declares may be named with its module, File.Stat, or
   # in lowercase, file: the pinned library's own names. Only AlchemTypes holds such.
@@ -165,7 +165,7 @@ defmodule NativeSystem do
   def nh_given(source: bytes, start: integer, pos: integer, count: integer): integer do
     paren = nc_expect(source,pos,b[40])
     spans = if paren < 0 do b[] else if nc_word(source,paren,b[41]) == 1 do b[] else nc_list_collect(source,paren,b[],0,41) end end
-    given = if nc_pos(spans) < 0 do 0 else nc_units(Enum.count(nc_code(spans)),6) end
+    given = if nc_pos(spans) < 0 do 0 else nc_units(Enum.count(nc_code(spans)),8) end
     before = nz_before(source,start-1)
     piped = if before < 1 do 0 else if byte_at(source,before)*256+byte_at(source,before-1) == 15996 do 1 else 0 end end
     if paren < 0 do 1 else if given+piped == count do 1 else 0 end end

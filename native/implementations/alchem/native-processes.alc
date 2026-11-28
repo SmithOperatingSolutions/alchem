@@ -297,23 +297,23 @@ defmodule NativeProcesses do
   def ac_statement_text(source: bytes, start: integer, open: integer, plan: bytes): bytes do
     spans = if nc_word(source,open,b[41]) == 1 do b[] else nc_list_collect(source,open,b[],0,41) end
     items = nc_code(spans)
-    count = if nc_pos(spans) < 0 do 0 else nc_units(Enum.count(items),6) end
+    count = if nc_pos(spans) < 0 do 0 else nc_units(Enum.count(items),8) end
     stop = nc_pos(spans)
     most = if Enum.at(plan,1,0) == 1 do 3 else 4 end
     if count < 2 do b[] else if count > most do b[] else
-      whole = ac_text(source,nc_cursor(items,6),nc_cursor(items,9))
-      guard = ac_guard(source,nc_cursor(items,6),nc_cursor(items,9),0)
-      pattern = if guard < 0 do whole else ac_text(source,nc_cursor(items,6),guard) end
-      plain = if guard >= 0 do 0 else if nc_identifier(source,nc_cursor(items,6)) == 0 do 0 else if nc_end(source,nc_cursor(items,6))-nc_start(source,nc_cursor(items,6)) == Enum.count(pattern) do 1 else 0 end end end
+      whole = ac_text(source,nc_long(items,8),nc_long(items,12))
+      guard = ac_guard(source,nc_long(items,8),nc_long(items,12),0)
+      pattern = if guard < 0 do whole else ac_text(source,nc_long(items,8),guard) end
+      plain = if guard >= 0 do 0 else if nc_identifier(source,nc_long(items,8)) == 0 do 0 else if nc_end(source,nc_long(items,8))-nc_start(source,nc_long(items,8)) == Enum.count(pattern) do 1 else 0 end end end
       name = Enum.concat(b[109,95,95],ac_number(start))
       test = if plain == 1 do nc_join(b[102,110,32],name,b[32,45,62,32,116,114,117,101,32,101,110,100]) else nc_join(nc_join(b[102,110,32],name,b[32,45,62,32,99,97,115,101,32]),nc_join(name,b[32,100,111,32],whole),b[32,45,62,32,116,114,117,101,32,95,32,45,62,32,102,97,108,115,101,32,101,110,100,32,101,110,100]) end
       show = nc_join(nc_join(b[102,110,32],name,b[32,45,62,32,105,110,115,112,101,99,116,40]),name,b[41,32,101,110,100])
-      wait = if Enum.at(plan,1,0) == 1 do b[48] else if count < 3 do b[45,49] else ac_text(source,nc_cursor(items,12),nc_cursor(items,15)) end end
+      wait = if Enum.at(plan,1,0) == 1 do b[48] else if count < 3 do b[45,49] else ac_text(source,nc_long(items,16),nc_long(items,20)) end end
       extra = if Enum.at(plan,1,0) == 1 do 2 else 3 end
-      custom = if count <= extra do b[34,34] else ac_text(source,nc_cursor(items,extra*6),nc_cursor(items,extra*6+3)) end
+      custom = if count <= extra do b[34,34] else ac_text(source,nc_long(items,extra*8),nc_long(items,extra*8+4)) end
       bound = if Enum.at(plan,0,0) == 1 do Enum.concat(pattern,b[32,61,32]) else b[] end
-      head = nc_join(bound,if Enum.at(plan,0,0) == 1 do b[80,114,111,99,101,115,115,46,97,115,115,101,114,116,95,114,101,99,101,105,118,101,40] else b[80,114,111,99,101,115,115,46,114,101,102,117,116,101,95,114,101,99,101,105,118,101,40] end,ac_text(source,nc_cursor(items,0),nc_cursor(items,3)))
-      tail = nc_join(nc_join(b[44,32,34],ac_quoted(whole,0,Enum.count(whole)),b[34,44,32,91]),nc_join(ac_pins(source,nc_cursor(items,6),nc_cursor(items,9),b[]),b[93,44,32],custom),nc_join(b[44,32],ac_number(Enum.count(bound)),b[41]))
+      head = nc_join(bound,if Enum.at(plan,0,0) == 1 do b[80,114,111,99,101,115,115,46,97,115,115,101,114,116,95,114,101,99,101,105,118,101,40] else b[80,114,111,99,101,115,115,46,114,101,102,117,116,101,95,114,101,99,101,105,118,101,40] end,ac_text(source,nc_long(items,0),nc_long(items,4)))
+      tail = nc_join(nc_join(b[44,32,34],ac_quoted(whole,0,Enum.count(whole)),b[34,44,32,91]),nc_join(ac_pins(source,nc_long(items,8),nc_long(items,12),b[]),b[93,44,32],custom),nc_join(b[44,32],ac_number(Enum.count(bound)),b[41]))
       text = nc_join(nc_join(head,b[44,32],wait),nc_join(b[44,32],test,b[44,32]),Enum.concat(show,tail))
       nc_join(nc_u24(stop),text,ac_newlines(ac_lines(source,start,stop)))
     end end

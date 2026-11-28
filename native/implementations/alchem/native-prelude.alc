@@ -381,7 +381,7 @@ defmodule NativePrelude do
     name = nc_start(source,dot)
     paren = if dot < 0 do -1 else nc_expect(source,nc_end(source,name),b[40]) end
     spans = if paren < 0 do b[] else if nc_word(source,paren,b[41]) == 1 do b[] else nc_list_collect(source,paren,b[],0,41) end end
-    given = if nc_pos(spans) < 0 do 0 else nc_units(Enum.count(nc_code(spans)),6) end
+    given = if nc_pos(spans) < 0 do 0 else nc_units(Enum.count(nc_code(spans)),8) end
     count = if paren < 0 do 0 else if nc_pos(nf_piped(source,paren,env)) < 0 do given else given+1 end end
     wanted = nc_join(b[65,108,99,104,127,109],nc_slice(source,nc_start(source,pos),nc_end(source,pos)),ny_digits(count))
     # An empty list literal says nothing of its elements, which the Enum and
@@ -397,7 +397,7 @@ defmodule NativePrelude do
     # pinned compiler has it (spec/alchem-regex.md).
     args = if paren < 0 do b[] else nc_arguments_open(source,paren,env,table,depth) end
     held = if nc_word(source,pos,b[83,116,114,105,110,103]) == 0 do 0 else if nc_word(source,name,b[115,112,108,105,116])*(count-2)*(count-2)+nc_word(source,name,b[114,101,112,108,97,99,101])*(count-3)*(count-3) != 0 do 0 else nc_word(source,name,b[115,112,108,105,116])+nc_word(source,name,b[114,101,112,108,97,99,101]) end end
-    barred = if held == 0 do 0 else if nt_tag(nc_arg_kind(args,1)) != 29 do 0 else 1-ny_regular(source,nc_cursor(nc_code(spans),(1+given-count)*6)) end end
+    barred = if held == 0 do 0 else if nt_tag(nc_arg_kind(args,1)) != 29 do 0 else 1-ny_regular(source,nc_long(nc_code(spans),(1+given-count)*8)) end end
     if nc_pos(made) >= 0 do made else if paren < 0 do b[] else if inner+barred*2 >= 2 do b[] else ny_open(bare,zf_received(source,table,pos,nh_placed(table,dn_typed(source,pos,env,table,args,ac_typed(source,pos,name,args,ny_listed(source,pos,name,env,table,nc_join(b[depth,1,0,Enum.count(wanted)],wanted,args)))),place))) end end end
   end
   # nn_passes; where the first argument is [] and what it gave is not what
@@ -433,7 +433,7 @@ defmodule NativePrelude do
     name = nc_start(source,pos)
     paren = nc_expect(source,nc_end(source,name),b[40])
     spans = if paren < 0 do b[] else if nc_word(source,paren,b[41]) == 1 do b[] else nc_list_collect(source,paren,b[],0,41) end end
-    given = if nc_pos(spans) < 0 do 0 else nc_units(Enum.count(nc_code(spans)),6) end
+    given = if nc_pos(spans) < 0 do 0 else nc_units(Enum.count(nc_code(spans)),8) end
     count = if paren < 0 do 0 else if nc_pos(nf_piped(source,paren,env)) < 0 do given else given+1 end end
     # map, filter and reduce without a module take a function that has its
     # types: a named one or fn(x: type): type, not fn x -> ... or a capture;
@@ -443,8 +443,8 @@ defmodule NativePrelude do
   end
   # 1 when an argument among the spans from index on is fn x -> ... or a capture.
   def ny_untyped(source: bytes, spans: bytes, index: integer): integer do
-    start = nc_start(source,nc_cursor(spans,index*6))
-    if index*6 >= Enum.count(spans) do 0 else
+    start = nc_start(source,nc_long(spans,index*8))
+    if index*8 >= Enum.count(spans) do 0 else
       if nf_untyped(source,start)+nf_capture_form(source,start) > 0 do 1 else ny_untyped(source,spans,index+1) end
     end
   end

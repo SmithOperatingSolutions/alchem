@@ -269,11 +269,11 @@ defmodule NativeComprehensions do
   # last of which holds the bar; b[] when there is none.
   def wc_cons(source: bytes, state: bytes, env: bytes, table: bytes, depth: integer): bytes do
     spans = nc_code(state)
-    count = nc_units(Enum.count(spans),6)
-    first = nc_cursor(spans,count*6-6)
-    stop = nc_cursor(spans,count*6-3)
+    count = nc_units(Enum.count(spans),8)
+    first = nc_long(spans,count*8-8)
+    stop = nc_long(spans,count*8-4)
     bar = wc_scan(source,first,5)
-    cut = Enum.concat(nc_slice(spans,0,count*6-3),nc_u24(if bar < 0 do 0 else bar end))
+    cut = Enum.concat(nc_slice(spans,0,count*8-4),nc_u32(if bar < 0 do 0 else bar end))
     items = if bar < 0 do b[] else if bar >= stop do b[] else nl_items(source,cut,env,table,depth,nc_join(nc_u24(0),nc_u24(count),if nf_parted(source,env,table) == 1 do b[1] else b[] end)) end end
     plain = if nc_pos(items) < 0 do b[] else nc_expression(source,bar+1,env,table,depth) end
     # A tail that does not compile without its type (one that holds a fn) is given the type of the elements before the bar.

@@ -136,16 +136,16 @@ defmodule NativeMaps do
   end
   def nm_literal(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
     spans = nc_list_collect(source,pos,b[],0,125)
-    plain = if nc_pos(spans) < 0 do b[] else nm_pairs(source,nc_code(spans),env,table,depth,nc_join(nc_u24(0),nc_u24(nc_units(Enum.count(nc_code(spans)),6)),if nf_parted(source,env,table) == 1 do b[1] else b[] end)) end
+    plain = if nc_pos(spans) < 0 do b[] else nm_pairs(source,nc_code(spans),env,table,depth,nc_join(nc_u24(0),nc_u24(nc_units(Enum.count(nc_code(spans)),8)),if nf_parted(source,env,table) == 1 do b[1] else b[] end)) end
     # Values after the first are expected to have its type.
     led = if nc_pos(spans) < 0 do b[] else if nc_pos(plain) >= 0 do b[] else nm_led(source,nc_code(spans),env,table,depth) end end
     if nc_pos(spans) < 0 do b[] else
-      items = if Enum.count(led) == 0 do plain else nm_pairs(source,nc_code(spans),led,table,depth,nc_join(nc_u24(0),nc_u24(nc_units(Enum.count(nc_code(spans)),6)),b[1])) end
+      items = if Enum.count(led) == 0 do plain else nm_pairs(source,nc_code(spans),led,table,depth,nc_join(nc_u24(0),nc_u24(nc_units(Enum.count(nc_code(spans)),8)),b[1])) end
       if nc_pos(items) < 0 do b[] else
         key = nt_child(nc_kind(items),0)
         kind = nt_binary(8,key,nt_child(nc_kind(items),1))
         if Enum.count(nm_tagged(key,nu_vars(env,3))) == 0 do b[] else if nt_tag(kind) < 0 do b[] else
-          count = nc_units(Enum.count(nc_code(spans)),6)
+          count = nc_units(Enum.count(nc_code(spans)),8)
           list = nc_join(nc_code(items),Enum.concat(b[185],nc_u32(count)),nl_pack_blob())
           nc_value(nc_pos(spans),nc_join(list,Enum.concat(b[80],nm_tagged(key,nu_vars(env,3))),nm_new_emit()),kind)
         end end
@@ -153,8 +153,8 @@ defmodule NativeMaps do
     end
   end
   def nm_led(source: bytes, spans: bytes, env: bytes, table: bytes, depth: integer): bytes do
-    count = nc_units(Enum.count(spans),6)
-    later = if count < 2 do 0 else ny_has(source,nc_cursor(spans,6),nc_cursor(spans,count*6-3),b[102,110])+ny_has(source,nc_cursor(spans,6),nc_cursor(spans,count*6-3),b[38]) end
+    count = nc_units(Enum.count(spans),8)
+    later = if count < 2 do 0 else ny_has(source,nc_long(spans,8),nc_long(spans,count*8-4),b[102,110])+ny_has(source,nc_long(spans,8),nc_long(spans,count*8-4),b[38]) end
     first = if later == 0 do b[] else nm_pair(source,spans,env,table,depth,0) end
     kind = nt_binary(8,nt_child(nc_kind(first),0),nt_child(nc_kind(first),1))
     if nc_pos(first) < 0 do b[] else if nu_has(kind,10,0,Enum.count(kind)) == 0 do b[] else nw_expect(env,0,kind) end end
@@ -175,12 +175,12 @@ defmodule NativeMaps do
   # From 16777216 on the index says that the values are expected to hold functions.
   def nm_pair(source: bytes, spans: bytes, env: bytes, table: bytes, depth: integer, plan: integer): bytes do
     index = if plan >= 16777216 do plan-16777216 else plan end
-    key = nc_expression(source,nc_cursor(spans,index*6),env,table,depth+2)
+    key = nc_expression(source,nc_long(spans,index*8),env,table,depth+2)
     if nc_pos(key) < 0 do b[] else
       begin = nc_expect(source,nc_pos(key),b[61,62])
       value = if begin < 0 do b[] else nc_expression(source,begin,if plan < 16777216 do env else nf_expecting(source,env,begin,nf_part(source,env,table,1)) end,table,depth+2) end
       if nc_pos(value) < 0 do b[] else
-        if nc_start(source,nc_pos(value)) != nc_cursor(spans,index*6+3) do b[] else
+        if nc_start(source,nc_pos(value)) != nc_long(spans,index*8+4) do b[] else
           kind = nt_tuple(Enum.concat(nt_cell(nc_kind(key)),nt_cell(nc_kind(value))),2)
           if nt_tag(kind) < 0 do b[] else
             pushed = nc_join(nc_code(key),b[80],Enum.concat(nc_code(value),b[80]))

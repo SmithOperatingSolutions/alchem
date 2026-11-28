@@ -76,7 +76,7 @@ defmodule NativeCollections do
   end
   def nl_built(source: bytes, state: bytes, env: bytes, table: bytes, depth: integer): bytes do
     spans = nc_code(state)
-    count = nc_units(Enum.count(spans),6)
+    count = nc_units(Enum.count(spans),8)
     items = nl_items(source,spans,env,table,depth,nc_join(nc_u24(0),nc_u24(count),if nf_parted(source,env,table) == 1 do b[1] else b[] end))
     kind = nt_unary(7,nc_kind(items))
     if nc_pos(items) < 0 do wc_cons(source,state,env,table,depth) else if nt_tag(kind) < 0 do b[] else
@@ -87,8 +87,8 @@ defmodule NativeCollections do
   # type holds a function and a later element is written as a lambda; b[]
   # otherwise.
   def nl_led(source: bytes, spans: bytes, env: bytes, table: bytes, depth: integer): bytes do
-    count = nc_units(Enum.count(spans),6)
-    later = if count < 2 do 0 else ny_has(source,nc_cursor(spans,6),nc_cursor(spans,count*6-3),b[102,110])+ny_has(source,nc_cursor(spans,6),nc_cursor(spans,count*6-3),b[38]) end
+    count = nc_units(Enum.count(spans),8)
+    later = if count < 2 do 0 else ny_has(source,nc_long(spans,8),nc_long(spans,count*8-4),b[102,110])+ny_has(source,nc_long(spans,8),nc_long(spans,count*8-4),b[38]) end
     first = if later == 0 do b[] else nl_items(source,spans,env,table,depth,Enum.concat(nc_u24(0),nc_u24(1))) end
     if nc_pos(first) < 0 do b[] else if nf_worth(nc_kind(first)) == 0 do b[] else nw_expect(env,0,Enum.concat(b[7],nc_kind(first))) end end
   end
@@ -96,7 +96,7 @@ defmodule NativeCollections do
   def nl_items(source: bytes, spans: bytes, env: bytes, table: bytes, depth: integer, bounds: bytes): bytes do
     first = nc_cursor(bounds,0)
     stop = nc_cursor(bounds,3)
-    if stop-first == 1 do nl_item(source,spans,if Enum.at(bounds,6,0) < 2 do env else ev_part(source,env,nc_cursor(spans,first*6),nc_cursor(spans,first*6+3)) end,table,nc_join(b[depth],nc_u24(first),if Enum.at(bounds,6,0)*(Enum.at(bounds,6,0)-2) == 0 do b[] else b[1] end)) else
+    if stop-first == 1 do nl_item(source,spans,if Enum.at(bounds,6,0) < 2 do env else ev_part(source,env,nc_long(spans,first*8),nc_long(spans,first*8+4)) end,table,nc_join(b[depth],nc_u24(first),if Enum.at(bounds,6,0)*(Enum.at(bounds,6,0)-2) == 0 do b[] else b[1] end)) else
     # Sixty-four elements or more in a long environment: its records go
     # into a store once, and each element is compiled in the window of
     # its own text (native-scope.alc). The seventh byte of bounds is then
@@ -116,11 +116,11 @@ defmodule NativeCollections do
   def nl_item(source: bytes, spans: bytes, env: bytes, table: bytes, plan: bytes): bytes do
     first = nc_cursor(plan,1)
     depth = Enum.at(plan,0,0)
-    keyed = nk_keyword(source,nc_start(source,nc_cursor(spans,first*6)),env,table,depth)
-    value = if nc_pos(keyed) >= 0 do keyed else nc_expression(source,nc_cursor(spans,first*6),if Enum.count(plan) == 4 do env else nf_expecting(source,env,nc_cursor(spans,first*6),nf_part(source,env,table,0)) end,table,depth) end
+    keyed = nk_keyword(source,nc_start(source,nc_long(spans,first*8)),env,table,depth)
+    value = if nc_pos(keyed) >= 0 do keyed else nc_expression(source,nc_long(spans,first*8),if Enum.count(plan) == 4 do env else nf_expecting(source,env,nc_long(spans,first*8),nf_part(source,env,table,0)) end,table,depth) end
     if nc_pos(value) < 0 do b[] else
       # A first element whose type is open needs the list's type from its context.
-      if nc_start(source,nc_pos(value)) != nc_cursor(spans,first*6+3) do b[] else nw_open(nc_value(nc_pos(value),Enum.concat(nc_code(value),b[80]),nc_kind(value)),value) end
+      if nc_start(source,nc_pos(value)) != nc_long(spans,first*8+4) do b[] else nw_open(nc_value(nc_pos(value),Enum.concat(nc_code(value),b[80]),nc_kind(value)),value) end
     end
   end
   def nl_parameter_words(source: bytes, pos: integer, count: integer, table: bytes, owner: integer): bytes do
