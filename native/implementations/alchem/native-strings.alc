@@ -18,7 +18,7 @@ defmodule NativeStrings do
     plain = if value == 110 do 10 else if value == 114 do 13 else if value == 116 do 9 else
       if value == 34 do 34 else if value == 92 do 92 else if value == 35 do 35 else ns_escape_other(value) end end end
     end end end
-    if plain >= 0 do Enum.concat(nc_u24(pos+1),b[plain]) else
+    if plain >= 0 do Enum.concat(nc_u32(pos+1),b[plain]) else
       if value == 120 do ns_escape_byte(pos+3,ns_hex_run(source,pos+1,2,0)) else
         if (value-48)*(55-value) >= 0 do ns_escape_byte(pos+3,ns_octal_run(source,pos,3,0)) else
           if value == 85 do ns_escape_point(pos+9,ns_hex_run(source,pos+1,8,0)) else
@@ -36,11 +36,11 @@ defmodule NativeStrings do
     end end end end
   end
   def ns_escape_byte(after: integer, value: integer): bytes do
-    if value < 0 do b[] else if value > 255 do b[] else Enum.concat(nc_u24(after),b[value]) end end
+    if value < 0 do b[] else if value > 255 do b[] else Enum.concat(nc_u32(after),b[value]) end end
   end
   def ns_escape_point(after: integer, value: integer): bytes do
     text = if value < 0 do b[] else ns_utf8(value) end
-    if Enum.count(text) == 0 do b[] else Enum.concat(nc_u24(after),text) end
+    if Enum.count(text) == 0 do b[] else Enum.concat(nc_u32(after),text) end
   end
   # \u{ one to six hexadecimal digits }.
   def ns_escape_braced(source: bytes, pos: integer, count: integer, value: integer): bytes do
@@ -72,7 +72,7 @@ defmodule NativeStrings do
   end
   def ns_decode(source: bytes, pos: integer, size: integer): bytes do
     piece = ns_piece(source,pos,size)
-    if nc_pos(piece) < 0 do b[] else if Enum.at(piece,3,0) != 1 do b[] else Enum.concat(nc_u24(nc_pos(piece)),nc_slice(piece,4,Enum.count(piece))) end end
+    if nc_at(piece) < 0 do b[] else if Enum.at(piece,4,0) != 1 do b[] else Enum.concat(nc_u32(nc_at(piece)),nc_slice(piece,5,Enum.count(piece))) end end
   end
   # The text from pos up to the closing quote (flag 1, the position after it)
   # or up to "#{" (flag 2, its position): position, flag, bytes.
@@ -82,18 +82,18 @@ defmodule NativeStrings do
   # Chunks of sixteen characters are joined in runs of doubling length: a
   # text of a megabyte is copied about sixteen times, not once a chunk.
   def ns_run_joined(first: bytes, second: bytes): bytes do
-    if nc_pos(first) < 0 do b[] else if nc_pos(second) < 0 do b[] else
-      nc_join(nc_slice(second,0,4),nc_slice(first,4,Enum.count(first)),nc_slice(second,4,Enum.count(second)))
+    if nc_at(first) < 0 do b[] else if nc_at(second) < 0 do b[] else
+      nc_join(nc_slice(second,0,5),nc_slice(first,5,Enum.count(first)),nc_slice(second,5,Enum.count(second)))
     end end
   end
   def ns_run_more(source: bytes, before: bytes, level: integer): bytes do
-    if level == 0 do ns_chunk(source,nc_pos(before),0,16) else
+    if level == 0 do ns_chunk(source,nc_at(before),0,16) else
       first = ns_run_more(source,before,level-1)
-      if nc_pos(first) < 0 do b[] else if Enum.at(first,3,0) != 0 do first else ns_run_joined(first,ns_run_more(source,first,level-1)) end end
+      if nc_at(first) < 0 do b[] else if Enum.at(first,4,0) != 0 do first else ns_run_joined(first,ns_run_more(source,first,level-1)) end end
     end
   end
   def ns_run_grow(source: bytes, done: bytes, level: integer): bytes do
-    if nc_pos(done) < 0 do b[] else if Enum.at(done,3,0) != 0 do done else
+    if nc_at(done) < 0 do b[] else if Enum.at(done,4,0) != 0 do done else
       ns_run_grow(source,ns_run_joined(done,ns_run_more(source,done,level)),level+1)
     end end
   end
@@ -114,7 +114,7 @@ defmodule NativeStrings do
   def ns_parts(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
     all = ns_part_grow(source,ns_part_step(source,pos,env,table,depth),env,table,depth,0)
     if Enum.count(all) == 0 do b[] else
-      nc_value(nc_cursor(all,0),Enum.concat(nc_slice(all,8,Enum.count(all)),ns_part_ends(nc_long(all,4))),b[2])
+      nc_value(nc_long(all,0),Enum.concat(nc_slice(all,9,Enum.count(all)),ns_part_ends(nc_long(all,5))),b[2])
     end
   end
   # One step of that: the text up to the closing quote (where the string
@@ -126,29 +126,29 @@ defmodule NativeStrings do
   # copies its code about fourteen times.
   def ns_part_step(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
     piece = ns_piece(source,pos,0)
-    text = nc_text_emit(nc_slice(piece,4,Enum.count(piece)))
-    inner = if Enum.at(piece,3,0) != 2 do b[] else if depth > 252 do b[] else nc_expression(source,nc_pos(piece)+2,env,table,depth+1) end end
+    text = nc_text_emit(nc_slice(piece,5,Enum.count(piece)))
+    inner = if Enum.at(piece,4,0) != 2 do b[] else if depth > 252 do b[] else nc_expression(source,nc_at(piece)+2,env,table,depth+1) end end
     shown = ne_shown(table,inner)
     next = if Enum.count(shown) == 0 do -1 else nc_expect(source,nc_pos(inner),b[125]) end
-    if nc_pos(piece) < 0 do b[] else
-      if Enum.at(piece,3,0) == 1 do nc_join(nc_u24(nc_pos(piece)),b[1,0,0,0,0],text) else
-        if next < 0 do b[] else nc_join(nc_u24(next),b[0,1,0,0,0],nc_join(nc_join(text,b[80],shown),b[80],Enum.concat(ns_concat_emit(),b[80]))) end
+    if nc_at(piece) < 0 do b[] else
+      if Enum.at(piece,4,0) == 1 do nc_join(nc_u32(nc_at(piece)),b[1,0,0,0,0],text) else
+        if next < 0 do b[] else nc_join(nc_u32(next),b[0,1,0,0,0],nc_join(nc_join(text,b[80],shown),b[80],Enum.concat(ns_concat_emit(),b[80]))) end
       end
     end
   end
   def ns_part_joined(first: bytes, second: bytes): bytes do
     if Enum.count(first) == 0 do b[] else if Enum.count(second) == 0 do b[] else
-      nc_join(Enum.concat(nc_slice(second,0,4),nc_u32(nc_long(first,4)+nc_long(second,4))),nc_slice(first,8,Enum.count(first)),nc_slice(second,8,Enum.count(second)))
+      nc_join(Enum.concat(nc_slice(second,0,5),nc_u32(nc_long(first,5)+nc_long(second,5))),nc_slice(first,9,Enum.count(first)),nc_slice(second,9,Enum.count(second)))
     end end
   end
   def ns_part_more(source: bytes, before: bytes, env: bytes, table: bytes, depth: integer, level: integer): bytes do
-    if level == 0 do ns_part_step(source,nc_cursor(before,0),env,table,depth) else
+    if level == 0 do ns_part_step(source,nc_long(before,0),env,table,depth) else
       first = ns_part_more(source,before,env,table,depth,level-1)
-      if Enum.count(first) == 0 do b[] else if Enum.at(first,3,0) == 1 do first else ns_part_joined(first,ns_part_more(source,first,env,table,depth,level-1)) end end
+      if Enum.count(first) == 0 do b[] else if Enum.at(first,4,0) == 1 do first else ns_part_joined(first,ns_part_more(source,first,env,table,depth,level-1)) end end
     end
   end
   def ns_part_grow(source: bytes, done: bytes, env: bytes, table: bytes, depth: integer, level: integer): bytes do
-    if Enum.count(done) == 0 do b[] else if Enum.at(done,3,0) == 1 do done else
+    if Enum.count(done) == 0 do b[] else if Enum.at(done,4,0) == 1 do done else
       ns_part_grow(source,ns_part_joined(done,ns_part_more(source,done,env,table,depth,level)),env,table,depth,level+1)
     end end
   end
@@ -193,12 +193,12 @@ defmodule NativeStrings do
   # and quotes are text.
   def ns_heredoc_piece(source: bytes, pos: integer, stop: integer): bytes do
     value = byte_at(source,pos)
-    token = if value == 92 do ns_escape(source,pos+1) else Enum.concat(nc_u24(pos+1),b[value]) end
+    token = if value == 92 do ns_escape(source,pos+1) else Enum.concat(nc_u32(pos+1),b[value]) end
     hole = if value*256+byte_at(source,pos+1) == 9083 do 1 else 0 end
-    rest = if pos >= stop do b[] else if hole == 1 do b[] else if nc_pos(token) < 0 do b[] else ns_heredoc_piece(source,nc_pos(token),stop) end end end
-    if pos >= stop do Enum.concat(nc_u24(stop),b[1]) else
-      if hole == 1 do Enum.concat(nc_u24(pos),b[2]) else
-        if nc_pos(rest) < 0 do b[] else nc_join(nc_slice(rest,0,4),nc_slice(token,3,Enum.count(token)),nc_slice(rest,4,Enum.count(rest))) end
+    rest = if pos >= stop do b[] else if hole == 1 do b[] else if nc_at(token) < 0 do b[] else ns_heredoc_piece(source,nc_at(token),stop) end end end
+    if pos >= stop do Enum.concat(nc_u32(stop),b[1]) else
+      if hole == 1 do Enum.concat(nc_u32(pos),b[2]) else
+        if nc_at(rest) < 0 do b[] else nc_join(nc_slice(rest,0,5),nc_slice(token,4,Enum.count(token)),nc_slice(rest,5,Enum.count(rest))) end
       end
     end
   end
@@ -208,28 +208,28 @@ defmodule NativeStrings do
   # that a heredoc of twenty thousand lines costs no depth of calls and its
   # text is copied a few times, not once a line.
   def ns_heredoc_lines(source: bytes, line: integer, close: integer, indent: integer): bytes do
-    ns_heredoc_grow(source,close,indent,Enum.concat(nc_u24(line),b[1]),1)
+    ns_heredoc_grow(source,close,indent,Enum.concat(nc_u32(line),b[1]),1)
   end
   # A run: where the next line starts, 1 (0 when a line holds an
   # expression), then the text.
   def ns_heredoc_grow(source: bytes, close: integer, indent: integer, done: bytes, size: integer): bytes do
-    if Enum.at(done,3,0) == 0 do b[] else if nc_cursor(done,0) >= close do Enum.concat(b[1],nc_slice(done,4,Enum.count(done))) else
-      ns_heredoc_grow(source,close,indent,ns_heredoc_both(done,ns_heredoc_run(source,close,indent,nc_cursor(done,0),size)),size*2)
+    if Enum.at(done,4,0) == 0 do b[] else if nc_long(done,0) >= close do Enum.concat(b[1],nc_slice(done,5,Enum.count(done))) else
+      ns_heredoc_grow(source,close,indent,ns_heredoc_both(done,ns_heredoc_run(source,close,indent,nc_long(done,0),size)),size*2)
     end end
   end
   def ns_heredoc_both(first: bytes, second: bytes): bytes do
-    if Enum.at(second,3,0) == 0 do b[0,0,0,0] else nc_join(nc_slice(second,0,4),nc_slice(first,4,Enum.count(first)),nc_slice(second,4,Enum.count(second))) end
+    if Enum.at(second,4,0) == 0 do b[0,0,0,0,0] else nc_join(nc_slice(second,0,5),nc_slice(first,5,Enum.count(first)),nc_slice(second,5,Enum.count(second))) end
   end
   def ns_heredoc_run(source: bytes, close: integer, indent: integer, line: integer, count: integer): bytes do
-    if line >= close do Enum.concat(nc_u24(line),b[1]) else
+    if line >= close do Enum.concat(nc_u32(line),b[1]) else
       if count <= 1 do
         start = if nc_equal(source,line,close,indent) == 1 do line+indent else line end
         stop = nz_line_end(source,line)
         text = ns_heredoc_piece(source,start,stop)
-        if Enum.at(text,3,0) != 1 do b[0,0,0,0] else nc_join(nc_u24(stop+1),b[1],Enum.concat(nc_slice(text,4,Enum.count(text)),b[10])) end
+        if Enum.at(text,4,0) != 1 do b[0,0,0,0,0] else nc_join(nc_u32(stop+1),b[1],Enum.concat(nc_slice(text,5,Enum.count(text)),b[10])) end
       else
         first = ns_heredoc_run(source,close,indent,line,nc_half(count))
-        if Enum.at(first,3,0) == 0 do first else ns_heredoc_both(first,ns_heredoc_run(source,close,indent,nc_cursor(first,0),count-nc_half(count))) end
+        if Enum.at(first,4,0) == 0 do first else ns_heredoc_both(first,ns_heredoc_run(source,close,indent,nc_long(first,0),count-nc_half(count))) end
       end
     end
   end
@@ -241,23 +241,23 @@ defmodule NativeStrings do
   # times, where each was joined inside the one before it. A step's fourth
   # byte is 1 after the closing line, 2 when the next step starts a line.
   def ns_heredoc_parts(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, plan: bytes): bytes do
-    all = ns_heredoc_grow_parts(source,ns_heredoc_step(source,pos,env,table,depth,plan),env,table,depth,nc_join(nc_slice(plan,0,4),b[0],b[]))
+    all = ns_heredoc_grow_parts(source,ns_heredoc_step(source,pos,env,table,depth,plan),env,table,depth,nc_join(nc_slice(plan,0,5),b[0],b[]))
     if Enum.count(all) == 0 do b[] else
-      nc_value(nc_cursor(all,0),Enum.concat(nc_slice(all,8,Enum.count(all)),ns_part_ends(nc_long(all,4))),b[2])
+      nc_value(nc_long(all,0),Enum.concat(nc_slice(all,9,Enum.count(all)),ns_part_ends(nc_long(all,5))),b[2])
     end
   end
   def ns_heredoc_step(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, plan: bytes): bytes do
-    close = nc_cursor(plan,0)
-    indent = Enum.at(plan,3,0)
-    fresh = Enum.at(plan,4,0)
+    close = nc_long(plan,0)
+    indent = Enum.at(plan,4,0)
+    fresh = Enum.at(plan,5,0)
     start = if fresh == 0 do pos else if nc_equal(source,pos,close,indent) == 1 do pos+indent else pos end end
     done = if fresh == 1 do if pos >= close do 1 else 0 end else 0 end
     piece = if done == 1 do b[] else ns_heredoc_piece(source,start,nz_line_end(source,start)) end
-    ended = if Enum.at(piece,3,0) == 1 do 1 else 0 end
-    text = nc_text_emit(Enum.concat(nc_slice(piece,4,Enum.count(piece)),if ended == 1 do b[10] else b[] end))
-    if done == 1 do nc_join(nc_u24(nc_blank_end(source,close)+3),b[1,0,0,0,0],nc_text_emit(b[])) else
-      if nc_pos(piece) < 0 do b[] else
-        if ended == 1 do nc_join(nc_u24(nc_pos(piece)+1),b[2,1,0,0,0],Enum.concat(text,b[80])) else ns_heredoc_hole(source,env,table,depth,nc_pos(piece),text) end
+    ended = if Enum.at(piece,4,0) == 1 do 1 else 0 end
+    text = nc_text_emit(Enum.concat(nc_slice(piece,5,Enum.count(piece)),if ended == 1 do b[10] else b[] end))
+    if done == 1 do nc_join(nc_u32(nc_blank_end(source,close)+3),b[1,0,0,0,0],nc_text_emit(b[])) else
+      if nc_at(piece) < 0 do b[] else
+        if ended == 1 do nc_join(nc_u32(nc_at(piece)+1),b[2,1,0,0,0],Enum.concat(text,b[80])) else ns_heredoc_hole(source,env,table,depth,nc_at(piece),text) end
       end
     end
   end
@@ -267,7 +267,7 @@ defmodule NativeStrings do
     shown = ne_shown(table,inner)
     after = nc_expect(source,nc_pos(inner),b[125])
     if Enum.count(shown) == 0 do b[] else if after < 0 do b[] else
-      nc_join(nc_u24(after),b[0,1,0,0,0],nc_join(nc_join(text,b[80],shown),b[80],Enum.concat(ns_concat_emit(),b[80])))
+      nc_join(nc_u32(after),b[0,1,0,0,0],nc_join(nc_join(text,b[80],shown),b[80],Enum.concat(ns_concat_emit(),b[80])))
     end end
   end
   # The string text makes, then shown when it is not empty, then the value rest.
@@ -277,15 +277,15 @@ defmodule NativeStrings do
   end
   # plan: the closing line, its indentation and the level.
   def ns_heredoc_more(source: bytes, before: bytes, env: bytes, table: bytes, depth: integer, plan: bytes): bytes do
-    level = Enum.at(plan,4,0)
-    first = if level == 0 do b[] else ns_heredoc_more(source,before,env,table,depth,nc_join(nc_slice(plan,0,4),b[level-1],b[])) end
-    if level == 0 do ns_heredoc_step(source,nc_cursor(before,0),env,table,depth,nc_join(nc_slice(plan,0,4),b[if Enum.at(before,3,0) == 2 do 1 else 0 end],b[])) else
-      if Enum.count(first) == 0 do b[] else if Enum.at(first,3,0) == 1 do first else ns_part_joined(first,ns_heredoc_more(source,first,env,table,depth,nc_join(nc_slice(plan,0,4),b[level-1],b[]))) end end
+    level = Enum.at(plan,5,0)
+    first = if level == 0 do b[] else ns_heredoc_more(source,before,env,table,depth,nc_join(nc_slice(plan,0,5),b[level-1],b[])) end
+    if level == 0 do ns_heredoc_step(source,nc_long(before,0),env,table,depth,nc_join(nc_slice(plan,0,5),b[if Enum.at(before,4,0) == 2 do 1 else 0 end],b[])) else
+      if Enum.count(first) == 0 do b[] else if Enum.at(first,4,0) == 1 do first else ns_part_joined(first,ns_heredoc_more(source,first,env,table,depth,nc_join(nc_slice(plan,0,5),b[level-1],b[]))) end end
     end
   end
   def ns_heredoc_grow_parts(source: bytes, done: bytes, env: bytes, table: bytes, depth: integer, plan: bytes): bytes do
-    if Enum.count(done) == 0 do b[] else if Enum.at(done,3,0) == 1 do done else
-      ns_heredoc_grow_parts(source,ns_part_joined(done,ns_heredoc_more(source,done,env,table,depth,plan)),env,table,depth,nc_join(nc_slice(plan,0,4),b[Enum.at(plan,4,0)+1],b[]))
+    if Enum.count(done) == 0 do b[] else if Enum.at(done,4,0) == 1 do done else
+      ns_heredoc_grow_parts(source,ns_part_joined(done,ns_heredoc_more(source,done,env,table,depth,plan)),env,table,depth,nc_join(nc_slice(plan,0,5),b[Enum.at(plan,5,0)+1],b[]))
     end end
   end
   def ns_heredoc(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
@@ -295,7 +295,7 @@ defmodule NativeStrings do
     indent = nc_blank_end(source,close)-close
     text = if close < 0 do b[] else ns_heredoc_lines(source,first,close,indent) end
     if (opened-10)*(opened-13) != 0 do b[] else if close < 0 do b[] else if indent > 255 do b[] else
-      if Enum.count(text) == 0 do ns_heredoc_parts(source,first,env,table,depth,nc_join(nc_u24(close),b[indent,1],b[])) else
+      if Enum.count(text) == 0 do ns_heredoc_parts(source,first,env,table,depth,nc_join(nc_u32(close),b[indent,1],b[])) else
         nc_value(nc_blank_end(source,close)+3,nc_text_emit(nc_slice(text,1,Enum.count(text))),b[2])
       end
     end end end
@@ -306,24 +306,24 @@ defmodule NativeStrings do
   end
   def ns_chunk(source: bytes, pos: integer, size: integer, budget: integer): bytes do
     value = byte_at(source,pos)
-    if value == 34 do Enum.concat(nc_u24(pos+1),b[1]) else
+    if value == 34 do Enum.concat(nc_u32(pos+1),b[1]) else
       if size >= 16777216 do b[] else
-        if budget == 0 do Enum.concat(nc_u24(pos),b[0]) else
+        if budget == 0 do Enum.concat(nc_u32(pos),b[0]) else
           if value < 32 do b[] else
             token = if value == 92 do ns_escape(source,pos+1) else
-              Enum.concat(nc_u24(pos+1),b[value])
+              Enum.concat(nc_u32(pos+1),b[value])
             end
             # "#{" opens an expression: the text stops there, flag 2.
-            if value*256+byte_at(source,pos+1) == 9083 do Enum.concat(nc_u24(pos),b[2]) else ns_step(source,token,size,budget) end
+            if value*256+byte_at(source,pos+1) == 9083 do Enum.concat(nc_u32(pos),b[2]) else ns_step(source,token,size,budget) end
           end
         end
       end
     end
   end
   def ns_step(source: bytes, token: bytes, size: integer, budget: integer): bytes do
-    if nc_pos(token) < 0 do b[] else
-      tail = ns_chunk(source,nc_pos(token),size+1,budget-1)
-      if nc_pos(tail) < 0 do b[] else nc_join(nc_u24(nc_pos(tail)),Enum.concat(b[Enum.at(tail,3,0)],nc_slice(token,3,Enum.count(token))),nc_slice(tail,4,Enum.count(tail))) end
+    if nc_at(token) < 0 do b[] else
+      tail = ns_chunk(source,nc_at(token),size+1,budget-1)
+      if nc_at(tail) < 0 do b[] else nc_join(nc_u32(nc_at(tail)),Enum.concat(b[Enum.at(tail,4,0)],nc_slice(token,4,Enum.count(token))),nc_slice(tail,5,Enum.count(tail))) end
     end
   end
   def ns_size(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do

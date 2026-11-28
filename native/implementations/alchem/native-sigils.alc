@@ -772,7 +772,7 @@ defmodule NativeSigils do
   def sg_string_plain(source: bytes, start: integer): integer do
     first = nz_line_end(source,start)+1
     close = ns_heredoc_close(source,first)
-    if ns_tripled(source,start) == 0 do if nc_pos(ns_decode(source,start+1,0)) < 0 do 0 else 1 end else
+    if ns_tripled(source,start) == 0 do if nc_at(ns_decode(source,start+1,0)) < 0 do 0 else 1 end else
       if close < 0 do 0 else if Enum.count(ns_heredoc_lines(source,first,close,nc_blank_end(source,close)-close)) == 0 do 0 else 1 end end
     end
   end

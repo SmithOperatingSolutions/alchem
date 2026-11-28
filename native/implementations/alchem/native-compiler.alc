@@ -1660,7 +1660,7 @@ defmodule NativeSourceCompiler do
     names = if Enum.count(named) == 0 do b[] else nu_signature(source,table,id) end
     wide = nu_barring(nu_hidden(named,names,0),extra)
     shaped = if Enum.count(wide) == 0 do b[] else np_params(source,nc_meta(table,id,6),wide,table,Enum.concat(nc_u24(0),nc_u24(count))) end
-    env = gm_params(source,table,np_env(shaped),count,Enum.concat(nc_u24(nc_meta(table,id,9)),nc_u24(nc_meta(table,id,12))))
+    env = gm_params(source,table,np_env(shaped),count,Enum.concat(nc_u32(nc_meta(table,id,9)),nc_u32(nc_meta(table,id,12))))
     if nc_pos(shaped) < 0 do b[] else
       # A test or a setup block ends in whatever it ends in (native-testing.alc).
       ours = tm_ours(source,nc_meta(table,id,0))
