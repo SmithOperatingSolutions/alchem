@@ -38,12 +38,12 @@ defmodule NativeNeeds do
     if Enum.count(name) == 0 do 0 else nu_named(nu_names(kind,0,b[]),name,0) end
   end
   # 1 when the path holds the function and the variable: each entry is the
-  # function (2 bytes), the length of the name and the name.
+  # function (3 bytes), the length of the name and the name.
   def qn_seen(path: bytes, target: integer, name: bytes, offset: integer): integer do
-    size = Enum.at(path,offset+2,0)
+    size = Enum.at(path,offset+3,0)
     if offset >= Enum.count(path) do 0 else
-      if nc_read(path,offset) != target do qn_seen(path,target,name,offset+3+size) else
-        if nt_same(nc_slice(path,offset+3,offset+3+size),name) == 1 do 1 else qn_seen(path,target,name,offset+3+size) end
+      if nc_cursor(path,offset) != target do qn_seen(path,target,name,offset+4+size) else
+        if nt_same(nc_slice(path,offset+4,offset+4+size),name) == 1 do 1 else qn_seen(path,target,name,offset+4+size) end
       end
     end
   end
@@ -51,7 +51,7 @@ defmodule NativeNeeds do
   # variable of that name. path: the functions and variables being asked
   # about around this one, which add nothing when met again.
   def qn_needs(source: bytes, table: bytes, target: integer, name: bytes, path: bytes): integer do
-    entry = nc_join(nc_u16(target),b[Enum.count(name)],name)
+    entry = nc_join(nc_u24(target),b[Enum.count(name)],name)
     record = nc_env_record(0,0,nc_join(b[46,Enum.count(name)],name,Enum.concat(path,entry)))
     if Enum.count(name) > 255 do 0 else if qn_seen(path,target,name,0) == 1 do 0 else
       if Enum.count(nc_function_with(source,table,target,record)) > 0 do 0 else if Enum.count(nc_function(source,table,target)) > 0 do 1 else 0 end end
@@ -60,11 +60,11 @@ defmodule NativeNeeds do
   # 1 when the call gives a type variable of a function of the program that
   # needs equality a type that has none, or one that mentions the variable
   # the calling function is being compiled without the equality of. plan:
-  # the callee (2 bytes), then the record of type 46 in reach, if any.
+  # the callee (3 bytes), then the record of type 46 in reach, if any.
   # offset: where in the callee's names the variable to look at stands.
   def qn_refused(source: bytes, table: bytes, plan: bytes, subst: bytes, offset: integer): integer do
-    target = nc_read(plan,0)
-    barred = nc_slice(plan,2,Enum.count(plan))
+    target = nc_cursor(plan,0)
+    barred = nc_slice(plan,3,Enum.count(plan))
     names = nu_signature(source,table,target)
     size = Enum.at(names,offset,0)
     name = nc_slice(names,offset+1,offset+1+size)

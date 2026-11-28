@@ -884,67 +884,95 @@ defmodule NativeMacros do
       mt_steps(work,next,level,remaining-1)
     end end end
   end
-  # macs and ix: the macros and the records so far; cur: the module's number.
-  def mt_index(work: bytes, cursor: bytes, macs: bytes, ix: bytes, cur: integer): bytes do
+  # The records so far are in two parts, ix and behind it late, those added
+  # since the two were last joined: a record added to the end of all of
+  # them copied them all, and a program of n functions that has a macro, a
+  # template or a protocol took n times n (8,000 functions 4.5 GB, 32,000
+  # the whole arena). late is joined to ix when it is a quarter of it, so
+  # every record is copied a few times.
+  def mt_joins(ix: bytes, late: bytes, more: bytes): integer do
+    if (Enum.count(late)+Enum.count(more))*4 > 16384+Enum.count(ix) do 1 else 0 end
+  end
+  def mt_kept(ix: bytes, late: bytes, more: bytes): bytes do
+    if mt_joins(ix,late,more) == 1 do nc_join(ix,late,more) else ix end
+  end
+  def mt_late(ix: bytes, late: bytes, more: bytes): bytes do
+    if mt_joins(ix,late,more) == 1 do b[] else Enum.concat(late,more) end
+  end
+  # What one declaration adds, for mt_index to go on from: 1, whether the
+  # text goes on inside a body, where it goes on, the module's number plus
+  # one, a macro (behind its length) and the records. b[0] ends the index,
+  # b[] is a text that is no program.
+  def mt_next(pos: integer, inside: integer, cur: integer, macro: bytes, records: bytes): bytes do
+    nc_join(b[1,inside],Enum.concat(nc_u24(pos),nc_u24(cur+1)),Enum.concat(mx_pack(macro),records))
+  end
+  # macs and ix, late: the macros and the records so far; cur: the module's
+  # number. Its call to itself is its whole value, so the index is a loop:
+  # each declaration was a call inside the one before, three calls deep,
+  # and a program of 33,000 functions nested deeper than calls may.
+  def mt_index(work: bytes, cursor: bytes, macs: bytes, ix: bytes, late: bytes, cur: integer): bytes do
     found = mt_steps(work,cursor,4,16)
     pos = nc_cursor(found,0)
-    if Enum.count(found) == 0 do b[] else
-      if Enum.at(found,4,0) != 1 do Enum.concat(mx_pack(macs),ix) else
-        if Enum.at(found,3,0) == 0 do mt_module(work,pos,macs,ix,cur) else mt_declared(work,pos,macs,ix,cur) end
-      end
-    end
+    step = if Enum.count(found) == 0 do b[] else if Enum.at(found,4,0) != 1 do b[0] else
+      if Enum.at(found,3,0) == 0 do mt_module(work,pos,cur) else mt_declared(work,pos,macs,cur,ix,late) end
+    end end
+    size = nc_cursor(step,8)
+    added = nc_slice(step,11+size,Enum.count(step))
+    if Enum.count(step) == 0 do b[] else if Enum.at(step,0,0) == 0 do nc_join(mx_pack(macs),ix,late) else
+      mt_index(work,mt_cursor(nc_cursor(step,2),Enum.at(step,1,0),0),if size == 0 do macs else Enum.concat(macs,nc_slice(step,11,11+size)) end,mt_kept(ix,late,added),mt_late(ix,late,added),nc_cursor(step,5)-1)
+    end end
   end
-  def mt_module(work: bytes, pos: integer, macs: bytes, ix: bytes, cur: integer): bytes do
+  def mt_module(work: bytes, pos: integer, cur: integer): bytes do
     name = nc_start(work,nc_end(work,pos))
     body = nc_expect(work,nc_end(work,name),b[100,111])
-    if nc_word(work,pos,b[100,101,102,109,111,100,117,108,101]) == 0 do Enum.concat(mx_pack(macs),ix) else
+    if nc_word(work,pos,b[100,101,102,109,111,100,117,108,101]) == 0 do b[0] else
       if body < 0 do b[] else if cur >= 65000 do b[] else
-        mt_index(work,mt_cursor(body,1,0),macs,Enum.concat(ix,mx_record(1,cur+1,mx_three(name,nc_end(work,name),pos),b[])),cur+1)
+        mt_next(body,1,cur+1,b[],mx_record(1,cur+1,mx_three(name,nc_end(work,name),pos),b[]))
       end end
     end
   end
-  def mt_declared(work: bytes, pos: integer, macs: bytes, ix: bytes, cur: integer): bytes do
+  def mt_declared(work: bytes, pos: integer, macs: bytes, cur: integer, ix: bytes, late: bytes): bytes do
     name = nc_start(work,nc_end(work,pos))
-    if nc_word(work,pos,b[101,110,100]) == 1 do mt_index(work,mt_cursor(nc_end(work,pos),0,0),macs,ix,cur) else
+    if nc_word(work,pos,b[101,110,100]) == 1 do mt_next(nc_end(work,pos),0,cur,b[],b[]) else
       if nc_word(work,pos,b[100,101,102])+nc_word(work,pos,b[100,101,102,112]) == 1 do
-        if name < 0 do b[] else if nc_end(work,name) < 0 do b[] else mt_defined(work,pos,macs,ix,cur) end end
+        if name < 0 do b[] else if nc_end(work,name) < 0 do b[] else mt_defined(work,pos,cur) end end
       else
         if nc_word(work,pos,b[100,101,102,109,97,99,114,111]) == 1 do
           made = mt_macro(work,pos,cur)
           if Enum.count(made) == 0 do b[] else if mx_macro_in(work,mx_pack(macs),cur,name,0) >= 0 do b[] else
-            mt_index(work,mt_cursor(nc_cursor(made,0),1,0),Enum.concat(macs,nc_slice(made,3,27)),Enum.concat(ix,mx_record(7,cur,mx_two(pos,nc_cursor(made,0)),b[])),cur)
+            mt_next(nc_cursor(made,0),1,cur,nc_slice(made,3,27),mx_record(7,cur,mx_two(pos,nc_cursor(made,0)),b[]))
           end end
-        else mt_other(work,pos,macs,ix,cur) end
+        else mt_other(work,pos,ix,late,cur) end
       end
     end
   end
   # def name(parameters): a record for the function, and one for its
   # parameters, which are left as they are: a default value is a constant.
-  def mt_defined(work: bytes, pos: integer, macs: bytes, ix: bytes, cur: integer): bytes do
+  def mt_defined(work: bytes, pos: integer, cur: integer): bytes do
     name = nc_start(work,nc_end(work,pos))
     stop = nc_end(work,name)
     close = if byte_at(work,nc_blank_end(work,stop)) != 40 do stop else np_close(work,stop,0,16777216) end
     if close < 0 do b[] else
-      mt_index(work,mt_cursor(close,1,0),macs,nc_join(ix,mx_record(3,cur,mx_two(name,stop),b[]),mx_record(10,cur,mx_two(pos,close),b[])),cur)
+      mt_next(close,1,cur,b[],Enum.concat(mx_record(3,cur,mx_two(name,stop),b[]),mx_record(10,cur,mx_two(pos,close),b[])))
     end
   end
-  def mt_other(work: bytes, pos: integer, macs: bytes, ix: bytes, cur: integer): bytes do
+  def mt_other(work: bytes, pos: integer, ix: bytes, late: bytes, cur: integer): bytes do
     name = nc_start(work,nc_end(work,pos))
     if mt_typed(work,pos) == 1 do
       stop = mt_block_end(work,pos,64)
-      if stop < 0 do b[] else mt_index(work,mt_cursor(stop,1,0),macs,Enum.concat(ix,mx_record(10,cur,mx_two(pos,stop),b[])),cur) end
-    else mt_rest(work,pos,macs,ix,cur) end
+      if stop < 0 do b[] else mt_next(stop,1,cur,b[],mx_record(10,cur,mx_two(pos,stop),b[])) end
+    else mt_rest(work,pos,ix,late,cur) end
   end
-  def mt_rest(work: bytes, pos: integer, macs: bytes, ix: bytes, cur: integer): bytes do
+  def mt_rest(work: bytes, pos: integer, ix: bytes, late: bytes, cur: integer): bytes do
     name = nc_start(work,nc_end(work,pos))
     if nc_word(work,pos,b[117,115,101]) == 1 do
       stop = if mx_upper(byte_at(work,name)) == 0 do nc_end(work,pos) else mt_use_end(work,nc_end(work,name)) end
       if stop < 0 do b[] else
-        mt_index(work,mt_cursor(stop,1,0),macs,if mx_upper(byte_at(work,name)) == 0 do ix else Enum.concat(ix,mx_record(4,cur,mx_three(pos,stop,name),b[])) end,cur)
+        mt_next(stop,1,cur,b[],if mx_upper(byte_at(work,name)) == 0 do b[] else mx_record(4,cur,mx_three(pos,stop,name),b[]) end)
       end
     else
-      made = if nc_word(work,pos,b[100,101,102,105,109,112,108]) == 1 do mp_impl(work,ix,pos,cur) else mp_protocol(work,pos,cur) end
-      if Enum.count(made) < 3 do b[] else mt_index(work,mt_cursor(nc_cursor(made,0),1,0),macs,Enum.concat(ix,nc_slice(made,3,Enum.count(made))),cur) end
+      made = if nc_word(work,pos,b[100,101,102,105,109,112,108]) == 1 do mp_impl(work,Enum.concat(ix,late),pos,cur) else mp_protocol(work,pos,cur) end
+      if Enum.count(made) < 3 do b[] else mt_next(nc_cursor(made,0),1,cur,b[],nc_slice(made,3,Enum.count(made))) end
     end
   end
   # defmacro name(parameters) do quote do ... end end at pos: where it ends,
@@ -1006,17 +1034,20 @@ defmodule NativeMacros do
   # The edits of a program, in the order of its records. state: where the
   # text not yet written starts, the module it is in and 1 when its code is
   # walked.
-  def mx_edits(work: bytes, ix: bytes, at: integer, state: bytes, acc: bytes): bytes do
+  # acc and late: the pieces so far, in two parts as the records of mt_index
+  # are (mt_kept), so that they are not all copied for every record.
+  def mx_edits(work: bytes, ix: bytes, at: integer, state: bytes, acc: bytes, late: bytes): bytes do
     base = mx_base(ix)+at*24
     kind = Enum.at(ix,base,0)
-    if base >= Enum.count(ix) do mx_joined(acc,mx_between(work,ix,state,mx_stop(work))) else
-      if (kind-3)*(kind-5)*(kind-6) == 0 do mx_edits(work,ix,at+1,state,acc) else
+    if base >= Enum.count(ix) do mx_joined(Enum.concat(acc,late),mx_between(work,ix,state,mx_stop(work))) else
+      if (kind-3)*(kind-5)*(kind-6) == 0 do mx_edits(work,ix,at+1,state,acc,late) else
         start = if kind == 1 do nc_cursor(ix,base+9) else nc_cursor(ix,base+3) end
         before = mx_between(work,ix,state,start)
         made = if kind == 1 do b[] else mx_edit(work,ix,base,nc_read(state,3)) end
         next = if kind == 1 do nc_join(nc_u24(start),nc_slice(ix,base+1,base+3),nc_slice(state,5,6)) else Enum.concat(nc_slice(ix,base+6,base+9),nc_slice(state,3,6)) end
         if Enum.count(before) == 1 do before else if Enum.count(made) == 1 do made else
-          mx_edits(work,ix,at+1,next,nc_join(acc,before,made))
+          more = Enum.concat(before,made)
+          mx_edits(work,ix,at+1,next,mt_kept(acc,late,more),mt_late(acc,late,more))
         end end
       end
     end
@@ -1206,7 +1237,7 @@ defmodule NativeMacros do
   # The program as it is compiled: b[0] as it is, b[] for one that cannot be
   # compiled, or 1, the length of the rewritten text, the text and its tail.
   def mx_prepare(given: bytes): bytes do
-    if mx_wanted(given) == 0 do b[0] else mx_indexed(given,mt_index(given,mt_cursor(0,0,0),b[],b[],-1)) end
+    if mx_wanted(given) == 0 do b[0] else mx_indexed(given,mt_index(given,mt_cursor(0,0,0),b[],b[],b[],-1)) end
   end
   def mx_indexed(given: bytes, ix: bytes): bytes do
     if Enum.count(ix) < 3 do b[] else mx_planned(given,ix) end
@@ -1219,7 +1250,7 @@ defmodule NativeMacros do
     tainted = if mx_raw(given,0,Enum.count(given),b[127]) == 0 do 0 else if mx_raw(given,0,Enum.count(given),b[65,108,99,104,127,109,127,84]) == 1 do 0 else mx_tainted(given,0) end end
     if tainted == 1 do b[] else
       if walked+mx_edited(ix,0,mx_count(ix)) == 0 do b[0] else
-        if mx_clash(given,ix,0)+mp_wrong(given,ix) > 0 do b[] else mx_made(given,mx_edits(given,ix,0,Enum.concat(b[0,0,0,255,255],b[walked]),b[])) end
+        if mx_clash(given,ix,0)+mp_wrong(given,ix) > 0 do b[] else mx_made(given,mx_edits(given,ix,0,Enum.concat(b[0,0,0,255,255],b[walked]),b[],b[])) end
       end
     end
   end

@@ -164,7 +164,7 @@ defmodule NativeFunctions do
     packet = nc_arg_packet(0,count,Enum.concat(words,nt_cell(nc_zeros(count))),nf_pushes(count,0))
     # Of a function of several forms, the form these parameter types fit.
     fit = nj_form(source,table,nj_aimed(source,table,target,count),packet)
-    value = if nc_pos(form) < 0 do b[] else if nc_tag(form) != count do b[] else if Enum.count(scope) == 0 do b[] else if fit < 0 do b[] else nu_call(source,scope,table,0,packet,nc_u16(fit)) end end end end
+    value = if nc_pos(form) < 0 do b[] else if nc_tag(form) != count do b[] else if Enum.count(scope) == 0 do b[] else if fit < 0 do b[] else nu_call(source,scope,table,0,packet,nc_u24(fit)) end end end end
     kind = nt_function(Enum.concat(words,nt_cell(nc_kind(value))),count)
     if nc_pos(value) < 0 do b[] else nc_value(nc_pos(form)+1,nf_code(count,gm_held(env,3),Enum.concat(nz_enter_plain(nc_start(source,pos)),nc_code(value))),kind) end
   end

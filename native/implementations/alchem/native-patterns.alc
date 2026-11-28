@@ -206,9 +206,9 @@ defmodule NativePatterns do
   # Name.variant or Name.variant(p, ...) of the sum type kind.
   def np_variant(source: bytes, start: integer, env: bytes, table: bytes, kind: bytes): bytes do
     id = nd_id(table,kind)
-    typed = if np_step(source,table,kind)*nc_word(source,nc_end(source,start),b[40]) == 1 do nc_value(start,nc_u16(id),b[0]) else nv_typed(source,start,table,nc_owner(table,nc_cursor(env,0))) end
+    typed = if np_step(source,table,kind)*nc_word(source,nc_end(source,start),b[40]) == 1 do nc_value(start,nc_u24(id),b[0]) else nv_typed(source,start,table,nc_owner(table,nc_cursor(env,0))) end
     name = nc_pos(typed)
-    index = if nc_pos(typed) < 0 do -1 else if nc_read(nc_code(typed),0) != id do -1 else nv_search(source,table,id,name,0) end end
+    index = if nc_pos(typed) < 0 do -1 else if nc_cursor(nc_code(typed),0) != id do -1 else nv_search(source,table,id,name,0) end end
     variant = nc_code(nv_at(source,table,id,index))
     count = nv_fields_of(variant)
     node = np_node(count,if id < 0 do 0 else nv_many(source,nc_meta(table,id,9),0) end,5,nc_u24(if index < 0 do 0 else index end))
@@ -229,23 +229,23 @@ defmodule NativePatterns do
     open = nc_expect(source,nd_name_end(source,name),b[123])
     count = if id < 0 do -1 else nd_fields(source,table,id,0) end
     if (nt_tag(kind)-13)*(nt_tag(kind)-18) != 0 do b[] else if named != id do b[] else if open < 0 do b[] else if count < 0 do b[] else
-      listed = np_listed(source,open,env,table,nc_join(nc_u16(id),nt_cell(kind),b[]))
+      listed = np_listed(source,open,env,table,nc_join(nc_u24(id),nt_cell(kind),b[]))
       if nc_pos(listed) < 0 do b[] else
         np_pack(nc_pos(listed),Enum.concat(np_node(count,1,11,b[0]),np_ordered(np_tree(listed),0,count)),np_env(listed))
       end
     end end end end
   end
   def np_listed(source: bytes, pos: integer, env: bytes, table: bytes, spec: bytes): bytes do
-    id = nc_read(spec,0)
+    id = nc_cursor(spec,0)
     name = nc_start(source,pos)
     index = nd_search(source,table,id,name,0)
     # spec: the struct's id, the matched type as a cell, then the entries
     # listed so far: for each its field's index (3 bytes), its tree's length
     # (4 bytes) and its tree.
-    listed = nc_slice(spec,nt_after(spec,2),Enum.count(spec))
+    listed = nc_slice(spec,nt_after(spec,3),Enum.count(spec))
     if nc_word(source,pos,b[125]) == 1 do np_pack(nc_end(source,pos),b[],env) else
       colon = nc_expect(source,nc_end(source,name),b[58])
-      child = if index < 0 do b[] else if colon < 0 do b[] else if np_given(listed,index,0) >= 0 do b[] else np_parse(source,colon,env,table,nd_field_kind(source,table,nt_read(spec,2),index)) end end end
+      child = if index < 0 do b[] else if colon < 0 do b[] else if np_given(listed,index,0) >= 0 do b[] else np_parse(source,colon,env,table,nd_field_kind(source,table,nt_read(spec,3),index)) end end end
       next = nc_pos(child)
       after = if nc_word(source,next,b[44]) == 1 do nc_end(source,next) else next end
       entry = nc_join(nc_u24(if index < 0 do 0 else index end),nc_u32(Enum.count(np_tree(child))),np_tree(child))

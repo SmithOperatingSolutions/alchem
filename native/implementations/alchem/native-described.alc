@@ -396,19 +396,19 @@ defmodule NativeDescribed do
   # poisoned) for one that mentions such a variable.
   def jd_refused(source: bytes, table: bytes, target: integer, subst: bytes): integer do
     mask = jd_byte(table,target)
-    if mask <= 128 do 0 else jd_refused_from(source,table,jd_base(source,table,target),subst,Enum.concat(nc_u16(target),b[0,0,0])) end
+    if mask <= 128 do 0 else jd_refused_from(source,table,jd_base(source,table,target),subst,Enum.concat(nc_u24(target),b[0,0,0])) end
   end
-  # state: the function (2 bytes), the index and the offset in names (2 bytes).
+  # state: the function (3 bytes), the index and the offset in names (2 bytes).
   def jd_refused_from(source: bytes, table: bytes, names: bytes, subst: bytes, state: bytes): integer do
-    target = nc_read(state,0)
-    index = Enum.at(state,2,0)
-    offset = nc_read(state,3)
+    target = nc_cursor(state,0)
+    index = Enum.at(state,3,0)
+    offset = nc_read(state,4)
     size = Enum.at(names,offset,0)
     kind = nu_apply(Enum.concat(b[16],nc_slice(names,offset,offset+1+size)),subst)
     if offset >= Enum.count(names) do 0 else
       bad = if jd_poisoned(source,table,kind) == 1 do 1 else 1-jd_readable(source,table,kind) end
       read = if bad == 0 do 0 else if index < 6 do jd_bit(jd_byte(table,target),index) else jd_late(source,table,target,index) end end
-      if read == 1 do 1 else jd_refused_from(source,table,names,subst,nc_join(nc_u16(target),b[index+1],nc_u16(offset+1+size))) end
+      if read == 1 do 1 else jd_refused_from(source,table,names,subst,nc_join(nc_u24(target),b[index+1],nc_u16(offset+1+size))) end
     end
   end
   # 1 when a function of the program mentions inspect, JSON or Gen: only

@@ -210,17 +210,17 @@ defmodule NativeGenerics do
   # A call of the generic function target with the arguments parsed: its
   # deferred lambdas take the types the other arguments settle, then every
   # argument is matched and the result type follows from the substitution.
-  # plan: the function's table index (2 bytes), then what the call's own
+  # plan: the function's table index (3 bytes), then what the call's own
   # expected type settles of its variables, as a substitution.
   def nu_call(source: bytes, env: bytes, table: bytes, depth: integer, parsed: bytes, plan: bytes): bytes do
     # A lambda's result may settle the parameter types of a later one.
     if nf_has_pending(parsed,0) == 0 do nu_call_typed(source,env,table,depth,parsed,plan) else
-      nu_call_typed(source,env,table,depth,sg_ordered(source,env,table,Enum.concat(b[depth,sg_strict_target(source,table,nc_read(plan,0))],nj_cells(source,table,nc_read(plan,0))),parsed,Enum.concat(b[0,0,0],nc_slice(plan,2,Enum.count(plan)))),plan)
+      nu_call_typed(source,env,table,depth,sg_ordered(source,env,table,Enum.concat(b[depth,sg_strict_target(source,table,nc_cursor(plan,0))],nj_cells(source,table,nc_cursor(plan,0))),parsed,Enum.concat(b[0,0,0],nc_slice(plan,3,Enum.count(plan)))),plan)
     end
   end
   def nu_call_typed(source: bytes, env: bytes, table: bytes, depth: integer, parsed: bytes, plan: bytes): bytes do
-    target = nc_read(plan,0)
-    seed = nc_slice(plan,2,Enum.count(plan))
+    target = nc_cursor(plan,0)
+    seed = nc_slice(plan,3,Enum.count(plan))
     count = nc_arg_count(parsed)
     cells = nj_cells(source,table,target)
     first = if count != nc_argc(table,target) do b[] else nu_arguments(cells,parsed,seed,0) end
@@ -245,7 +245,7 @@ defmodule NativeGenerics do
     ordered = od_library(source,table,target)*(1+od_library(source,table,nc_cursor(env,0)))
     barred = qn_barred(env,3,b[])
     given = nu_comparators(source,table,names,Enum.concat(b[ordered],subst),nu_vars(env,3),qn_name(barred))
-    missing = if extra == 0 do 0 else if Enum.count(given) == 0 do 1 else nu_refused(names,subst,nu_equal(source,table,target),b[0,0,0,0,0,0,0],qn_name(barred))+qn_refused(source,table,Enum.concat(nc_u16(target),barred),subst,0)+jd_refused(source,table,target,subst) end end
+    missing = if extra == 0 do 0 else if Enum.count(given) == 0 do 1 else nu_refused(names,subst,nu_equal(source,table,target),b[0,0,0,0,0,0,0],qn_name(barred))+qn_refused(source,table,Enum.concat(nc_u24(target),barred),subst,0)+jd_refused(source,table,target,subst) end end
     # The library's own helpers (o_ and a name) are not the program's to call.
     hidden = if od_library(source,table,target) == 0 do 0 else if od_library(source,table,nc_cursor(env,0)) == 1 do 0 else nc_word_at(source,nc_meta(table,target,0),b[111,95],0) end end
     pushed = Enum.concat(nc_arg_code(typed),given)

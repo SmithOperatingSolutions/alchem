@@ -73,9 +73,9 @@ longer than a program may be; packages
 
 ## Compiler representation
 
-Table records are 27 bytes: five u24 source positions, argc, flags, eight
+Table records are 28 bytes: five u24 source positions, argc, flags, eight
 bytes (for a function: where its result type is written, the number of its
-default arguments and where its guard starts) and the u16 index of the owning
+default arguments and where its guard starts) and the u24 index of the owning
 module's header. A further clause of a function has a record of its own with
 flags 40, which no lookup finds and which has no code (alchem-clauses.md). Each
 module contributes a header record (flags 32) holding its name span, the start
@@ -84,11 +84,12 @@ header occupies a function-table slot but emits no code. Name lookup takes the
 owning module; `Module.function` finds the header by name, checks that the
 caller is that module or imports it, and rejects another module's `defp`.
 
-Limits: 65,535 user functions across all modules and 65,536 table records in
-all, where every module header, struct, sum type, exception and further clause
-of a function is a record too: one module may hold 65,535 functions, 64
-modules 65,472 between them. A record is named by a 16-bit number in an environment (its function) and
-in a record (its module), which is what bounds the table; a call site holds
+Limits: 16,777,214 user functions across all modules and 16,777,215 table
+records in all, where every module header, struct, sum type, exception and
+further clause of a function is a record too. A record is named by a number
+of three bytes in an environment (its function) and in a record (its
+module), which is what bounds the table (two bytes, and 65,535 functions,
+until `source-capacity.md`, "Limits that remain"); a call site holds
 the 32-bit address of its slot, and the lengths of a program's functions are
 kept behind a 32-bit count (`nc_build`). Shared runtimes take slots beyond the
 records, so they do not reduce the function limit.
@@ -141,7 +142,7 @@ the test).
 
 `harness/modules.py` checks bundled projects, the visibility rules, bundler
 errors, invalid bundles, a 200-module call chain, 300 modules and 65472/65473
-functions across 64 modules (65536 and 65537 table records). Project outcomes were confirmed against the pinned
+functions across 64 modules (65536 and 65537 table records, both of which run). Project outcomes were confirmed against the pinned
 upstream `alchem run` on the unbundled files.
 
 Imported structs and sum types are written `Module.Name` (see

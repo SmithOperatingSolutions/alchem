@@ -127,16 +127,16 @@ defmodule NativeSets do
   # A call of library function target with the arguments parsed. plan: the
   # nesting, what may be converted (0 nothing; 1 to streams, 2 the first
   # argument to a list too, 3 every argument, and something must be; 5 to
-  # streams or nothing), the function (2 bytes), then the arguments.
+  # streams or nothing), the function (3 bytes), then the arguments.
   def nn_enter(source: bytes, name: integer, env: bytes, table: bytes, plan: bytes): bytes do
     mode = Enum.at(plan,1,0)
-    parsed = nc_slice(plan,4,Enum.count(plan))
-    first = nj_fit(source,table,nc_read(plan,2),nc_arg_count(parsed))
+    parsed = nc_slice(plan,5,Enum.count(plan))
+    first = nj_fit(source,table,nc_cursor(plan,2),nc_arg_count(parsed))
     given = if first < 0 do b[] else if mode == 0 do parsed else nn_coerce(nj_cells(source,table,first),parsed,0,b[mode]) end end
     same = if (mode-1)*(mode-2)*(mode-3) != 0 do 0 else if Enum.count(given) == Enum.count(parsed) do 1 else 0 end end
     fit = if nc_pos(given) < 0 do -1 else if same == 1 do -1 else nj_form(source,table,first,given) end end
     full = if fit < 0 do b[] else nj_full(source,table,fit,given,nc_end(source,name)) end
-    if nc_pos(full) < 0 do b[] else nj_call(source,nc_end(source,name),env,table,Enum.at(plan,0,0),Enum.concat(nc_u16(fit),full)) end
+    if nc_pos(full) < 0 do b[] else nj_call(source,nc_end(source,name),env,table,Enum.at(plan,0,0),Enum.concat(nc_u24(fit),full)) end
   end
   # The forms of a library function in turn. plan: the nesting, the form to
   # try, what may be converted, the module name without its form behind its
@@ -147,7 +147,7 @@ defmodule NativeSets do
     wanted = if form == 1 do nc_slice(plan,4,4+size) else nc_join(nc_slice(plan,4,4+size),b[118],ny_digits(form)) end
     home = ny_module(source,table,wanted,Enum.concat(nc_u24(0),nc_u24(nc_records(Enum.count(table)))))
     target = if home < 0 do -1 else nc_find(source,name,table,home) end
-    call = if target < 0 do b[] else nn_enter(source,name,env,table,nc_join(b[Enum.at(plan,0,0),Enum.at(plan,2,0)],nc_u16(target),nc_slice(plan,4+size,Enum.count(plan)))) end
+    call = if target < 0 do b[] else nn_enter(source,name,env,table,nc_join(b[Enum.at(plan,0,0),Enum.at(plan,2,0)],nc_u24(target),nc_slice(plan,4+size,Enum.count(plan)))) end
     if nc_pos(call) >= 0 do call else if form >= 16 do b[] else nn_forms(source,name,env,table,nc_join(b[Enum.at(plan,0,0),form+1],nc_slice(plan,2,4+size),nc_slice(plan,4+size,Enum.count(plan)))) end end
   end
   def nn_mode(plan: bytes, mode: integer): bytes do

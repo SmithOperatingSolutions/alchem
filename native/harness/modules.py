@@ -194,8 +194,10 @@ def verify(compiler):
         assert len(source)>5_000_000,len(source)
         done=run(source,'five megabytes')
         assert (done.returncode,done.stdout,done.stderr)==(0,b'168427\n',b''),('five files of a megabyte',done)
-        # A table holds 65536 records and a module's header is one: 64 modules
-        # of 1023 functions fill it, and one function more is rejected.
+        # A table held 65536 records and a module's header is one: 64 modules
+        # of 1023 functions filled it, and one function more was rejected. A
+        # record's number is three bytes now (harness/past_limit.py): one
+        # more runs as well.
         def spread(extra):
             parts=[];each=(FUNCTION_LIMIT+1)//64-1
             for m in range(64):
@@ -210,7 +212,10 @@ def verify(compiler):
         done=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=10)
         assert done.returncode==42,('65472 functions in 64 modules',done.returncode)
         result=at_limit([str(compiler)],input=spread(1),capture_output=True,env={'PATH':''},timeout=600)
-        assert (result.returncode,result.stdout)==(65,b''),('65473 functions in 64 modules',result.returncode)
+        assert (result.returncode,result.stderr)==(0,b''),('65473 functions in 64 modules',result.returncode,result.stderr)
+        out.unlink(missing_ok=True);out.write_bytes(result.stdout);out.chmod(0o700)
+        done=subprocess.run([str(out)],capture_output=True,env={'PATH':''},timeout=10)
+        assert done.returncode==42,('65473 functions in 64 modules',done.returncode)
     print(f'PASS modules: {len(PROJECTS)} bundled projects, {bundles} bundles by the Alchem-written bundler identical to the Python one and its {len(NATIVE_ERRORS)} errors, {len(REJECTED)} visibility rejections, {len(UNBUNDLED)} bundler errors, {len(INVALID)} invalid bundles, 300-module programs, a 5 MB program of five 1 MB files, 65472/65473 functions across 64 modules (65536/65537 table records)')
 
 

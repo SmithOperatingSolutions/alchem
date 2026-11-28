@@ -191,7 +191,7 @@ defmodule NativeNodes do
     name = dn_name(source,table,nd_id(table,made))
     deep = nt_same(name,b[112,105,100])+nt_same(name,b[115,117,112,101,114,118,105,115,111,114])+nt_same(name,b[115,101,114,118,101,114])
     if Enum.count(made) == 0 do b[] else if deep+nt_same(name,b[116,97,115,107]) == 0 do made else if nt_same(nc_slice(dn_name(source,table,owner),0,6),b[65,108,99,104,127,109]) == 1 do made else
-      if dn_raws(source,table,nc_join(nc_u16(owner),nc_u24(0),nc_u24(nt_count(kind))),kind,b[deep,0]) == 0 do b[] else made end
+      if dn_raws(source,table,nc_join(nc_u24(owner),nc_u24(0),nc_u24(nt_count(kind))),kind,b[deep,0]) == 0 do b[] else made end
     end end end
   end
   # 1 when children index up to count of kind may all be sent. place: the
@@ -199,17 +199,17 @@ defmodule NativeNodes do
   # where a type variable stands for a type looked at elsewhere, then the
   # declarations being looked into.
   def dn_raws(source: bytes, table: bytes, place: bytes, kind: bytes, mode: bytes): integer do
-    index = nc_cursor(place,2)
-    if index >= nc_cursor(place,5) do 1 else
-      if dn_raw(source,table,nc_read(place,0),nt_child(kind,index),mode) == 0 do 0 else dn_raws(source,table,nc_join(nc_slice(place,0,2),nc_u24(index+1),nc_slice(place,5,8)),kind,mode) end
+    index = nc_cursor(place,3)
+    if index >= nc_cursor(place,6) do 1 else
+      if dn_raw(source,table,nc_cursor(place,0),nt_child(kind,index),mode) == 0 do 0 else dn_raws(source,table,nc_join(nc_slice(place,0,3),nc_u24(index+1),nc_slice(place,6,9)),kind,mode) end
     end
   end
   def dn_raw(source: bytes, table: bytes, owner: integer, kind: bytes, mode: bytes): integer do
     tag = nt_tag(kind)
     if (tag-10)*(tag-26) == 0 do 0 else if tag == 16 do Enum.at(mode,1,0) else
       if (tag-4)*(tag-7)*(tag-25) == 0 do dn_raw(source,table,owner,nt_child(kind,0),mode) else
-        if (tag-6)*(tag-8) == 0 do dn_raws(source,table,nc_join(nc_u16(owner),nc_u24(0),nc_u24(2)),kind,mode) else
-          if tag == 5 do dn_raws(source,table,nc_join(nc_u16(owner),nc_u24(0),nc_u24(nt_count(kind))),kind,mode) else
+        if (tag-6)*(tag-8) == 0 do dn_raws(source,table,nc_join(nc_u24(owner),nc_u24(0),nc_u24(2)),kind,mode) else
+          if tag == 5 do dn_raws(source,table,nc_join(nc_u24(owner),nc_u24(0),nc_u24(nt_count(kind))),kind,mode) else
             if (tag-15)*(tag-20) != 0 do 1 else dn_raw_named(source,table,owner,kind,mode) end
           end
         end
@@ -217,17 +217,17 @@ defmodule NativeNodes do
     end end
   end
   def dn_seen(mode: bytes, id: integer, offset: integer): integer do
-    if offset+2 > Enum.count(mode) do 0 else if nc_read(mode,offset) == id do 1 else dn_seen(mode,id,offset+2) end end
+    if offset+3 > Enum.count(mode) do 0 else if nc_cursor(mode,offset) == id do 1 else dn_seen(mode,id,offset+3) end end
   end
   # A declared type: a handle of the library holds nothing that is sent;
   # another is looked into, once, after its arguments.
   def dn_raw_named(source: bytes, table: bytes, owner: integer, kind: bytes, mode: bytes): integer do
     id = nd_named(source,nc_cursor(kind,1),table,owner)
     # A name that is no declared type has no number to note.
-    inner = if id < 0 do b[] else nc_join(b[1,1],nc_slice(mode,2,Enum.count(mode)),nc_u16(id)) end
+    inner = if id < 0 do b[] else nc_join(b[1,1],nc_slice(mode,2,Enum.count(mode)),nc_u24(id)) end
     start = if id < 0 do -1 else nc_meta(table,id,9) end
     if id < 0 do 1 else if Enum.at(mode,0,0) == 0 do 1 else if Enum.count(ac_shown(dn_name(source,table,id))) > 0 do 1 else if dn_seen(mode,id,2) == 1 do 1 else
-      if (if nt_tag(kind) == 20 do dn_raws(source,table,nc_join(nc_u16(owner),nc_u24(0),nc_u24(nt_count(kind))),kind,mode) else 1 end) == 0 do 0 else
+      if (if nt_tag(kind) == 20 do dn_raws(source,table,nc_join(nc_u24(owner),nc_u24(0),nc_u24(nt_count(kind))),kind,mode) else 1 end) == 0 do 0 else
         if Enum.at(table,id*28+16,0) == 64 do dn_raw_fields(source,table,nc_owner(table,id),start,inner) else dn_raw_variants(source,table,nc_owner(table,id),start,inner) end
       end
     end end end end

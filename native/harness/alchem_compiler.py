@@ -99,7 +99,6 @@ def verify(frontend,backends,saved_compilers=None):
                 basic.replace('x*6','if=1\n x'),
                 basic.replace('x*6','main=1\n x'),
                 basic.replace('scale(7)','scale(7,)'),
-                'defmodule M do '+''.join(f'def f{i}(): integer do 1 end ' for i in range(FUNCTION_LIMIT))+'def main() do System.halt(0) end end',
             ]
             for source in invalid:
                 if len(source)>1000000 and not fresh:continue

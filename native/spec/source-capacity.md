@@ -112,16 +112,35 @@ Seed IR V11 reads up to 16,777,216 bytes (`bytes.read`; versions before it keep
 
 ## Limits that remain
 
-- 65,535 functions and 65,536 table records (`alchem-modules.md`, "Compiler
-  representation"; seed IR V11 takes 65,535 functions too, earlier versions
-  256). It was 4096 and 8000. The compiler's own source has 1,862
-  functions in 1,239,267 bytes (it had 3,491 before the library stopped
-  costing a function per entry), and a library function written in Alchem no
-  longer adds one (`alchem-library-profile.md`), so the source limit comes
-  first only for dense functions: at the compiler's own density 16,776,191
-  bytes hold about 25,000 functions, and a program of one-line functions
-  reaches 65,535 at about 3.6 MB (the pinned compiler takes more).
-  A program of 65,535 functions has 64 bytes of source for each on average.
+- 16,777,214 functions and 16,777,215 table records (`alchem-modules.md`,
+  "Compiler representation"), which the source's 16 MiB reaches first: at
+  the compiler's own density they hold about 25,000 functions, and
+  functions of one line each about 300,000. It was 65,535 and 65,536
+  (and 4096 and 8000 before that): a record was named by a number of two
+  bytes in the record of its module, at the start of an environment, in
+  the context of a function's clauses and in the plans the compiler's parts
+  hand each other (the call's target, a struct's or a sum type's number, a
+  module in the order of the modules, a function asked about for equality
+  or for JSON). Each is three bytes now; the record is 28 bytes for 27 and
+  an environment's records start at its fourth byte. None of this is in
+  what the compiler makes: every program compiles to the bytes it did, and
+  the compiler from the pinned release makes itself. `harness/past_limit.py`
+  holds programs whose every function, struct and sum type stands behind
+  66,000 others. Seed IR V11 takes 65,535 functions.
+- A file of tests holds 65,534 declarations: its tests, describe blocks
+  and functions are each a record of `native-testing.alc`, whose numbers
+  are two bytes in the 48 bytes of its cursor. One with more is refused,
+  where it ended the compiler; a program without tests has no such bound.
+- A program with a macro, a template or a protocol is read once more by
+  `native-macros.alc` before it is compiled. That reading added each
+  record to the end of all of them, and each piece of the rewritten text
+  to the end of all the pieces, and was three calls inside one another for
+  every declaration: 8,000 functions took 4.5 GB, 32,000 the arena, and
+  33,000 nested deeper than calls may. The records and the pieces are kept
+  in two parts, the later joined to the earlier when it is a quarter of it
+  (`mt_kept`, `mt_late`), and the reading is a loop (`mt_index`, whose
+  steps say what they add with `mt_next`): 66,000 functions take 12 s and
+  123 MB.
 - A `for` body's statements were compiled with the code so far copied for
   each (12.6 GB at 5,000); they are joined in runs of doubling length now, as
   a function body's are (`wf_more`; "Costs that grow faster than the
@@ -193,7 +212,7 @@ What remains fixed, with the reason:
 | Limit | Number | Why |
 | --- | --- | --- |
 | Source | 16,776,191 bytes | positions are 24 bits (above; #19); the pinned compiler stops at 1,048,576 a file |
-| Functions; table records | 65,535; 65,536 | 16-bit ids (below) |
+| Functions; table records | 16,777,214; 16,777,215 | 24-bit numbers ("Limits that remain"); 65,535 and 65,536 until they were widened |
 | Parameters of one function | 65,534 | two bytes of the table record (the pinned compiler takes what its megabyte holds, about 140,000 one-letter parameters) |
 | The description of a type for `inspect`, the JSON library and node messages | 64 KiB a node: a struct of about 3,000 fields, a sum type of about 4,000 variants | a node's length is 16 bits in the format the inspect routine (`spec/integer-parse-x86_64.s`), `library/JSON.alc` and the node codec read. Counts and name lengths in it are one byte, or 255 and four bytes (`ni_count`, `ins_count`), which `inspect` reads; JSON and node messages read one byte, so a type with 255 fields, variants or tuple parts or more has no JSON or wire form (it is refused at compilation: `ni_held`, `ni_small`) |
 | The name of a function in a failure trace; of a type variable | 254 bytes; 255 | one length byte in the trace tables (`nz_named`) and in a type (tag 16) |
@@ -377,9 +396,7 @@ what they are (`bare?`).
 What remains is linear: about 0.4 ms and 40 KB a function, a third of it
 the lexer and the parser, the rest the passes that still make the tree
 again (`qualify`, the names of `assembled`) and the reads of a field,
-which pass the fields before it. And the compiler takes 65,535 functions
-("Limits that remain"): a module of 120,000 passes `alchem check`'s own
-checks and is then refused by the compiler.
+which pass the fields before it.
 
 ## Time
 

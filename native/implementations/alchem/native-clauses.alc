@@ -408,16 +408,16 @@ defmodule NativeClauses do
   # The default values of the parameters of a function from one of them on,
   # as arguments: the length of their types (2 bytes), their types as a type
   # list, then the code that pushes them. plan: the parameter at pos, the
-  # first to give, their number, and the function (2 bytes).
+  # first to give, their number, and the function (3 bytes).
   def nj_defaults(source: bytes, pos: integer, table: bytes, plan: bytes): bytes do
     index = nc_cursor(plan,0)
     wanted = if index < nc_cursor(plan,3) do 0 else 1 end
     item = if index == nc_cursor(plan,6) do b[] else nj_param(source,pos) end
     begin = nc_cursor(item,3)
-    value = if wanted == 0 do b[] else if begin == 0 do b[] else if nj_lower(source,begin,nc_pos(item),16777216) == 0 do b[] else nc_expression(source,begin,nc_slice(plan,9,11),table,0) end end end
+    value = if wanted == 0 do b[] else if begin == 0 do b[] else if nj_lower(source,begin,nc_pos(item),16777216) == 0 do b[] else nc_expression(source,begin,nc_slice(plan,9,12),table,0) end end end
     whole = if wanted == 0 do 1 else if nc_pos(value) < 0 do 0 else if nc_start(source,nc_pos(value)) == nc_pos(item) do 1 else 0 end end end
     if index == nc_cursor(plan,6) do b[0,0,0,0] else if Enum.count(item) == 0 do b[] else if whole == 0 do b[] else
-      rest = nj_defaults(source,nc_end(source,nc_pos(item)),table,Enum.concat(nc_u24(index+1),nc_slice(plan,3,11)))
+      rest = nj_defaults(source,nc_end(source,nc_pos(item)),table,Enum.concat(nc_u24(index+1),nc_slice(plan,3,12)))
       cell = if wanted == 0 do b[] else nt_cell(nc_kind(value)) end
       push = if wanted == 0 do b[] else Enum.concat(nc_code(value),b[80]) end
       if Enum.count(rest) == 0 do b[] else
@@ -444,7 +444,7 @@ defmodule NativeClauses do
     count = nc_arg_count(args)
     total = nc_argc(table,target)
     types = nc_arg_types(args)
-    extra = if count == total do b[] else nj_defaults(source,nc_meta(table,target,6),nj_from(table,nj_back(source,at)),nc_join(nc_u24(0),Enum.concat(nc_u24(count),nc_u24(total)),nc_u16(target))) end
+    extra = if count == total do b[] else nj_defaults(source,nc_meta(table,target,6),nj_from(table,nj_back(source,at)),nc_join(nc_u24(0),Enum.concat(nc_u24(count),nc_u24(total)),nc_u24(target))) end
     size = nc_long(extra,0)
     if count == total do args else if Enum.count(extra) == 0 do b[] else
       nc_arg_packet(nc_pos(args),total,nc_join(nc_slice(types,0,nt_skip(types,0,count)),nc_slice(extra,4,4+size),nt_cell(Enum.concat(nw_marks(args),nc_zeros(total-count)))),Enum.concat(nc_arg_code(args),nc_slice(extra,4+size,Enum.count(extra))))
@@ -452,23 +452,23 @@ defmodule NativeClauses do
   end
   # A direct call whose argument list opens at pos: to function target, or
   # to the function of its name that takes the number of arguments given.
-  # plan: target (2 bytes), then 1 when the call is from another module,
+  # plan: target (3 bytes), then 1 when the call is from another module,
   # which only reaches a def.
   def nj_enter(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, plan: bytes): bytes do
-    target = nc_read(plan,0)
+    target = nc_cursor(plan,0)
     parsed = if Enum.at(table,target*28+16,0) == 1 do b[] else nc_arguments_open(source,nc_end(source,pos),env,table,depth) end
     first = if nc_pos(parsed) < 0 do -1 else nj_fit(source,table,target,nc_arg_count(parsed)) end
     given = nn_ranged(source,table,first,parsed,0)
     fit = nj_form(source,table,first,given)
-    hidden = if fit < 0 do 1 else Enum.at(plan,2,0)*Enum.at(table,fit*28+16,0) end
+    hidden = if fit < 0 do 1 else Enum.at(plan,3,0)*Enum.at(table,fit*28+16,0) end
     full = if hidden != 0 do b[] else nj_full(source,table,fit,given,pos) end
-    if nc_pos(full) < 0 do b[] else nj_call(source,pos,env,table,depth,Enum.concat(nc_u16(fit),full)) end
+    if nc_pos(full) < 0 do b[] else nj_call(source,pos,env,table,depth,Enum.concat(nc_u24(fit),full)) end
   end
-  # plan: the function (2 bytes), then its arguments.
+  # plan: the function (3 bytes), then its arguments.
   def nj_call(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, plan: bytes): bytes do
-    target = nc_read(plan,0)
-    parsed = nc_slice(plan,2,Enum.count(plan))
-    if nu_generic(source,table,target) == 1 do nf_postfix(source,nu_call(source,env,table,depth,parsed,Enum.concat(nc_u16(target),nw_seed(source,nc_start(source,pos),env,table,target))),env,table,depth) else
+    target = nc_cursor(plan,0)
+    parsed = nc_slice(plan,3,Enum.count(plan))
+    if nu_generic(source,table,target) == 1 do nf_postfix(source,nu_call(source,env,table,depth,parsed,Enum.concat(nc_u24(target),nw_seed(source,nc_start(source,pos),env,table,target))),env,table,depth) else
       cells = nj_cells(source,table,target)
       args = if nf_has_pending(parsed,0) == 0 do parsed else nf_typed_all(source,env,table,depth,parsed,Enum.concat(nc_u24(nc_arg_count(parsed)-1),cells)) end
       if nc_pos(args) < 0 do b[] else if nj_check(cells,args,0) == 0 do b[] else

@@ -1080,7 +1080,7 @@ defmodule NativeSourceCompiler do
       target = if home < 0 do -1 else if nc_imported(source,table,owner,home) == 0 do -1 else nc_find(source,name,table,home) end end
       # A module that is not the program's may be a library module written in Alchem.
       if home < 0 do vs_or(source,pos,env,table,depth) else if target < 0 do b[] else
-        if nc_word(source,nc_end(source,name),b[40]) != 1 do b[] else nj_enter(source,nc_end(source,name),env,table,depth,Enum.concat(nc_u16(target),b[if home == owner do 0 else 1 end])) end
+        if nc_word(source,nc_end(source,name),b[40]) != 1 do b[] else nj_enter(source,nc_end(source,name),env,table,depth,Enum.concat(nc_u24(target),b[if home == owner do 0 else 1 end])) end
       end end end
     else
       if local < 0 do b[] else gm_loaded(source,pos,env,table,ne_read(env,local,nc_value(stop,nc_slot(b[72,139,69],local),nt_read(env,nc_env_offset(env,local)+7)))) end
@@ -1089,7 +1089,7 @@ defmodule NativeSourceCompiler do
   # A direct call to table entry target whose argument list opens at pos, or
   # to the function of its name that takes the arguments given.
   def nc_call_function(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, target: integer): bytes do
-    if target < 0 do b[] else nj_enter(source,pos,env,table,depth,Enum.concat(nc_u16(target),b[0])) end
+    if target < 0 do b[] else nj_enter(source,pos,env,table,depth,Enum.concat(nc_u24(target),b[0])) end
   end
 
   # Cursor-only list span pass; compile each expression once in a balanced tree.
@@ -1696,13 +1696,13 @@ defmodule NativeSourceCompiler do
   end
 
   # User functions across all modules. Table slots also hold module headers
-  # and shared runtimes. A record is named by a 16-bit number (the function of
-  # an environment, the module of a record), so tables stop at 65536 records;
-  # the runtimes take the slots after them, which call sites address with a
-  # 32-bit address.
-  def nc_function_limit(): integer do 65535 end
-  def nc_record_limit(): integer do 65536 end
-  def nc_slot_limit(): integer do 65541 end
+  # and shared runtimes. A record is named by a number of three bytes (the
+  # function of an environment, the module of a record, the function a plan
+  # is for), so tables stop at 16777215 records; the runtimes take the
+  # slots after them, which call sites address with a 32-bit address.
+  def nc_function_limit(): integer do 16777214 end
+  def nc_record_limit(): integer do 16777215 end
+  def nc_slot_limit(): integer do 16777220 end
   # One eight-byte entry per slot; code follows the table directly.
   def nc_addresses(lengths: bytes, id: integer, offset: integer): bytes do
     nc_address_range(lengths,id,nc_units(Enum.count(lengths),4),offset)
