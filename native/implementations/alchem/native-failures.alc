@@ -190,7 +190,7 @@ defmodule NativeFailures do
   # slot: the failure of a nil, named where the case stands (np_case).
   def zf_unmatched(table: bytes, env: bytes, slot: integer): bytes do
     at = nc_env_offset(env,slot)
-    if zf_nil(nt_read(env,at+7),0) == 0 do b[] else wc_fail(table,nc_cursor(env,at),b[110,111,32,99,97,115,101,32,98,114,97,110,99,104,32,109,97,116,99,104,101,100]) end
+    if zf_nil(nt_read(env,at+7),0) == 0 do b[] else wc_fail(table,nc_long(env,at),b[110,111,32,99,97,115,101,32,98,114,97,110,99,104,32,109,97,116,99,104,101,100]) end
   end
   # The test that the option in RAX is none. In the library a nil is one
   # too: the pinned runtime's own functions ask only whether a value is some.

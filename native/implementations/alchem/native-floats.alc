@@ -409,9 +409,9 @@ defmodule NativeFloats do
     at = nc_env_offset(env,local)
     first = nc_env_next(env,at)
     if first >= Enum.count(env) do 0 else
-      start = nc_read(env,at)+65536*Enum.at(env,at+2,0)
-      one = nc_read(env,first)+65536*Enum.at(env,first+2,0)
-      ends = nc_read(env,first+3)+65536*Enum.at(env,first+5,0)
+      start = nc_long(env,at)
+      one = nc_long(env,first)
+      ends = nc_env_stop(env,first)
       kind = nt_read(env,first+7)
       if one != start do 0 else if ends != one do 0 else if Enum.count(kind) != 2 do 0 else if Enum.at(kind,1,0) == 197 do 1 else 0 end end end end
     end
@@ -421,10 +421,10 @@ defmodule NativeFloats do
     first = nc_env_next(env,at)
     second = if first >= Enum.count(env) do Enum.count(env) else nc_env_next(env,first) end
     if second >= Enum.count(env) do 0 else
-      start = nc_read(env,at)+65536*Enum.at(env,at+2,0)
-      one = nc_read(env,first)+65536*Enum.at(env,first+2,0)
-      two = nc_read(env,second)+65536*Enum.at(env,second+2,0)
-      ends = nc_read(env,first+3)+65536*Enum.at(env,first+5,0)
+      start = nc_long(env,at)
+      one = nc_long(env,first)
+      two = nc_long(env,second)
+      ends = nc_env_stop(env,first)
       if one != start do 0 else if two != start do 0 else if ends != one do 0 else
         if nt_tag(nt_read(env,first+7))*nt_tag(nt_read(env,second+7)) == 576 do 1 else 0 end
       end end end

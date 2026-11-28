@@ -461,7 +461,7 @@ defmodule NativeGenerics do
   def nw_expected(env: bytes, paren: integer, offset: integer): bytes do
     kind = nt_read(env,offset+7)
     if offset >= Enum.count(env) do b[] else
-      if nc_cursor(env,offset) != paren do nw_expected(env,paren,nc_env_next(env,offset)) else
+      if nc_long(env,offset) != paren do nw_expected(env,paren,nc_env_next(env,offset)) else
         if nt_tag(kind) != 21 do nw_expected(env,paren,nc_env_next(env,offset)) else nc_slice(kind,1,Enum.count(kind)) end
       end
     end

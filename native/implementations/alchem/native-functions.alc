@@ -560,7 +560,7 @@ defmodule NativeFunctions do
   # function: the pinned language rejects a capture inside another either way.
   def nf_nested(source: bytes, env: bytes, offset: integer): integer do
     if offset >= Enum.count(env) do 0 else
-      if byte_at(source,nc_cursor(env,offset)) != 38 do nf_nested(source,env,nc_env_next(env,offset)) else if nt_tag(nt_read(env,offset+7)) == 21 do nf_nested(source,env,nc_env_next(env,offset)) else 1 end end
+      if byte_at(source,nc_long(env,offset)) != 38 do nf_nested(source,env,nc_env_next(env,offset)) else if nt_tag(nt_read(env,offset+7)) == 21 do nf_nested(source,env,nc_env_next(env,offset)) else 1 end end
     end
   end
   # The digit at pos as a placeholder or arity index, else -1.
@@ -574,9 +574,9 @@ defmodule NativeFunctions do
   def nf_placeholder(source: bytes, pos: integer, env: bytes, table: bytes): bytes do
     index = nf_index(source,pos)
     offset = if index < 1 do 2 else nc_env_offset(env,index-1) end
-    start = nc_cursor(env,offset)
+    start = nc_long(env,offset)
     if index < 1 do b[] else if offset+8 > Enum.count(env) do b[] else
-      if byte_at(source,start) != 38 do b[] else if nc_cursor(env,offset+3)-start != index do b[] else
+      if byte_at(source,start) != 38 do b[] else if nc_env_stop(env,offset)-start != index do b[] else
         nd_access(source,nc_value(nc_end(source,pos),nc_slot(b[72,139,69],index-1),nt_read(env,offset+7)),env,table,0)
       end end
     end end
@@ -679,7 +679,7 @@ defmodule NativeFunctions do
   def nf_ambient_from(env: bytes, offset: integer, found: bytes): bytes do
     kind = nt_read(env,offset+7)
     if offset >= Enum.count(env) do found else
-      nf_ambient_from(env,nc_env_next(env,offset),if nt_tag(kind) == 41 do kind else if nt_tag(kind) != 21 do found else if nc_cursor(env,offset) != 0 do found else kind end end end)
+      nf_ambient_from(env,nc_env_next(env,offset),if nt_tag(kind) == 41 do kind else if nt_tag(kind) != 21 do found else if nc_long(env,offset) != 0 do found else kind end end end)
     end
   end
   # 1 for a type worth a record: one that holds a function, which types a
@@ -711,9 +711,9 @@ defmodule NativeFunctions do
   end
   # 1 when a named record of env from offset on has a name that inner has.
   def nf_clashes(source: bytes, env: bytes, inner: bytes, offset: integer): integer do
-    start = nc_cursor(env,offset)
+    start = nc_long(env,offset)
     if offset >= Enum.count(env) do 0 else
-      if byte_at(source,start) == 38 do nf_clashes(source,env,inner,nc_env_next(env,offset)) else if nc_cursor(env,offset+3) == start do nf_clashes(source,env,inner,nc_env_next(env,offset)) else
+      if byte_at(source,start) == 38 do nf_clashes(source,env,inner,nc_env_next(env,offset)) else if nc_env_stop(env,offset) == start do nf_clashes(source,env,inner,nc_env_next(env,offset)) else
         if nc_lookup(source,start,inner,3) >= 0 do 1 else nf_clashes(source,env,inner,nc_env_next(env,offset)) end
       end end
     end
@@ -722,15 +722,15 @@ defmodule NativeFunctions do
   # placeholder's without its name.
   def nf_carry_at(source: bytes, env: bytes, offset: integer): integer do
     if offset >= Enum.count(env) do offset else
-      if nc_env_gap(env,offset) > 0 do offset else if nc_cursor(env,offset+3) == nc_cursor(env,offset) do nf_carry_at(source,env,nc_env_next(env,offset)) else
-        if byte_at(source,nc_cursor(env,offset)) == 38 do offset else nf_carry_at(source,env,nc_env_next(env,offset)) end
+      if nc_env_gap(env,offset) > 0 do offset else if nc_env_stop(env,offset) == nc_long(env,offset) do nf_carry_at(source,env,nc_env_next(env,offset)) else
+        if byte_at(source,nc_long(env,offset)) == 38 do offset else nf_carry_at(source,env,nc_env_next(env,offset)) end
       end end
     end
   end
   def nf_carried(source: bytes, env: bytes, offset: integer): bytes do
     at = nf_carry_at(source,env,offset)
     if at >= Enum.count(env) do nc_slice(env,offset,Enum.count(env)) else
-      nc_join(nc_slice(env,offset,at),if nc_env_gap(env,at) > 0 do b[] else nc_env_record(nc_cursor(env,at),nc_cursor(env,at),nt_read(env,at+7)) end,nf_carried(source,env,nc_env_next(env,at)))
+      nc_join(nc_slice(env,offset,at),if nc_env_gap(env,at) > 0 do b[] else nc_env_record(nc_long(env,at),nc_long(env,at),nt_read(env,at+7)) end,nf_carried(source,env,nc_env_next(env,at)))
     end
   end
   def nf_capture_env(source: bytes, env: bytes, inner: bytes, captures: bytes, index: integer): bytes do
@@ -931,10 +931,10 @@ defmodule NativeFunctions do
   end
   # slot: the slot of the record at offset.
   def nf_piped_at(source: bytes, pos: integer, env: bytes, offset: integer, slot: integer): bytes do
-    start = nc_cursor(env,offset)
+    start = nc_long(env,offset)
     if pos < 1 do b[] else if offset >= Enum.count(env) do b[] else
       if start != pos-1 do nf_piped_at(source,pos,env,nc_env_next(env,offset),slot+nc_env_weight(env,offset)) else
-        if nc_cursor(env,offset+3) != start do nf_piped_at(source,pos,env,nc_env_next(env,offset),slot+nc_env_weight(env,offset)) else
+        if nc_env_stop(env,offset) != start do nf_piped_at(source,pos,env,nc_env_next(env,offset),slot+nc_env_weight(env,offset)) else
           # A record of tag 21 at the same place holds an expected type, not a piped value.
           if byte_at(source,start) != 40 do b[] else if nc_env_tag(env,offset) == 21 do nf_piped_at(source,pos,env,nc_env_next(env,offset),slot+nc_env_weight(env,offset)) else nc_value(pos,nc_slot(b[72,139,69],slot),nt_read(env,offset+7)) end end
         end

@@ -144,9 +144,9 @@ defmodule NativePatterns do
     size = nc_long(all,14)
     bound = nc_slice(all,18+size,Enum.count(all))
     entries = ev_scan(bound,nc_zeros(8),ev_count(bound,0,0),0)
-    count = nc_units(Enum.count(entries)-8,13)
+    count = nc_units(Enum.count(entries)-8,15)
     if Enum.count(all) == 0 do b[] else if nc_cursor(plan,3) == 0 do b[] else
-      if Enum.count(ev_pick(source,entries,8,count,1))+Enum.count(ev_pick(source,entries,8,count,0)) != count*13 do b[] else np_pack(nc_cursor(all,0),nc_slice(all,18,18+size),Enum.concat(env,bound)) end
+      if Enum.count(ev_pick(source,entries,8,count,1))+Enum.count(ev_pick(source,entries,8,count,0)) != count*15 do b[] else np_pack(nc_cursor(all,0),nc_slice(all,18,18+size),Enum.concat(env,bound)) end
     end end
   end
   def np_part(source: bytes, env: bytes, table: bytes, cells: bytes, plan: bytes, state: bytes): bytes do

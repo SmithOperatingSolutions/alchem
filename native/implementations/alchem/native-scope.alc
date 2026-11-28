@@ -18,15 +18,15 @@ defmodule NativeScope do
   # windows, so a failure costs one more compilation and not one at every
   # level.
   #
-  # An entry of an index is 13 bytes: where the name starts and stops, the
+  # An entry of an index is 15 bytes: where the name starts and stops, the
   # slot, and the offset of the record in the store's records.
   def ev_plain(): integer do 1024 end
   def ev_few(): integer do 4 end
   def ev_many(): integer do 9 end
   def ev_entry(start: integer, stop: integer, slot: integer, offset: integer): bytes do
-    nc_join(nc_u24(start),nc_u24(stop),Enum.concat(nc_u24(slot),nc_u32(offset)))
+    nc_join(nc_u32(start),nc_u32(stop),Enum.concat(nc_u24(slot),nc_u32(offset)))
   end
-  def ev_units(items: bytes): integer do nc_units(Enum.count(items),13) end
+  def ev_units(items: bytes): integer do nc_units(Enum.count(items),15) end
   # The order of two names of the source: by length, then by their bytes.
   def ev_order(source: bytes, a: integer, astop: integer, b: integer, bstop: integer): integer do
     if astop-a != bstop-b do astop-a-bstop+b else if a == b do 0 else ev_order_at(source,a,b,astop-a) end end
@@ -40,34 +40,34 @@ defmodule NativeScope do
   # before start..stop; of the first whose slot is not below slot.
   def ev_bound(source: bytes, data: bytes, lo: integer, count: integer, start: integer, stop: integer): integer do
     half = nc_half(count)
-    at = lo+half*13
+    at = lo+half*15
     if count == 0 do lo else
-      if ev_order(source,nc_cursor(data,at),nc_cursor(data,at+3),start,stop) < 0 do ev_bound(source,data,at+13,count-half-1,start,stop) else ev_bound(source,data,lo,half,start,stop) end
+      if ev_order(source,nc_long(data,at),nc_long(data,at+4),start,stop) < 0 do ev_bound(source,data,at+15,count-half-1,start,stop) else ev_bound(source,data,lo,half,start,stop) end
     end
   end
   def ev_bound_slot(data: bytes, lo: integer, count: integer, slot: integer): integer do
     half = nc_half(count)
-    at = lo+half*13
+    at = lo+half*15
     if count == 0 do lo else
-      if nc_cursor(data,at+6) < slot do ev_bound_slot(data,at+13,count-half-1,slot) else ev_bound_slot(data,lo,half,slot) end
+      if nc_cursor(data,at+8) < slot do ev_bound_slot(data,at+15,count-half-1,slot) else ev_bound_slot(data,lo,half,slot) end
     end
   end
   # 0 when the entries at a and b are the same by name (mode 0) or slot.
   def ev_differ(source: bytes, first: bytes, a: integer, second: bytes, b: integer, mode: integer): integer do
-    if mode == 1 do nc_cursor(first,a+6)-nc_cursor(second,b+6) else ev_order(source,nc_cursor(first,a),nc_cursor(first,a+3),nc_cursor(second,b),nc_cursor(second,b+3)) end
+    if mode == 1 do nc_cursor(first,a+8)-nc_cursor(second,b+8) else ev_order(source,nc_long(first,a),nc_long(first,a+4),nc_long(second,b),nc_long(second,b+4)) end
   end
   # Two sorted lists as one, by name (mode 0) or by slot (mode 1); of two
   # entries that are the same the one of a stays.
   def ev_merge(source: bytes, a: bytes, b: bytes, mode: integer): bytes do
     if Enum.count(a) == 0 do b else if Enum.count(b) == 0 do a else
-      if ev_differ(source,a,Enum.count(a)-13,b,0,mode) < 0 do Enum.concat(a,b) else ev_merge_at(source,a,b,mode) end
+      if ev_differ(source,a,Enum.count(a)-15,b,0,mode) < 0 do Enum.concat(a,b) else ev_merge_at(source,a,b,mode) end
     end end
   end
   def ev_merge_at(source: bytes, a: bytes, b: bytes, mode: integer): bytes do
-    at = nc_half(ev_units(b))*13
-    split = if mode == 1 do ev_bound_slot(a,0,ev_units(a),nc_cursor(b,at+6)) else ev_bound(source,a,0,ev_units(a),nc_cursor(b,at),nc_cursor(b,at+3)) end
+    at = nc_half(ev_units(b))*15
+    split = if mode == 1 do ev_bound_slot(a,0,ev_units(a),nc_cursor(b,at+8)) else ev_bound(source,a,0,ev_units(a),nc_long(b,at),nc_long(b,at+4)) end
     same = if split >= Enum.count(a) do 0 else if ev_differ(source,a,split,b,at,mode) == 0 do 1 else 0 end end
-    nc_join(ev_merge(source,nc_slice(a,0,split),nc_slice(b,0,at),mode),if same == 1 do b[] else nc_slice(b,at,at+13) end,ev_merge(source,nc_slice(a,split,Enum.count(a)),nc_slice(b,at+13,Enum.count(b)),mode))
+    nc_join(ev_merge(source,nc_slice(a,0,split),nc_slice(b,0,at),mode),if same == 1 do b[] else nc_slice(b,at,at+15) end,ev_merge(source,nc_slice(a,split,Enum.count(a)),nc_slice(b,at+15,Enum.count(b)),mode))
   end
   # The names in the text from lo to hi, wherever they stand (a string, a
   # sigil, a comment), sorted. A name before ? or ! is there with and
@@ -114,7 +114,7 @@ defmodule NativeScope do
   def ev_scan_one(run: bytes, offset: integer, slot: integer, shift: integer): bytes do
     gap = nc_env_gap(run,offset)
     if gap > 0 do Enum.concat(nc_u32(nc_env_next(run,offset)),nc_u32(slot+gap)) else
-      nc_join(nc_u32(nc_env_next(run,offset)),nc_u32(slot+1),ev_entry(nc_cursor(run,offset),nc_cursor(run,offset+3),slot,shift+offset))
+      nc_join(nc_u32(nc_env_next(run,offset)),nc_u32(slot+1),ev_entry(nc_long(run,offset),nc_env_stop(run,offset),slot,shift+offset))
     end
   end
   # 1 for a record found by its name: one whose name starts as a name does.
@@ -125,8 +125,8 @@ defmodule NativeScope do
   # Of count entries from lo those found by name, sorted by it (named 1), or the others.
   def ev_pick(source: bytes, items: bytes, lo: integer, count: integer, named: integer): bytes do
     half = nc_half(count)
-    if count == 0 do b[] else if count == 1 do if ev_named(source,nc_cursor(items,lo),nc_cursor(items,lo+3)) == named do nc_slice(items,lo,lo+13) else b[] end else
-      if named == 1 do ev_merge(source,ev_pick(source,items,lo,half,1),ev_pick(source,items,lo+half*13,count-half,1),0) else Enum.concat(ev_pick(source,items,lo,half,0),ev_pick(source,items,lo+half*13,count-half,0)) end
+    if count == 0 do b[] else if count == 1 do if ev_named(source,nc_long(items,lo),nc_long(items,lo+4)) == named do nc_slice(items,lo,lo+15) else b[] end else
+      if named == 1 do ev_merge(source,ev_pick(source,items,lo,half,1),ev_pick(source,items,lo+half*15,count-half,1),0) else Enum.concat(ev_pick(source,items,lo,half,0),ev_pick(source,items,lo+half*15,count-half,0)) end
     end end
   end
   # The store with the records of extra after its own.
@@ -156,7 +156,7 @@ defmodule NativeScope do
     before = nc_long(store,lengths+kept*4-4)
     if kept == 0 do wc_both(last,nc_u32(ev_units(last))) else
       if before >= ev_units(last)*2 do wc_both(Enum.concat(nc_slice(store,first,stop),last),Enum.concat(nc_slice(store,lengths,lengths+kept*4),nc_u32(ev_units(last)))) else
-        ev_compact(source,store,ev_merge(source,nc_slice(store,stop-before*13,stop),last,0),kept-1,stop-before*13)
+        ev_compact(source,store,ev_merge(source,nc_slice(store,stop-before*15,stop),last,0),kept-1,stop-before*15)
       end
     end
   end
@@ -166,8 +166,8 @@ defmodule NativeScope do
     count = if lengths >= ev_tail(store) do 0 else nc_long(store,lengths) end
     at = ev_bound(source,store,run,count,start,stop)
     if lengths >= ev_tail(store) do -1 else
-      if at >= run+count*13 do ev_find(source,store,start,stop,run+count*13,lengths+4) else
-        if ev_order(source,nc_cursor(store,at),nc_cursor(store,at+3),start,stop) == 0 do at else ev_find(source,store,start,stop,run+count*13,lengths+4) end
+      if at >= run+count*15 do ev_find(source,store,start,stop,run+count*15,lengths+4) else
+        if ev_order(source,nc_long(store,at),nc_long(store,at+4),start,stop) == 0 do at else ev_find(source,store,start,stop,run+count*15,lengths+4) end
       end
     end
   end
@@ -175,36 +175,36 @@ defmodule NativeScope do
   def ev_matches(source: bytes, store: bytes, names: bytes, lo: integer, count: integer): bytes do
     half = nc_half(count)
     first = ev_records(store)+ev_pinned(store)
-    at = if count != 1 do -1 else ev_find(source,store,nc_cursor(names,lo),nc_cursor(names,lo+3),first,first+ev_sorted(store)) end
-    if count == 0 do b[] else if count == 1 do if at < 0 do b[] else nc_slice(store,at,at+13) end else
-      ev_merge(source,ev_matches(source,store,names,lo,half),ev_matches(source,store,names,lo+half*13,count-half),1)
+    at = if count != 1 do -1 else ev_find(source,store,nc_long(names,lo),nc_long(names,lo+4),first,first+ev_sorted(store)) end
+    if count == 0 do b[] else if count == 1 do if at < 0 do b[] else nc_slice(store,at,at+15) end else
+      ev_merge(source,ev_matches(source,store,names,lo,half),ev_matches(source,store,names,lo+half*15,count-half),1)
     end end
   end
   # The records of the entries, each behind a record for the slots left out
   # before it, and one for those after the last.
   def ev_emit(store: bytes, entries: bytes): bytes do
     count = ev_units(entries)
-    Enum.concat(ev_emit_run(store,entries,0,count),nc_env_left(ev_total(store)-(if count == 0 do ev_base(store) else nc_cursor(entries,count*13-7)+1 end)))
+    Enum.concat(ev_emit_run(store,entries,0,count),nc_env_left(ev_total(store)-(if count == 0 do ev_base(store) else nc_cursor(entries,count*15-7)+1 end)))
   end
   def ev_emit_run(store: bytes, entries: bytes, first: integer, count: integer): bytes do
     half = nc_half(count)
-    if count == 0 do b[] else if count == 1 do ev_emit_one(store,entries,first*13) else
+    if count == 0 do b[] else if count == 1 do ev_emit_one(store,entries,first*15) else
       Enum.concat(ev_emit_run(store,entries,first,half),ev_emit_run(store,entries,first+half,count-half))
     end end
   end
   def ev_emit_one(store: bytes, entries: bytes, at: integer): bytes do
-    offset = nc_long(entries,at+9)
+    offset = nc_long(entries,at+11)
     before = if at == 0 do ev_base(store) else nc_cursor(entries,at-7)+1 end
-    Enum.concat(nc_env_left(nc_cursor(entries,at+6)-before),nc_slice(store,offset,nc_env_next(store,offset)))
+    Enum.concat(nc_env_left(nc_cursor(entries,at+8)-before),nc_slice(store,offset,nc_env_next(store,offset)))
   end
   def ev_view(source: bytes, store: bytes, names: bytes): bytes do
-    ev_emit(store,ev_merge(source,ev_matches(source,store,names,0,ev_units(names)),ev_pins(source,store,names,ev_records(store),nc_units(ev_pinned(store),13)),1))
+    ev_emit(store,ev_merge(source,ev_matches(source,store,names,0,ev_units(names)),ev_pins(source,store,names,ev_records(store),nc_units(ev_pinned(store),15)),1))
   end
   # Of count pinned entries from lo those a statement of these names needs.
   def ev_pins(source: bytes, store: bytes, names: bytes, lo: integer, count: integer): bytes do
     half = nc_half(count)
-    if count == 0 do b[] else if count == 1 do if ev_near_by(source,store,nc_long(store,lo+9),names) == 1 do nc_slice(store,lo,lo+13) else b[] end else
-      Enum.concat(ev_pins(source,store,names,lo,half),ev_pins(source,store,names,lo+half*13,count-half))
+    if count == 0 do b[] else if count == 1 do if ev_near_by(source,store,nc_long(store,lo+11),names) == 1 do nc_slice(store,lo,lo+15) else b[] end else
+      Enum.concat(ev_pins(source,store,names,lo,half),ev_pins(source,store,names,lo+half*15,count-half))
     end end
   end
   # 1 for a record without a name that only what made it reads, by its
@@ -215,7 +215,7 @@ defmodule NativeScope do
   # into a function (they stand at its &: nf_nested).
   def ev_loose(source: bytes, run: bytes, offset: integer): integer do
     tag = nc_env_tag(run,offset)
-    if nc_cursor(run,offset+3) != nc_cursor(run,offset) do 0 else if byte_at(source,nc_cursor(run,offset)) == 38 do 0 else
+    if nc_env_stop(run,offset) != nc_long(run,offset) do 0 else if byte_at(source,nc_long(run,offset)) == 38 do 0 else
       if tag == 24 do if nt_size(run,offset+7) == 1 do 1 else 0 end else
         if tag < 17 do 1 else if (tag-18)*(tag-19)*(tag-20)*(tag-22)*(tag-23) == 0 do 1 else if (tag-25)*(tag-26)*(tag-29) == 0 do 1 else 0 end end end
       end
@@ -225,8 +225,8 @@ defmodule NativeScope do
   # text the names end with (where it starts and stops, three bytes each)
   # may need: any but a loose one made outside that text.
   def ev_near_by(source: bytes, run: bytes, offset: integer, names: bytes): integer do
-    at = nc_cursor(run,offset)
-    if ev_loose(source,run,offset) == 0 do 1 else if at+1 < nc_cursor(names,Enum.count(names)-6) do 0 else if at > nc_cursor(names,Enum.count(names)-3) do 0 else 1 end end end
+    at = nc_long(run,offset)
+    if ev_loose(source,run,offset) == 0 do 1 else if at+1 < nc_long(names,Enum.count(names)-8) do 0 else if at > nc_long(names,Enum.count(names)-4) do 0 else 1 end end end
   end
   # The records of a list that a statement of these names can find. mark:
   # where the records kept since the last one left out start, or below
@@ -243,11 +243,11 @@ defmodule NativeScope do
     end
   end
   def ev_kept(source: bytes, names: bytes, run: bytes, offset: integer): integer do
-    start = nc_cursor(run,offset)
-    stop = nc_cursor(run,offset+3)
+    start = nc_long(run,offset)
+    stop = nc_env_stop(run,offset)
     at = if ev_named(source,start,stop) == 0 do -1 else ev_bound(source,names,0,ev_units(names),start,stop) end
-    if at < 0 do ev_near_by(source,run,offset,names) else if at+13 > Enum.count(names) do 0 else
-      if ev_order(source,nc_cursor(names,at),nc_cursor(names,at+3),start,stop) == 0 do 1 else 0 end
+    if at < 0 do ev_near_by(source,run,offset,names) else if at+15 > Enum.count(names) do 0 else
+      if ev_order(source,nc_long(names,at),nc_long(names,at+4),start,stop) == 0 do 1 else 0 end
     end end
   end
   # The environment of a statement of these names, and the whole one.
@@ -277,7 +277,7 @@ defmodule NativeScope do
   end
   # The names of the text from start to stop, and behind them the two.
   def ev_named_in(source: bytes, start: integer, stop: integer): bytes do
-    nc_join(ev_names(source,start,stop),nc_u24(start),nc_u24(stop))
+    nc_join(ev_names(source,start,stop),nc_u32(start),nc_u32(stop))
   end
   # An expression in a long environment is compiled in a window of it, and
   # once more in the whole one when it does not compile so or ends later
@@ -357,21 +357,21 @@ defmodule NativeScope do
   # A run of statements: its code, the type of its value as a cell, the
   # records the statements added or the whole environment after them, the
   # packet of the last statement (wf_block; empty when none is asked for),
-  # and 17 bytes: the position after the run, a step's flags (nx_pack), 1
+  # and 18 bytes: the position after the run, a step's flags (nx_pack), 1
   # when the environment is the whole one, and the sizes of the code, the
   # environment and the packet. The code stands first: two runs are joined
   # with two copies of the first one's code.
   def ev_foot(pos: integer, flags: integer, all: integer, size: integer, added: integer, last: integer): bytes do
-    nc_join(Enum.concat(nc_u24(pos),b[flags,all]),nc_u32(size),Enum.concat(nc_u32(added),nc_u32(last)))
+    nc_join(Enum.concat(nc_u32(pos),b[flags,all]),nc_u32(size),Enum.concat(nc_u32(added),nc_u32(last)))
   end
-  def ev_pos(run: bytes): integer do if Enum.count(run) < 17 do -1 else nc_cursor(run,Enum.count(run)-17) end end
+  def ev_pos(run: bytes): integer do if Enum.count(run) < 18 do -1 else nc_long(run,Enum.count(run)-18) end end
   def ev_flags(run: bytes): integer do Enum.at(run,Enum.count(run)-14,0) end
   def ev_all(run: bytes): integer do Enum.at(run,Enum.count(run)-13,0) end
   def ev_size(run: bytes): integer do nc_long(run,Enum.count(run)-12) end
   def ev_code(run: bytes): bytes do nc_slice(run,0,ev_size(run)) end
   def ev_kind(run: bytes): bytes do nt_read(run,ev_size(run)) end
   def ev_added(run: bytes): bytes do nc_slice(run,nt_after(run,ev_size(run)),nt_after(run,ev_size(run))+nc_long(run,Enum.count(run)-8)) end
-  def ev_last(run: bytes): bytes do nc_slice(run,Enum.count(run)-17-nc_long(run,Enum.count(run)-4),Enum.count(run)-17) end
+  def ev_last(run: bytes): bytes do nc_slice(run,Enum.count(run)-18-nc_long(run,Enum.count(run)-4),Enum.count(run)-18) end
   def ev_ended(run: bytes): integer do
     flags = ev_flags(run)
     low = if flags >= 4 do flags-4 else flags end
@@ -393,14 +393,14 @@ defmodule NativeScope do
   # last statement's packet is asked for, 1 when statements have windows,
   # and the position.
   def ev_plan(plan: bytes, level: integer, pos: integer, mode: integer): bytes do
-    Enum.concat(b[Enum.at(plan,0,0),level,Enum.at(plan,2,0),mode],nc_u24(pos))
+    Enum.concat(b[Enum.at(plan,0,0),level,Enum.at(plan,2,0),mode],nc_u32(pos))
   end
   # The statement of the plan compiled in env. all: 1 when env is the whole
   # environment, and what the run has is the whole one after the statement;
   # 2 when the last record of env is the mark of a second compilation,
   # which no later statement is to see: its slot is one left out.
   def ev_made(source: bytes, table: bytes, plan: bytes, env: bytes, all: integer): bytes do
-    pos = nc_cursor(plan,4)
+    pos = nc_long(plan,4)
     step = nx_step(source,pos,env,table,Enum.at(plan,0,0))
     kind = nt_after(step,8+nx_size(step))
     from = if all == 1 do kind else kind+Enum.count(env) end
@@ -411,7 +411,7 @@ defmodule NativeScope do
     end end
   end
   def ev_leaf(source: bytes, table: bytes, plan: bytes, big: bytes, mid: bytes, small: bytes): bytes do
-    start = nc_start(source,nc_cursor(plan,4))
+    start = nc_start(source,nc_long(plan,4))
     stop = if Enum.at(plan,3,0) == 0 do -1 else ev_extent(source,start) end
     near = if stop < 0 do b[] else ev_made(source,table,plan,ev_window(source,big,mid,small,ev_named_in(source,start,stop)),0) end
     if Enum.at(plan,3,0) == 0 do ev_made(source,table,plan,big,1) else
@@ -424,7 +424,7 @@ defmodule NativeScope do
   end
   def ev_span(source: bytes, table: bytes, plan: bytes, big: bytes, mid: bytes, small: bytes): bytes do
     level = Enum.at(plan,1,0)
-    first = if level == 0 do b[] else ev_span(source,table,ev_plan(plan,level-1,nc_cursor(plan,4),Enum.at(plan,3,0)),big,mid,small) end
+    first = if level == 0 do b[] else ev_span(source,table,ev_plan(plan,level-1,nc_long(plan,4),Enum.at(plan,3,0)),big,mid,small) end
     if level == 0 do ev_leaf(source,table,plan,big,mid,small) else
       if Enum.count(first) == 0 do b[] else if ev_ended(first) == 1 do first else
         ev_join(first,ev_next(source,table,ev_plan(plan,level-1,ev_pos(first),Enum.at(plan,3,0)),big,mid,if Enum.at(plan,3,0) == 0 do ev_added(first) else Enum.concat(small,ev_added(first)) end))
@@ -440,7 +440,7 @@ defmodule NativeScope do
     level = Enum.at(plan,1,0)
     if Enum.at(plan,3,0) == 0 do
       if ev_turns(fresh,level) == 0 do ev_span(source,table,plan,fresh,b[],b[]) else
-        ev_begin(source,table,ev_plan(plan,level,nc_cursor(plan,4),1),ev_big(source,plan,big,mid,fresh))
+        ev_begin(source,table,ev_plan(plan,level,nc_long(plan,4),1),ev_big(source,plan,big,mid,fresh))
       end
     else
       if level < ev_few() do ev_span(source,table,plan,big,mid,fresh) else
@@ -495,7 +495,7 @@ defmodule NativeScope do
   # The block at pos (nx_block, wf_block) as a run. spec: the depth, and 1
   # when the last statement's packet is asked for.
   def ev_block(source: bytes, pos: integer, env: bytes, table: bytes, spec: bytes): bytes do
-    ev_grow(source,table,Enum.concat(b[Enum.at(spec,0,0),0,Enum.at(spec,1,0),0],nc_u24(pos)),b[],env,nc_u32(0))
+    ev_grow(source,table,Enum.concat(b[Enum.at(spec,0,0),0,Enum.at(spec,1,0),0],nc_u32(pos)),b[],env,nc_u32(0))
   end
   # Native smoke test; assembled with the compiler.
   def main() do System.halt(0) end
