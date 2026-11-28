@@ -2,15 +2,15 @@ defmodule NativeTrace do
   # Failure traces: what a program needs to end as the pinned runtime ends
   # it, naming the place, the reason and every active call (the routine is
   # spec/trace-x86_64.s). The compiler itself is not traced: nc_compile marks
-  # byte 15 of the first table record when the program is a compiler entry.
+  # byte 20 of the first table record when the program is a compiler entry.
   def nz_on(table: bytes): integer do if Enum.at(table,20,0) == 1 do 0 else 1 end end
   def nz_off(table: bytes): bytes do nc_join(nc_slice(table,0,20),b[1],nc_slice(table,21,Enum.count(table))) end
   # The routine's table slot, after the four shared runtimes.
   def nz_slot(table: bytes): integer do nc_records(Enum.count(table))+4 end
   # A statement begins: its position goes to the frame.
-  # The frame's word is 64 bits: the position in its low 22 bits and above
-  # them a count of lines past that position's own (see wf_at). One that
-  # does not fit a sign-extended 32-bit immediate is stored in two halves.
+  # The frame's word is 64 bits: a position alone here (nz_put has the
+  # lines of a for and of a try above it). One that does not fit a
+  # sign-extended 32-bit immediate is stored in two halves.
   def nz_set(pos: integer): bytes do nz_put(pos,1) end
   # A line as the compiler counts with it: a position, and above its low
   # 32 bits the lines past the position's own. The word a frame holds is

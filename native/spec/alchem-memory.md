@@ -109,7 +109,7 @@ A compiler entry (`nc_entry_compiler`, the compiler itself among them)
 collects as every program does: its arena is every program's
 (`nc_arena_init`), and its input, all of standard input, is read into room
 the reserve hook gives and the grow hook makes larger, as `IO.read_all`
-reads (`nc_io_prefix`; more than 16 MiB less 1 KiB is refused as before).
+reads (`nc_io_prefix`; more than 1 GiB less 1 KiB is refused, `source-capacity.md`).
 The compiler building itself went from 1.47 GB resident to 53 MB, and
 compiles a small program in 16 MiB of address space. `gm_off` (a start that
 leaves the collector off) remains in the blob, started by no entry.

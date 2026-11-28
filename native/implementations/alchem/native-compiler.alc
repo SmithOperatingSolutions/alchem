@@ -120,7 +120,7 @@ defmodule NativeSourceCompiler do
     Enum.at(data, pos, 0) + Enum.at(data, pos + 1, 0) * 256
   end
   # The position a packet starts with. A value's flags (nw_mark, nx_impure)
-  # are the byte after it, so a position takes all 24 bits.
+  # are the byte after it: the position is four bytes.
   def nc_pos(result: bytes): integer do
     if Enum.count(result) < 4 do -1 else nc_long(result,0) end
   end
@@ -130,7 +130,7 @@ defmodule NativeSourceCompiler do
   def nc_slice(data: bytes, start: integer, stop: integer): bytes do
     if start >= stop do b[] else Enum.slice(data,start,stop-start) end
   end
-  # A compiled value: position after it (3 bytes), its flags (1 byte: 128
+  # A compiled value: position after it (4 bytes), its flags (1 byte: 128
   # nw_mark, 64 nx_impure), its type as a cell (nt_cell: the type after its
   # length), then its code. An empty byte string is failure, also for no type.
   def nc_code(result: bytes): bytes do
@@ -359,8 +359,8 @@ defmodule NativeSourceCompiler do
     end end
   end
   # The name index. A key: where a name is in the source and its length, a
-  # module, a record number and where the index ends in the table (3 bytes
-  # each); a name that is not in the source follows the key.
+  # module and a record number (3 bytes each) and where the index ends in the table (the first and the last are 4 bytes
+  # ); a name that is not in the source follows the key.
   def nc_index_key(table: bytes, pos: integer, size: integer, owner: integer, from: integer): bytes do
     count = nc_records(Enum.count(table))
     nc_join(nc_join(nc_u32(pos),nc_u24(size),nc_u24(owner)),nc_u24(from),nc_u32(count*44+40))
@@ -620,7 +620,7 @@ defmodule NativeSourceCompiler do
     end
   end
 
-  # Table building. A state: the position (3 bytes), what follows (0 more
+  # Table building. A state: the position (4 bytes), what follows (0 more
   # declarations of the module, 1 the end of the source, 2 a defmodule
   # header), the number of records so far, the record of the module being
   # read and the user functions declared before it (3 bytes each), the
@@ -944,7 +944,7 @@ defmodule NativeSourceCompiler do
   def nc_call(index: integer): bytes do
     nc_join(b[65,187],nc_u32(4195456+index*8),b[65,255,19])
   end
-  # An argument packet: position (3 bytes), count, the length of its type list
+  # An argument packet: position (4 bytes), count, the length of its type list
   # (2 bytes), the types as a type list, then the code that pushes the
   # arguments. With nc_arg_narrow() arguments or more, or a type list that
   # two bytes do not hold, the count byte is 255 and the count (3 bytes) and

@@ -307,7 +307,7 @@ defmodule NativeComprehensions do
   # slots of two closure records. A state is: the mode, the first slot, the
   # length of the environment with the for's own slots (3 bytes), the option
   # (1 into, 2 uniq: true, 3 reduce, 4 uniq: false) and where its value
-  # starts (3 bytes), 1 for the form in parentheses, where the for stands (3
+  # starts (4 bytes), 1 for the form in parentheses, where the for stands (4
   # bytes), how many generators came so far, the line the next item stands
   # on (past the for's own), the chain slot of the innermost record so far,
   # and the first slots of the for's record and of the body's.
@@ -340,7 +340,8 @@ defmodule NativeComprehensions do
   # standing on a line of the generated code. Lines are counted from the
   # line the statement stood on when the for began (kept in the for's third
   # slot) and from the last line of the body; a line is a position with the
-  # lines past it above its low 22 bits. The records are frame slots, since
+  # lines past it above its low 32 bits (nz_past; the word a frame holds:
+  # nz_low). The records are frame slots, since
   # the body's values are on the stack.
   #
   # The frame stands at line `past` after the for's own and its closures end

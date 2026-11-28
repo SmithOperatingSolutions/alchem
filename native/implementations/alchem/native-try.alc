@@ -162,7 +162,7 @@ defmodule NativeTry do
   end
   # try do body rescue arms catch arms else arms after block end. mode 1: the
   # try is a statement. plan: the depth, the try's first slot, 1 when its
-  # value is dropped, where it stands (3 bytes) and its words (ty_sections);
+  # value is dropped, where it stands (4 bytes) and its words (ty_sections);
   # then the line the pinned compiler's handler starts on, the line a
   # handler's arm leaves the try's closure on and the line after the body (4
   # bytes each).
@@ -248,14 +248,14 @@ defmodule NativeTry do
     found = wf_last(source,pos,env,table,depth)
     if nc_pos(found) < 0 do nc_start(source,pos) else ty_stub(source,nc_pos(found),wc_first(nc_code(found)),table,depth+1) end
   end
-  # Where the arrows of the arms of the block at pos stand, three bytes each.
+  # Where the arrows of the arms of the block at pos stand, four bytes each.
   def ty_arrows(source: bytes, pos: integer, found: bytes): bytes do
     at = wc_scan(source,pos,4)
     if at < 0 do found else if nc_word(source,at,b[45,62]) == 0 do found else if Enum.count(found) > 4000 do found else ty_arrows(source,at+2,Enum.concat(found,nc_u32(at))) end end end
   end
   # The arms, last section first: each run of arms ends in what follows it.
   # A state is: the section (0 rescue, 1 catch, 2 else), 1 for its first arm,
-  # the line the arm stands on (4 bytes), where the section ends (3 bytes),
+  # the line the arm stands on (8 bytes), where the section ends (4 bytes),
   # the type the arms match after its length, and what follows the section.
   # The arms, and where they did not compile the arms held to the type of
   # the body, which is the try's where it has no else (nf_led).

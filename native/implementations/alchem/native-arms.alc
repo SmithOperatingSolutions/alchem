@@ -14,7 +14,7 @@ defmodule NativeArms do
   # when arms it would have given a type to do not compile, so is the whole
   # case.
   #
-  # A run of arms: where the next arm starts (3 bytes), a status (0 arms may
+  # A run of arms: where the next arm starts (4 bytes), a status (0 arms may
   # follow, 1 the end that closes the case was met, 2 the arm there is left
   # to np_arms), 1 when an arm's value holds a function type, the number of
   # arms (4 bytes), then four parts, each behind its length (4 bytes): the

@@ -1,50 +1,86 @@
-# Sixteen-MiB native source input
+# The size of a native source
 
-Native compiler/source-tool entries accept at most 16,776,191 bytes (16 MiB
-less 1 KiB and one byte: `nc_limit`), reserving one extra input byte to reject
-overflow before calling the compiler: a longer input ends with `E_RUNTIME_INPUT: input exceeds byte limit`
-and status 65, and no ELF is written. The reader keeps EINTR/short-read
-behavior. `nc_compile` checks the same bound on what it is given, and
-`nc_compile_all` on the source with the library functions written in Alchem
-appended; a program too close to the limit to hold them is compiled without
-them, as before.
+Native compiler/source-tool entries accept at most 1,073,740,799 bytes (1 GiB
+less 1 KiB and one byte: `nc_limit`): a longer input ends with
+`E_RUNTIME_INPUT: input exceeds byte limit` and status 65 as it is read, and
+no ELF is written. The reader keeps EINTR/short-read behavior and takes
+memory as the input comes (`nc_io_prefix`). `nc_compile` checks the same
+bound on what it is given, and `nc_compile_all` on the source with the
+library functions written in Alchem appended; a program too close to the
+limit to hold them is compiled without them, as before. It was 16,776,191
+bytes while a position was three bytes (issue #19), and 4,194,303 and
+1,048,576 before that.
 
-The pinned compiler refuses a source file past 1,048,576 bytes (`source
-exceeds 1048576 bytes`) but not a program: five files of a megabyte each build
-and run. The bundlers and `alchem` refused such a file as it does; they now
-read a file as long as a program may be (`alchem-modules.md`), and
-the compiler takes what a program of many files adds up to. A single source
-given to `alchem-compiler` directly may be larger than a megabyte because the
-compiler's own source has to pass through it; this is a deliberate
-difference. Issue #19 is to go past 16 MiB with four-byte positions.
+Three things keep their own, smaller bound:
+
+- A source *file* is at most 16,776,191 bytes for the bundlers and `alchem`
+  (`alchem-modules.md`; `File.read` gives 16 MiB). A program of several files
+  may be as long as a source may be. The pinned compiler refuses a source
+  file past 1,048,576 bytes (`source exceeds 1048576 bytes`) but not a
+  program; a single source given to `alchem-compiler` directly may be larger
+  than a megabyte because the compiler's own source has to pass through it;
+  this is a deliberate difference.
+- The rewriting of macros, protocols, HTML templates and an `fn` whose
+  clauses stand on the lines after it (`native-macros.alc`) keeps a place in
+  three bytes. A text of 16 MiB or more that may hold one of them
+  (`mx_wanted`: the words `defmacro`, `defprotocol`, `defimpl`, `~h`, `~H`,
+  the byte 127, or such an `fn`, anywhere in it) is not compiled. The text a
+  rewriting makes may pass 16 MiB.
+- A file of tests is under 16 MiB (`tm_prepare`): a longer text is compiled
+  as it is, and has no tests.
 
 ## What holds a position
 
-Source positions are unsigned 24-bit fields (`nc_u24`/`nc_cursor`) in parser
-packets, signatures, parameter/local names, list spans, string decoder cursors,
-scoped bindings and the function table, and a position takes all 24 bits. A
-compiled value's flags are the byte after its position: bit 7 is `nw_mark`
-(the value's type needed one from its context) and bit 6 `nx_impure`. Until
-they had that byte they were bits 23 and 22 of the position, which held the
-source to 4 MiB. 16,777,215 stands for no position (`mx_none`), so
-the limit leaves 1 KiB below it for the positions just past the end that
-scans produce.
+A source position is four bytes wherever the compiler keeps one
+(`nc_u32`/`nc_long`): in parser packets (a value, a step, an argument packet,
+a pattern's packet and the states of the scans start with one, `nc_pos`),
+signatures, parameters, list spans (start and stop), string and sigil pieces,
+the plans its parts hand each other, the index of an environment's stores and
+the function table. A compiled value's flags are the byte after its position:
+bit 7 is `nw_mark` (the value's type needed one from its context) and bit 6
+`nx_impure`.
 
-Integers that carry more than a position are not stored in three bytes:
+Some things keep their length or their bytes, because a compiled program
+depends on them:
 
-- A frame's trace word (RBP-136) is 64 bits: the position in its low 24 bits
-  and above them the count of lines past that position's own, which a `for`
-  uses (`alchem-traces.md`). It was 32 bits with the position in the low 20,
-  then 64 with it in the low 22. A `try` keeps such words in 32 bits, which
-  hold 255 lines past a position (`ty_past`, `ty_record`).
-  The count is no longer bounded by the word: a value that does not fit a
-  sign-extended 32-bit immediate is stored in two halves (`nz_set`, `wf_word`).
+- A record of an environment is as long as it was. A block is compiled in
+  windows from 1024 bytes of environment on (`ev_plain`, `native-scope.alc`),
+  and its code depends on that, so no record may grow: one holds where its
+  name starts (four bytes) and the name's length (three; it held the name's
+  end and a byte nothing read). A record that notes a position
+  (`nc_env_note`: the collector's notes, the end of a call that jumps) has
+  the position's low three bytes as its type, and stands at the position
+  itself when that takes a fourth. The ends a `for` notes (`wf_mark`) are
+  three bytes each in a record that stands at the first of them, which tells
+  one within 8 MiB of it; one farther away has a record of its own. A piped
+  function that waits for its type is kept by how far before the call's `(`
+  it stands (`nf_piped_kind`).
+- A declared type (a struct, a sum type, an instance of either) is named in a
+  type by three bytes, and types are in compiled programs (what a `throw`
+  throws, a process's messages). In a source under 16 MiB they are where the
+  declaration's name stands, as they were; in a longer one the number of the
+  declaration's record (`nd_key`, `nc_wide`: a byte of every table record
+  says which). A name not yet resolved (tags 15 and 20) holds the four bytes
+  of where it is written.
+- A frame's trace word (RBP-136) is 64 bits: in a source under 16 MiB the
+  position in its low 24 bits and above them the count of lines past that
+  position's own, which a `for` uses (`alchem-traces.md`); in a longer one
+  the position in the low 32 and the lines above them. The compiler counts
+  with the second form (`nz_past`, `nz_place`) and writes the word the source
+  asks for (`nz_low`, `nz_high`); the trace routine is the one assembled from
+  `spec/trace-x86_64.s` with its mask and its shift changed (`nz_routine`; on
+  ARM64 two instruction words). A position a failure passes to the routine
+  is 32 bits whose bits 30 and 31 say how to show it, which is why a source
+  ends below 1 GiB. A `try` keeps its lines in eight bytes.
 - The end of an interpolation hole is searched with the nesting depth above
-  bit 24 of the position (`sg_hole_some`).
+  bit 32 of the position (`sg_hole_some`).
+
+So every program under the old limit compiles to the bytes it did: 11,419 of
+the 11,421 programs compared, and the other two are compiler entries, whose
+one changed byte is the limit of what they read.
 
 Whitespace/comment skipping, body scanning and clause scanning take up to
-16,777,216 steps, enough for a source that is all short comment lines or all
-tokens.
+1,073,741,824 steps.
 
 ## What holds a code size
 
@@ -113,8 +149,8 @@ Seed IR V11 reads up to 16,777,216 bytes (`bytes.read`; versions before it keep
 ## Limits that remain
 
 - 16,777,214 functions and 16,777,215 table records (`alchem-modules.md`,
-  "Compiler representation"), which the source's 16 MiB reaches first: at
-  the compiler's own density they hold about 25,000 functions, and
+  "Compiler representation"), which a source of 16 MiB did not reach: at
+  the compiler's own density that held about 25,000 functions, and
   functions of one line each about 300,000. It was 65,535 and 65,536
   (and 4096 and 8000 before that): a record was named by a number of two
   bytes in the record of its module, at the start of an environment, in
@@ -227,7 +263,7 @@ What remains fixed, with the reason:
 
 | Limit | Number | Why |
 | --- | --- | --- |
-| Source | 16,776,191 bytes | positions are 24 bits (above; #19); the pinned compiler stops at 1,048,576 a file |
+| Source | 1,073,740,799 bytes; 16,776,191 a file, and for a text with a macro, a protocol, a template, a clause-style `fn` or tests | a failure passes its position in 30 bits; `File.read`; the rewriting keeps a place in three bytes (above); the pinned compiler stops at 1,048,576 a file |
 | Functions; table records | 16,777,214; 16,777,215 | 24-bit numbers ("Limits that remain"); 65,535 and 65,536 until they were widened |
 | Parameters of one function | 65,534 | two bytes of the table record (the pinned compiler takes what its megabyte holds, about 140,000 one-letter parameters) |
 | The description of a type for `inspect`, the JSON library and node messages | 64 KiB a node: a struct of about 3,000 fields, a sum type of about 4,000 variants | a node's length is 16 bits in the format the inspect routine (`spec/integer-parse-x86_64.s`), `library/JSON.alc` and the node codec read. Counts and name lengths in it are one byte, or 255 and four bytes (`ni_count`, `ins_count`), which `inspect` reads; JSON and node messages read one byte, so a type with 255 fields, variants or tuple parts or more has no JSON or wire form (it is refused at compilation: `ni_held`, `ni_small`) |
@@ -459,8 +495,9 @@ themselves, read once by the table builder.
 functions to 16,776,191 bytes (past the 4096 that the
 table and seed IR V11 once held), builds it from the seed
 through the frontend in parts, and requires A1 == A2, the same image for a
-program as the compiler built from the source as it is, and refusal of the
-grown source with one byte more.
+program as the compiler built from the source as it is, and the same
+compiler again from the grown source with one byte more, which was refused
+while a position was three bytes.
 
 `harness/source_capacity.py` compiles real late declarations, bindings, calls
 and Unicode operations on both sides of 64 KiB and through 256 KiB; a call
@@ -469,16 +506,20 @@ chain through five functions spread over sources of 1,048,575, 1,048,577,
 whose failure trace (a `for`, an `if` value, a `for` with two generators and a
 filter, and a column counted past two-byte characters on line 1,677,672) must be the pinned compiler's trace for
 the unpadded program with every line moved by the padding before it; a program
-of exactly 16,776,191 bytes that runs; refusal of one byte and of 4096 bytes
-more, and of a malformed source at the limit; a `for` whose generator stands
+of exactly 16,776,191 bytes that runs, and a malformed one that is refused;
+a `for` whose generator stands
 745 lines past its body (three nested `cond`s of 249 arms; more than a 32-bit
 immediate holds above 24 bits of position), at the start of a source and at
-the end of one of 16,776,191 bytes; the compiler under 3 GiB of address space
+the end of one of 16,776,191 bytes. Past the old limit: the same call chain
+in sources of 16,776,193, 16,777,217 and 20,971,521 bytes, the `for` at the
+end of sources of 16,777,217 and 20,971,521 bytes, programs of 16,776,192
+and 25,165,825 bytes that run, and refusal of 1,073,740,800 bytes as they
+are read; the compiler under 3 GiB of address space
 (the arena is halved until it is granted) and under 512 MiB (exit 71); and a
 21.6 MB image whose one function holds more than 16 MiB of code. `harness/compiler_entry.py` reads
 binary standard input of 65,535, 65,536, 1,048,575, 1,048,576, 4,194,303,
-4,194,304 and 16,776,191 bytes through a compiler entry and is refused at
-16,776,192; `harness/input.py` does the same for seed IR V11 at 4,194,303,
+4,194,304 and 16,777,217 bytes through a compiler entry and is refused past
+1,073,740,799; `harness/input.py` does the same for seed IR V11 at 4,194,303,
 4,194,304, 16,776,191 and 16,777,216 and keeps V10 at 1,048,576. `harness/compiler_arena.py` covers budgets up to 16 GiB and their
 halving under an address-space limit; `harness/self_host.py` measures the
 arena charge of each rebuild against 16 GiB (458 MB seed-built, 601 MB

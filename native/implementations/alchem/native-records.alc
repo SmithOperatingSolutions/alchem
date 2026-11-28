@@ -195,7 +195,7 @@ defmodule NativeRecords do
     if id < 0 do b[] else Enum.concat(b[if Enum.at(table,id*40+21,0) == 64 do 13 else 14 end],nd_key(table,id)) end
   end
   # The field declared at pos in struct id: the position after it, with the
-  # name position and the default's position (3 bytes each, 0 for no default)
+  # name position and the default's position (4 bytes each, 0 for no default)
   # as code, and the field's type.
   def nd_field(source: bytes, table: bytes, id: integer, pos: integer): bytes do
     name = nc_start(source,pos)
@@ -309,8 +309,8 @@ defmodule NativeRecords do
     end end
   end
   # spec: the struct's id (2 bytes), its field count (3 bytes), the index of
-  # the field after the one given last and where it is declared (3 bytes
-  # each: a literal that gives its fields in the order they are declared
+  # the field after the one given last and where it is declared (3 and 4 bytes
+  # : a literal that gives its fields in the order they are declared
   # finds each where it looks first), one byte per field (0 not
   # given, 1 given, 2 copied from the base of an update), then the substitution
   # for its type parameters so far. The result's type is the instance built. The new record's pointer stays
@@ -374,7 +374,7 @@ defmodule NativeRecords do
     end end
   end
   # The field named at pos of the struct of spec: its index (3 bytes) and
-  # where the field after it is declared (3 bytes), then its packet
+  # where the field after it is declared (4 bytes), then its packet
   # (nd_field); b[] when the struct has none of that name. Looked for from
   # the field after the one given last, then from the first.
   def nd_located(source: bytes, table: bytes, spec: bytes, pos: integer): bytes do
@@ -447,7 +447,7 @@ defmodule NativeRecords do
   # count plus one, the variant's index, then its fields.
   #
   # The variant declared at pos: the position after it, with its name position
-  # (3 bytes), parameter list position (3 bytes, 0 for none) and field count
+  # (4 bytes), parameter list position (4 bytes, 0 for none) and field count
   # as code.
   # 1 for a name a variant or a field may have: any name but the words the
   # pinned language keeps (integer, string and list are names like others).

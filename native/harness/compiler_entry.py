@@ -25,8 +25,18 @@ def verify(frontend,backends):
    for data in [b'',b'abc',bytes(range(256)),b'x'*65535,b'x'*65536,b'x'*1048575,b'x'*1048576,bytes(range(256))*16383+bytes(range(255)),b'x'*4194304,bytes(range(256))*65531+bytes(range(255))]:
     run=subprocess.run([str(output)],input=data,capture_output=True,env={'PATH':''},timeout=120)
     assert (run.returncode,run.stdout,run.stderr)==(0,data if data else b'\0\xff',b''),run
-   run=subprocess.run([str(output)],input=b'x'*16776192,capture_output=True,env={'PATH':''},timeout=120)
-   assert (run.returncode,run.stdout,run.stderr)==(65,b'',b'E_RUNTIME_INPUT: input exceeds byte limit\n'),run
+   # 16 MiB and a byte pass a compiler entry now; a byte more than its limit of
+   # 1 GiB less 1 KiB does not (written as it is taken, until it takes no more).
+   data=b'x'*16777217
+   run=subprocess.run([str(output)],input=data,capture_output=True,env={'PATH':''},timeout=120)
+   assert (run.returncode,run.stdout,run.stderr)==(0,data,b''),(run.returncode,len(run.stdout),run.stderr[:200])
+   child=subprocess.Popen([str(output)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env={'PATH':''})
+   try:
+    for _ in range(1024):child.stdin.write(b'x'*(1<<20))
+    child.stdin.close()
+   except (BrokenPipeError,OSError):pass
+   said=(child.stdout.read(),child.stderr.read());status=child.wait(timeout=300)
+   assert (status,said)==(65,(b'',b'E_RUNTIME_INPUT: input exceeds byte limit\n')),(status,said[1][:200])
    run=subprocess.run([str(output)],capture_output=True,preexec_fn=lambda:os.close(0),timeout=120)
    assert (run.returncode,run.stdout,run.stderr)==(74,b'',b'E_RUNTIME_IO: input read failed\n'),run
    with open('/dev/full','wb') as full:

@@ -75,11 +75,11 @@ defmodule NativeSigils do
       end
     end
   end
-  # What the sigil at start holds: where its text starts (3 bytes); the plan
+  # What the sigil at start holds: where its text starts (4 bytes); the plan
   # of its text: the closing delimiter (0 for a heredoc), the indentation of
   # a heredoc's closing line, 1 when #{ } holds a value, then where that
-  # closing line starts and where the text stops (3 bytes each); and where
-  # its modifiers start (3 bytes). b[] for none.
+  # closing line starts and where the text stops (4 bytes each); and where
+  # its modifiers start (4 bytes). b[] for none.
   def sg_shape(source: bytes, start: integer): bytes do
     opener = byte_at(source,start+2)
     tall = if opener != 34 do 0 else ns_tripled(source,start+2) end
@@ -496,7 +496,7 @@ defmodule NativeSigils do
   end
   # sigil_x(text, modifiers) for a sigil of the program at start: value is
   # the text, a string. spec: the nesting, the letter, where the sigil ends
-  # and where its modifiers start (3 bytes each).
+  # and where its modifiers start (4 bytes each).
   def sg_defined(source: bytes, start: integer, env: bytes, table: bytes, spec: bytes, value: bytes): bytes do
     stop = nc_long(spec,2)
     target = sg_handler(source,table,Enum.at(spec,1,0))
@@ -563,7 +563,7 @@ defmodule NativeSigils do
   end
   # The number an index of a tuple is written as, from pos on: digits, the
   # same in parentheses or after a minus sign, or a module constant that is
-  # one. The position after it (3 bytes) and the number; b[] for anything
+  # one. The position after it (4 bytes) and the number; b[] for anything
   # else, and for a number that is no position of a tuple.
   def sg_number(source: bytes, pos: integer, env: bytes, table: bytes, budget: integer): bytes do
     start = nc_start(source,pos)
@@ -603,7 +603,7 @@ defmodule NativeSigils do
   end
   # map[key]: the value of a key, and the program ends naming the bracket
   # when the map does not hold it. plan: the bracket and the position after
-  # the index (3 bytes each), then the type variables in reach.
+  # the index (4 bytes each), then the type variables in reach.
   def sg_index_map(table: bytes, value: bytes, index: bytes, plan: bytes): bytes do
     fail = sg_fail(table,nc_long(plan,0),b[109,97,112,32,107,101,121,32,110,111,116,32,102,111,117,110,100])
     pushed = nc_join(Enum.concat(nc_code(value),b[80]),nc_code(index),b[80])

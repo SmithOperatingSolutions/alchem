@@ -78,7 +78,7 @@ defmodule NativeTail do
   end
   # The expression from start to the ")" at close, once the parentheses
   # around the whole of it are taken off: where it then starts and its last
-  # ")" (3 bytes each), when it is one call that ends there: a name and its
+  # ")" (4 bytes each), when it is one call that ends there: a name and its
   # arguments, or anything piped into such a call. Nothing otherwise. A pipe
   # binds looser than every operator the expression is then read with
   # (nc_math), so the call is its value.

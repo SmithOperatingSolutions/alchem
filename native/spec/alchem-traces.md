@@ -71,8 +71,12 @@ of every byte that continues a character. It walks the frames by their saved
 RBP and names each from its return address. A failing place passes the
 position and the reason: its number in the routine's table of messages, or
 from 4096 up the address of a string holding the message. A frame's word is
-64 bits: the position is its low 22 bits (a source is below 4 MiB) and the
-bits above them count lines past that position's own.
+64 bits: in a source under 16 MiB the position is its low 24 bits and the
+bits above them count lines past that position's own; in a longer one the
+position is its low 32 bits and the lines are above them, and the routine
+the program holds has its mask and its shift for that (`nz_routine`,
+`source-capacity.md`). A position passed to the routine is below 2^30: its
+bits 30 and 31 say how the failure is shown.
 
 A failure inside a `try` goes to its handler instead of ending the program
 (`alchem-try.md`): the routine first looks at the handler word at R14-16, and

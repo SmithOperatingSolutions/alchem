@@ -6,8 +6,8 @@ defmodule NativeClauses do
   # (spec/alchem-clauses.md).
   #
   # A table record of a function keeps, after its flags: where its result
-  # type is written (3 bytes, 0 when it is left out), how many of its
-  # parameters have default values, and where its guard starts (3 bytes, 0
+  # type is written (4 bytes, 0 when it is left out), how many of its
+  # parameters have default values, and where its guard starts (4 bytes, 0
   # for none). The first clause of a function has the function's record;
   # every further clause has a record of its own with flags 40, which no
   # lookup finds and which has no code.

@@ -60,8 +60,10 @@ def verify(frontend,backend,compiler):
         program=root/'probe';program.unlink(missing_ok=True);program.write_bytes(got.stdout);program.chmod(0o700)
         run=subprocess.run([str(program)],capture_output=True,env={'PATH':''},timeout=120)
         assert (run.returncode,run.stdout,run.stderr)==(42,b'grown\n',b''),run
-        over=subprocess.run([str(previous)],input=source.encode()+b' ',capture_output=True,env={'PATH':''},timeout=120)
-        assert (over.returncode,over.stdout,over.stderr)==(65,b'',b'E_RUNTIME_INPUT: input exceeds byte limit\n'),('grown source one byte over',over.returncode,over.stderr)
+        # One byte more was refused while a position was three bytes; the compiler
+        # it makes now is the same one, since it holds no place of its source.
+        over=subprocess.run([str(previous)],input=source.encode()+b' ',capture_output=True,env={'PATH':''},timeout=600)
+        assert (over.returncode,over.stderr)==(0,b'') and over.stdout==images[1],('grown source one byte past the old limit',over.returncode,over.stderr[:200])
     print(f'PASS grown compiler: a {len(source.encode())}-byte compiler source of {source.count(chr(10)+"def ")} functions built seed -> A1 == A2 ({len(images[1])} bytes) through the frontend in parts')
 
 

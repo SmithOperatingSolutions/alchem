@@ -52,7 +52,8 @@ deeply nested functions takes about sixteen calls per level of nesting, below
 the halving over its functions. Both backends emit the same guard.
 
 A V11 bytes.read limit may be 0..16777216 (V10 keeps 0..1048576): the compiler
-reads sources of up to 16,776,191 bytes, and a V11 program may hold 16 MiB of
+reads sources of up to 16,776,191 bytes when it is made from the seed (the
+compiler it makes of itself reads 1,073,740,799, `source-capacity.md`), and a V11 program may hold 16 MiB of
 byte constants (`bytes.const`, each still at most 1 MiB; earlier versions keep
 4 MiB): the compiler's source grown to that size is mostly such data. The emitted code is that of V10 with the
 larger immediates, the same in both backends. The seed frontend itself parses

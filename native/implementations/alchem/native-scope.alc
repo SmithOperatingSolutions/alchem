@@ -222,7 +222,7 @@ defmodule NativeScope do
     end end
   end
   # 1 for a record without an identifier's name that a statement of the
-  # text the names end with (where it starts and stops, three bytes each)
+  # text the names end with (where it starts and stops, four bytes each)
   # may need: any but a loose one made outside that text.
   def ev_near_by(source: bytes, run: bytes, offset: integer, names: bytes): integer do
     at = nc_long(run,offset)
