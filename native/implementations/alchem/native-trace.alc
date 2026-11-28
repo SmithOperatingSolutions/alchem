@@ -12,10 +12,31 @@ defmodule NativeTrace do
   # them a count of lines past that position's own (see wf_at). One that
   # does not fit a sign-extended 32-bit immediate is stored in two halves.
   def nz_set(pos: integer): bytes do
-    high = nc_units(pos,4294967296)
-    if pos < 2147483648 do Enum.concat(b[72,199,133,120,255,255,255],nc_u32(pos)) else
-      nc_join(Enum.concat(b[199,133,120,255,255,255],nc_u32(pos-high*4294967296)),b[199,133,124,255,255,255],nc_u32(high))
+    if nz_short(pos) == 1 do Enum.concat(b[72,199,133,120,255,255,255],nc_u32(nz_low(pos))) else
+      nc_join(Enum.concat(b[199,133,120,255,255,255],nc_u32(nz_low(pos))),b[199,133,124,255,255,255],nc_u32(nz_high(pos)))
     end
+  end
+  # A line as the compiler counts with it: a position, and above its low
+  # 32 bits the lines past the position's own. The word a frame holds has
+  # the position's low 24 bits, then the lines, and the rest of the
+  # position in its highest byte, which is what it had before a position
+  # took four bytes: nz_low and nz_high are its two halves, and nz_line is
+  # the line of two such halves. A word with nothing above bit 30 is set as
+  # one sign-extended immediate (nz_short).
+  def nz_past(line: integer): integer do nc_units(line,4294967296) end
+  def nz_place(line: integer): integer do line-nz_past(line)*4294967296 end
+  def nz_low(line: integer): integer do
+    nc_low(nz_place(line))+(nz_past(line)-nc_units(nz_past(line),256)*256)*16777216
+  end
+  def nz_high(line: integer): integer do
+    nc_units(nz_past(line),256)+nc_units(nz_place(line),16777216)*16777216
+  end
+  def nz_short(line: integer): integer do
+    if nz_high(line) != 0 do 0 else if nz_low(line) < 2147483648 do 1 else 0 end end
+  end
+  def nz_line(low: integer, high: integer): integer do
+    far = nc_units(high,16777216)
+    nc_low(low)+far*16777216+(nc_units(low,16777216)+(high-far*16777216)*256)*4294967296
   end
   def nz_at(table: bytes, pos: integer): bytes do
     if nz_on(table) == 0 do b[] else nz_set(pos) end

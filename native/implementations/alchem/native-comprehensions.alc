@@ -145,7 +145,7 @@ defmodule NativeComprehensions do
         if nc_opens(source,next) == 0 do b[] else nc_branch(source,nc_end(source,next),np_env(parsed),table,depth) end
       end
     end
-    if nc_pos(inner) < 0 do b[] else wc_matched(source,table,nc_join(Enum.concat(nc_u24(slot),b[depth]),nc_u24(origin),nc_u24(nc_start(source,nc_start(source,arrow)+2))),value,nc_join(wc_row(np_tree(parsed)),held,b[]),wc_both(inner,np_env(parsed))) end
+    if nc_pos(inner) < 0 do b[] else wc_matched(source,table,nc_join(Enum.concat(nc_u24(slot),b[depth]),nc_u32(origin),nc_u32(nc_start(source,nc_start(source,arrow)+2))),value,nc_join(wc_row(np_tree(parsed)),held,b[]),wc_both(inner,np_env(parsed))) end
   end
   # Two packets as one: the first after its length (3 bytes).
   def wc_both(first: bytes, second: bytes): bytes do nc_join(nc_u32(Enum.count(first)),first,second) end
@@ -164,14 +164,14 @@ defmodule NativeComprehensions do
     store = Enum.concat(nc_code(value),nc_slot(b[72,137,69],slot))
     other = nc_expect(source,nc_pos(inner),b[101,108,115,101])
     # What a value that does not match meets is a statement of its own in the pinned compiler, where the with stands.
-    arms = nc_join(nc_slice(plan,0,7),b[0],nc_join(nc_u32(Enum.count(given)-Enum.count(held)),nc_slice(given,0,Enum.count(given)-Enum.count(held)),b[]))
+    arms = nc_join(nc_slice(plan,0,8),b[0],nc_join(nc_u32(Enum.count(given)-Enum.count(held)),nc_slice(given,0,Enum.count(given)-Enum.count(held)),b[]))
     plain = if wc_open(tree,0) == 1 do b[] else
       if other < 0 do wc_unmatched(table,plan,nc_kind(value),inner) else wc_arms(source,other,held,table,Enum.at(plan,3,0),arms) end
     end
     # Else arms that do not compile are expected to give the body's type (nf_led).
     led = if nc_pos(plain) >= 0 do b[] else if other < 0 do b[] else if wc_open(tree,0) == 1 do b[] else nf_led(source,held,table,inner,other) end end end
     missed = if Enum.count(led) == 0 do plain else wc_arms(source,other,led,table,Enum.at(plan,3,0),arms) end
-    miss = zf_counted(source,table,held,missed,nc_cursor(plan,4))
+    miss = zf_counted(source,table,held,missed,nc_long(plan,4))
     if Enum.count(match) == 0 do b[] else
       if wc_open(tree,0) == 1 do nw_keep(nc_value(nc_pos(inner),nc_join(store,match,nc_code(inner)),nc_kind(inner)),inner,b[]) else
         if nc_pos(miss) < 0 do b[] else np_join(nc_join(store,match,b[132,192,15,132]),b[],inner,wc_at(miss,nc_pos(inner))) end
@@ -185,7 +185,7 @@ defmodule NativeComprehensions do
   def wc_unmatched(table: bytes, plan: bytes, kind: bytes, inner: bytes): bytes do
     want = nc_kind(inner)
     load = nc_slot(b[72,139,69],nc_cursor(plan,0))
-    fail = Enum.concat(wc_enter(table,nc_cursor(plan,4)),wc_fail(table,nc_cursor(plan,7),b[110,111,32,119,105,116,104,32,99,108,97,117,115,101,32,109,97,116,99,104,101,100]))
+    fail = Enum.concat(wc_enter(table,nc_long(plan,4)),wc_fail(table,nc_long(plan,8),b[110,111,32,119,105,116,104,32,99,108,97,117,115,101,32,109,97,116,99,104,101,100]))
     passed = nt_merge(want,Enum.concat(b[6,9],nt_child(kind,1)))
     if nt_tag(want) == 12 do nc_value(nc_pos(inner),b[],b[12]) else
       if nt_tag(nt_merge(want,kind)) >= 0 do wc_hinted(nc_value(nc_pos(inner),load,kind),inner) else
@@ -212,14 +212,14 @@ defmodule NativeComprehensions do
   # 2 bytes), then the rows of the arms taken that have no guard.
   def wc_arms(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
     slot = nc_cursor(state,0)
-    size = nc_long(state,8)
-    cover = nc_slice(state,12,12+size)
+    size = nc_long(state,9)
+    cover = nc_slice(state,13,13+size)
     start = nc_start(source,pos)
     kind = nt_read(env,nc_env_offset(env,slot)+7)
     done = if nc_word(source,start,b[101,110,100]) == 1 do 1 else 1-np_useful(source,cover,b[0],1) end
     if start < 0 do b[] else
       if done == 1 do
-        if Enum.at(state,7,0) == 0 do b[] else nc_value(start,wc_fail(table,nc_cursor(state,4),b[110,111,32,99,97,115,101,32,98,114,97,110,99,104,32,109,97,116,99,104,101,100]),b[9]) end
+        if Enum.at(state,8,0) == 0 do b[] else nc_value(start,wc_fail(table,nc_long(state,4),b[110,111,32,99,97,115,101,32,98,114,97,110,99,104,32,109,97,116,99,104,101,100]),b[9]) end
       else
         parsed = np_parse(source,start,env,table,kind)
         stop = wc_skip(source,start)
@@ -227,7 +227,7 @@ defmodule NativeComprehensions do
         next = wc_scan(source,wc_arm_body(source,stop),1)
         if next < 0 do b[] else
           if fits == 0 do wc_arms(source,next,env,table,depth,state) else
-            if np_useful(source,nc_slice(state,12+size,Enum.count(state)),np_tree(parsed),1) == 0 do b[] else wc_arm(source,wc_both(parsed,nc_u24(next)),env,table,depth,state) end
+            if np_useful(source,nc_slice(state,13+size,Enum.count(state)),np_tree(parsed),1) == 0 do b[] else wc_arm(source,wc_both(parsed,nc_u32(next)),env,table,depth,state) end
           end
         end
       end
@@ -250,15 +250,15 @@ defmodule NativeComprehensions do
   end
   def wc_arm(source: bytes, found: bytes, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
     parsed = wc_first(found)
-    next = nc_cursor(wc_second(found),0)
+    next = nc_long(wc_second(found),0)
     scope = np_env(parsed)
     guarded = nc_word(source,nc_pos(parsed),b[119,104,101,110])
     guard = if guarded == 0 do nc_value(nc_pos(parsed),b[],b[3]) else nc_condition(source,nc_end(source,nc_pos(parsed)),sg_conditional(scope),table,depth+1) end
     arrow = nc_expect(source,nc_pos(guard),b[45,62])
     body = if arrow < 0 do b[] else nc_branch(source,arrow,scope,table,depth+1) end
-    size = nc_long(state,8)
+    size = nc_long(state,9)
     row = if guarded == 1 do b[] else wc_row(np_tree(parsed)) end
-    grown = nc_join(nc_join(nc_slice(state,0,7),b[1],nc_u32(size+Enum.count(row))),nc_join(nc_slice(state,12,12+size),row,nc_slice(state,12+size,Enum.count(state))),row)
+    grown = nc_join(nc_join(nc_slice(state,0,8),b[1],nc_u32(size+Enum.count(row))),nc_join(nc_slice(state,13,13+size),row,nc_slice(state,13+size,Enum.count(state))),row)
     rest = if nc_pos(body) < 0 do b[] else if nc_start(source,nc_pos(body)) != next do b[] else wc_arms(source,next,env,table,depth,grown) end end
     match = np_emit(source,scope,table,np_tree(parsed),0)
     check = if guarded == 0 do b[] else Enum.concat(nc_code(guard),b[72,133,192,15,132]) end
@@ -321,7 +321,7 @@ defmodule NativeComprehensions do
     # A for is a closure of the pinned compiler: no return stands in it, and
     # a call in it is not the function's result (nj_valued, tl_allowed).
     held = nj_valued(pair)
-    state = nc_join(nc_join(Enum.concat(b[mode],nc_u24(slot)),nc_u24(Enum.count(held)),b[0,0,0,0,paren]),nc_join(nc_u24(start),nc_u24(0),nc_u24(2)),nc_join(nc_u24(nc_env_count(whole,3)-1),nc_u24(nc_env_count(whole,3)-2),nc_u24(nc_env_count(pair,3)-2)))
+    state = nc_join(nc_join(Enum.concat(b[mode],nc_u24(slot)),nc_u24(Enum.count(held)),b[0,0,0,0,0,paren]),nc_join(nc_u32(start),nc_u24(0),nc_u24(2)),nc_join(nc_u24(nc_env_count(whole,3)-1),nc_u24(nc_env_count(whole,3)-2),nc_u24(nc_env_count(pair,3)-2)))
     made = if depth > 190 do b[] else wf_items(source,first,held,table,depth+1,state) end
     parts = nc_code(made)
     if nc_pos(made) < 0 do b[] else
@@ -346,9 +346,8 @@ defmodule NativeComprehensions do
   # The frame stands at line `past` after the for's own and its closures end
   # with the record whose chain slot is `record`.
   def wf_word(slot: integer, line: integer): bytes do
-    high = nc_units(line,4294967296)
-    if line < 2147483648 do Enum.concat(nc_slot(b[72,199,69],slot),nc_u32(line)) else
-      nc_join(b[72,184],Enum.concat(nc_u32(line-high*4294967296),nc_u32(high)),nc_slot(b[72,137,69],slot))
+    if nz_short(line) == 1 do Enum.concat(nc_slot(b[72,199,69],slot),nc_u32(nz_low(line))) else
+      nc_join(b[72,184],Enum.concat(nc_u32(nz_low(line)),nc_u32(nz_high(line))),nc_slot(b[72,137,69],slot))
     end
   end
   # RAX moved on by count lines: past 127 of them through RCX.
@@ -365,14 +364,14 @@ defmodule NativeComprehensions do
   # under the record whose chain slot is `record`.
   def wf_note(table: bytes, state: bytes, first: integer): bytes do
     if nz_on(table) == 0 do b[] else
-      nc_join(nc_join(nc_slot(b[72,139,69],nc_cursor(state,1)+2),wf_lines(nc_cursor(state,18)),nc_slot(b[72,137,69],first)),nc_slot(b[72,141,69],nc_cursor(state,21)),nc_slot(b[72,137,69],first+1))
+      nc_join(nc_join(nc_slot(b[72,139,69],nc_cursor(state,1)+2),wf_lines(nc_cursor(state,20)),nc_slot(b[72,137,69],first)),nc_slot(b[72,141,69],nc_cursor(state,23)),nc_slot(b[72,137,69],first+1))
     end
   end
   # The for begins: its line is kept, its record made (the function stands
   # at line final while the for runs) and the for stands one line on.
   def wf_enter(table: bytes, state: bytes, final: integer): bytes do
     slot = nc_cursor(state,1)
-    record = nc_cursor(state,24)
+    record = nc_cursor(state,26)
     if nz_on(table) == 0 do b[] else
       nc_join(nc_join(b[72,139,133,120,255,255,255],nc_slot(b[72,137,69],slot+2),wf_word(record,final)),nc_join(b[72,139,133,112,255,255,255],nc_slot(b[72,137,69],record+1),wf_at(table,state,1,record+1)),b[])
     end
@@ -380,20 +379,20 @@ defmodule NativeComprehensions do
   # The body begins: its record says where the generator around it stands,
   # line cursor, and the frame stands at pos when pos is one.
   def wf_inside(table: bytes, state: bytes, cursor: integer, pos: integer): bytes do
-    record = nc_cursor(state,27)
+    record = nc_cursor(state,29)
     if nz_on(table) == 0 do b[] else
-      nc_join(nc_join(wf_word(record,cursor),nc_slot(b[72,141,69],nc_cursor(state,21)),nc_slot(b[72,137,69],record+1)),Enum.concat(nc_slot(b[72,141,69],record+1),b[72,137,133,112,255,255,255]),if pos < 0 do b[] else nz_at(table,pos) end)
+      nc_join(nc_join(wf_word(record,cursor),nc_slot(b[72,141,69],nc_cursor(state,23)),nc_slot(b[72,137,69],record+1)),Enum.concat(nc_slot(b[72,141,69],record+1),b[72,137,133,112,255,255,255]),if pos < 0 do b[] else nz_at(table,pos) end)
     end
   end
   # The for is over: the function has its own closures again and stands at
   # line final.
   def wf_leave(table: bytes, state: bytes, final: integer): bytes do
-    if nz_on(table) == 0 do b[] else nc_join(nc_slot(b[72,139,69],nc_cursor(state,24)+1),b[72,137,133,112,255,255,255],nz_at(table,final)) end
+    if nz_on(table) == 0 do b[] else nc_join(nc_slot(b[72,139,69],nc_cursor(state,26)+1),b[72,137,133,112,255,255,255],nz_at(table,final)) end
   end
   # The line the function stands at once the for is over: the line after the
   # body, two for each generator and two more. A call the for is an argument
   # of stays where it stood, as for an if or case (nz_closure).
-  def wf_final(state: bytes, cursor: integer): integer do cursor+(nc_cursor(state,15)*2+2)*16777216 end
+  def wf_final(state: bytes, cursor: integer): integer do cursor+(nc_cursor(state,17)*2+2)*4294967296 end
   def wf_resume(source: bytes, table: bytes, slot: integer, stop: integer): bytes do
     next = byte_at(source,nc_start(source,stop))
     piped = if next*256+byte_at(source,nc_start(source,stop)+1) == 31806 do 1 else 0 end
@@ -490,11 +489,11 @@ defmodule NativeComprehensions do
     choice = if nc_identifier(source,start) == 0 do 0 else if byte_at(source,nc_end(source,start)) == 58 do 1 else 0 end end
     if start < 0 do b[] else
       if nc_word(source,start,b[100,111]) == 1 do
-        if nc_cursor(state,15) == 0 do b[] else wf_body(source,start,env,table,depth,state) end
+        if nc_cursor(state,17) == 0 do b[] else wf_body(source,start,env,table,depth,state) end
       else
         if choice == 1 do wf_option(source,start,env,table,depth,state) else
           if wc_arrow(source,wc_skip(source,start)) == 1 do wf_generator(source,start,env,table,depth,state) else
-            if nc_cursor(state,15) == 0 do b[] else wf_filter(source,start,env,table,depth,state) end
+            if nc_cursor(state,17) == 0 do b[] else wf_filter(source,start,env,table,depth,state) end
           end
         end
       end
@@ -522,7 +521,7 @@ defmodule NativeComprehensions do
     probe = if choice == 0 do b[] else if Enum.at(state,7,0) != 0 do b[] else nc_expression(source,value,wf_outer(env,state),table,depth) end end
     after = if yes+no == 0 do nc_pos(probe) else nc_end(source,value) end
     if nc_pos(probe) < 0 do b[] else if after != nc_pos(probe) do b[] else
-      wf_next(source,after,env,table,depth,nc_join(nc_slice(state,0,7),Enum.concat(b[choice],nc_u24(value)),nc_slice(state,11,Enum.count(state))))
+      wf_next(source,after,env,table,depth,nc_join(nc_slice(state,0,7),Enum.concat(b[choice],nc_u32(value)),nc_slice(state,12,Enum.count(state))))
     end end
   end
   # pattern <- enumerable: a list, a set (its elements in order), a map (its
@@ -540,11 +539,11 @@ defmodule NativeComprehensions do
     fits = if nc_pos(parsed) < 0 do 0 else if nc_start(source,nc_pos(parsed)) == nc_start(source,arrow) do 1 else 0 end end
     match = if fits == 0 do b[] else np_emit(source,np_env(parsed),table,np_tree(parsed),0) end
     names = nc_env_count(np_env(parsed),3)-nc_env_count(held,3)
-    past = nc_cursor(state,18)+2+names
+    past = nc_cursor(state,20)+2+names
     record = nc_env_count(held,3)-2
-    inner = if Enum.count(match) == 0 do b[] else wf_next(source,nc_pos(value),np_env(parsed),table,depth,nc_join(nc_join(nc_slice(state,0,15),nc_u24(nc_cursor(state,15)+1),nc_u24(past)),nc_u24(record+1),nc_slice(state,24,30))) end
+    inner = if Enum.count(match) == 0 do b[] else wf_next(source,nc_pos(value),np_env(parsed),table,depth,nc_join(nc_join(nc_slice(state,0,17),nc_u24(nc_cursor(state,17)+1),nc_u24(past)),nc_u24(record+1),nc_slice(state,26,32))) end
     lazy = if (tag-23)*(tag-26) == 0 do 1 else 0 end
-    head = nc_join(wf_at(table,state,nc_cursor(state,18),nc_cursor(state,21)),nc_code(value),if lazy == 0 do nn_convert(kind,7) else nn_convert(kind,26) end)
+    head = nc_join(wf_at(table,state,nc_cursor(state,20),nc_cursor(state,23)),nc_code(value),if lazy == 0 do nn_convert(kind,7) else nn_convert(kind,26) end)
     if nc_pos(inner) < 0 do b[] else wf_loop(inner,nc_join(head,b[80],Enum.concat(wf_note(table,state,record),b[88])),match,slot*2+lazy) end
   end
   # head leaves the list in RAX; match takes an element in RAX and leaves 1
@@ -569,24 +568,24 @@ defmodule NativeComprehensions do
   # A filter: what follows runs when it holds.
   def wf_filter(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
     condition = nc_condition(source,start,env,table,depth)
-    past = nc_cursor(state,18)
-    inner = wf_next(source,nc_pos(condition),env,table,depth,nc_join(nc_slice(state,0,18),nc_u24(past+1),nc_slice(state,21,30)))
+    past = nc_cursor(state,20)
+    inner = wf_next(source,nc_pos(condition),env,table,depth,nc_join(nc_slice(state,0,20),nc_u24(past+1),nc_slice(state,23,32)))
     parts = nc_code(inner)
     rest = wc_second(parts)
     action = wc_first(rest)
-    guarded = nc_join(Enum.concat(wf_at(table,state,past,nc_cursor(state,21)),nc_code(condition)),Enum.concat(b[72,133,192,15,132],nc_u32(Enum.count(action))),action)
+    guarded = nc_join(Enum.concat(wf_at(table,state,past,nc_cursor(state,23)),nc_code(condition)),Enum.concat(b[72,133,192,15,132],nc_u32(Enum.count(action))),action)
     if nc_pos(inner) < 0 do b[] else nw_keep(nc_value(nc_pos(inner),wc_both(wc_first(parts),wc_both(guarded,wc_second(rest))),nc_kind(inner)),inner,b[]) end
   end
   # The body at its do: a block to end, or after "do:" one expression.
   def wf_body(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
     line = if byte_at(source,nc_end(source,start)) == 58 do 1 else 0 end
-    paren = Enum.at(state,11,0)
+    paren = Enum.at(state,12,0)
     first = if line == 1 do nc_end(source,start)+1 else nc_end(source,start) end
     plain = if Enum.at(state,7,0) == 0 do 1 else if Enum.at(state,7,0) == 4 do 1 else 0 end end
     marked = if Enum.at(state,0,0)*plain*(1-line) == 0 do env else wf_mark(env,wc_scan(source,first,0)) end
     # The body of a for whose list is expected gives the element's type: a
     # lambda there takes its types from it (nf_expecting).
-    wanted = nw_expected(env,nc_cursor(state,12),3)
+    wanted = nw_expected(env,nc_long(state,13),3)
     element = if nt_tag(wanted) != 7 do b[] else nt_child(wanted,0) end
     inside = if Enum.count(element) == 0 do marked else if nf_worth(element) == 0 do marked else nw_expect(marked,0,element) end end
     block = if line+paren > 0 do b[] else if Enum.at(state,7,0) == 3 do b[] else wf_block(source,first,inside,table,depth) end end
@@ -595,7 +594,7 @@ defmodule NativeComprehensions do
     body = if Enum.at(state,0,0)*plain+(if nc_tag(given) == 12 do 1 else 0 end) == 0 do given else zf_unit(source,table,env,given,if line == 1 do nc_start(source,first) else nc_pos(wc_second(block)) end) end
     stop = if line == 0 do nc_expect(source,nc_pos(body),b[101,110,100]) else if paren == 1 do nc_expect(source,nc_pos(body),b[41]) else nc_pos(body) end end
     if Enum.at(state,7,0) == 3 do if line+paren > 0 do b[] else wf_reduce(source,start,env,table,depth,state) end else
-      if stop < 0 do b[] else wf_collect(source,table,env,nc_join(state,nc_u24(nc_start(source,first)),b[depth,line]),wc_at(body,stop),if line == 1 do nc_value(nc_start(source,first),b[],b[12]) else wc_second(block) end) end
+      if stop < 0 do b[] else wf_collect(source,table,env,nc_join(state,nc_u32(nc_start(source,first)),b[depth,line]),wc_at(body,stop),if line == 1 do nc_value(nc_start(source,first),b[],b[12]) else wc_second(block) end) end
     end
   end
   # The expression of the one-line form; one that is no call is marked as such.
@@ -643,7 +642,7 @@ defmodule NativeComprehensions do
     if last < 0 do 0 else
       if nc_word(source,last,b[105,102])+nc_word(source,last,b[117,110,108,101,115,115]) == 1 do wf_branch(source,last,env,table,depth) else
         if wf_keyword(source,last,env)+ty_keyword(source,last,env) > 0 do wf_inner(wc_second(nc_code(found)),last) else
-          if nc_word(source,last,b[99,111,110,100])*nc_opens(source,nc_end(source,last)) == 1 do wf_cond(source,nc_join(nc_u24(last),nc_u24(nc_end(source,nc_end(source,last))),b[0,0,0,0]),env,table,depth) else last+16777216 end
+          if nc_word(source,last,b[99,111,110,100])*nc_opens(source,nc_end(source,last)) == 1 do wf_cond(source,nc_join(nc_u32(last),nc_u32(nc_end(source,nc_end(source,last))),b[0,0,0,0,0]),env,table,depth) else last+4294967296 end
         end
       end
     end
@@ -653,12 +652,12 @@ defmodule NativeComprehensions do
   # follows the cond. plan: where the cond stands, where to read on, the
   # arrow of the last arm so far and how many arms came.
   def wf_cond(source: bytes, plan: bytes, env: bytes, table: bytes, depth: integer): integer do
-    next = wc_scan(source,nc_cursor(plan,3),4)
-    count = Enum.at(plan,9,0)
-    arrow = nc_cursor(plan,6)
-    if next < 0 do nc_cursor(plan,0)+16777216 else if count > 250 do nc_cursor(plan,0)+16777216 else
-      if nc_word(source,next,b[45,62]) == 1 do wf_cond(source,nc_join(nc_slice(plan,0,3),nc_u24(next+2),Enum.concat(nc_u24(next),b[count+1])),env,table,depth) else
-        if wf_true(source,nz_before(source,arrow-1)) == 0 do nc_cursor(plan,0)+(1+count)*16777216 else wf_after(source,wf_last(source,arrow+2,env,table,depth),table,depth)+(count-1)*16777216 end
+    next = wc_scan(source,nc_long(plan,4),4)
+    count = Enum.at(plan,12,0)
+    arrow = nc_long(plan,8)
+    if next < 0 do nc_long(plan,0)+4294967296 else if count > 250 do nc_long(plan,0)+4294967296 else
+      if nc_word(source,next,b[45,62]) == 1 do wf_cond(source,nc_join(nc_slice(plan,0,4),nc_u32(next+2),Enum.concat(nc_u32(next),b[count+1])),env,table,depth) else
+        if wf_true(source,nz_before(source,arrow-1)) == 0 do nc_long(plan,0)+(1+count)*4294967296 else wf_after(source,wf_last(source,arrow+2,env,table,depth),table,depth)+(count-1)*4294967296 end
       end
     end end
   end
@@ -670,8 +669,8 @@ defmodule NativeComprehensions do
     opener = wc_scan(source,nc_end(source,last),3)
     other = wc_scan(source,nc_end(source,opener),2)
     final = if nc_word(source,other,b[101,108,115,101]) == 1 do nc_end(source,other) else nc_end(source,opener) end
-    if opener < 0 do last+16777216 else if byte_at(source,nc_end(source,opener)) == 58 do last+33554432 else
-      wf_after(source,wf_last(source,final,env,table,depth),table,depth)+16777216
+    if opener < 0 do last+4294967296 else if byte_at(source,nc_end(source,opener)) == 58 do last+8589934592 else
+      wf_after(source,wf_last(source,final,env,table,depth),table,depth)+4294967296
     end end
   end
   # A for leaves the line its function then stands at in its last
@@ -681,8 +680,8 @@ defmodule NativeComprehensions do
     noted = if size < 10 do 0 else nt_same(nc_slice(code,size-10,size-4),b[199,133,120,255,255,255]) end
     halved = if size < 20 do 0 else nt_same(nc_slice(code,size-20,size-14),b[199,133,120,255,255,255])*nt_same(nc_slice(code,size-10,size-4),b[199,133,124,255,255,255]) end
     upper = nc_read(code,size-4)+nc_read(code,size-2)*65536
-    if halved == 1 do nc_read(code,size-14)+nc_read(code,size-12)*65536+upper*4294967296+16777216 else
-      if noted == 0 do last+16777216 else upper+16777216 end
+    if halved == 1 do nz_line(nc_read(code,size-14)+nc_read(code,size-12)*65536,upper)+4294967296 else
+      if noted == 0 do last+4294967296 else nz_line(upper,0)+4294967296 end
     end
   end
   # The three parts of a for's code with what a trace needs: cursor is the
@@ -697,15 +696,15 @@ defmodule NativeComprehensions do
   # The values of the body as the for's result. state has also where the
   # body starts, the depth and 1 for the one-line form.
   def wf_collect(source: bytes, table: bytes, env: bytes, state: bytes, body: bytes, found: bytes): bytes do
-    line = Enum.at(state,34,0)
+    line = Enum.at(state,37,0)
     plain = if Enum.at(state,7,0) == 0 do 1 else if Enum.at(state,7,0) == 4 do 1 else 0 end end
     empty = if nc_tag(body) == 12 do 1 else nh_effect(source,nc_pos(found),b[],2) end
     effect = if empty == 0 do 0 else wf_effect(source,nc_pos(found),env) end
     item = if empty == 0 do nc_kind(body) else if effect == 1 do b[5,0] else b[] end end
-    cursor = if line == 1 do nc_cursor(state,30)+16777216 else
-      if Enum.at(state,0,0)*plain+empty > 0 do nc_pos(found)+16777216 else wf_after(source,found,table,Enum.at(state,33,0)) end
+    cursor = if line == 1 do nc_long(state,32)+4294967296 else
+      if Enum.at(state,0,0)*plain+empty > 0 do nc_pos(found)+4294967296 else wf_after(source,found,table,Enum.at(state,36,0)) end
     end
-    start = if line == 1 do nc_cursor(state,30) else -1 end
+    start = if line == 1 do nc_long(state,32) else -1 end
     if Enum.at(state,0,0)*plain == 1 do
       nw_keep(nc_value(nc_pos(body),wf_traced(table,state,cursor,start,wc_both(b[],wc_both(nc_code(body),b[]))),b[12]),body,b[])
     else
@@ -751,7 +750,7 @@ defmodule NativeComprehensions do
   # tuples as entries (a later one replaces an earlier one of its key), a
   # set the elements and a string the strings.
   def wf_into(source: bytes, table: bytes, env: bytes, state: bytes, item: bytes): bytes do
-    target = nc_expression(source,nc_cursor(state,8),wf_outer(env,state),table,Enum.at(state,33,0))
+    target = nc_expression(source,nc_long(state,8),wf_outer(env,state),table,Enum.at(state,36,0))
     tag = nc_tag(target)
     pair = if nt_tag(item) != 5 do b[] else if nt_count(item) != 2 do b[] else nt_binary(8,nt_child(item,0),nt_child(item,1)) end end
     kind = if tag == 7 do nt_merge(nc_kind(target),nt_unary(7,item)) else if tag == 8 do nt_merge(nc_kind(target),pair) else if tag == 25 do nt_merge(nc_kind(target),nt_unary(25,item)) else if tag != 2 do b[] else if nt_tag(item) == 2 do b[2] else b[] end end end end end
@@ -777,8 +776,8 @@ defmodule NativeComprehensions do
   end
   def wf_reduce_in(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, state: bytes): bytes do
     slot = nc_cursor(state,1)
-    initial = nc_expression(source,nc_cursor(state,8),wf_outer(env,state),table,depth)
-    wanted = nw_expected(env,nc_cursor(state,12),3)
+    initial = nc_expression(source,nc_long(state,8),wf_outer(env,state),table,depth)
+    wanted = nw_expected(env,nc_long(state,13),3)
     given = if Enum.count(wanted) == 0 do nc_kind(initial) else nt_merge(nc_kind(initial),wanted) end
     load = nc_slot(b[72,139,69],slot)
     plain = if nc_pos(initial) < 0 do b[] else if nt_tag(given) < 0 do b[] else np_case(source,nc_value(start,load,given),env,table,depth,start) end end
@@ -792,7 +791,7 @@ defmodule NativeComprehensions do
     store = nc_slot(b[72,137,69],slot)
     if nc_pos(arms) < 0 do b[] else if no_compatible(kind,nc_kind(arms)) == 0 do b[] else
       # The arms are a statement where the for stands, counted each time round.
-      value = nc_value(nc_pos(arms),wf_traced(table,state,nc_cursor(state,12)+16777216,nc_cursor(state,12),wc_both(Enum.concat(nc_code(initial),store),wc_both(nc_join(zf_cover(source,table,env,start),nc_code(arms),store),load))),kind)
+      value = nc_value(nc_pos(arms),wf_traced(table,state,nc_long(state,13)+4294967296,nc_long(state,13),wc_both(Enum.concat(nc_code(initial),store),wc_both(nc_join(zf_cover(source,table,env,start),nc_code(arms),store),load))),kind)
       if nu_holes(given,0) == 1 do nw_mark(value) else if nw_marked(arms) == 1 do nw_mark(value) else value end end
     end end
   end
