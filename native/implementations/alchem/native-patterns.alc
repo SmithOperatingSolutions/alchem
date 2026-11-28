@@ -585,8 +585,8 @@ defmodule NativePatterns do
     value = byte_at(source,start)
     after = nc_start(source,nc_end(source,start))
     if start < 0 do -1 else
-      if value == 37 do if byte_at(source,after) == 123 do np_close(source,after,0,16777216) else np_close(source,nc_start(source,nd_name_end(source,after)),0,16777216) end else
-        if (value-123)*(value-91) == 0 do np_close(source,start,0,16777216) else
+      if value == 37 do if byte_at(source,after) == 123 do np_close(source,after,0,1073741824) else np_close(source,nc_start(source,nd_name_end(source,after)),0,1073741824) end else
+        if (value-123)*(value-91) == 0 do np_close(source,start,0,1073741824) else
           if (value-94)*(value-45) == 0 do nc_end(source,after) else if value == 58 do nc_end(source,start+1) else
             if classify_ascii(value) == 2 do np_skip_name(source,start,64) else nc_end(source,start) end
           end end
@@ -597,7 +597,7 @@ defmodule NativePatterns do
   def np_skip_name(source: bytes, start: integer, budget: integer): integer do
     next = nc_end(source,start)
     if nc_word(source,next,b[46])*budget > 0 do np_skip_name(source,nc_start(source,nc_end(source,next)),budget-1) else
-      if byte_at(source,nc_start(source,next)) == 40 do np_close(source,nc_start(source,next),0,16777216) else next end
+      if byte_at(source,nc_start(source,next)) == 40 do np_close(source,nc_start(source,next),0,1073741824) else next end
     end
   end
   # The position after the bracket that closes the one at pos (depth 0), or

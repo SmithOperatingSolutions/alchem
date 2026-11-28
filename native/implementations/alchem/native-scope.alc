@@ -77,7 +77,7 @@ defmodule NativeScope do
     if hi-lo <= 0 do b[] else if hi-lo == 1 do ev_name_at(source,lo) else ev_merge(source,ev_names(source,lo,lo+half),ev_names(source,lo+half,hi),0) end end
   end
   def ev_name_at(source: bytes, pos: integer): bytes do
-    stop = nc_scan(source,pos,2,16777216)
+    stop = nc_scan(source,pos,2,1073741824)
     mark = byte_at(source,stop)
     if classify_ascii(byte_at(source,pos)) != 2 do b[] else if is_identifier_continue(byte_at(source,pos-1)) == 1 do b[] else
       if (mark-63)*(mark-33) == 0 do Enum.concat(ev_entry(pos,stop,0,0),ev_entry(pos,stop+1,0,0)) else ev_entry(pos,stop,0,0) end
@@ -311,7 +311,7 @@ defmodule NativeScope do
     if Enum.at(state,6,0) == 1 do nc_long(state,0) else -1 end
   end
   def ev_extent_grow(source: bytes, state: bytes, size: integer, mode: integer): bytes do
-    if Enum.at(state,6,0) != 2 do state else if size > 16777216 do b[] else ev_extent_grow(source,ev_extent_run(source,state,size,mode),size*2,mode) end end
+    if Enum.at(state,6,0) != 2 do state else if size > 1073741824 do b[] else ev_extent_grow(source,ev_extent_run(source,state,size,mode),size*2,mode) end end
   end
   def ev_extent_run(source: bytes, state: bytes, size: integer, mode: integer): bytes do
     half = nc_half(size)

@@ -103,7 +103,7 @@ defmodule NativePrelude do
   # after it from opening one.
   def ny_pick_holes(source: bytes, index: bytes, state: bytes, pos: integer, stop: integer): bytes do
     at = ny_hole_at(source,pos,stop)
-    close = if at >= stop do -1 else np_close(source,at+2,1,16777216) end
+    close = if at >= stop do -1 else np_close(source,at+2,1,1073741824) end
     if at >= stop do state else if close < 0 do state else if close > stop do state else
       ny_pick_holes(source,index,ny_pick(source,index,ny_reached(state,at+2),at+2,close-1),close,stop)
     end end end

@@ -22,7 +22,7 @@ defmodule NativeSigils do
   # below -1.
   def sg_hole_some(source: bytes, pos: integer, depth: integer, left: integer): integer do
     value = byte_at(source,pos)
-    if pos < 0 do -1 else if pos >= Enum.count(source) do -1 else if value == 10 do -1 else if left == 0 do 0-2-pos-depth*16777216 else
+    if pos < 0 do -1 else if pos >= Enum.count(source) do -1 else if value == 10 do -1 else if left == 0 do 0-2-pos-depth*4294967296 else
       if value == 34 do sg_hole_some(source,ns_quoted_end(source,pos+1),depth,left-1) else
         if value == 123 do sg_hole_some(source,pos+1,depth+1,left-1) else
           if value != 125 do sg_hole_some(source,pos+1,depth,left-1) else if depth == 1 do pos else sg_hole_some(source,pos+1,depth-1,left-1) end end
@@ -32,8 +32,8 @@ defmodule NativeSigils do
   end
   def sg_hole_end(source: bytes, pos: integer, depth: integer): integer do
     next = sg_hole_some(source,pos,depth,64)
-    deep = nc_units(0-2-next,16777216)
-    if next >= -1 do next else sg_hole_end(source,0-2-next-deep*16777216,deep) end
+    deep = nc_units(0-2-next,4294967296)
+    if next >= -1 do next else sg_hole_end(source,0-2-next-deep*4294967296,deep) end
   end
   # Where the delimiter stands that closes a one-line sigil whose text starts
   # at pos, -1 when its line ends first. A backslash keeps the byte after it
@@ -646,7 +646,7 @@ defmodule NativeSigils do
   def sg_indexed(source: bytes, value: bytes, env: bytes, table: bytes, depth: integer): bytes do
     next = nc_pos(value)
     open = nc_start(source,next)
-    after = if next < 0 do -1 else if byte_at(source,open) != 91 do -1 else if sg_same_line(source,next,open) == 0 do -1 else np_close(source,open,0,16777216) end end end
+    after = if next < 0 do -1 else if byte_at(source,open) != 91 do -1 else if sg_same_line(source,next,open) == 0 do -1 else np_close(source,open,0,1073741824) end end end
     arm = if sg_arm_after(source,after) == 0 do 0 else 1-sg_in_condition(env,3,0) end
     if after < 0 do value else if nc_word(source,after,b[61])+arm > 0 do value else
       sg_indexed(source,nf_postfix(source,sg_index(source,value,env,table,depth),env,table,depth),env,table,depth)
@@ -782,7 +782,7 @@ defmodule NativeSigils do
     piece = sg_piece(source,pos,plan)
     close = sg_hole_end(source,nc_pos(piece)+2,1)
     if nc_pos(piece) < 0 do 0 else if Enum.at(piece,4,0) == 1 do 1 else if strict == 1 do 0 else if close < 0 do 0 else
-      if nj_constant(source,nc_pos(piece)+2,close,16777216) == 0 do 0 else sg_holes_constant(source,close+1,plan,strict) end
+      if nj_constant(source,nc_pos(piece)+2,close,1073741824) == 0 do 0 else sg_holes_constant(source,close+1,plan,strict) end
     end end end end
   end
   # 1 when the token at start is no sigil, or a sigil that is a constant.
@@ -831,7 +831,7 @@ defmodule NativeSigils do
     # The text of a @doc may be a ~S or ~s sigil that holds no value.
     letter = byte_at(source,first+1)
     plain = if byte_at(source,first) == 34 do sg_string_plain(source,first) else if byte_at(source,first) == 126 do if (letter-115)*(letter-83) != 0 do 0 else sg_sigil_constant(source,first,1) end else nc_word(source,first,b[102,97,108,115,101]) end end
-    if stop < 0 do 0 else if nc_word(source,name,b[100,111,99])+nc_word(source,name,b[109,111,100,117,108,101,100,111,99]) == 0 do sg_constant_tokens(source,first,stop,-1,16777216) else
+    if stop < 0 do 0 else if nc_word(source,name,b[100,111,99])+nc_word(source,name,b[109,111,100,117,108,101,100,111,99]) == 0 do sg_constant_tokens(source,first,stop,-1,1073741824) else
       if nc_start(source,nc_end(source,first)) != nc_start(source,stop) do 0 else plain end
     end end
   end

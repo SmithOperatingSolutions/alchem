@@ -14,9 +14,9 @@ defmodule NativeRecords do
     first = byte_at(source,name)
     # Name[a, b] takes type parameters: their number is the record's count.
     count = nd_parameters(source,nd_name_end(source,name),0)
-    after = if count <= 0 do nd_name_end(source,name) else np_close(source,nd_name_end(source,name),0,16777216) end
+    after = if count <= 0 do nd_name_end(source,name) else np_close(source,nd_name_end(source,name),0,1073741824) end
     body = nc_expect(source,after,b[100,111])
-    stop = if body < 0 do -1 else nc_body_end(source,body,16777216) end
+    stop = if body < 0 do -1 else nc_body_end(source,body,1073741824) end
     if nc_identifier(source,name) == 0 do b[] else if (first-65)*(90-first)+nd_lower(source,name)*65536 < 0 do b[] else if stop < 0 do b[] else if count < 0 do b[] else
       nc_record(nc_places(name,nd_name_end(source,name),body,body,stop),count,flag,nc_zeros(9),owner,nc_wide(source))
     end end end end

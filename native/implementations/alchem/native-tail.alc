@@ -61,7 +61,7 @@ defmodule NativeTail do
   # From pos, the "(" at the outer level whose ")" stands at close.
   def tl_step(source: bytes, pos: integer, close: integer): bytes do
     start = nc_start(source,pos)
-    after = if byte_at(source,start) == 40 do np_close(source,start,0,16777216) else nc_end(source,start) end
+    after = if byte_at(source,start) == 40 do np_close(source,start,0,1073741824) else nc_end(source,start) end
     if start < 0 do nk_state(0,0,0) else if start >= close do nk_state(0,0,0) else if after <= start do nk_state(0,0,0) else
       if byte_at(source,start) != 40 do nk_state(after,0,2) else if after-1 == close do nk_state(start,0,1) else nk_state(after,0,2) end end
     end end end
@@ -73,7 +73,7 @@ defmodule NativeTail do
     end
   end
   def tl_open(source: bytes, start: integer, close: integer): integer do
-    state = tl_run(source,nk_state(start,0,2),16777216,close)
+    state = tl_run(source,nk_state(start,0,2),1073741824,close)
     if Enum.at(state,6,0) == 1 do nc_long(state,0) else -1 end
   end
   # The expression from start to the ")" at close, once the parentheses

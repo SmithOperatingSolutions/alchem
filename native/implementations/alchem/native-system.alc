@@ -115,7 +115,7 @@ defmodule NativeSystem do
   def nh_end(source: bytes, start: integer): integer do
     mark = if byte_at(source,start) != 48 do 0 else byte_at(source,start+1) end
     radix = if mark == 120 do 1 else if mark == 111 do 1 else if mark == 98 do 1 else 0 end end end
-    stop = if radix == 0 do start else nh_scan(source,start+2,16777216) end
+    stop = if radix == 0 do start else nh_scan(source,start+2,1073741824) end
     if stop <= start+2 do ne_end(source,start) else stop end
   end
   def nh_scan(source: bytes, pos: integer, left: integer): integer do

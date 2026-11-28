@@ -29,7 +29,7 @@ defmodule NativeClauses do
     mark = nc_start(source,after)
     given = if after < 0 do 0 else if byte_at(source,mark)*256+byte_at(source,mark+1) == 23644 do 1 else 0 end end
     value = if given == 1 do nc_start(source,mark+2) else 0 end
-    last = if given == 1 do nc_span(source,nc_span_state(value,0,0,0,0),16777216) else after end
+    last = if given == 1 do nc_span(source,nc_span_state(value,0,0,0,0),1073741824) else after end
     if after < 0 do b[] else if last <= value do b[] else
       nc_join(nc_join(nc_u32(last),nc_u32(value),nc_u32(stop)),nc_kind(kind),b[])
     end end
@@ -39,7 +39,7 @@ defmodule NativeClauses do
   def nj_after(source: bytes, pos: integer): integer do
     start = nc_start(source,pos)
     if byte_at(source,start) != 92 do nc_end(source,pos) else
-      if byte_at(source,start+1) != 92 do -1 else nc_end(source,nc_span(source,nc_span_state(nc_start(source,start+2),0,0,0,0),16777216)) end
+      if byte_at(source,start+1) != 92 do -1 else nc_end(source,nc_span(source,nc_span_state(nc_start(source,start+2),0,0,0,0),1073741824)) end
     end
   end
   # The parameters from pos to the ")": the position after it, how many
@@ -50,7 +50,7 @@ defmodule NativeClauses do
     item = nj_param(source,pos)
     next = nc_pos(item)
     given = if nc_long(item,4) > 0 do 1 else 0 end
-    sound = if given == 0 do 1 else nj_plain(source,nc_start(source,pos),b[0])*nj_constant(source,nc_long(item,4),next,16777216) end
+    sound = if given == 0 do 1 else nj_plain(source,nc_start(source,pos),b[0])*nj_constant(source,nc_long(item,4),next,1073741824) end
     if count >= 65535 do b[] else if next < 0 do b[] else if defaults*(1-given) > 0 do b[] else if sound == 0 do b[] else
       if nc_word(source,next,b[41]) == 1 do nc_join(nc_u32(nc_end(source,next)),nc_u24(count+1),nc_u24(defaults+given)) else
         if nc_word(source,next,b[44]) == 1 do nj_params(source,nc_end(source,next),count+1,defaults+given) else b[] end
@@ -77,9 +77,9 @@ defmodule NativeClauses do
     result = if typed == 1 do nc_type(source,nc_end(source,after)) else nc_value(after,b[],b[0]) end
     rest = nc_pos(result)
     guarded = if rest < 0 do 0 else nc_word(source,rest,b[119,104,101,110]) end
-    open = if guarded == 1 do nj_guard_end(source,nc_end(source,rest),16777216) else rest end
+    open = if guarded == 1 do nj_guard_end(source,nc_end(source,rest),1073741824) else rest end
     body = nc_expect(source,open,b[100,111])
-    stop = if body < 0 do -1 else nc_body_end(source,body,16777216) end
+    stop = if body < 0 do -1 else nc_body_end(source,body,1073741824) end
     flags = if is_main == 1 do 1 else nc_word(source,pos,b[100,101,102,112])*16 end
     # A record holds up to 255 defaults in a byte; more are counted again
     # where they are needed (nj_defaulted).
@@ -391,7 +391,7 @@ defmodule NativeClauses do
       if value == 92 do nj_text_constant(source,at+2,stop) else
         if value != 35 do nj_text_constant(source,if at == pos do at+1 else at end,stop) else
           if close == at+1 do nj_text_constant(source,close,stop) else
-            if nj_constant(source,at+2,close-1,16777216) == 0 do 0 else nj_text_constant(source,close,stop) end
+            if nj_constant(source,at+2,close-1,1073741824) == 0 do 0 else nj_text_constant(source,close,stop) end
           end
         end
       end
@@ -415,7 +415,7 @@ defmodule NativeClauses do
     wanted = if index < nc_cursor(plan,3) do 0 else 1 end
     item = if index == nc_cursor(plan,6) do b[] else nj_param(source,pos) end
     begin = nc_long(item,4)
-    value = if wanted == 0 do b[] else if begin == 0 do b[] else if nj_lower(source,begin,nc_pos(item),16777216) == 0 do b[] else nc_expression(source,begin,nc_slice(plan,9,12),table,0) end end end
+    value = if wanted == 0 do b[] else if begin == 0 do b[] else if nj_lower(source,begin,nc_pos(item),1073741824) == 0 do b[] else nc_expression(source,begin,nc_slice(plan,9,12),table,0) end end end
     whole = if wanted == 0 do 1 else if nc_pos(value) < 0 do 0 else if nc_start(source,nc_pos(value)) == nc_pos(item) do 1 else 0 end end end
     if index == nc_cursor(plan,6) do b[0,0,0,0] else if Enum.count(item) == 0 do b[] else if whole == 0 do b[] else
       rest = nj_defaults(source,nc_end(source,nc_pos(item)),table,Enum.concat(nc_u24(index+1),nc_slice(plan,3,12)))
@@ -552,7 +552,7 @@ defmodule NativeClauses do
     result = nc_return_kind(source,table,nc_cursor(ids,0))
     own = nc_long(table,clause*40+22)
     agrees = if own == 0 do 1 else nt_same(nd_resolve(source,table,nc_owner(table,clause),nc_kind(nc_type(source,own))),result) end
-    body = if agrees == 0 do b[] else nn_expected(nc_body(source,nc_meta(table,clause,9),nf_bodied(source,table,nc_cursor(ids,0),scope),table,16777216),result,table) end
+    body = if agrees == 0 do b[] else nn_expected(nc_body(source,nc_meta(table,clause,9),nf_bodied(source,table,nc_cursor(ids,0),scope),table,1073741824),result,table) end
     if nc_pos(body) < 0 do b[] else if no_compatible(result,nc_kind(body)) == 0 do b[] else
       if nc_start(source,nc_pos(body)) != nc_meta(table,clause,12) do b[] else body end
     end end

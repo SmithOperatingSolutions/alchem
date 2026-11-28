@@ -34,7 +34,7 @@
  add rsi,rax
  mov rax,rsi
  sub rax,r12
- cmp rax,0xfffc07
+ cmp rax,0x3ffffc07
  ja io_limit
  jmp 1b
 2:

@@ -144,7 +144,7 @@ defmodule NativeJson do
   end
   def jn_tail(source: bytes, plan: bytes, env: bytes, table: bytes): bytes do
     name = nc_long(plan,0)
-    next = nc_start(source,np_close(source,nc_start(source,nc_end(source,name)),0,16777216))
+    next = nc_start(source,np_close(source,nc_start(source,nc_end(source,name)),0,1073741824))
     scope = nj_context(env,3,b[])
     id = nc_cursor(env,0)
     # What is expected of the call itself, or of the block it ends.

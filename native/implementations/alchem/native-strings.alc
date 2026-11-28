@@ -307,7 +307,7 @@ defmodule NativeStrings do
   def ns_chunk(source: bytes, pos: integer, size: integer, budget: integer): bytes do
     value = byte_at(source,pos)
     if value == 34 do Enum.concat(nc_u32(pos+1),b[1]) else
-      if size >= 16777216 do b[] else
+      if size >= 1073741824 do b[] else
         if budget == 0 do Enum.concat(nc_u32(pos),b[0]) else
           if value < 32 do b[] else
             token = if value == 92 do ns_escape(source,pos+1) else

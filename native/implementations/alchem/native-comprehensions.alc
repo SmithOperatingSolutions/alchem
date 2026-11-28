@@ -88,7 +88,7 @@ defmodule NativeComprehensions do
     end
   end
   def wc_scan(source: bytes, pos: integer, mode: integer): integer do
-    state = if pos < 0 do b[] else wc_scan_run(source,nk_state(pos,0,2),16777216,mode) end
+    state = if pos < 0 do b[] else wc_scan_run(source,nk_state(pos,0,2),1073741824,mode) end
     if Enum.at(state,6,0) == 1 do nc_long(state,0) else -1 end
   end
   # 1 when the pattern tree at offset matches every value by its form alone:
@@ -235,7 +235,7 @@ defmodule NativeComprehensions do
   end
   # The position after the arrow of the arm whose pattern ends at pos.
   def wc_arm_body(source: bytes, pos: integer): integer do
-    if nc_word(source,pos,b[119,104,101,110]) == 0 do nc_expect(source,pos,b[45,62]) else wc_arm_arrow(source,nc_end(source,pos),0,16777216) end
+    if nc_word(source,pos,b[119,104,101,110]) == 0 do nc_expect(source,pos,b[45,62]) else wc_arm_arrow(source,nc_end(source,pos),0,1073741824) end
   end
   def wc_arm_arrow(source: bytes, pos: integer, depth: integer, budget: integer): integer do
     start = nc_start(source,pos)
@@ -345,26 +345,26 @@ defmodule NativeComprehensions do
   #
   # The frame stands at line `past` after the for's own and its closures end
   # with the record whose chain slot is `record`.
-  def wf_word(slot: integer, line: integer): bytes do
-    if nz_short(line) == 1 do Enum.concat(nc_slot(b[72,199,69],slot),nc_u32(nz_low(line))) else
-      nc_join(b[72,184],Enum.concat(nc_u32(nz_low(line)),nc_u32(nz_high(line))),nc_slot(b[72,137,69],slot))
+  def wf_word(slot: integer, line: integer, wide: integer): bytes do
+    if nz_short(line,wide) == 1 do Enum.concat(nc_slot(b[72,199,69],slot),nc_u32(nz_low(line,wide))) else
+      nc_join(b[72,184],Enum.concat(nc_u32(nz_low(line,wide)),nc_u32(nz_high(line,wide))),nc_slot(b[72,137,69],slot))
     end
   end
   # RAX moved on by count lines: past 127 of them through RCX.
-  def wf_lines(count: integer): bytes do
+  def wf_lines(count: integer, wide: integer): bytes do
     high = nc_units(count*16777216,4294967296)
-    if count < 128 do Enum.concat(b[72,5],nc_u32(count*16777216)) else nc_join(b[72,185],Enum.concat(nc_u32(count*16777216-high*4294967296),nc_u32(high)),b[72,1,200]) end
+    if wide == 1 do nc_join(b[72,185],Enum.concat(nc_u32(0),nc_u32(count)),b[72,1,200]) else if count < 128 do Enum.concat(b[72,5],nc_u32(count*16777216)) else nc_join(b[72,185],Enum.concat(nc_u32(count*16777216-high*4294967296),nc_u32(high)),b[72,1,200]) end end
   end
   def wf_at(table: bytes, state: bytes, past: integer, record: integer): bytes do
     if nz_on(table) == 0 do b[] else
-      nc_join(nc_join(nc_slot(b[72,141,69],record),b[72,137,133,112,255,255,255],nc_slot(b[72,139,69],nc_cursor(state,1)+2)),wf_lines(past),b[72,137,133,120,255,255,255])
+      nc_join(nc_join(nc_slot(b[72,141,69],record),b[72,137,133,112,255,255,255],nc_slot(b[72,139,69],nc_cursor(state,1)+2)),wf_lines(past,nd_wide(table)),b[72,137,133,120,255,255,255])
     end
   end
   # The record in the slots from first: the line `past` after the for's own,
   # under the record whose chain slot is `record`.
   def wf_note(table: bytes, state: bytes, first: integer): bytes do
     if nz_on(table) == 0 do b[] else
-      nc_join(nc_join(nc_slot(b[72,139,69],nc_cursor(state,1)+2),wf_lines(nc_cursor(state,20)),nc_slot(b[72,137,69],first)),nc_slot(b[72,141,69],nc_cursor(state,23)),nc_slot(b[72,137,69],first+1))
+      nc_join(nc_join(nc_slot(b[72,139,69],nc_cursor(state,1)+2),wf_lines(nc_cursor(state,20),nd_wide(table)),nc_slot(b[72,137,69],first)),nc_slot(b[72,141,69],nc_cursor(state,23)),nc_slot(b[72,137,69],first+1))
     end
   end
   # The for begins: its line is kept, its record made (the function stands
@@ -373,7 +373,7 @@ defmodule NativeComprehensions do
     slot = nc_cursor(state,1)
     record = nc_cursor(state,26)
     if nz_on(table) == 0 do b[] else
-      nc_join(nc_join(b[72,139,133,120,255,255,255],nc_slot(b[72,137,69],slot+2),wf_word(record,final)),nc_join(b[72,139,133,112,255,255,255],nc_slot(b[72,137,69],record+1),wf_at(table,state,1,record+1)),b[])
+      nc_join(nc_join(b[72,139,133,120,255,255,255],nc_slot(b[72,137,69],slot+2),wf_word(record,final,nd_wide(table))),nc_join(b[72,139,133,112,255,255,255],nc_slot(b[72,137,69],record+1),wf_at(table,state,1,record+1)),b[])
     end
   end
   # The body begins: its record says where the generator around it stands,
@@ -381,7 +381,7 @@ defmodule NativeComprehensions do
   def wf_inside(table: bytes, state: bytes, cursor: integer, pos: integer): bytes do
     record = nc_cursor(state,29)
     if nz_on(table) == 0 do b[] else
-      nc_join(nc_join(wf_word(record,cursor),nc_slot(b[72,141,69],nc_cursor(state,23)),nc_slot(b[72,137,69],record+1)),Enum.concat(nc_slot(b[72,141,69],record+1),b[72,137,133,112,255,255,255]),if pos < 0 do b[] else nz_at(table,pos) end)
+      nc_join(nc_join(wf_word(record,cursor,nd_wide(table)),nc_slot(b[72,141,69],nc_cursor(state,23)),nc_slot(b[72,137,69],record+1)),Enum.concat(nc_slot(b[72,141,69],record+1),b[72,137,133,112,255,255,255]),if pos < 0 do b[] else nz_at(table,pos) end)
     end
   end
   # The for is over: the function has its own closures again and stands at
@@ -641,7 +641,7 @@ defmodule NativeComprehensions do
     env = wc_first(nc_code(found))
     if last < 0 do 0 else
       if nc_word(source,last,b[105,102])+nc_word(source,last,b[117,110,108,101,115,115]) == 1 do wf_branch(source,last,env,table,depth) else
-        if wf_keyword(source,last,env)+ty_keyword(source,last,env) > 0 do wf_inner(wc_second(nc_code(found)),last) else
+        if wf_keyword(source,last,env)+ty_keyword(source,last,env) > 0 do wf_inner(wc_second(nc_code(found)),last,nd_wide(table)) else
           if nc_word(source,last,b[99,111,110,100])*nc_opens(source,nc_end(source,last)) == 1 do wf_cond(source,nc_join(nc_u32(last),nc_u32(nc_end(source,nc_end(source,last))),b[0,0,0,0,0]),env,table,depth) else last+4294967296 end
         end
       end
@@ -675,13 +675,13 @@ defmodule NativeComprehensions do
   end
   # A for leaves the line its function then stands at in its last
   # instruction: code is that of a statement that is a for.
-  def wf_inner(code: bytes, last: integer): integer do
+  def wf_inner(code: bytes, last: integer, wide: integer): integer do
     size = Enum.count(code)
     noted = if size < 10 do 0 else nt_same(nc_slice(code,size-10,size-4),b[199,133,120,255,255,255]) end
     halved = if size < 20 do 0 else nt_same(nc_slice(code,size-20,size-14),b[199,133,120,255,255,255])*nt_same(nc_slice(code,size-10,size-4),b[199,133,124,255,255,255]) end
     upper = nc_read(code,size-4)+nc_read(code,size-2)*65536
-    if halved == 1 do nz_line(nc_read(code,size-14)+nc_read(code,size-12)*65536,upper)+4294967296 else
-      if noted == 0 do last+4294967296 else nz_line(upper,0)+4294967296 end
+    if halved == 1 do nz_line(nc_read(code,size-14)+nc_read(code,size-12)*65536,upper,wide)+4294967296 else
+      if noted == 0 do last+4294967296 else nz_line(upper,0,wide)+4294967296 end
     end
   end
   # The three parts of a for's code with what a trace needs: cursor is the

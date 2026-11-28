@@ -200,7 +200,7 @@ defmodule NativeSourceCompiler do
         if nc_single(source,pos) == 1 do pos+1 else
           next = nc_skip(source,pos,16)
           if next < 0 do -1 else
-            if nc_ignored(source,next) == 0 do next else nc_skip(source,next,16777216) end
+            if nc_ignored(source,next) == 0 do next else nc_skip(source,next,1073741824) end
           end
         end
       end
@@ -224,7 +224,7 @@ defmodule NativeSourceCompiler do
       kind = classify_ascii(byte_at(source,start))
       # A name may end in ? or !; != after a name is the operator.
       if kind == 2 do
-        stop = nc_scan(source,start,2,16777216)
+        stop = nc_scan(source,start,2,1073741824)
         if byte_at(source,stop) == 63 do stop+1 else if byte_at(source,stop) == 33 do if byte_at(source,stop+1) == 61 do stop else stop+1 end else stop end end
       else
         if kind == 3 do nh_end(source,start) else nc_punctuation_end(source,start) end
@@ -581,7 +581,7 @@ defmodule NativeSourceCompiler do
             typed = if next > nesting do 0 else nc_word(source,start,b[102,110])*nc_word(source,nc_end(source,start),b[91]) end
             # 251 blocks inside a function's own, as the pinned parser nests them:
             # a body nested deeper is refused here, before any of it is compiled.
-            if next > 252 do b[] else nc_body_chunk(source,if typed == 1 do np_close(source,nc_start(source,nc_end(source,start)),0,16777216) else nc_end(source,start) end,next,count-1) end
+            if next > 252 do b[] else nc_body_chunk(source,if typed == 1 do np_close(source,nc_start(source,nc_end(source,start)),0,1073741824) else nc_end(source,start) end,next,count-1) end
           end
         end
       end
@@ -1184,7 +1184,7 @@ defmodule NativeSourceCompiler do
     if quota == 0 do nc_value(pos,spans,b[0]) else
       if count >= 16777216 do b[] else
         start = nc_start(source,pos)
-        stop = nc_span(source,nc_span_state(start,0,0,0,0),16777216)
+        stop = nc_span(source,nc_span_state(start,0,0,0,0),1073741824)
         if stop <= start do b[] else
           merged = Enum.concat(spans,Enum.concat(nc_u32(start),nc_u32(stop)))
           if nc_word(source,stop,b[closing]) == 1 do nc_value(nc_end(source,stop),merged,b[1]) else
@@ -1661,7 +1661,7 @@ defmodule NativeSourceCompiler do
     if nc_pos(shaped) < 0 do b[] else
       # A test or a setup block ends in whatever it ends in (native-testing.alc).
       ours = tm_ours(source,nc_meta(table,id,0))
-      body = if ours > 0 do nc_body(source,nc_meta(table,id,9),env,table,16777216) else nn_returned(source,table,id,nc_body(source,nc_meta(table,id,9),nf_bodied(source,table,id,env),table,16777216)) end
+      body = if ours > 0 do nc_body(source,nc_meta(table,id,9),env,table,1073741824) else nn_returned(source,table,id,nc_body(source,nc_meta(table,id,9),nf_bodied(source,table,id,env),table,1073741824)) end
       if nc_pos(body) < 0 do b[] else
         # main is a block of statements and returns 0 when it reaches its end; any
         # other function ends in a value of its result type.
@@ -1825,10 +1825,11 @@ defmodule NativeSourceCompiler do
       end
     end
   end
-  # The most bytes a program may have, with the library it uses: a position
-  # is 24 bits, and 16777215 stands for none (mx_none), so 1 KiB is left
-  # between the last position and it.
-  def nc_limit(): integer do 16776191 end
+  # The most bytes a program may have, with the library it uses: 1 GiB less
+  # 1 KiB and a byte. A position is four bytes wherever the compiler keeps
+  # one, and a frame's word and a line have 32 bits for it (nz_low); the
+  # rewriting of macros and of tests keeps three (mx_prepare, tm_prepare).
+  def nc_limit(): integer do 1073740799 end
   def nc_compile(given: bytes): bytes do
     if Enum.count(given) > nc_limit() do b[] else ac_compiled(given,0) end
   end

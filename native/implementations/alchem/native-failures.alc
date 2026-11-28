@@ -216,7 +216,7 @@ defmodule NativeFailures do
   # statement of a block may be; else 0.
   def zf_formed(source: bytes, table: bytes, env: bytes, value: bytes, start: integer): integer do
     stop = nc_start(source,nc_pos(value))
-    close = if byte_at(source,start) != 40 do -1 else np_close(source,start,0,16777216) end
+    close = if byte_at(source,start) != 40 do -1 else np_close(source,start,0,1073741824) end
     last = zf_last(source,start,stop)
     name = if nc_word(source,last,b[75,101,114,110,101,108])*nc_word(source,nc_end(source,last),b[46]) == 1 do nc_start(source,nc_end(source,nc_end(source,last))) else last end
     owner = nc_owner(table,nc_cursor(env,0))
@@ -242,7 +242,7 @@ defmodule NativeFailures do
   end
   # Where the last part of the pipeline from start up to stop begins.
   def zf_last(source: bytes, start: integer, stop: integer): integer do
-    state = zf_pipe_run(source,nk_state(start,0,2),16777216,stop)
+    state = zf_pipe_run(source,nk_state(start,0,2),1073741824,stop)
     if Enum.at(state,6,0) != 1 do start else zf_last(source,nc_start(source,nc_long(state,0)),stop) end
   end
   # As nk_pipe_step, with the position after the |> it finds.
