@@ -69,7 +69,7 @@ def encoders(root,compiler):
     helpers=''.join(re.search(r'  def '+name+r'\(.*?\n  end\n',compiler_text,re.S).group(0) for name in ['nc_hi','nc_upper','nc_quot256','nc_quot_high','nc_quot_low','nc_u16','nc_u32','nc_join','nc_zeros','nc_half','nc_slice'])
     # The entry calls the translation, and a macOS compiler writes Mach-O
     # (native-macho.alc); the encoders alone are tested here.
-    helpers+='  def xa_function(code: bytes): bytes do code end\n'
+    helpers+='  def xa_placed(code: bytes, last: integer): bytes do code end\n  def nc_slot_limit(): integer do 16777220 end\n'
     helpers+='  def m_import_count(): integer do 0 end\n  def a_macho_image(image: bytes, table: integer): bytes do image end\n'
     def joined(calls):
         if len(calls)==1:return calls[0]

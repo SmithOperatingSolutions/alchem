@@ -133,9 +133,9 @@ defmodule NativeSystem do
   # A struct a library file declares may be named with its module, File.Stat, or
   # in lowercase, file: the pinned library's own names. Only AlchemTypes holds such.
   def nh_declare(source: bytes, table: bytes, declared: bytes, owner: integer): bytes do
-    name = nc_cursor(declared,0)
-    plain = if nc_cursor(declared,3) != nc_end(source,name) do 0 else if byte_at(source,name) > 90 do 0 else 1 end end
-    if Enum.count(declared) != 28 do declared else if plain == 1 do declared else
+    name = nc_meta(declared,0,0)
+    plain = if nc_meta(declared,0,3) != nc_end(source,name) do 0 else if byte_at(source,name) > 90 do 0 else 1 end end
+    if Enum.count(declared) != 40 do declared else if plain == 1 do declared else
       if nt_same(nc_slice(source,nc_meta(table,owner,0),nc_meta(table,owner,3)),b[65,108,99,104,127,109,84,121,112,101,115]) == 1 do declared else b[] end
     end end
   end
@@ -149,7 +149,7 @@ defmodule NativeSystem do
   end
   # A module's records follow its header: those of owner from record at on.
   def nh_within(source: bytes, pos: integer, size: integer, table: bytes, at: integer, owner: integer): integer do
-    flags = if at*28+16 >= Enum.count(table) do 32 else Enum.at(table,at*28+16,0) end
+    flags = if at*40+21 >= Enum.count(table) do 32 else Enum.at(table,at*40+21,0) end
     start = if flags < 64 do 0 else nc_meta(table,at,0) end
     if at >= nc_records(Enum.count(table)) do -1 else if flags == 32 do -1 else
       match = if flags < 64 do 0 else if nc_meta(table,at,3)-start != size do 0 else nc_equal(source,pos,start,size) end end

@@ -18,7 +18,7 @@ defmodule NativeRecords do
     body = nc_expect(source,after,b[100,111])
     stop = if body < 0 do -1 else nc_body_end(source,body,16777216) end
     if nc_identifier(source,name) == 0 do b[] else if (first-65)*(90-first)+nd_lower(source,name)*65536 < 0 do b[] else if stop < 0 do b[] else if count < 0 do b[] else
-      nc_join(nc_join(nc_u24(name),nc_u24(nd_name_end(source,name)),nc_u24(body)),nc_join(nc_u24(body),nc_u24(stop),b[count-nc_hi(count)*256,flag]),nc_join(b[0,0,0,0,0,0,0],b[nc_hi(count)],nc_u24(owner)))
+      nc_record(nc_places(name,nd_name_end(source,name),body,body,stop),count,flag,nc_zeros(9),owner)
     end end end end
   end
   # The number of type parameters written from pos on: 0 without brackets, -1
@@ -53,7 +53,7 @@ defmodule NativeRecords do
   # parameter it leaves open is unknown.
   def nd_instance(source: bytes, table: bytes, id: integer, subst: bytes): bytes do
     count = nc_argc(table,id)
-    tag = if Enum.at(table,id*28+16,0) == 64 do 13 else 14 end
+    tag = if Enum.at(table,id*40+21,0) == 64 do 13 else 14 end
     if count == 0 do Enum.concat(b[tag],nc_u24(nc_meta(table,id,0))) else
       nt_sized(nc_join(Enum.concat(b[tag+5],nc_u24(nc_meta(table,id,0))),nt_counter(count),nd_instance_from(source,table,id,0,subst)))
     end
@@ -73,7 +73,7 @@ defmodule NativeRecords do
       middle = first+nc_half(stop-first)
       start = nc_meta(table,middle,0)
       size = nc_meta(table,middle,3)-start
-      wanted = if Enum.at(table,middle*28+16,0) < 64 do 0 else if nc_owner(table,middle) == owner do 1 else 0 end end
+      wanted = if Enum.at(table,middle*40+21,0) < 64 do 0 else if nc_owner(table,middle) == owner do 1 else 0 end end
       match = if wanted == 0 do 0 else if nc_end(source,pos)-pos == size do nc_equal(source,pos,start,size) else 0 end end
       if match == 1 do middle else
         left = nd_find_range(source,pos,table,first,middle,owner)
@@ -140,7 +140,7 @@ defmodule NativeRecords do
   # Name[arguments]: as many as the declaration has parameters.
   def nd_resolve_instance(source: bytes, table: bytes, owner: integer, kind: bytes): bytes do
     id = nd_named(source,nc_cursor(kind,1),table,owner)
-    tag = if id < 0 do 0 else if Enum.at(table,id*28+16,0) == 64 do 18 else 19 end end
+    tag = if id < 0 do 0 else if Enum.at(table,id*40+21,0) == 64 do 18 else 19 end end
     if id < 0 do b[] else if nc_argc(table,id) != nt_count(kind) do b[] else
       dn_checked(source,table,owner,kind,nd_resolve_arguments(source,table,owner,kind,nc_join(b[tag],nc_u24(nc_meta(table,id,0)),nt_counter(nt_count(kind)))))
     end end
@@ -181,7 +181,7 @@ defmodule NativeRecords do
     end
   end
   def nd_declared(table: bytes, id: integer): bytes do
-    if id < 0 do b[] else Enum.concat(b[if Enum.at(table,id*28+16,0) == 64 do 13 else 14 end],nc_u24(nc_meta(table,id,0))) end
+    if id < 0 do b[] else Enum.concat(b[if Enum.at(table,id*40+21,0) == 64 do 13 else 14 end],nc_u24(nc_meta(table,id,0))) end
   end
   # The field declared at pos in struct id: the position after it, with the
   # name position and the default's position (3 bytes each, 0 for no default)
@@ -240,7 +240,7 @@ defmodule NativeRecords do
   # compiler calls any other an unknown type.
   def nd_closed(source: bytes, table: bytes, id: integer): integer do
     subst = nd_closed_subst(source,table,id,0,b[])
-    if Enum.at(table,id*28+16,0) == 64 do nd_closed_fields(source,table,id,nc_meta(table,id,9),subst) else nd_closed_variants(source,table,id,nc_meta(table,id,9),subst) end
+    if Enum.at(table,id*40+21,0) == 64 do nd_closed_fields(source,table,id,nc_meta(table,id,9),subst) else nd_closed_variants(source,table,id,nc_meta(table,id,9),subst) end
   end
   def nd_closed_subst(source: bytes, table: bytes, id: integer, index: integer, subst: bytes): bytes do
     if index >= nc_argc(table,id) do subst else nd_closed_subst(source,table,id,index+1,nu_bind(subst,nd_parameter(source,table,id,index),b[0])) end
@@ -286,7 +286,7 @@ defmodule NativeRecords do
     name = nc_start(source,nc_end(source,pos))
     id = nd_named(source,name,table,nc_owner(table,nc_cursor(env,0)))
     open = nc_expect(source,nd_name_end(source,name),b[123])
-    count = if id < 0 do -1 else if Enum.at(table,id*28+16,0) != 64 do -1 else nd_fields(source,table,id,0) end end
+    count = if id < 0 do -1 else if Enum.at(table,id*40+21,0) != 64 do -1 else nd_fields(source,table,id,0) end end
     if open < 0 do b[] else if count < 0 do b[] else
       # An instance of this struct expected here (an annotation, the
       # function's result) settles its type parameters for the fields'
@@ -526,14 +526,14 @@ defmodule NativeRecords do
     known = nd_library(source,pos,table,nd_find(source,pos,table,owner))
     # A struct of that name is no sum type: Markup.Value.text is of the library's Markup.Value.
     # Nor is a name that is none of its variants: JSON.decode is a function.
-    local = if known < 0 do -1 else if Enum.at(table,known*28+16,0) != 128 do -1 else if nv_search(source,table,known,second,0) < 0 do -1 else known end end end
+    local = if known < 0 do -1 else if Enum.at(table,known*40+21,0) != 128 do -1 else if nv_search(source,table,known,second,0) < 0 do -1 else known end end end
     home = if local >= 0 do -1 else nc_find(source,pos,table,-1) end
     far = if home < 0 do -1 else if nc_imported(source,table,owner,home) == 0 do -1 else nd_find(source,second,table,home) end end
     # Module.Name where the program has no such module: a sum type of the library.
     shared = if local >= 0 do -1 else if home >= 0 do -1 else nh_dotted(source,pos,table) end end
     id = if local >= 0 do local else if far >= 0 do far else shared end end
     name = if local >= 0 do second else nc_start(source,nc_expect(source,nc_end(source,second),b[46])) end
-    if nc_word(source,dot,b[46]) != 1 do b[] else if id < 0 do b[] else if Enum.at(table,id*28+16,0) != 128 do b[] else
+    if nc_word(source,dot,b[46]) != 1 do b[] else if id < 0 do b[] else if Enum.at(table,id*40+21,0) != 128 do b[] else
       if local < 0 do if nc_word(source,nc_end(source,second),b[46]) != 1 do b[] else nc_value(name,nc_u24(id),b[0]) end else nc_value(name,nc_u24(id),b[0]) end
     end end end
   end

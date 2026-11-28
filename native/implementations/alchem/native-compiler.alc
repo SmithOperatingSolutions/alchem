@@ -74,18 +74,33 @@ defmodule NativeSourceCompiler do
       end
     end
   end
-  # Table records are 28 bytes: five u24 source positions, argc, flags, an
-  # eight-byte return type and the u24 index of the owning module's header.
+  # Table records are 40 bytes (nc_record): five source positions of four
+  # bytes each, the low byte of argc, flags, where the result type is
+  # written (4), the number of defaults (1), where the guard starts (4), the
+  # high byte of argc, the index of the owning module's header (4) and four
+  # bytes that are zero. A position is read by its number, 0, 3, 6, 9 or
+  # 12 (nc_meta), as when each was three bytes.
   # A finished table has after its records one record of zeros, the name
   # index (the number of every record as a u32, in the order of nc_order) and
-  # up to 27 bytes that make its size one more than a multiple of 28, which
+  # up to 39 bytes that make its size one more than a multiple of 40, which
   # is how it is told from records alone.
   def nc_records(size: integer): integer do
-    count = nc_units(size,28)
-    if count*28 == size do count else nc_units(size-28,32) end
+    count = nc_units(size,40)
+    if count*40 == size do count else nc_units(size-40,44) end
   end
   def nc_indexed(table: bytes): integer do
-    if nc_units(Enum.count(table),28)*28 == Enum.count(table) do 0 else 1 end
+    if nc_units(Enum.count(table),40)*40 == Enum.count(table) do 0 else 1 end
+  end
+  # places: the five positions; more: where the result type is written, the
+  # number of defaults and where the guard starts (nc_record_more).
+  def nc_record(places: bytes, argc: integer, flags: integer, more: bytes, owner: integer): bytes do
+    nc_join(nc_join(places,b[argc-nc_hi(argc)*256,flags],more),b[nc_hi(argc)],Enum.concat(nc_u32(owner),b[0,0,0,0]))
+  end
+  def nc_places(a: integer, b: integer, c: integer, d: integer, e: integer): bytes do
+    nc_join(nc_join(nc_u32(a),nc_u32(b),nc_u32(c)),nc_u32(d),nc_u32(e))
+  end
+  def nc_record_more(result: integer, defaults: integer, guard: integer): bytes do
+    nc_join(nc_u32(result),b[defaults],nc_u32(guard))
   end
   def nc_u24(value: integer): bytes do
     high = nc_upper(value)
@@ -313,13 +328,13 @@ defmodule NativeSourceCompiler do
     end
   end
   def nc_meta(table: bytes, index: integer, field: integer): integer do
-    nc_cursor(table,index*28+field)
+    nc_long(table,index*40+nc_units(field,3)*4)
   end
-  def nc_owner(table: bytes, index: integer): integer do nc_cursor(table,index*28+25) end
+  def nc_owner(table: bytes, index: integer): integer do nc_long(table,index*40+32) end
   # The number of parameters of a function's record (of type parameters, for
   # a struct or sum type): its low byte after the positions, its high byte
   # before the owner.
-  def nc_argc(table: bytes, index: integer): integer do Enum.at(table,index*28+15,0)+Enum.at(table,index*28+24,0)*256 end
+  def nc_argc(table: bytes, index: integer): integer do Enum.at(table,index*40+20,0)+Enum.at(table,index*40+31,0)*256 end
   # The function named at pos in module owner; owner -1 finds a module header.
   def nc_find(source: bytes, pos: integer, table: bytes, owner: integer): integer do
     if nc_indexed(table) == 0 do nc_find_range(source,pos,table,0,nc_records(Enum.count(table)),owner) else
@@ -345,7 +360,7 @@ defmodule NativeSourceCompiler do
   # each); a name that is not in the source follows the key.
   def nc_index_key(table: bytes, pos: integer, size: integer, owner: integer, from: integer): bytes do
     count = nc_records(Enum.count(table))
-    nc_join(nc_join(nc_u24(pos),nc_u24(size),nc_u24(owner)),nc_u24(from),nc_u24(count*32+28))
+    nc_join(nc_join(nc_u24(pos),nc_u24(size),nc_u24(owner)),nc_u24(from),nc_u24(count*44+40))
   end
   # The first difference of count bytes of left from at and of right from
   # start, 0 when there is none.
@@ -384,7 +399,7 @@ defmodule NativeSourceCompiler do
   # struct or sum type of the key's module. -1 when there is none.
   def nc_index_walk(source: bytes, table: bytes, key: bytes, at: integer, kind: integer): integer do
     id = nc_cursor(table,at)
-    flags = Enum.at(table,id*28+16,0)
+    flags = Enum.at(table,id*40+21,0)
     fits = if kind == 1 do if flags == 32 do 1 else 0 end else if kind == 0 do if flags < 32 do 1 else 0 end else if flags >= 64 do 1 else 0 end end end
     if at >= nc_cursor(key,12) do -1 else if nc_name_order(source,table,id,key) != 0 do -1 else
       if kind != 1 do
@@ -396,7 +411,7 @@ defmodule NativeSourceCompiler do
   end
   def nc_index_find(source: bytes, table: bytes, key: bytes, kind: integer): integer do
     count = nc_records(Enum.count(table))
-    if nc_cursor(key,3) <= 0 do -1 else nc_index_walk(source,table,key,nc_seek(source,table,table,key,count*28+28,count*32+28),kind) end
+    if nc_cursor(key,3) <= 0 do -1 else nc_index_walk(source,table,key,nc_seek(source,table,table,key,count*40+40,count*44+40),kind) end
   end
   def nc_zip(source: bytes, table: bytes, left: bytes, right: bytes): bytes do
     if Enum.count(left) == 0 do right else if Enum.count(right) == 0 do left else
@@ -434,8 +449,8 @@ defmodule NativeSourceCompiler do
   # The records with their name index.
   def nc_table_index(source: bytes, records: bytes): bytes do
     count = nc_records(Enum.count(records))
-    over = count*4-nc_units(count*4,28)*28
-    nc_join(nc_join(records,nc_zeros(28),nc_sorted(source,records,0,count)),nc_zeros(if over <= 1 do 1-over else 29-over end),b[])
+    over = count*4-nc_units(count*4,40)*40
+    nc_join(nc_join(records,nc_zeros(40),nc_sorted(source,records,0,count)),nc_zeros(if over <= 1 do 1-over else 41-over end),b[])
   end
   # What building the table left to check once every record is known: a
   # module name is declared once, a struct or sum type once in its module
@@ -453,7 +468,7 @@ defmodule NativeSourceCompiler do
     if found < 0 do 0 else if found < id do 1 else 0 end end
   end
   def nc_record_valid(source: bytes, table: bytes, id: integer): integer do
-    flags = Enum.at(table,id*28+16,0)
+    flags = Enum.at(table,id*40+21,0)
     name = nc_meta(table,id,0)
     if flags == 40 do 1 else
       if flags == 32 do if nc_find(source,name,table,-1) == id do 1 else 0 end else
@@ -470,8 +485,8 @@ defmodule NativeSourceCompiler do
       middle = first+nc_half(stop-first)
       start = nc_meta(table,middle,0)
       size = nc_meta(table,middle,3)-start
-      header = if Enum.at(table,middle*28+16,0) == 32 do 1 else 0 end
-      wanted = if owner < 0 do header else if Enum.at(table,middle*28+16,0) >= 32 do 0 else if nc_owner(table,middle) == owner do 1 else 0 end end end
+      header = if Enum.at(table,middle*40+21,0) == 32 do 1 else 0 end
+      wanted = if owner < 0 do header else if Enum.at(table,middle*40+21,0) >= 32 do 0 else if nc_owner(table,middle) == owner do 1 else 0 end end end
       match = if wanted == 0 do 0 else if nc_end(source,pos)-pos == size do nc_equal(source,pos,start,size) else 0 end end
       if match == 1 do middle else
         left = nc_find_range(source,pos,table,first,middle,owner)
@@ -595,7 +610,7 @@ defmodule NativeSourceCompiler do
   def nc_main_range(table: bytes, first: integer, stop: integer): integer do
     if first >= stop do -1 else
       middle = first+nc_half(stop-first)
-      if Enum.at(table,middle*28+16,0) == 1 do middle else
+      if Enum.at(table,middle*40+21,0) == 1 do middle else
         left = nc_main_range(table,first,middle)
         if left >= 0 do left else nc_main_range(table,middle+1,stop) end
       end
@@ -615,8 +630,8 @@ defmodule NativeSourceCompiler do
   def nc_table_state(pos: integer, kind: integer, counts: bytes, header: bytes, window: bytes, made: bytes): bytes do
     nc_join(nc_join(nc_u24(pos),b[kind],counts),nc_join(nc_u24(Enum.count(window)),header,window),made)
   end
-  def nc_table_window(state: bytes): bytes do nc_slice(state,44,44+nc_cursor(state,13)) end
-  def nc_table_made(state: bytes): bytes do nc_slice(state,44+nc_cursor(state,13),Enum.count(state)) end
+  def nc_table_window(state: bytes): bytes do nc_slice(state,56,56+nc_cursor(state,13)) end
+  def nc_table_made(state: bytes): bytes do nc_slice(state,56+nc_cursor(state,13),Enum.count(state)) end
   def nc_table_batch(source: bytes, state: bytes, quota: integer): bytes do
     next = nc_table_skip(source,nc_start(source,nc_cursor(state,0)),1024)
     if next < 0 do b[] else nc_table_declare(source,next,state,quota) end
@@ -669,9 +684,9 @@ defmodule NativeSourceCompiler do
   end
   # The state after a record: placed is the window with it.
   def nc_table_add(source: bytes, state: bytes, pos: integer, placed: bytes): bytes do
-    record = nc_slice(placed,Enum.count(placed)-28,Enum.count(placed))
+    record = nc_slice(placed,Enum.count(placed)-40,Enum.count(placed))
     counts = nc_join(nc_u24(nc_cursor(state,4)+1),nc_u24(nc_cursor(state,7)),nc_u24(nc_cursor(state,10)))
-    nc_table_state(pos,0,counts,nc_slice(state,16,44),if Enum.at(record,16,0) >= 40 do nc_table_kept(source,placed) else record end,Enum.concat(nc_table_made(state),record))
+    nc_table_state(pos,0,counts,nc_slice(state,16,56),if Enum.at(record,21,0) >= 40 do nc_table_kept(source,placed) else record end,Enum.concat(nc_table_made(state),record))
   end
   # The window with a further clause: the clause before it is left out once
   # the clauses kept before that declare the type of every parameter, since
@@ -681,9 +696,9 @@ defmodule NativeSourceCompiler do
   # them for each.
   def nc_table_kept(source: bytes, placed: bytes): bytes do
     count = nc_records(Enum.count(placed))
-    before = nc_slice(placed,0,Enum.count(placed)-56)
-    if count < 3 do placed else if Enum.at(placed,(count-2)*28+16,0) != 40 do placed else
-      if nc_table_settled(source,before,nj_head(before,count-3),0) == 0 do placed else Enum.concat(before,nc_slice(placed,Enum.count(placed)-28,Enum.count(placed))) end
+    before = nc_slice(placed,0,Enum.count(placed)-80)
+    if count < 3 do placed else if Enum.at(placed,(count-2)*40+21,0) != 40 do placed else
+      if nc_table_settled(source,before,nj_head(before,count-3),0) == 0 do placed else Enum.concat(before,nc_slice(placed,Enum.count(placed)-40,Enum.count(placed))) end
     end end
   end
   # 1 when the clauses of the form at head declare every parameter from index on.
@@ -703,9 +718,9 @@ defmodule NativeSourceCompiler do
       # The state holds the user functions declared before its module.
       if nc_cursor(state,10)+count-owner-1 >= nc_function_limit() do b[] else if count >= nc_record_limit() do b[] else
         if quota == 0 do nc_join(nc_u24(pos),b[0],nc_slice(state,4,Enum.count(state))) else
-          record = nc_table_record(source,pos,owner,nc_slice(state,16,44))
-          placed = if Enum.count(record) != 28 do b[] else if Enum.at(record,16,0) >= 64 do Enum.concat(nc_table_window(state),record) else nj_place(source,nc_table_window(state),record,nc_records(nc_cursor(state,13))) end end
-          if Enum.count(placed) == 0 do b[] else nc_table_batch(source,nc_table_add(source,state,nc_end(source,nc_cursor(record,12)),placed),quota-1) end
+          record = nc_table_record(source,pos,owner,nc_slice(state,16,56))
+          placed = if Enum.count(record) != 40 do b[] else if Enum.at(record,21,0) >= 64 do Enum.concat(nc_table_window(state),record) else nj_place(source,nc_table_window(state),record,nc_records(nc_cursor(state,13))) end end
+          if Enum.count(placed) == 0 do b[] else nc_table_batch(source,nc_table_add(source,state,nc_end(source,nc_meta(record,0,12)),placed),quota-1) end
         end
       end end
     end
@@ -722,7 +737,7 @@ defmodule NativeSourceCompiler do
       after = if body < 0 do -1 else nc_imports_end(source,body) end
       if after < 0 do b[] else
         previous = if count == 0 do 0 else nc_cursor(state,10)+count-nc_cursor(state,7)-1 end
-        record = nc_join(nc_join(nc_u24(name),nc_u24(nc_end(source,name)),nc_u24(body)),nc_join(nc_u24(after),nc_u24(previous),b[0,32]),Enum.concat(nt_word(0),nc_u24(count)))
+        record = nc_record(nc_places(name,nc_end(source,name),body,after,previous),0,32,nc_zeros(9),count)
         nc_table_state(after,0,nc_join(nc_u24(count+1),nc_u24(count),nc_u24(previous)),record,record,Enum.concat(nc_table_made(state),record))
       end
     end end end
@@ -786,13 +801,13 @@ defmodule NativeSourceCompiler do
   # and joins what they make.
   def nc_table_steps(source: bytes, state: bytes, level: integer, remaining: integer): bytes do
     if Enum.count(state) == 0 do b[] else if Enum.at(state,3,0) == 1 do state else if remaining == 0 do state else
-      fresh = nc_slice(state,0,44+nc_cursor(state,13))
+      fresh = nc_slice(state,0,56+nc_cursor(state,13))
       next = if level == 0 do nc_table_step(source,fresh) else nc_table_steps(source,fresh,level-1,16) end
-      nc_table_steps(source,if Enum.count(next) == 0 do b[] else nc_join(nc_slice(next,0,44+nc_cursor(next,13)),nc_table_made(state),nc_table_made(next)) end,level,remaining-1)
+      nc_table_steps(source,if Enum.count(next) == 0 do b[] else nc_join(nc_slice(next,0,56+nc_cursor(next,13)),nc_table_made(state),nc_table_made(next)) end,level,remaining-1)
     end end end
   end
   def nc_module(source: bytes): bytes do
-    state = nc_table_steps(source,nc_table_state(0,2,nc_zeros(9),nc_zeros(28),b[],b[]),3,16)
+    state = nc_table_steps(source,nc_table_state(0,2,nc_zeros(9),nc_zeros(40),b[],b[]),3,16)
     if Enum.count(state) == 0 do b[] else if Enum.at(state,3,0) != 1 do b[] else
       table = nc_table_index(source,nc_table_made(state))
       count = nc_records(Enum.count(table))
@@ -1632,7 +1647,7 @@ defmodule NativeSourceCompiler do
       if nc_pos(body) < 0 do b[] else
         # main is a block of statements and returns 0 when it reaches its end; any
         # other function ends in a value of its result type.
-        entry = if Enum.at(table,id*28+16,0) == 1 do 1 else 0 end
+        entry = if Enum.at(table,id*40+21,0) == 1 do 1 else 0 end
         # A function says what it returns.
         fits = if entry == 1 do 1-nx_pure(body) else if ours > 0 do 1-nw_marked(body) else if nj_result(table,id) == 0 do 0 else no_compatible(nc_return_kind(source,table,id),nc_kind(body)) end end end
         if fits == 0 do b[] else
@@ -1667,8 +1682,8 @@ defmodule NativeSourceCompiler do
         # A module header occupies a table slot but has no code.
         # A module header has no code; a struct or sum type has its equality function.
         # A further clause is compiled with the first clause of its function.
-        code = if nj_silent(Enum.at(table,first*28+16,0)) == 1 do b[] else if Enum.at(table,first*28+16,0) >= 64 do nq_function(source,table,first) else nc_function(source,table,first) end end
-        if nj_silent(Enum.at(table,first*28+16,0)) == 1 do b[4,0,0,0,0,0,0,0] else
+        code = if nj_silent(Enum.at(table,first*40+21,0)) == 1 do b[] else if Enum.at(table,first*40+21,0) >= 64 do nq_function(source,table,first) else nc_function(source,table,first) end end
+        if nj_silent(Enum.at(table,first*40+21,0)) == 1 do b[4,0,0,0,0,0,0,0] else
           if Enum.count(code) == 0 do b[] else nc_join(nc_u32(4),nc_u32(Enum.count(code)),code) end
         end
       else
@@ -1701,16 +1716,12 @@ defmodule NativeSourceCompiler do
   # is for), so tables stop at 16777215 records; the runtimes take the
   # slots after them, which call sites address with a 32-bit address.
   #
-  # Only a Linux x86-64 program has been run past 65535 functions; the
-  # compilers for the other systems keep that bound. A position-independent
-  # ARM64 program (macOS, and Linux with nc_arm() 2) tells an address of
-  # the table from a number by where a table of 65541 slots ends
-  # (a_in_block): a slot past that was not moved to where the image
-  # stands, and the program ended at its first call.
-  def nc_wide(): integer do if nc_arm()+nc_win() == 0 do 1 else 0 end end
-  def nc_function_limit(): integer do if nc_wide() == 1 do 16777214 else 65535 end end
-  def nc_record_limit(): integer do if nc_wide() == 1 do 16777215 else 65536 end end
-  def nc_slot_limit(): integer do if nc_wide() == 1 do 16777220 else 65541 end end
+  # A position-independent ARM64 program (macOS, and Linux with nc_arm() 2)
+  # tells an address of the table from a number by where its own table
+  # ends (xa_block), which the translation is given (a_block_end).
+  def nc_function_limit(): integer do 16777214 end
+  def nc_record_limit(): integer do 16777215 end
+  def nc_slot_limit(): integer do 16777220 end
   # One eight-byte entry per slot; code follows the table directly.
   def nc_addresses(lengths: bytes, id: integer, offset: integer): bytes do
     nc_address_range(lengths,id,nc_units(Enum.count(lengths),4),offset)
@@ -1787,7 +1798,7 @@ defmodule NativeSourceCompiler do
   def nc_choose_entry(source: bytes, table: bytes, io: integer): bytes do
     index = nc_native_index(source,table,0,nc_records(Enum.count(table)))
     if index < 0 do ac_entry(source,table,nc_main_index(table,0)) else
-      if Enum.at(table,index*28+16,0) != 0 do b[] else
+      if Enum.at(table,index*40+21,0) != 0 do b[] else
         if nt_tag(nc_return_kind(source,table,index)) != 1 do b[] else
         if nc_argc(table,index) != 1 do b[] else
           annotation = nc_parameter_type(source,nc_meta(table,index,6))
@@ -1888,7 +1899,7 @@ defmodule NativeSourceCompiler do
   def nc_refused(source: bytes, table: bytes, first: integer, stop: integer): bytes do
     if first >= stop do b[] else
       if stop-first == 1 do
-        flags = Enum.at(table,first*28+16,0)
+        flags = Enum.at(table,first*40+21,0)
         code = if nj_silent(flags) == 1 do b[0] else if flags >= 64 do nq_function(source,table,first) else nc_function(source,table,first) end end
         if Enum.count(code) > 0 do b[] else
           owner = nc_owner(table,first)
@@ -1918,11 +1929,11 @@ defmodule NativeSourceCompiler do
           plain_meta = nc_join(nc_built_meta(bundle),nc_bundle_meta(shared),if Enum.count(io) == 0 do b[] else nc_u32(Enum.count(io)) end)
           plain_code = nc_join(nc_built_code(bundle),nc_bundle_code(shared),io)
           # The ARM64 compiler translates every function (spec/arm64.md).
-          arm = if nc_a64() == 1 do xa_bundle(plain_meta,plain_code,0,nc_units(Enum.count(plain_meta),4),0) else b[] end
+          arm = if nc_a64() == 1 do xa_bundle(plain_meta,plain_code,0,nc_units(Enum.count(plain_meta),4),0,a_block_end(nc_units(Enum.count(plain_meta),4))) else b[] end
           meta = if nc_a64() == 1 do nc_slice(arm,4,4+nc_long(arm,0)) else plain_meta end
           translated = if nc_a64() == 1 do nc_slice(arm,4+nc_long(arm,0),Enum.count(arm)) else plain_code end
           # Coverage counts calls by where they stand: on ARM64 that is known now.
-          code = if nc_a64() == 1 do (if Enum.at(table,15,0) == 2 do zf_cover_arm_points(translated,meta,table) else translated end) else plain_code end
+          code = if nc_a64() == 1 do (if Enum.at(table,20,0) == 2 do zf_cover_arm_points(translated,meta,table) else translated end) else plain_code end
           # The image's size and every address in it are 32-bit fields, and a
           # jump reaches 2 GiB: 1 GiB of code keeps the image well within both.
           if Enum.count(code) > 1073741824 do b[] else

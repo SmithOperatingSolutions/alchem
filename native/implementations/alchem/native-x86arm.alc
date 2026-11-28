@@ -239,16 +239,26 @@ defmodule NativeX86Arm do
           if base < 0 do a_lsl_n(16,xr(xf(rec,6)),xa_log(xf(rec,7)),8) else a_add_shift(16,xr(base),xr(xf(rec,6)),xa_log(xf(rec,7))) end
         end
         disp = xf(rec,8)
-        if base < 0 do (if xf(rec,6) < 0 do a_image(16,disp) else Enum.concat(scaled,xa_add_image(disp)) end) else
+        if base < 0 do (if xf(rec,6) < 0 do xa_image(rec,16,disp) else Enum.concat(scaled,xa_add_image(rec,disp)) end) else
           if disp == 0 do scaled else Enum.concat(scaled,xa_add16(disp)) end
         end
       end
     end end
   end
+  # Whether a number in an instruction is an address of the entry's words or
+  # the table, which a position-independent program reads from the copy:
+  # one from 0x400420 to where this program's table ends (word 15, which
+  # xa_insn adds to what was decoded).
+  def xa_block(rec: bytes, address: integer): integer do
+    if nc_pic() == 0 do 0 else if address < 4195360 do 0 else if address >= xf(rec,15) do 0 else 1 end end end
+  end
+  def xa_image(rec: bytes, rd: integer, address: integer): bytes do
+    if xa_block(rec,address) == 1 do a_block_addr(rd,address) else a_mov_imm(rd,address) end
+  end
   # X16 += disp, an address in the image (the copy, where the program is
   # position-independent) or any other number.
-  def xa_add_image(disp: integer): bytes do
-    if nc_pic()*a_in_block(disp) == 1 do Enum.concat(a_add_value(16,16,disp-4195360,0),a_add(16,16,26,0)) else a_add_value(16,16,disp,0) end
+  def xa_add_image(rec: bytes, disp: integer): bytes do
+    if xa_block(rec,disp) == 1 do Enum.concat(a_add_value(16,16,disp-4195360,0),a_add(16,16,26,0)) else a_add_value(16,16,disp,0) end
   end
   # X16 += disp (through X17 past twelve bits).
   def xa_add16(disp: integer): bytes do
@@ -334,7 +344,8 @@ defmodule NativeX86Arm do
   # here in the translated function. st: the flags' origin before it (pol),
   # whether flags are read after it (need: 0 no, 1 yes, 2 its carry), the
   # direction (0 forward, 1 back) and 1 for a function past 256 KiB.
-  def xa_insn(rec: bytes, mp: bytes, here: integer, st: bytes): bytes do
+  def xa_insn(decoded: bytes, mp: bytes, here: integer, st: bytes): bytes do
+    rec = Enum.concat(decoded,xw(nc_long(st,4)))
     op = xf(rec,1)
     if xa_high(rec) == 1 do xa_udf(rec) else
       if op < 10 do xa_move(rec,mp,here) else if op < 22 do xa_alu(rec,mp,here,st) else if op < 40 do xa_unary(rec,mp,here,st) else
@@ -349,8 +360,8 @@ defmodule NativeX86Arm do
     pre = xa_addr(rec,mp,here)
     if op == 1 do (if xf(rec,4) == 1 do xa_wrr(xf(rec,5),xr(xf(rec,3)),size) else Enum.concat(pre,a_stur(xr(xf(rec,3)),xa_mb(rec),xa_md(rec),size)) end) else
       if op == 2 do (if xf(rec,4) == 1 do (if size == 8 do xa_wrr(xf(rec,3),xr(xf(rec,5)),8) else Enum.concat(xa_rdr(xf(rec,5),19,size,0),xa_wrr(xf(rec,3),19,size)) end) else nc_join(pre,a_ldur(19,xa_mb(rec),xa_md(rec),size,0),xa_wrr(xf(rec,3),19,size)) end) else
-        if op == 3 do nc_join(pre,xa_imm_value(xf(rec,9),size),xa_wr(rec,19,size)) else
-          if op == 4 do Enum.concat(xa_imm_value(if size == 4 do xa_u32(xf(rec,9)) else xf(rec,9) end,size),xa_wrr(xf(rec,3),19,if size == 4 do (if nc_pic()*a_in_block(xa_u32(xf(rec,9))) == 1 do 8 else 4 end) else size end)) else
+        if op == 3 do nc_join(pre,xa_imm_value(rec,xf(rec,9),size),xa_wr(rec,19,size)) else
+          if op == 4 do Enum.concat(xa_imm_value(rec,if size == 4 do xa_u32(xf(rec,9)) else xf(rec,9) end,size),xa_wrr(xf(rec,3),19,if size == 4 do (if xa_block(rec,xa_u32(xf(rec,9))) == 1 do 8 else 4 end) else size end)) else
             if op == 5 do Enum.concat(xa_lea(rec,mp,here),xa_wrr(xf(rec,3),16,size)) else xa_udf(rec) end
           end
         end
@@ -361,8 +372,8 @@ defmodule NativeX86Arm do
   # X19 = a moved immediate. A 32-bit one among the addresses of the entry's
   # words and the table is such an address (a slot a call or a function
   # value names), which a position-independent program reads from the copy.
-  def xa_imm_value(v: integer, size: integer): bytes do
-    if size == 4 do a_image(19,v) else a_mov_imm(19,v) end
+  def xa_imm_value(rec: bytes, v: integer, size: integer): bytes do
+    if size == 4 do xa_image(rec,19,v) else a_mov_imm(19,v) end
   end
   # X16 = the address of the memory operand.
   def xa_lea(rec: bytes, mp: bytes, here: integer): bytes do
@@ -818,16 +829,20 @@ defmodule NativeX86Arm do
   # Pass 1 (xa_scan) walks the instructions in order, noting for each its
   # translation's size and what it needs to know of the instructions before
   # it; pass 2 (xa_emit) translates them with every target known.
-  def xa_function(code: bytes): bytes do
+  def xa_function(code: bytes): bytes do xa_placed(code,a_block_end(65541)) end
+  # last: where the program's table ends (a_block_end), which is what tells
+  # an address of the entry's words and the table from a number.
+  def xa_placed(code: bytes, last: integer): bytes do
     big = if Enum.count(code) >= 262144 do 1 else 0 end
-    first = xa_scan(code,0,Enum.count(code),Enum.count(code),b[0,0,big])
+    head = Enum.concat(b[0,0,big],nc_u32(last))
+    first = xa_scan(code,0,Enum.count(code),Enum.count(code),head)
     # Targets where the carry is live, found as their jumps were met: once
     # more with all of them known (a loop's head is met before its jump).
-    marks = xa_marks(xa_scan_state(first),3)
-    scanned = if Enum.count(marks) == 0 do first else xa_scan(code,0,Enum.count(code),Enum.count(code),Enum.concat(b[0,0,big],marks)) end
+    marks = xa_marks(xa_scan_state(first),7)
+    scanned = if Enum.count(marks) == 0 do first else xa_scan(code,0,Enum.count(code),Enum.count(code),Enum.concat(head,marks)) end
     list = xa_scan_list(scanned)
     mp = nc_slice(xa_offsets(list,0,a_div(Enum.count(list),16),0),4,4+Enum.count(list))
-    made = xa_emit(code,mp,0,a_div(Enum.count(mp),16),big)
+    made = xa_emit(code,mp,0,a_div(Enum.count(mp),16),nc_slice(head,2,7))
     if Enum.count(made)-4*a_div(Enum.count(made),4) != 0 do b[] else made end
   end
   # A scan: u32 where it stopped, u16 the length of the state, the state
@@ -849,7 +864,7 @@ defmodule NativeX86Arm do
   def xa_entry(p: integer, size: integer, flags: bytes, span: integer): bytes do nc_join(nc_u32(p),nc_u32(size),Enum.concat(flags,nc_u32(span))) end
   def xa_seq(code: bytes, p: integer, limit: integer, stop: integer, st: bytes, acc: bytes): bytes do
     if p >= limit do xa_pack(p,st,acc) else if p >= stop do xa_pack(p,st,acc) else
-      data = xa_pending_at(st,p,3)
+      data = xa_pending_at(st,p,7)
       if data >= 0 do xa_seq(code,p+data,limit,stop,xa_unpend(st,p),Enum.concat(acc,xa_entry(p,data+xa_pad(data),b[0,0,0,1],data))) else
         rec = xd(code,p)
         n = xf(rec,0)
@@ -878,14 +893,14 @@ defmodule NativeX86Arm do
     before = if target >= 0 do (if pol == 1 do xa_carried(st,target) else 0 end) else 0 end
     inpol = if before == 1 do 0 else pol end
     need = xa_need(code,p+n,stop,16)
-    size = Enum.count(xa_insn(rec,b[],0,b[inpol,need,Enum.at(st,1,0),Enum.at(st,2,0)]))
+    size = Enum.count(xa_insn(rec,b[],0,Enum.concat(b[inpol,need,Enum.at(st,1,0),Enum.at(st,2,0)],nc_slice(st,3,7))))
     found = if target >= 0 do (if xa_carried(st,target) == 0 do xa_live_carry(code,target,stop,16) else 0 end) else 0 end
     st2 = nc_join(b[xa_pol(rec,inpol),if op == 58 do 0 else if op == 59 do 1 else Enum.at(st,1,0) end end],nc_slice(st,2,Enum.count(st)),Enum.concat(if op == 80 do xa_region(code,p+n,xf(rec,9),nc_long(code,p+7)) else b[] end,if found == 1 do Enum.concat(nc_u32(target),nc_u32(4294967295)) else b[] end))
     after = if Enum.at(st2,0,0) == 1 do xa_carried(st2,p+n) else 0 end
     st3 = if after == 1 do Enum.concat(b[0],nc_slice(st2,1,Enum.count(st2))) else st2 end
     nc_join(nc_u16(Enum.count(st3)),st3,xa_entry(p,size+12*(before+after),b[inpol,need,Enum.at(st,1,0),4*before+8*after],n))
   end
-  def xa_carried(st: bytes, p: integer): integer do xa_carried_at(st,p,3) end
+  def xa_carried(st: bytes, p: integer): integer do xa_carried_at(st,p,7) end
   def xa_carried_at(st: bytes, p: integer, at: integer): integer do
     if at+8 > Enum.count(st) do 0 else if nc_long(st,at) == p do (if nc_long(st,at+4) == 4294967295 do 1 else xa_carried_at(st,p,at+8) end) else xa_carried_at(st,p,at+8) end end
   end
@@ -928,11 +943,11 @@ defmodule NativeX86Arm do
     Enum.concat(nc_u32(p+xf(rec,0)+xf(rec,8)-back),nc_u32(span))
   end
   # The length of the data region that starts at p, -1 for none; the state
-  # without it. offset: where the regions start in st (3).
+  # without it. offset: where the regions start in st (7).
   def xa_pending_at(st: bytes, p: integer, at: integer): integer do
     if at+8 > Enum.count(st) do -1 else if nc_long(st,at) == p do (if nc_long(st,at+4) == 4294967295 do xa_pending_at(st,p,at+8) else nc_long(st,at+4) end) else xa_pending_at(st,p,at+8) end end
   end
-  def xa_unpend(st: bytes, p: integer): bytes do Enum.concat(nc_slice(st,0,3),xa_unpend_at(st,p,3)) end
+  def xa_unpend(st: bytes, p: integer): bytes do Enum.concat(nc_slice(st,0,7),xa_unpend_at(st,p,7)) end
   def xa_unpend_at(st: bytes, p: integer, at: integer): bytes do
     if at+8 > Enum.count(st) do b[] else if nc_long(st,at) == p do xa_unpend_at(st,p,at+8) else Enum.concat(nc_slice(st,at,at+8),xa_unpend_at(st,p,at+8)) end end
   end
@@ -984,31 +999,32 @@ defmodule NativeX86Arm do
       end
     end
   end
-  def xa_emit(code: bytes, mp: bytes, first: integer, stop: integer, big: integer): bytes do
-    if stop-first == 1 do xa_emit_one(code,mp,first*16,big) else
+  # ends: whether the code is big, then the u32 of where the table ends.
+  def xa_emit(code: bytes, mp: bytes, first: integer, stop: integer, ends: bytes): bytes do
+    if stop-first == 1 do xa_emit_one(code,mp,first*16,ends) else
       if stop <= first do b[] else
         middle = first+a_div(stop-first,2)
-        Enum.concat(xa_emit(code,mp,first,middle,big),xa_emit(code,mp,middle,stop,big))
+        Enum.concat(xa_emit(code,mp,first,middle,ends),xa_emit(code,mp,middle,stop,ends))
       end
     end
   end
-  def xa_emit_one(code: bytes, mp: bytes, at: integer, big: integer): bytes do
+  def xa_emit_one(code: bytes, mp: bytes, at: integer, ends: bytes): bytes do
     p = nc_long(mp,at)
     here = nc_long(mp,at+4)
     kind = Enum.at(mp,at+11,0)
     span = nc_long(mp,at+12)
     next = if at+16 < Enum.count(mp) do nc_long(mp,at+20) else -1 end
     made = if kind == 1 do Enum.concat(nc_slice(code,p,p+span),nc_zeros(xa_pad(span))) else if kind == 2 do a4(Enum.at(code,p,0)+256*Enum.at(code,p+1,0)) else if kind == 3 do Enum.concat(nc_slice(code,p+7,p+span),nc_zeros(xa_pad(span-7))) else
-      xa_emit_insn(code,mp,at,here,kind,big)
+      xa_emit_insn(code,mp,at,here,kind,ends)
     end end end
     # Each translation must come out at the size pass 1 measured; one that
     # does not leaves a byte that no instruction is, which xa_function sees.
     if next >= 0 do (if here+Enum.count(made) != next do b[1] else made end) else made end
   end
   # An instruction, C turned over before it (kind 4) and after it (8).
-  def xa_emit_insn(code: bytes, mp: bytes, at: integer, here: integer, kind: integer, big: integer): bytes do
+  def xa_emit_insn(code: bytes, mp: bytes, at: integer, here: integer, kind: integer, ends: bytes): bytes do
     before = if kind-8*a_div(kind,8) == 4 do xa_flip() else b[] end
-    made = xa_insn(xd(code,nc_long(mp,at)),mp,here+Enum.count(before),b[Enum.at(mp,at+8,0),Enum.at(mp,at+9,0),Enum.at(mp,at+10,0),big])
+    made = xa_insn(xd(code,nc_long(mp,at)),mp,here+Enum.count(before),Enum.concat(b[Enum.at(mp,at+8,0),Enum.at(mp,at+9,0),Enum.at(mp,at+10,0)],ends))
     nc_join(before,made,if kind >= 8 do xa_flip() else b[] end)
   end
   def xa_pad(span: integer): integer do 4*a_div(span+3,4)-span end
@@ -1034,15 +1050,15 @@ defmodule NativeX86Arm do
   # The functions first..stop of a bundle (32-bit lengths, then the code
   # from offset), translated: u32 the length of the lengths, the lengths,
   # the code. A function that does not translate fails the program.
-  def xa_bundle(lengths: bytes, code: bytes, first: integer, stop: integer, offset: integer): bytes do
+  def xa_bundle(lengths: bytes, code: bytes, first: integer, stop: integer, offset: integer, last: integer): bytes do
     if stop-first == 1 do
-      made = xa_function(nc_slice(code,offset,offset+nc_long(lengths,first*4)))
+      made = xa_placed(nc_slice(code,offset,offset+nc_long(lengths,first*4)),last)
       if Enum.count(made) == 0 do (if nc_long(lengths,first*4) == 0 do Enum.concat(nc_u32(4),nc_u32(0)) else b[] end) else nc_join(nc_u32(4),nc_u32(Enum.count(made)),made) end
     else
       if stop <= first do nc_u32(0) else
         middle = first+a_div(stop-first,2)
-        left = xa_bundle(lengths,code,first,middle,offset)
-        right = xa_bundle(lengths,code,middle,stop,offset+nc_length_sum(lengths,first,middle))
+        left = xa_bundle(lengths,code,first,middle,offset,last)
+        right = xa_bundle(lengths,code,middle,stop,offset+nc_length_sum(lengths,first,middle),last)
         if Enum.count(left)*Enum.count(right) == 0 do b[] else
           nc_join(nc_u32(nc_long(left,0)+nc_long(right,0)),Enum.concat(nc_slice(left,4,4+nc_long(left,0)),nc_slice(right,4,4+nc_long(right,0))),Enum.concat(nc_slice(left,4+nc_long(left,0),Enum.count(left)),nc_slice(right,4+nc_long(right,0),Enum.count(right))))
         end

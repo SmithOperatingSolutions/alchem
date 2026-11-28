@@ -363,7 +363,7 @@ defmodule NativePrelude do
     first = nc_cursor(bounds,0)
     stop = nc_cursor(bounds,3)
     middle = first+nc_half(stop-first)
-    match = if first >= stop do 0 else if Enum.at(table,middle*28+16,0) != 32 do 0 else nt_same(nc_slice(source,nc_meta(table,middle,0),nc_meta(table,middle,3)),name) end end
+    match = if first >= stop do 0 else if Enum.at(table,middle*40+21,0) != 32 do 0 else nt_same(nc_slice(source,nc_meta(table,middle,0),nc_meta(table,middle,3)),name) end end
     if first >= stop do -1 else if match == 1 do middle else
       left = ny_module_plain(source,table,name,Enum.concat(nc_u24(first),nc_u24(middle)))
       if left >= 0 do left else ny_module_plain(source,table,name,Enum.concat(nc_u24(middle+1),nc_u24(stop))) end

@@ -82,9 +82,9 @@ defmodule NativeClauses do
     flags = if is_main == 1 do 1 else nc_word(source,pos,b[100,101,102,112])*16 end
     # A record holds up to 255 defaults in a byte; more are counted again
     # where they are needed (nj_defaulted).
-    word = nc_join(nc_u24(if typed == 1 do nc_start(source,nc_end(source,after)) else 0 end),b[if nc_cursor(head,15) > 255 do 255 else nc_cursor(head,15) end],nc_join(nc_u24(if guarded == 1 do nc_start(source,nc_end(source,rest)) else 0 end),b[Enum.at(head,13,0)],nc_u24(owner)))
+    more = nc_record_more(if typed == 1 do nc_start(source,nc_end(source,after)) else 0 end,if nc_cursor(head,15) > 255 do 255 else nc_cursor(head,15) end,if guarded == 1 do nc_start(source,nc_end(source,rest)) else 0 end)
     if stop < 0 do b[] else if is_main*(nc_cursor(head,12)+typed+guarded+nc_word(source,pos,b[100,101,102,112])) != 0 do b[] else
-      nc_join(nc_slice(head,0,9),nc_join(nc_u24(body),nc_u24(stop),b[Enum.at(head,12,0),flags]),word)
+      nc_record(nc_places(nc_cursor(head,0),nc_cursor(head,3),nc_cursor(head,6),body,stop),nc_read(head,12),flags,more,owner)
     end end
   end
   # Record index of the table when it is a function of module owner with the
@@ -92,7 +92,7 @@ defmodule NativeClauses do
   def nj_named(source: bytes, pos: integer, table: bytes, index: integer, owner: integer): integer do
     start = nc_meta(table,index,0)
     size = nc_meta(table,index,3)-start
-    if Enum.at(table,index*28+16,0) >= 32 do -1 else if nc_owner(table,index) != owner do -1 else
+    if Enum.at(table,index*40+21,0) >= 32 do -1 else if nc_owner(table,index) != owner do -1 else
       if nc_end(source,pos)-pos != size do -1 else if nc_equal(source,pos,start,size) == 1 do index else -1 end end
     end end
   end
@@ -115,11 +115,11 @@ defmodule NativeClauses do
   # some of those with defaults. exact 1 asks for all of them.
   def nj_takes(source: bytes, table: bytes, id: integer, count: integer, exact: integer): integer do
     total = nc_argc(table,id)
-    if count > total do 0 else if count < total-nj_defaulted(source,table,id*28)*(1-exact) do 0 else 1 end end
+    if count > total do 0 else if count < total-nj_defaulted(source,table,id*40)*(1-exact) do 0 else 1 end end
   end
   # How many parameters of the record at offset have a default value.
   def nj_defaulted(source: bytes, table: bytes, at: integer): integer do
-    if Enum.at(table,at+20,0) < 255 do Enum.at(table,at+20,0) else nc_cursor(nj_params(source,nc_cursor(table,at+6),0,0),6) end
+    if Enum.at(table,at+26,0) < 255 do Enum.at(table,at+26,0) else nc_cursor(nj_params(source,nc_long(table,at+8),0,0),6) end
   end
   # The function with the name and module of function target that takes
   # count arguments, -1 when none does.
@@ -142,24 +142,24 @@ defmodule NativeClauses do
   # 1 when record index of the table is a clause of a function with the name,
   # module and number of parameters of record.
   def nj_same(source: bytes, table: bytes, index: integer, record: bytes): integer do
-    flags = if index < 0 do 1 else Enum.at(table,index*28+16,0) end
+    flags = if index < 0 do 1 else Enum.at(table,index*40+21,0) end
     start = nc_meta(table,index,0)
     size = nc_meta(table,index,3)-start
-    if flags*(flags-16)*(flags-40) != 0 do 0 else if nc_owner(table,index) != nc_cursor(record,25) do 0 else
+    if flags*(flags-16)*(flags-40) != 0 do 0 else if nc_owner(table,index) != nc_long(record,32) do 0 else
       if nc_argc(table,index) != nc_argc(record,0) do 0 else
-        if nc_cursor(record,3)-nc_cursor(record,0) != size do 0 else nc_equal(source,nc_cursor(record,0),start,size) end
+        if nc_meta(record,0,3)-nc_meta(record,0,0) != size do 0 else nc_equal(source,nc_meta(record,0,0),start,size) end
       end
     end end
   end
   # The first clause of the function that clause index belongs to.
   def nj_head(table: bytes, index: integer): integer do
-    if Enum.at(table,index*28+16,0) >= 40 do nj_head(table,index-1) else index end
+    if Enum.at(table,index*40+21,0) >= 40 do nj_head(table,index-1) else index end
   end
   # The clause after clause id of its function, -1 when it is the last. The
   # records of structs and sum types declared between two clauses lie
   # between theirs, since records are in source order.
   def nj_more(table: bytes, id: integer): integer do
-    flags = Enum.at(table,id*28+44,0)
+    flags = Enum.at(table,id*40+61,0)
     if flags == 40 do id+1 else if flags >= 64 do nj_more(table,id+1) else -1 end end
   end
   # 1 when a function from record first on has the record's name and takes
@@ -169,19 +169,19 @@ defmodule NativeClauses do
   end
   # The same among the records before record stop.
   def nj_clash_before(source: bytes, table: bytes, record: bytes, first: integer, stop: integer): integer do
-    other = nj_scan(source,nc_cursor(record,0),table,first,stop,nc_cursor(record,25))
+    other = nj_scan(source,nc_meta(record,0,0),table,first,stop,nc_long(record,32))
     high = nc_argc(record,0)
     top = nc_argc(table,other)
     if other < 0 do 0 else
       if high-nj_defaulted(source,record,0) > top do nj_clash_before(source,table,record,other+1,stop) else
-        if top-nj_defaulted(source,table,other*28) > high do nj_clash_before(source,table,record,other+1,stop) else 1 end
+        if top-nj_defaulted(source,table,other*40) > high do nj_clash_before(source,table,record,other+1,stop) else 1 end
       end
     end
   end
   # The last record up to index that is no struct or sum type: those may
   # stand between the clauses of a function.
   def nj_last_clause(table: bytes, index: integer): integer do
-    if index < 0 do -1 else if Enum.at(table,index*28+16,0) >= 64 do nj_last_clause(table,index-1) else index end end
+    if index < 0 do -1 else if Enum.at(table,index*40+21,0) >= 64 do nj_last_clause(table,index-1) else index end end
   end
   # The table of count records with the record added, b[] when it may not
   # stand where it does: as it is for a new function or one that begins
@@ -191,9 +191,9 @@ defmodule NativeClauses do
   def nj_place(source: bytes, table: bytes, record: bytes, count: integer): bytes do
     last = nj_last_clause(table,count-1)
     if nj_same(source,table,last,record) == 1 do
-      if nc_argc(record,0) == 0 do b[] else if Enum.at(table,nj_head(table,last)*28+16,0) != Enum.at(record,16,0) do b[] else
+      if nc_argc(record,0) == 0 do b[] else if Enum.at(table,nj_head(table,last)*40+21,0) != Enum.at(record,21,0) do b[] else
         # A clause that declares another type for a parameter begins another form.
-        Enum.concat(table,if nj_other_form(source,table,nj_head(table,last),record,0) == 1 do record else nc_join(nc_slice(record,0,16),b[40],nc_slice(record,17,28)) end)
+        Enum.concat(table,if nj_other_form(source,table,nj_head(table,last),record,0) == 1 do record else nc_join(nc_slice(record,0,21),b[40],nc_slice(record,22,40)) end)
       end end
     else
       if nj_clash(source,table,record,0) == 1 do b[] else Enum.concat(table,record) end
@@ -244,7 +244,7 @@ defmodule NativeClauses do
   # 1 when the record's clause declares, from parameter index on, another
   # type than the clauses of the form at head declare.
   def nj_other_form(source: bytes, table: bytes, head: integer, record: bytes, index: integer): integer do
-    mine = if index >= nc_argc(record,0) do b[] else nj_declared(source,nc_cursor(record,6),index) end
+    mine = if index >= nc_argc(record,0) do b[] else nj_declared(source,nc_meta(record,0,6),index) end
     theirs = if Enum.count(mine) == 0 do b[] else nj_form_declared(source,table,head,index) end
     if index >= nc_argc(record,0) do 0 else
       if Enum.count(theirs) == 0 do nj_other_form(source,table,head,record,index+1) else
@@ -252,19 +252,19 @@ defmodule NativeClauses do
       end
     end
   end
-  def nj_record(table: bytes, id: integer): bytes do nc_slice(table,id*28,id*28+28) end
+  def nj_record(table: bytes, id: integer): bytes do nc_slice(table,id*40,id*40+40) end
   # The last clause of the function whose clause id is.
   def nj_last_of(table: bytes, id: integer): integer do
     if nj_more(table,id) < 0 do id else nj_last_of(table,nj_more(table,id)) end
   end
   # The first record from index on that is no struct or sum type.
   def nj_next_clause(table: bytes, index: integer): integer do
-    if Enum.at(table,index*28+16,0) >= 64 do nj_next_clause(table,index+1) else index end
+    if Enum.at(table,index*40+21,0) >= 64 do nj_next_clause(table,index+1) else index end
   end
   # The form after form id of its function, -1 when it is the last.
   def nj_next_form(source: bytes, table: bytes, id: integer): integer do
     next = nj_next_clause(table,nj_last_of(table,id)+1)
-    if next >= nc_records(Enum.count(table)) do -1 else if Enum.at(table,next*28+16,0) == 40 do -1 else if nj_same(source,table,next,nj_record(table,id)) == 1 do next else -1 end end end
+    if next >= nc_records(Enum.count(table)) do -1 else if Enum.at(table,next*40+21,0) == 40 do -1 else if nj_same(source,table,next,nj_record(table,id)) == 1 do next else -1 end end end
   end
   # The first form of the function that form id belongs to.
   def nj_first_form(source: bytes, table: bytes, id: integer): integer do
@@ -317,7 +317,7 @@ defmodule NativeClauses do
   # Where the result type of function id is written, in its first clause
   # that has one; 0 when none has.
   def nj_result(table: bytes, id: integer): integer do
-    own = nc_cursor(table,id*28+17)
+    own = nc_long(table,id*40+22)
     if own > 0 do own else if nj_more(table,id) < 0 do 0 else nj_result(table,nj_more(table,id)) end end
   end
   # The type a literal pattern gives its parameter, none for other patterns.
@@ -436,7 +436,7 @@ defmodule NativeClauses do
   # The table for compiling a default value at a call: a failure in the
   # value names the call, whose position the first record keeps.
   def nj_from(table: bytes, pos: integer): bytes do
-    nc_join(nc_slice(table,0,21),nc_u24(pos),nc_slice(table,24,Enum.count(table)))
+    nc_join(nc_slice(table,0,27),nc_u32(pos),nc_slice(table,31,Enum.count(table)))
   end
   # The argument packet with the default values of the parameters of
   # function target it leaves out. at: where the call's name ends.
@@ -456,11 +456,11 @@ defmodule NativeClauses do
   # which only reaches a def.
   def nj_enter(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, plan: bytes): bytes do
     target = nc_cursor(plan,0)
-    parsed = if Enum.at(table,target*28+16,0) == 1 do b[] else nc_arguments_open(source,nc_end(source,pos),env,table,depth) end
+    parsed = if Enum.at(table,target*40+21,0) == 1 do b[] else nc_arguments_open(source,nc_end(source,pos),env,table,depth) end
     first = if nc_pos(parsed) < 0 do -1 else nj_fit(source,table,target,nc_arg_count(parsed)) end
     given = nn_ranged(source,table,first,parsed,0)
     fit = nj_form(source,table,first,given)
-    hidden = if fit < 0 do 1 else Enum.at(plan,3,0)*Enum.at(table,fit*28+16,0) end
+    hidden = if fit < 0 do 1 else Enum.at(plan,3,0)*Enum.at(table,fit*40+21,0) end
     full = if hidden != 0 do b[] else nj_full(source,table,fit,given,pos) end
     if nc_pos(full) < 0 do b[] else nj_call(source,pos,env,table,depth,Enum.concat(nc_u24(fit),full)) end
   end
@@ -481,7 +481,7 @@ defmodule NativeClauses do
   # 1 when function id is compiled clause by clause: it has more than one,
   # or its only one has a guard.
   def nj_clausal(table: bytes, id: integer): integer do
-    if nj_more(table,id) >= 0 do 1 else if nc_cursor(table,id*28+21) > 0 do 1 else 0 end end
+    if nj_more(table,id) >= 0 do 1 else if nc_long(table,id*40+27) > 0 do 1 else 0 end end
   end
   # 1 when the parameter at start is a plain name, which is the parameter's
   # own slot: not _, a literal, a constructor or, for an option, none.
@@ -549,7 +549,7 @@ defmodule NativeClauses do
   def nj_body(source: bytes, table: bytes, ids: bytes, scope: bytes): bytes do
     clause = nc_cursor(ids,3)
     result = nc_return_kind(source,table,nc_cursor(ids,0))
-    own = nc_cursor(table,clause*28+17)
+    own = nc_long(table,clause*40+22)
     agrees = if own == 0 do 1 else nt_same(nd_resolve(source,table,nc_owner(table,clause),nc_kind(nc_type(source,own))),result) end
     body = if agrees == 0 do b[] else nn_expected(nc_body(source,nc_meta(table,clause,9),nf_bodied(source,table,nc_cursor(ids,0),scope),table,16777216),result,table) end
     if nc_pos(body) < 0 do b[] else if no_compatible(result,nc_kind(body)) == 0 do b[] else
@@ -612,7 +612,7 @@ defmodule NativeClauses do
     scope = nj_context(env,3,b[])
     id = nc_cursor(env,0)
     wanted = if Enum.count(scope) > 0 do if Enum.at(scope,0,0) == 40 do b[] else nc_slice(scope,1,Enum.count(scope)) end else
-      if Enum.at(table,id*28+16,0) == 1 do b[] else if nj_result(table,id) == 0 do b[] else nc_return_kind(source,table,id) end end
+      if Enum.at(table,id*40+21,0) == 1 do b[] else if nj_result(table,id) == 0 do b[] else nc_return_kind(source,table,id) end end
     end
     value = if Enum.count(wanted) == 0 do b[] else nc_expression(source,nc_end(source,start),if nt_tag(wanted) == 9 do env else if nw_last_call(source,nc_end(source,start)) >= 0 do nw_expect(env,nw_last_call(source,nc_end(source,start)),wanted) else nf_expecting(source,env,nc_end(source,start),wanted) end end,table,depth) end
     stop = nc_pos(value)

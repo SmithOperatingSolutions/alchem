@@ -21,10 +21,10 @@ defmodule NativeDescribed do
   # byte of entry id is the byte of record id, whatever record the entry
   # names.
   def jd_byte(table: bytes, id: integer): integer do
-    if nc_indexed(table) == 0 do 0 else Enum.at(table,nc_records(Enum.count(table))*28+31+id*4,0) end
+    if nc_indexed(table) == 0 do 0 else Enum.at(table,nc_records(Enum.count(table))*40+43+id*4,0) end
   end
   def jd_put(table: bytes, id: integer, value: integer): bytes do
-    at = nc_records(Enum.count(table))*28+31+id*4
+    at = nc_records(Enum.count(table))*40+43+id*4
     nc_join(nc_slice(table,0,at),b[value],nc_slice(table,at+1,Enum.count(table)))
   end
   def jd_on(table: bytes, id: integer): integer do
@@ -275,7 +275,7 @@ defmodule NativeDescribed do
   end
   # The table after function id was tried.
   def jd_record(source: bytes, since: bytes, table: bytes, id: integer, mode: integer): bytes do
-    flags = Enum.at(table,id*28+16,0)
+    flags = Enum.at(table,id*40+21,0)
     due = if flags*(flags-16) != 0 do 0 else if mode < 2 do jd_open(source,table,id) else jd_on(table,id) end end
     more = if due == 0 do 0 else if jd_touched(source,since,table,id,0,nc_records(Enum.count(table))) == 0 do 0 else
       if mode < 2 do if Enum.count(nc_function(source,table,id)) > 0 do 0 else 128 end else jd_probes(source,table,id,0,jd_bits(nu_name_count(jd_base(source,table,id),0))) end
@@ -288,7 +288,7 @@ defmodule NativeDescribed do
   def jd_touched(source: bytes, since: bytes, table: bytes, id: integer, first: integer, stop: integer): integer do
     if Enum.count(since) == 0 do 1 else if first >= stop do 0 else
       if stop-first == 1 do
-        if (1-jd_bit(jd_byte(table,first),6))*(if jd_byte(table,first) == jd_byte(since,first) do 1 else 0 end) == 1 do 0 else if Enum.at(table,first*28+16,0)*(Enum.at(table,first*28+16,0)-16) != 0 do 0 else
+        if (1-jd_bit(jd_byte(table,first),6))*(if jd_byte(table,first) == jd_byte(since,first) do 1 else 0 end) == 1 do 0 else if Enum.at(table,first*40+21,0)*(Enum.at(table,first*40+21,0)-16) != 0 do 0 else
           mx_raw(source,nc_meta(table,id,9),jd_text_end(table,id),nc_slice(source,nc_meta(table,first,0),jd_plain_end(source,nc_meta(table,first,0),nc_meta(table,first,3))))
         end end
       else
@@ -313,7 +313,7 @@ defmodule NativeDescribed do
   end
   def jd_total(table: bytes, first: integer, stop: integer): integer do
     if first >= stop do 0 else
-      if stop-first == 1 do if (Enum.at(table,first*28+16,0))*(Enum.at(table,first*28+16,0)-16) != 0 do 0 else jd_byte(table,first) end else
+      if stop-first == 1 do if (Enum.at(table,first*40+21,0))*(Enum.at(table,first*40+21,0)-16) != 0 do 0 else jd_byte(table,first) end else
         middle = first+nc_half(stop-first)
         jd_total(table,first,middle)+jd_total(table,middle,stop)
       end
@@ -332,7 +332,7 @@ defmodule NativeDescribed do
   end
   # The table with function id being compiled for what.
   def jd_push(table: bytes, id: integer, what: integer): bytes do
-    zero = nc_records(Enum.count(table))*28
+    zero = nc_records(Enum.count(table))*40
     depth = Enum.at(table,zero+1,0)
     nc_join(nc_join(nc_slice(table,0,zero+1),b[depth+1],nc_slice(table,zero+2,zero+2+depth*4)),Enum.concat(nc_u24(id),b[what]),nc_slice(table,zero+6+depth*4,Enum.count(table)))
   end
@@ -349,7 +349,7 @@ defmodule NativeDescribed do
   end
   # 1 when the compilation of function id for what is under way, from entry index on.
   def jd_under(table: bytes, id: integer, what: integer, index: integer): integer do
-    at = nc_records(Enum.count(table))*28+2+index*4
+    at = nc_records(Enum.count(table))*40+2+index*4
     if index >= Enum.at(table,at-2-index*4+1,0) do 0 else
       if nc_cursor(table,at) == id do if Enum.at(table,at+3,0) == what do 1 else jd_under(table,id,what,index+1) end else jd_under(table,id,what,index+1) end
     end
@@ -359,13 +359,13 @@ defmodule NativeDescribed do
   # nothing) or four are (then it is taken to read: the record's bytes from
   # 14 on, its flags among them, stay zero).
   def jd_late(source: bytes, table: bytes, target: integer, index: integer): integer do
-    depth = Enum.at(table,nc_records(Enum.count(table))*28+1,0)
+    depth = Enum.at(table,nc_records(Enum.count(table))*40+1,0)
     if jd_bit(jd_byte(table,target),6) == 0 do 0 else if jd_under(table,target,index+1,0) == 1 do 0 else if depth >= 4 do 1 else jd_reads(source,table,target,index+1) end end end
   end
   # 1 when kind mentions a poisoned type variable of the function being
   # compiled for that.
   def jd_poisoned(source: bytes, table: bytes, kind: bytes): integer do
-    zero = nc_records(Enum.count(table))*28
+    zero = nc_records(Enum.count(table))*40
     depth = if nc_indexed(table) == 0 do 0 else Enum.at(table,zero+1,0) end
     if depth == 0 do 0 else if nu_has(kind,16,0,Enum.count(kind)) == 0 do 0 else
       jd_meets(nu_names(kind,0,b[]),jd_base(source,table,nc_cursor(table,zero+depth*4-2)),b[Enum.at(table,zero+depth*4+1,0),0,0,0])
@@ -422,7 +422,7 @@ defmodule NativeDescribed do
     end
   end
   def jd_mentions(source: bytes, table: bytes, id: integer): integer do
-    flags = Enum.at(table,id*28+16,0)
+    flags = Enum.at(table,id*40+21,0)
     if flags*(flags-1)*(flags-16)*(flags-40) != 0 do 0 else if od_library(source,table,id) == 1 do 0 else jd_text(source,nc_meta(table,id,9),nc_meta(table,id,12)) end end
   end
   def jd_text(source: bytes, first: integer, stop: integer): integer do

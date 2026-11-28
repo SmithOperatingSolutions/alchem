@@ -121,21 +121,28 @@ Seed IR V11 reads up to 16,777,216 bytes (`bytes.read`; versions before it keep
   the context of a function's clauses and in the plans the compiler's parts
   hand each other (the call's target, a struct's or a sum type's number, a
   module in the order of the modules, a function asked about for equality
-  or for JSON). Each is three bytes now; the record is 28 bytes for 27 and
-  an environment's records start at its fourth byte. None of this is in
+  or for JSON). Each is three bytes now, and an environment's records
+  start at its fourth byte. The table's record went from 27 bytes to 40,
+  with four bytes for each position and for its module, so that it need
+  not change when positions or numbers grow. None of this is in
   what the compiler makes: every program compiles to the bytes it did, and
   the compiler from the pinned release makes itself. `harness/past_limit.py`
   holds programs whose every function, struct and sum type stands behind
   66,000 others. Seed IR V11 takes 65,535 functions.
 
-  The compilers for ARM64, macOS and Windows keep 65,535 (`nc_wide`): only
-  a Linux x86-64 program has been run past it. A position-independent
-  ARM64 program (macOS, and Linux built so) tells an address of the table
-  from a number by where a table of 65,541 slots ends (`a_in_block`), and
-  a slot past that was not moved to where the image stands: such a program
-  of 65,540 functions ended at its first call. `string_case` on macOS
-  showed it: its program of 65,534 functions had fallen back on a routine
-  of the compiler's while the table had no room for the library's.
+  The limit is the same for every system. A position-independent ARM64
+  program (macOS, and Linux built so) told an address of the table from a
+  number by where a table of 65,541 slots ends, and a slot past that was
+  not moved to where the image stands: such a program of 65,540 functions
+  ended at its first call (`string_case` on macOS showed it). The
+  translation is now given where the program's own table ends
+  (`a_block_end`, `xa_block`; `darwin-arm64.md`), so the addresses it
+  takes for the table's are those of the table and no more; for a program
+  under the old limit that is fewer than before, and the 952 programs
+  compared compile for macOS to the bytes they did. The programs of
+  `harness/past_limit.py` run on Linux x86-64, on Linux ARM64 built either
+  way and on macOS; the first of them is among the programs checked on
+  Windows (`scripts/windows-examples.py`).
 - A file of tests holds 65,534 declarations: its tests, describe blocks
   and functions are each a record of `native-testing.alc`, whose numbers
   are two bytes in the 48 bytes of its cursor. One with more is refused,
@@ -221,7 +228,7 @@ What remains fixed, with the reason:
 | Limit | Number | Why |
 | --- | --- | --- |
 | Source | 16,776,191 bytes | positions are 24 bits (above; #19); the pinned compiler stops at 1,048,576 a file |
-| Functions; table records | 16,777,214; 16,777,215 for Linux x86-64, 65,535; 65,536 for the other systems | 24-bit numbers ("Limits that remain"); 65,535 and 65,536 until they were widened |
+| Functions; table records | 16,777,214; 16,777,215 | 24-bit numbers ("Limits that remain"); 65,535 and 65,536 until they were widened |
 | Parameters of one function | 65,534 | two bytes of the table record (the pinned compiler takes what its megabyte holds, about 140,000 one-letter parameters) |
 | The description of a type for `inspect`, the JSON library and node messages | 64 KiB a node: a struct of about 3,000 fields, a sum type of about 4,000 variants | a node's length is 16 bits in the format the inspect routine (`spec/integer-parse-x86_64.s`), `library/JSON.alc` and the node codec read. Counts and name lengths in it are one byte, or 255 and four bytes (`ni_count`, `ins_count`), which `inspect` reads; JSON and node messages read one byte, so a type with 255 fields, variants or tuple parts or more has no JSON or wire form (it is refused at compilation: `ni_held`, `ni_small`) |
 | The name of a function in a failure trace; of a type variable | 254 bytes; 255 | one length byte in the trace tables (`nz_named`) and in a type (tag 16) |

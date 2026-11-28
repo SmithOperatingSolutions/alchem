@@ -19,11 +19,12 @@ defmodule NativeFast do
   # that are small each a byte at its number (the base and the index one more
   # than they are; the prefixes in 12 and, what is past 255, 14), the length
   # at 16, the displacement at 20, the immediate at 24 and where the
-  # instruction starts at 32. Its words are read with xf alone.
+  # instruction starts at 32. Its words are read with xf alone. Word 15 is
+  # what xa_insn adds after them: where the program's table ends.
   def xf(rec: bytes, i: integer): integer do
-    if i == 0 do xf_word(rec,16) else if i == 8 do ((xf_word(rec,20) <<< 32) >>> 32) else if i == 9 do xf_word(rec,24) ||| (xf_word(rec,28) <<< 32) else
+    if i == 15 do xf_word(rec,36) else if i == 0 do xf_word(rec,16) else if i == 8 do ((xf_word(rec,20) <<< 32) >>> 32) else if i == 9 do xf_word(rec,24) ||| (xf_word(rec,28) <<< 32) else
       if i == 14 do xf_word(rec,32) else if i == 12 do Enum.at(rec,12,0)+Enum.at(rec,14,0)*256 else if (i-5)*(i-6) == 0 do Enum.at(rec,i,0)-1 else Enum.at(rec,i,0) end end end
-    end end end
+    end end end end
   end
   def xf_word(rec: bytes, at: integer): integer do
     Enum.at(rec,at,0) ||| (Enum.at(rec,at+1,0) <<< 8) ||| (Enum.at(rec,at+2,0) <<< 16) ||| (Enum.at(rec,at+3,0) <<< 24)
