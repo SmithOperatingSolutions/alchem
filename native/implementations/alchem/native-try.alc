@@ -15,7 +15,7 @@ defmodule NativeTry do
   def ty_held(data: bytes, pos: integer): integer do nt_read_word(data,pos) end
   # The packet with other code, and with code before its own.
   def ty_recode(value: bytes, code: bytes): bytes do
-    if nc_pos(value) < 0 do b[] else Enum.concat(nc_slice(value,0,nt_after(value,4)),code) end
+    if nc_pos(value) < 0 do b[] else Enum.concat(nc_slice(value,0,nt_after(value,5)),code) end
   end
   def ty_before(code: bytes, value: bytes): bytes do ty_recode(value,Enum.concat(code,nc_code(value))) end
   # A run of arms carries, before its code, the line the pinned compiler's

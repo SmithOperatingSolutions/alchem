@@ -6,9 +6,9 @@ defmodule NativeFunctions do
   def nf_lambda(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
     params = nc_expect(source,nc_end(source,pos),b[40])
     shape = if params < 0 do b[] else if nc_word(source,params,b[41]) == 1 do Enum.concat(nc_u32(nc_end(source,params)),b[0,0,0]) else nc_parameters(source,params,0) end end
-    if nc_at(shape) < 0 do b[] else
+    if nc_pos(shape) < 0 do b[] else
       count = nc_cursor(shape,4)
-      declared = nc_type(source,nc_expect(source,nc_at(shape),b[58]))
+      declared = nc_type(source,nc_expect(source,nc_pos(shape),b[58]))
       owner = nc_owner(table,nc_cursor(env,0))
       body = nc_expect(source,nc_pos(declared),b[100,111])
       inner = if body < 0 do b[] else nc_env(source,params,nc_u24(nc_cursor(env,0)),count,table) end

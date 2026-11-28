@@ -133,7 +133,7 @@ defmodule NativeTail do
     close = nc_long(inner,4)
     again = if Enum.count(inner) == 0 do b[] else nc_math(source,nc_long(inner,0),tl_mark(gm_handing(source,env,nc_long(inner,0),close),close+1),table,depth) end
     fits = if nc_pos(again) < 0 do 0 else if nz_before(source,nc_pos(again)-1) != close do 0 else tl_ends(again,tl_jump(tl_count(source,table,id),id,1-od_library(source,table,id))) end end
-    if fits == 0 do value else Enum.concat(nc_slice(value,0,nt_after(value,4)),nc_code(again)) end
+    if fits == 0 do value else Enum.concat(nc_slice(value,0,nt_after(value,5)),nc_code(again)) end
   end
   # The library written in Alchem is Go in the pinned compiler, where its
   # loops and searches are no calls of the program. Its functions and their

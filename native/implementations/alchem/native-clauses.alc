@@ -48,7 +48,7 @@ defmodule NativeClauses do
   # and the value is a constant.
   def nj_params(source: bytes, pos: integer, count: integer, defaults: integer): bytes do
     item = nj_param(source,pos)
-    next = nc_at(item)
+    next = nc_pos(item)
     given = if nc_long(item,4) > 0 do 1 else 0 end
     sound = if given == 0 do 1 else nj_plain(source,nc_start(source,pos),b[0])*nj_constant(source,nc_long(item,4),next,16777216) end
     if count >= 65535 do b[] else if next < 0 do b[] else if defaults*(1-given) > 0 do b[] else if sound == 0 do b[] else
@@ -213,7 +213,7 @@ defmodule NativeClauses do
     written = nc_slice(item,12,Enum.count(item))
     kind = if Enum.count(written) == 0 do nj_literal(source,pos) else written end
     if Enum.count(item) == 0 do b[] else
-      if index > 0 do nj_declared(source,nc_end(source,nc_at(item)),index-1) else
+      if index > 0 do nj_declared(source,nc_end(source,nc_pos(item)),index-1) else
         if Enum.count(kind) == 0 do b[] else Enum.concat(nc_u32(if Enum.count(written) == 0 do 0 else nc_start(source,nc_end(source,nc_long(item,8))) end),kind) end
       end
     end
@@ -336,7 +336,7 @@ defmodule NativeClauses do
     written = nc_slice(item,12,Enum.count(item))
     kind = if Enum.count(written) == 0 do nj_literal(source,pos) else nd_resolve(source,table,owner,written) end
     if count == 0 do b[] else if Enum.count(item) == 0 do b[] else
-      Enum.concat(nt_cell(kind),nj_clause_cells(source,nc_end(source,nc_at(item)),count-1,table,owner))
+      Enum.concat(nt_cell(kind),nj_clause_cells(source,nc_end(source,nc_pos(item)),count-1,table,owner))
     end end
   end
   # Two type lists as one: each entry from first, or from second where first
@@ -415,10 +415,10 @@ defmodule NativeClauses do
     wanted = if index < nc_cursor(plan,3) do 0 else 1 end
     item = if index == nc_cursor(plan,6) do b[] else nj_param(source,pos) end
     begin = nc_long(item,4)
-    value = if wanted == 0 do b[] else if begin == 0 do b[] else if nj_lower(source,begin,nc_at(item),16777216) == 0 do b[] else nc_expression(source,begin,nc_slice(plan,9,12),table,0) end end end
-    whole = if wanted == 0 do 1 else if nc_pos(value) < 0 do 0 else if nc_start(source,nc_pos(value)) == nc_at(item) do 1 else 0 end end end
+    value = if wanted == 0 do b[] else if begin == 0 do b[] else if nj_lower(source,begin,nc_pos(item),16777216) == 0 do b[] else nc_expression(source,begin,nc_slice(plan,9,12),table,0) end end end
+    whole = if wanted == 0 do 1 else if nc_pos(value) < 0 do 0 else if nc_start(source,nc_pos(value)) == nc_pos(item) do 1 else 0 end end end
     if index == nc_cursor(plan,6) do b[0,0,0,0] else if Enum.count(item) == 0 do b[] else if whole == 0 do b[] else
-      rest = nj_defaults(source,nc_end(source,nc_at(item)),table,Enum.concat(nc_u24(index+1),nc_slice(plan,3,12)))
+      rest = nj_defaults(source,nc_end(source,nc_pos(item)),table,Enum.concat(nc_u24(index+1),nc_slice(plan,3,12)))
       cell = if wanted == 0 do b[] else nt_cell(nc_kind(value)) end
       push = if wanted == 0 do b[] else Enum.concat(nc_code(value),b[80]) end
       if Enum.count(rest) == 0 do b[] else
@@ -505,7 +505,7 @@ defmodule NativeClauses do
     start = nc_start(source,pos)
     if index == nc_cursor(plan,3) do env else if Enum.count(item) == 0 do b[] else
       bound = if nj_plain(source,start,kind) == 1 do nc_bind(source,start,env,kind) else np_hidden(env,start,kind) end
-      if Enum.count(bound) == 0 do b[] else nj_slots(source,nc_end(source,nc_at(item)),bound,Enum.concat(nc_u24(index+1),nc_slice(plan,3,Enum.count(plan)))) end
+      if Enum.count(bound) == 0 do b[] else nj_slots(source,nc_end(source,nc_pos(item)),bound,Enum.concat(nc_u24(index+1),nc_slice(plan,3,Enum.count(plan)))) end
     end end
   end
   # Matched parameters travel as: the length of their trees (2 bytes), the
@@ -532,7 +532,7 @@ defmodule NativeClauses do
     test = if whole == 0 do b[] else if Enum.at(tree,0,0) == 0 do b[176,1] else np_emit(source,np_env(parsed),table,tree,0) end end
     match = if Enum.at(tree,0,0) == 0 do b[] else Enum.concat(nc_slot(b[72,139,69],nc_cursor(spec,0)),test) end
     if Enum.count(test) == 0 do b[] else
-      np_pack(nc_end(source,nc_at(item)),nc_join(nc_u32(Enum.count(tree)),tree,match),np_env(parsed))
+      np_pack(nc_end(source,nc_pos(item)),nc_join(nc_u32(Enum.count(tree)),tree,match),np_env(parsed))
     end
   end
   # The parameters of a clause from pos on. plan as for nj_slots.
@@ -602,7 +602,7 @@ defmodule NativeClauses do
   # The value with type kind when it has none of its own: a body that ends
   # in return has the type its returns were held to.
   def nj_typed(value: bytes, kind: bytes): bytes do
-    if nc_tag(value) != 9 do value else nc_join(nc_slice(value,0,4),nt_cell(kind),nc_code(value)) end
+    if nc_tag(value) != 9 do value else nc_join(nc_slice(value,0,5),nt_cell(kind),nc_code(value)) end
   end
   # The statement return value at start: the value, then the way out of the
   # frame. Its block ends with it, and it leaves a value of no known type

@@ -463,8 +463,8 @@ defmodule NativeRecords do
     shape = if nc_word(source,open,b[40]) != 1 do Enum.concat(nc_u32(open),b[0,0,0]) else nc_parameters(source,nc_end(source,open),0) end
     params = if nc_word(source,open,b[40]) != 1 do 0 else nc_end(source,open) end
     # A variant name is not capitalized.
-    if nv_member(source,name) == 0 do b[] else if nc_at(shape) < 0 do b[] else if (byte_at(source,name)-65)*(90-byte_at(source,name)) >= 0 do b[] else
-      nc_value(nc_at(shape),nc_join(nc_u32(name),nc_u32(params),nc_slice(shape,4,7)),b[0])
+    if nv_member(source,name) == 0 do b[] else if nc_pos(shape) < 0 do b[] else if (byte_at(source,name)-65)*(90-byte_at(source,name)) >= 0 do b[] else
+      nc_value(nc_pos(shape),nc_join(nc_u32(name),nc_u32(params),nc_slice(shape,4,7)),b[0])
     end end end
   end
   # How many fields the variant of a packet's code has.

@@ -532,7 +532,7 @@ defmodule NativeMemory do
   def gm_shed(source: bytes, env: bytes, table: bytes, first: integer, value: bytes): bytes do
     if nc_pos(value) < 0 do value else if gm_any(env,3,53)+gm_any(env,3,50)+gm_any(env,3,54)+gm_any(env,3,57) == 0 do value else
       code = gm_shed_from(source,env,table,3,0,nc_join(nc_u32(first),nc_u32(nc_pos(value)),b[]))
-      if Enum.count(code) == 0 do value else nc_join(nc_slice(value,0,nt_after(value,4)),code,nc_code(value)) end
+      if Enum.count(code) == 0 do value else nc_join(nc_slice(value,0,nt_after(value,5)),code,nc_code(value)) end
     end end
   end
   def gm_shed_from(source: bytes, env: bytes, table: bytes, offset: integer, slot: integer, span: bytes): bytes do

@@ -81,7 +81,7 @@ defmodule NativeJson do
     packet = if Enum.count(node) == 0 do b[] else nc_arg_packet(nc_pos(args),count+1,kinds,nc_join(nc_arg_code(args),jd_placed(node,nu_vars(env,3)),b[80])) end
     home = Enum.concat(b[65,108,99,104,127,109,74,83,79,78],ny_digits(count+1))
     made = if Enum.count(node) == 0 do b[] else nn_passes(source,pos,name,env,table,nc_join(b[Enum.at(plan,0,0),1,0,Enum.count(home)],home,packet)) end
-    if nc_pos(made) < 0 do b[] else nh_placed(table,if op == 3 do nc_join(nc_slice(made,0,4),nt_cell(wanted),nc_code(made)) else made end,nc_start(source,pos)) end
+    if nc_pos(made) < 0 do b[] else nh_placed(table,if op == 3 do nc_join(nc_slice(made,0,5),nt_cell(wanted),nc_code(made)) else made end,nc_start(source,pos)) end
   end
   # Gen.check(generator, property) and Gen.check(generator, property, runs):
   # the library's check gets one argument more, the description of the type

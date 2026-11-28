@@ -4,7 +4,7 @@ defmodule NativeComprehensions do
   # A packet at another position, its marks kept.
   def wc_at(value: bytes, pos: integer): bytes do
     if nc_pos(value) < 0 do b[] else if pos < 0 do b[] else
-      Enum.concat(nc_u24(pos+nc_cursor(value,0)-nc_pos(value)),nc_slice(value,3,Enum.count(value)))
+      Enum.concat(nc_u32(pos+nc_long(value,0)-nc_pos(value)),nc_slice(value,4,Enum.count(value)))
     end end
   end
   # The program ends naming pos and a reason the trace routine has no number

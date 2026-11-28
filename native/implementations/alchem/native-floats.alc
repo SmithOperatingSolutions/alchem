@@ -268,7 +268,7 @@ defmodule NativeFloats do
   # 1 for a float Go's compiler knows at compile time: a literal, or a value
   # with bit 8 of its flags (a name bound to one, an operation on two).
   def ne_go_constant(value: bytes): integer do
-    if ne_constant(value) == 1 do 1 else if Enum.count(value) < 4 do 0 else if Enum.at(value,3,0)-16*a_div(Enum.at(value,3,0),16) >= 8 do 1 else 0 end end end
+    if ne_constant(value) == 1 do 1 else if Enum.count(value) < 5 do 0 else if Enum.at(value,4,0)-16*a_div(Enum.at(value,4,0),16) >= 8 do 1 else 0 end end end
   end
   # A call of function id on ARM64 whose body Go's compiler inlines and
   # whose value is a product is a product where it is called: the factors
@@ -436,12 +436,12 @@ defmodule NativeFloats do
     constant = if nc_arm() == 0 do 0 else ne_go_constant(inside) end
     if kind == 0 do (if constant == 1 do ne_flag(value,8) else value end) else if Enum.count(nc_code(value)) != Enum.count(nc_code(inside)) do value else ne_flag(value,if kind == 1 do 32 else 16 end) end end
   end
-  def ne_flag(value: bytes, bit: integer): bytes do Enum.concat(nc_slice(value,0,3),Enum.concat(b[Enum.at(value,3,0)+bit],nc_slice(value,4,Enum.count(value)))) end
+  def ne_flag(value: bytes, bit: integer): bytes do Enum.concat(nc_slice(value,0,4),Enum.concat(b[Enum.at(value,4,0)+bit],nc_slice(value,5,Enum.count(value)))) end
   def ne_multiply_tail(): bytes do b[89,102,72,15,110,193,102,72,15,110,200,242,15,89,193,102,72,15,126,192] end
   # 1 for a product, 2 for a negated product, else 0.
   def ne_is_product(value: bytes): integer do
-    if Enum.count(value) < 4 do 0 else
-      flags = Enum.at(value,3,0)-64*a_div(Enum.at(value,3,0),64)
+    if Enum.count(value) < 5 do 0 else
+      flags = Enum.at(value,4,0)-64*a_div(Enum.at(value,4,0),64)
       code = nc_code(value)
       if flags >= 32 do (if Enum.count(code) < 20 do 0 else zf_same(code,Enum.count(code)-20,ne_multiply_tail(),0) end) else
         if flags >= 16 do (if Enum.count(code) < 25 do 0 else 2*zf_same(code,Enum.count(code)-25,Enum.concat(ne_multiply_tail(),b[72,15,186,248,63]),0) end) else 0 end

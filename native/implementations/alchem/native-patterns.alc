@@ -100,7 +100,7 @@ defmodule NativePatterns do
     stop = if atom == 1 do nc_end(source,token+1) else nc_end(source,token) end
     text = if byte_at(source,token) == 34 do 2 else if atom == 1 do 2 else 0 end end
     # A string with a value in it is no pattern.
-    plain = if byte_at(source,token) != 34 do 1 else if ns_tripled(source,token) == 1 do 1 else if nc_at(ns_decode(source,token+1,0)) < 0 do 0 else 1 end end end
+    plain = if byte_at(source,token) != 34 do 1 else if ns_tripled(source,token) == 1 do 1 else if nc_pos(ns_decode(source,token+1,0)) < 0 do 0 else 1 end end end
     valid = if plain == 0 do 0 else if text == 2 do 1-negative else is_digit(byte_at(source,token)) end end
     float = if text == 2 do 0 else if valid == 0 do 0 else ne_is(source,token,stop) end end
     if valid == 0 do b[] else if nt_tag(kind) != text+atom*20+float*24 do b[] else if stop < 0 do b[] else

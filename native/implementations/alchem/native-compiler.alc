@@ -122,9 +122,6 @@ defmodule NativeSourceCompiler do
   # The position a packet starts with. A value's flags (nw_mark, nx_impure)
   # are the byte after it, so a position takes all 24 bits.
   def nc_pos(result: bytes): integer do
-    if Enum.count(result) < 3 do -1 else nc_cursor(result,0) end
-  end
-  def nc_at(result: bytes): integer do
     if Enum.count(result) < 4 do -1 else nc_long(result,0) end
   end
   def nc_join(a: bytes, b: bytes, c: bytes): bytes do
@@ -137,21 +134,21 @@ defmodule NativeSourceCompiler do
   # nw_mark, 64 nx_impure), its type as a cell (nt_cell: the type after its
   # length), then its code. An empty byte string is failure, also for no type.
   def nc_code(result: bytes): bytes do
-    nc_slice(result,nt_after(result,4),Enum.count(result))
+    nc_slice(result,nt_after(result,5),Enum.count(result))
   end
 
   def nc_result(pos: integer, code: bytes): bytes do
     nc_value(pos,code,b[0])
   end
   def nc_value(pos: integer, code: bytes, kind: bytes): bytes do
-    if Enum.count(kind) == 0 do b[] else nc_join(nc_u24(pos),Enum.concat(b[0],nt_cell(kind)),code) end
+    if Enum.count(kind) == 0 do b[] else nc_join(nc_u32(pos),Enum.concat(b[0],nt_cell(kind)),code) end
   end
   def nc_kind(result: bytes): bytes do
-    if Enum.count(result) < 6 do b[] else nt_read(result,4) end
+    if Enum.count(result) < 7 do b[] else nt_read(result,5) end
   end
   # The first byte of the type: the whole type when it is a scalar.
   def nc_tag(result: bytes): integer do
-    if Enum.count(result) < 6 do -1 else Enum.at(result,4+nt_head(result,4),0) end
+    if Enum.count(result) < 7 do -1 else Enum.at(result,5+nt_head(result,5),0) end
   end
 
   def nc_spaces(source: bytes, pos: integer, count: integer): integer do
@@ -593,8 +590,8 @@ defmodule NativeSourceCompiler do
   def nc_body_scan(source: bytes, pos: integer, nesting: integer, count: integer): integer do
     if count <= 0 do -1 else
       state = nc_body_chunk(source,pos,nesting,16)
-      if nc_at(state) < 0 do -1 else
-        if nc_read(state,4) == 0 do nc_at(state) else nc_body_scan(source,nc_at(state),nc_read(state,4),count-16) end
+      if nc_pos(state) < 0 do -1 else
+        if nc_read(state,4) == 0 do nc_pos(state) else nc_body_scan(source,nc_pos(state),nc_read(state,4),count-16) end
       end
     end
   end
@@ -608,7 +605,7 @@ defmodule NativeSourceCompiler do
     # A function may have the name of a type (Gen.integer), as a variant and a field may.
     params = if nv_member(source,name) == 0 do -1 else nc_expect(source,nc_end(source,name),b[40]) end
     shape = if params < 0 do b[] else if nc_word(source,params,b[41]) == 1 do Enum.concat(nc_u32(nc_end(source,params)),b[0,0,0,0,0,0]) else nj_params(source,params,0,0) end end
-    if nc_at(shape) < 0 do b[] else nj_signature(source,pos,owner,nc_join(nc_join(nc_u32(name),nc_u32(nc_end(source,name)),nc_u32(params)),shape,b[])) end
+    if nc_pos(shape) < 0 do b[] else nj_signature(source,pos,owner,nc_join(nc_join(nc_u32(name),nc_u32(nc_end(source,name)),nc_u32(params)),shape,b[])) end
   end
   def nc_main_index(table: bytes, index: integer): integer do
     nc_main_range(table,index,nc_records(Enum.count(table)))
@@ -954,20 +951,20 @@ defmodule NativeSourceCompiler do
   # the length (4 bytes) follow it.
   def nc_arg_narrow(): integer do 255 end
   def nc_arg_packet(pos: integer, count: integer, kinds: bytes, code: bytes): bytes do
-    if count < nc_arg_narrow() do if Enum.count(kinds) < 65535 do nc_join(nc_u24(pos),nc_join(b[count],nc_u16(Enum.count(kinds)),kinds),code) else nc_arg_wide(pos,count,kinds,code) end else nc_arg_wide(pos,count,kinds,code) end
+    if count < nc_arg_narrow() do if Enum.count(kinds) < 65535 do nc_join(nc_u32(pos),nc_join(b[count],nc_u16(Enum.count(kinds)),kinds),code) else nc_arg_wide(pos,count,kinds,code) end else nc_arg_wide(pos,count,kinds,code) end
   end
   def nc_arg_wide(pos: integer, count: integer, kinds: bytes, code: bytes): bytes do
-    nc_join(nc_join(nc_u24(pos),b[255],nc_u24(count)),Enum.concat(nc_u32(Enum.count(kinds)),kinds),code)
+    nc_join(nc_join(nc_u32(pos),b[255],nc_u24(count)),Enum.concat(nc_u32(Enum.count(kinds)),kinds),code)
   end
   def nc_arg_count(args: bytes): integer do
-    if Enum.at(args,3,0) == 255 do nc_cursor(args,4) else Enum.at(args,3,0) end
+    if Enum.at(args,4,0) == 255 do nc_cursor(args,5) else Enum.at(args,4,0) end
   end
   # Where the type list of a packet starts and ends.
   def nc_arg_from(args: bytes): integer do
-    if Enum.at(args,3,0) == 255 do 11 else 6 end
+    if Enum.at(args,4,0) == 255 do 12 else 7 end
   end
   def nc_arg_to(args: bytes): integer do
-    if Enum.at(args,3,0) == 255 do 11+nc_long(args,7) else 6+nc_read(args,4) end
+    if Enum.at(args,4,0) == 255 do 12+nc_long(args,8) else 7+nc_read(args,5) end
   end
   def nc_arg_types(args: bytes): bytes do
     nc_slice(args,nc_arg_from(args),nc_arg_to(args))
@@ -1049,7 +1046,7 @@ defmodule NativeSourceCompiler do
   # The arguments whose spans are first up to stop (3 bytes each in bounds),
   # compiled by halves so that code is copied about log n times.
   def nc_arg_kind(args: bytes, index: integer): bytes do
-    if Enum.count(args) < 7 do b[] else nt_item(nc_arg_types(args),index) end
+    if Enum.count(args) < 8 do b[] else nt_item(nc_arg_types(args),index) end
   end
   def nc_arg_code(args: bytes): bytes do
     nc_slice(args,nc_arg_to(args),Enum.count(args))
@@ -1177,9 +1174,9 @@ defmodule NativeSourceCompiler do
   end
   def nc_span(source: bytes, state: bytes, budget: integer): integer do
     if budget <= 0 do -1 else
-      next = nc_span_chunk(source,nc_at(state),Enum.at(state,4,0),Enum.at(state,5,0),Enum.at(state,6,0),16)
-      if nc_at(next) < 0 do -1 else
-        if Enum.at(next,7,0) == 1 do nc_at(next) else nc_span(source,next,budget-16) end
+      next = nc_span_chunk(source,nc_pos(state),Enum.at(state,4,0),Enum.at(state,5,0),Enum.at(state,6,0),16)
+      if nc_pos(next) < 0 do -1 else
+        if Enum.at(next,7,0) == 1 do nc_pos(next) else nc_span(source,next,budget-16) end
       end
     end
   end
@@ -1252,7 +1249,7 @@ defmodule NativeSourceCompiler do
             if nc_word(source,stop,b[93]) == 1 do Enum.concat(nc_u32(nc_end(source,stop)),b[value]) else
               if nc_word(source,stop,b[44]) == 0 do b[] else
                 rest = nc_literal_items(source,nc_end(source,stop),count+1)
-                if nc_at(rest) < 0 do b[] else nc_join(nc_u32(nc_at(rest)),b[value],nc_slice(rest,4,Enum.count(rest))) end
+                if nc_pos(rest) < 0 do b[] else nc_join(nc_u32(nc_pos(rest)),b[value],nc_slice(rest,4,Enum.count(rest))) end
               end
             end
           end
@@ -1262,8 +1259,8 @@ defmodule NativeSourceCompiler do
   end
   def nc_list(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer): bytes do
     literal = if nc_word(source,pos,b[93]) == 1 do nc_u32(nc_end(source,pos)) else nc_literal_items(source,pos,0) end
-    if nc_at(literal) >= 0 do
-      nc_value(nc_at(literal),nc_text_emit(nc_slice(literal,4,Enum.count(literal))),b[1])
+    if nc_pos(literal) >= 0 do
+      nc_value(nc_pos(literal),nc_text_emit(nc_slice(literal,4,Enum.count(literal))),b[1])
     else
       state = nc_list_collect(source,pos,b[],0,93)
       if nc_pos(state) < 0 do b[] else
