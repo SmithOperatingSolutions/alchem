@@ -138,24 +138,24 @@ defmodule NativeTrace do
   def nz_manifest(source: bytes, pos: integer, left: integer, found: bytes): bytes do
     size = nz_digits_end(source,pos+2)
     stop = nz_line_end(source,size)
-    if left == 0 do Enum.concat(nc_u24(pos),found) else
+    if left == 0 do Enum.concat(nc_u32(pos),found) else
       if byte_at(source,pos)*256+byte_at(source,pos+1) != 8992 do b[] else if byte_at(source,size) != 32 do b[] else if stop >= Enum.count(source) do b[] else if nz_digits(source,pos+2,0) > Enum.count(source) do b[] else
-        nz_manifest(source,stop+1,left-1,nc_join(found,nc_u32(nz_digits(source,pos+2,0)),Enum.concat(nc_u24(size+1),nc_u24(stop))))
+        nz_manifest(source,stop+1,left-1,nc_join(found,nc_u32(nz_digits(source,pos+2,0)),Enum.concat(nc_u32(size+1),nc_u32(stop))))
       end end end end
     end
   end
   # Where each file starts, the length of its path and the path.
   def nz_file_records(source: bytes, found: bytes, offset: integer, start: integer): bytes do
-    first = nc_cursor(found,offset+4)
-    stop = nc_cursor(found,offset+7)
+    first = nc_long(found,offset+4)
+    stop = nc_long(found,offset+8)
     if offset >= Enum.count(found) do b[] else
-      nc_join(Enum.concat(nc_u32(start),nc_u16(stop-first)),nc_slice(source,first,stop),nz_file_records(source,found,offset+10,start+nc_read(found,offset)+nc_read(found,offset+2)*65536))
+      nc_join(Enum.concat(nc_u32(start),nc_u16(stop-first)),nc_slice(source,first,stop),nz_file_records(source,found,offset+12,start+nc_read(found,offset)+nc_read(found,offset+2)*65536))
     end
   end
   def nz_files(source: bytes): bytes do
     count = nz_digits(source,15,0)
     found = if nz_bundled(source) == 0 do b[] else nz_manifest(source,nz_line_end(source,15)+1,count,b[]) end
-    if Enum.count(found) < 3 do b[0,0,0,0,7,0,60,115,116,100,105,110,62] else nz_file_records(source,found,3,nc_cursor(found,0)) end
+    if Enum.count(found) < 4 do b[0,0,0,0,7,0,60,115,116,100,105,110,62] else nz_file_records(source,found,4,nc_long(found,0)) end
   end
   def nz_file_count(files: bytes, offset: integer): integer do
     if offset >= Enum.count(files) do 0 else 1+nz_file_count(files,offset+6+nc_read(files,offset+4)) end

@@ -236,7 +236,7 @@ defmodule NativeProcesses do
     made = if kind == 0 do b[] else if byte_at(source,open) != 40 do b[] else if ac_leading(source,start) == 0 do b[] else ac_statement_text(source,start,open+1,b[kind,past]) end end end
     if hit < 0 do nc_slice(source,from,size) else
       if Enum.count(made) == 0 do Enum.concat(nc_slice(source,from,hit+8),ac_rewritten(source,hit+8,size)) else
-        nc_join(nc_slice(source,from,start),nc_slice(made,3,Enum.count(made)),ac_rewritten(source,nc_cursor(made,0),size))
+        nc_join(nc_slice(source,from,start),nc_slice(made,4,Enum.count(made)),ac_rewritten(source,nc_long(made,0),size))
       end
     end
   end
@@ -315,7 +315,7 @@ defmodule NativeProcesses do
       head = nc_join(bound,if Enum.at(plan,0,0) == 1 do b[80,114,111,99,101,115,115,46,97,115,115,101,114,116,95,114,101,99,101,105,118,101,40] else b[80,114,111,99,101,115,115,46,114,101,102,117,116,101,95,114,101,99,101,105,118,101,40] end,ac_text(source,nc_long(items,0),nc_long(items,4)))
       tail = nc_join(nc_join(b[44,32,34],ac_quoted(whole,0,Enum.count(whole)),b[34,44,32,91]),nc_join(ac_pins(source,nc_long(items,8),nc_long(items,12),b[]),b[93,44,32],custom),nc_join(b[44,32],ac_number(Enum.count(bound)),b[41]))
       text = nc_join(nc_join(head,b[44,32],wait),nc_join(b[44,32],test,b[44,32]),Enum.concat(show,tail))
-      nc_join(nc_u24(stop),text,ac_newlines(ac_lines(source,start,stop)))
+      nc_join(nc_u32(stop),text,ac_newlines(ac_lines(source,start,stop)))
     end end
   end
   def ac_newlines(count: integer): bytes do

@@ -620,8 +620,8 @@ defmodule NativeFailures do
   def zf_cover_fn(source: bytes, table: bytes, env: bytes, plan: bytes, shaped: integer): bytes do
     flag = Enum.at(table,20,0)
     if flag < 2 do b[] else
-      if Enum.at(plan,0,0) == 0 do if shaped == 0 do b[] else if nc_cursor(plan,4) == 0 do b[] else zf_cover(source,table,env,nc_cursor(plan,4)) end end else
-        if flag == 3 do zf_cover_call(table,nc_long(table,27)) else zf_cover(source,table,env,nc_cursor(plan,1)) end
+      if Enum.at(plan,0,0) == 0 do if shaped == 0 do b[] else if nc_long(plan,5) == 0 do b[] else zf_cover(source,table,env,nc_long(plan,5)) end end else
+        if flag == 3 do zf_cover_call(table,nc_long(table,27)) else zf_cover(source,table,env,nc_long(plan,1)) end
       end
     end
   end

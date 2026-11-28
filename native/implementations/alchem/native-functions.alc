@@ -37,7 +37,7 @@ defmodule NativeFunctions do
     unit = if nc_tag(inner) == 12 do 1 else 0 end
     begin = nc_start(source,nc_pos(spec))
     enter = if form == 0 do tl_fn_enter(source,env,table,begin) else nz_enter_plain(if nc_long(table,27) == 0 do begin else nc_long(table,27) end) end
-    value = if nc_pos(inner) < 0 do b[] else nc_value(nc_pos(inner),nc_join(nc_join(enter,zf_cover_fn(source,table,env,nc_join(b[form],nc_u24(begin),nc_u24(if nc_tag(spec) != 9 do 0 else nc_long(nc_kind(spec),2) end)),Enum.count(np_tree(shaped))),np_tree(shaped)),nc_code(inner),Enum.concat(if unit == 1 do nc_join(nc_allocate_emit(0),b[72,199,2,0,0,0,0],b[72,137,208]) else b[] end,if form == 0 do tl_fn_leave(source,env,table) else b[] end)),if unit == 1 do b[5,0] else nc_kind(inner) end) end
+    value = if nc_pos(inner) < 0 do b[] else nc_value(nc_pos(inner),nc_join(nc_join(enter,zf_cover_fn(source,table,env,nc_join(b[form],nc_u32(begin),nc_u32(if nc_tag(spec) != 9 do 0 else nc_long(nc_kind(spec),2) end)),Enum.count(np_tree(shaped))),np_tree(shaped)),nc_code(inner),Enum.concat(if unit == 1 do nc_join(nc_allocate_emit(0),b[72,199,2,0,0,0,0],b[72,137,208]) else b[] end,if form == 0 do tl_fn_leave(source,env,table) else b[] end)),if unit == 1 do b[5,0] else nc_kind(inner) end) end
     gm_shed(source,env,table,if form != 0 do 0 else if nc_tag(spec) == 9 do nc_long(nc_kind(spec),2) else nc_pos(spec) end end,nf_seal(source,spec,if nw_marked(inner) == 1 do nw_mark(value) else value end,words,gm_held(env,3),form))
   end
   def nf_seal(source: bytes, spec: bytes, value: bytes, words: bytes, captures: bytes, form: integer): bytes do

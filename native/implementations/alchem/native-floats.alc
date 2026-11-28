@@ -572,7 +572,7 @@ defmodule NativeFloats do
   # ---- the Float module ----
   def ne_unary(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
     dot = if nc_word(source,start,b[70,108,111,97,116]) == 0 do -1 else nc_expect(source,nc_end(source,start),b[46]) end
-    if dot < 0 do nb_unary(source,start,env,table,depth) else ne_module(source,nc_start(source,dot),env,table,Enum.concat(nc_u24(depth),nc_u24(start))) end
+    if dot < 0 do nb_unary(source,start,env,table,depth) else ne_module(source,nc_start(source,dot),env,table,Enum.concat(nc_u24(depth),nc_u32(start))) end
   end
   def ne_name(source: bytes, name: integer): integer do
     if nc_word(source,name,b[102,114,111,109,95,105,110,116,101,103,101,114]) == 1 do 1 else if nc_word(source,name,b[116,111,95,115,116,114,105,110,103]) == 1 do 2 else
@@ -587,7 +587,7 @@ defmodule NativeFloats do
     op = ne_name(source,name)
     begin = nc_expect(source,nc_end(source,name),b[40])
     args = if op == 0 do b[] else if begin < 0 do b[] else nc_arguments(source,begin,env,table,nc_cursor(plan,0)) end end
-    if nc_pos(args) < 0 do b[] else nw_library(ne_function(source,table,args,op+nc_arg_count(args)*16,nc_cursor(plan,3)),args,0) end
+    if nc_pos(args) < 0 do b[] else nw_library(ne_function(source,table,args,op+nc_arg_count(args)*16,nc_long(plan,3)),args,0) end
   end
   def ne_places_message(): bytes do b[112,114,101,99,105,115,105,111,110,32,109,117,115,116,32,98,101,32,98,101,116,119,101,101,110,32,48,32,97,110,100,32,49,53] end
   # plan: the function and 16 times the number of arguments.

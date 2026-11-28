@@ -89,7 +89,7 @@ defmodule NativeTail do
     inner = nz_before(source,close-1)
     if open < 0 do b[] else if budget == 0 do b[] else
       if open == start do if byte_at(source,inner) != 41 do b[] else tl_target(source,nc_start(source,start+1),inner,budget-1) end else
-        if name == start do Enum.concat(nc_u24(start),nc_u24(close)) else if byte_at(source,before)*256+byte_at(source,before-1) == 15996 do Enum.concat(nc_u24(start),nc_u24(close)) else b[] end end
+        if name == start do Enum.concat(nc_u32(start),nc_u32(close)) else if byte_at(source,before)*256+byte_at(source,before-1) == 15996 do Enum.concat(nc_u32(start),nc_u32(close)) else b[] end end
       end
     end end
   end
@@ -130,8 +130,8 @@ defmodule NativeTail do
     id = nc_cursor(env,0)
     last = nz_before(source,nc_pos(value)-1)
     inner = if byte_at(source,last) != 41 do b[] else tl_target(source,nc_start(source,start),last,200) end
-    close = nc_cursor(inner,3)
-    again = if Enum.count(inner) == 0 do b[] else nc_math(source,nc_cursor(inner,0),tl_mark(gm_handing(source,env,nc_cursor(inner,0),close),close+1),table,depth) end
+    close = nc_long(inner,4)
+    again = if Enum.count(inner) == 0 do b[] else nc_math(source,nc_long(inner,0),tl_mark(gm_handing(source,env,nc_long(inner,0),close),close+1),table,depth) end
     fits = if nc_pos(again) < 0 do 0 else if nz_before(source,nc_pos(again)-1) != close do 0 else tl_ends(again,tl_jump(tl_count(source,table,id),id,1-od_library(source,table,id))) end end
     if fits == 0 do value else Enum.concat(nc_slice(value,0,nt_after(value,4)),nc_code(again)) end
   end

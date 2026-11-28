@@ -44,7 +44,7 @@ defmodule NativePrelude do
   # holds one byte per entry and then one per flag, 1 when it is marked.
   # Only the program's code is read: a comment is passed over, and of a
   # string or heredoc only what stands in its #{ }. A sigil is read whole,
-  # since the text of one may be code (a template). The last three bytes of
+  # since the text of one may be code (a template). The last four bytes of
   # state say where the reading has got to: a comment or a string may end
   # past the stretch a call was given, and the next stretch starts there.
   def ny_pick(source: bytes, index: bytes, state: bytes, first: integer, stop: integer): bytes do
@@ -52,12 +52,12 @@ defmodule NativePrelude do
       middle = first+nc_half(stop-first)
       ny_pick(source,index,ny_pick(source,index,state,first,middle),middle,stop)
     else
-      reached = nc_cursor(state,Enum.count(state)-3)
+      reached = nc_long(state,Enum.count(state)-4)
       ny_pick_scan(source,index,state,if reached > first do reached else first end,stop)
     end
   end
   def ny_reached(state: bytes, pos: integer): bytes do
-    Enum.concat(nc_slice(state,0,Enum.count(state)-3),nc_u24(pos))
+    Enum.concat(nc_slice(state,0,Enum.count(state)-4),nc_u32(pos))
   end
   def ny_pick_scan(source: bytes, index: bytes, state: bytes, pos: integer, stop: integer): bytes do
     value = Enum.at(source,pos,0)
@@ -175,7 +175,7 @@ defmodule NativePrelude do
     found = if name < 0 do -1 else ny_name(source,name,nc_end(source,name)-name,index,names+2,names+2+nc_read(index,names)*4) end
     any = nc_cursor(index,found)
     if found < 0 do state else
-      ny_counted(source,index,ny_mark_list(index,state,any+2,nc_read(index,any)),Enum.concat(nc_u24(pos),nc_u24(nc_end(source,dot))),found+4,Enum.at(index,found+3,0))
+      ny_counted(source,index,ny_mark_list(index,state,any+2,nc_read(index,any)),Enum.concat(nc_u32(pos),nc_u32(nc_end(source,dot))),found+4,Enum.at(index,found+3,0))
     end
   end
   # The lists of a name for calls with a number of arguments, count of them
@@ -184,7 +184,7 @@ defmodule NativePrelude do
     held = nc_cursor(index,at+1)
     if count == 0 do state else
       # Arguments are counted only for a list that still has something to mark.
-      given = if ny_all(index,state,held+2,nc_read(index,held)) == 1 do 0 else nh_given(source,nc_cursor(span,0),nc_cursor(span,3),Enum.at(index,at,0)) end
+      given = if ny_all(index,state,held+2,nc_read(index,held)) == 1 do 0 else nh_given(source,nc_long(span,0),nc_long(span,4),Enum.at(index,at,0)) end
       ny_counted(source,index,if given == 0 do state else ny_mark_list(index,state,held+2,nc_read(index,held)) end,span,at+4,count-1)
     end
   end
@@ -344,7 +344,7 @@ defmodule NativePrelude do
     read = if ny_replaces(source,0,Enum.count(source)) == 0 do source else ny_masked(source,0,Enum.count(source)) end
     # Calendar sigils name their structs without writing them.
     hinted = nc_join(read,sg_hints(source),nn_hinted(source))
-    state = nc_slice(ny_pick(hinted,index,nc_zeros(count+nc_read(index,266)+3),0,Enum.count(hinted)),0,count+nc_read(index,266))
+    state = nc_slice(ny_pick(hinted,index,nc_zeros(count+nc_read(index,266)+4),0,Enum.count(hinted)),0,count+nc_read(index,266))
     # The first flag is native_compile: a compiler entry gets no library.
     modules = if Enum.at(state,count,0) == 1 do b[] else ny_groups(index,Enum.concat(ny_chosen(index,state,0,count),state),ny_tables(),0,nc_read(index,264)) end
     if Enum.count(modules) == 0 do b[] else Enum.concat(b[10],modules) end

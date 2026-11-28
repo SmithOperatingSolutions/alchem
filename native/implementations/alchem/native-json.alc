@@ -58,10 +58,10 @@ defmodule NativeJson do
     name = nc_start(source,nc_expect(source,nc_end(source,pos),b[46]))
     op = if nc_word(source,pos,b[74,83,79,78]) == 0 do 0 else if nn_library(source,env,table) == 1 do 0 else jn_which(source,name) end end
     check = if nc_word(source,pos,b[71,101,110]) == 0 do 0 else if nn_library(source,env,table) == 1 do 0 else nc_word(source,name,b[99,104,101,99,107]) end end
-    if nc_word(source,pos,b[84,127]) == 1 do tm_intrinsic(source,pos,env,table,depth) else if check == 1 do jn_check(source,pos,env,table,Enum.concat(b[depth,4],nc_u24(name))) else if op == 0 do mp_or(source,pos,env,table,depth) else jn_call(source,pos,env,table,Enum.concat(b[depth,op],nc_u24(name))) end end end
+    if nc_word(source,pos,b[84,127]) == 1 do tm_intrinsic(source,pos,env,table,depth) else if check == 1 do jn_check(source,pos,env,table,Enum.concat(b[depth,4],nc_u32(name))) else if op == 0 do mp_or(source,pos,env,table,depth) else jn_call(source,pos,env,table,Enum.concat(b[depth,op],nc_u32(name))) end end end
   end
   def jn_call(source: bytes, pos: integer, env: bytes, table: bytes, plan: bytes): bytes do
-    name = nc_cursor(plan,2)
+    name = nc_long(plan,2)
     op = Enum.at(plan,1,0)
     paren = nc_expect(source,nc_end(source,name),b[40])
     given = if paren < 0 do b[] else nc_arguments(source,paren,env,table,Enum.at(plan,0,0)) end
@@ -70,7 +70,7 @@ defmodule NativeJson do
     count = nc_arg_count(args)
     direct = nw_expected(env,nc_start(source,nc_end(source,name)),3)
     piped = if op != 3 do b[] else if Enum.count(direct) > 0 do b[] else if nc_pos(nf_piped(source,paren,env)) < 0 do b[] else jn_annotated(source,pos,env,table) end end end
-    wanted = if op != 3 do b[] else if Enum.count(direct) > 0 do direct else if Enum.count(piped) > 0 do piped else jn_tail(source,Enum.concat(nc_u24(name),nc_u24(nc_start(source,pos))),env,table) end end end
+    wanted = if op != 3 do b[] else if Enum.count(direct) > 0 do direct else if Enum.count(piped) > 0 do piped else jn_tail(source,Enum.concat(nc_u32(name),nc_u32(nc_start(source,pos))),env,table) end end end
     # decode_as gives result[a, string] for the a its context expects.
     target = if op != 3 do nc_arg_kind(args,0) else if nt_tag(wanted) != 6 do b[] else if nt_tag(nt_child(wanted,1)) != 2 do b[] else nt_child(wanted,0) end end end
     fits = if nc_pos(args) < 0 do 0 else if op == 3 do if count != 1 do 0 else nq_comparable(source,table,target,b[])*(1-jd_poisoned(source,table,target)) end else if count == 1 do 1 else if op == 1 do if count == 2 do 1 else 0 end else 0 end end end end
@@ -88,7 +88,7 @@ defmodule NativeJson do
   # of the generator's values, for the failing value it reports. The
   # property may be a fn whose types the library function gives it.
   def jn_check(source: bytes, pos: integer, env: bytes, table: bytes, plan: bytes): bytes do
-    name = nc_cursor(plan,2)
+    name = nc_long(plan,2)
     paren = nc_expect(source,nc_end(source,name),b[40])
     args = if paren < 0 do b[] else nc_arguments_open(source,paren,env,table,Enum.at(plan,0,0)) end
     count = nc_arg_count(args)
@@ -143,12 +143,12 @@ defmodule NativeJson do
     if nc_pos(declared) < 0 do b[] else if nc_start(source,nc_pos(declared)) != equal do b[] else nd_resolve(source,table,nc_owner(table,nc_cursor(env,0)),nc_kind(declared)) end end
   end
   def jn_tail(source: bytes, plan: bytes, env: bytes, table: bytes): bytes do
-    name = nc_cursor(plan,0)
+    name = nc_long(plan,0)
     next = nc_start(source,np_close(source,nc_start(source,nc_end(source,name)),0,16777216))
     scope = nj_context(env,3,b[])
     id = nc_cursor(env,0)
     # What is expected of the call itself, or of the block it ends.
-    placed = nw_expected(env,nc_cursor(plan,3),3)
+    placed = nw_expected(env,nc_long(plan,4),3)
     held = if Enum.count(placed) > 0 do placed else if ty_ends(source,next,env) == 0 do b[] else nf_ambient(source,env,table) end end
     if nt_tag(held) == 6 do held else if nc_word(source,next,b[101,110,100])+nc_word(source,next,b[101,108,115,101]) == 0 do b[] else
       if Enum.at(scope,0,0) == 41 do nc_slice(scope,1,Enum.count(scope)) else if nj_result(table,id) == 0 do b[] else nc_return_kind(source,table,id) end end
