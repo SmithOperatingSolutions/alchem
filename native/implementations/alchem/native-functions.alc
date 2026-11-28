@@ -883,9 +883,12 @@ defmodule NativeFunctions do
       paren = nf_pipe_target(source,target)
       slot = nc_env_count(env,3)
       mark = if paren < 0 do 0 else paren end
-      record = nc_env_record(mark,mark,if nc_tag(left) == 11 do Enum.concat(nc_kind(left),nc_u24(slot+1)) else nn_waiting(left) end)
+      # A function that waits for its type is kept by how far before the
+      # "(" it stands (three bytes: the record is as long as it was, ev_plain).
+      record = nc_env_record(mark,mark,if nc_tag(left) == 11 do nc_join(b[11],nc_u24(nc_low(mark-nc_long(nc_kind(left),1))),Enum.concat(nc_slice(nc_kind(left),5,8),nc_u24(slot+1))) else nn_waiting(left) end)
       # The target is a call: value.(arguments) after it is no part of it.
-      call = if paren < 0 do b[] else sg_indexed(source,gm_unary(source,target,Enum.concat(env,record),table,depth+1),Enum.concat(env,record),table,depth+1) end
+      far = if nc_tag(left) != 11 do 0 else if mark-nc_long(nc_kind(left),1) >= 16777216 do 1 else 0 end end
+      call = if paren < 0 do b[] else if far == 1 do b[] else sg_indexed(source,gm_unary(source,target,Enum.concat(env,record),table,depth+1),Enum.concat(env,record),table,depth+1) end end
       # A call that took the value loads its slot, which nothing else uses.
       taken = if nc_pos(call) < 0 do 0 else nf_holds(nc_code(call),nc_slot(b[72,139,69],slot),0,Enum.count(nc_code(call))) end
       if nc_pos(call) < 0 do b[] else if nf_pipe_taken(source,call,taken) == 0 do b[] else
@@ -926,6 +929,10 @@ defmodule NativeFunctions do
   def nf_piped(source: bytes, pos: integer, env: bytes): bytes do
     nn_plain(nf_piped_from(source,pos,env,3))
   end
+  # The type of a piped value as its record at the "(" at start keeps it.
+  def nf_piped_kind(kind: bytes, start: integer): bytes do
+    if nt_tag(kind) != 11 do kind else nc_join(b[11],nc_u32(start-nc_cursor(kind,1)),nc_slice(kind,4,10)) end
+  end
   def nf_piped_from(source: bytes, pos: integer, env: bytes, offset: integer): bytes do
     nf_piped_at(source,pos,env,offset,0)
   end
@@ -936,7 +943,7 @@ defmodule NativeFunctions do
       if start != pos-1 do nf_piped_at(source,pos,env,nc_env_next(env,offset),slot+nc_env_weight(env,offset)) else
         if nc_env_stop(env,offset) != start do nf_piped_at(source,pos,env,nc_env_next(env,offset),slot+nc_env_weight(env,offset)) else
           # A record of tag 21 at the same place holds an expected type, not a piped value.
-          if byte_at(source,start) != 40 do b[] else if nc_env_tag(env,offset) == 21 do nf_piped_at(source,pos,env,nc_env_next(env,offset),slot+nc_env_weight(env,offset)) else nc_value(pos,nc_slot(b[72,139,69],slot),nt_read(env,offset+7)) end end
+          if byte_at(source,start) != 40 do b[] else if (nc_env_tag(env,offset)-21)*(if nc_env_tag(env,offset) >= 40 do 0 else 1 end) == 0 do nf_piped_at(source,pos,env,nc_env_next(env,offset),slot+nc_env_weight(env,offset)) else nc_value(pos,nc_slot(b[72,139,69],slot),nf_piped_kind(nt_read(env,offset+7),start)) end end
         end
       end
     end end

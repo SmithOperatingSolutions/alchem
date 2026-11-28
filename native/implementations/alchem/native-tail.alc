@@ -13,11 +13,11 @@ defmodule NativeTail do
   # under a record with no name whose type is tag 45 and the position. The
   # call that ends there (nj_call, nu_call_finish) jumps when it is a call
   # of the function it stands in.
-  def tl_mark(env: bytes, close: integer): bytes do nj_mark(env,Enum.concat(b[45],nc_u24(close))) end
+  def tl_mark(env: bytes, close: integer): bytes do nc_env_note(env,45,close) end
   # The end noted last, -1 when none is.
   def tl_noted(env: bytes, offset: integer, found: integer): integer do
     if offset >= Enum.count(env) do found else
-      tl_noted(env,nc_env_next(env,offset),if nc_env_tag(env,offset) == 45 do nc_cursor(env,offset+8+nt_head(env,offset+7)) else found end)
+      tl_noted(env,nc_env_next(env,offset),if nc_env_tag(env,offset) == 45 do nc_env_noted(env,offset) else found end)
     end
   end
   # 1 when the call of function target whose arguments end at close is to jump.

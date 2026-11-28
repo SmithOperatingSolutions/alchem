@@ -865,6 +865,20 @@ defmodule NativeSourceCompiler do
     nc_join(nc_u32(start),nc_u24(stop-start),nt_cell(kind))
   end
   def nc_env_stop(env: bytes, offset: integer): integer do nc_long(env,offset)+nc_cursor(env,offset+4) end
+  # A record with no name that notes a position: its type is a tag and the
+  # position's low three bytes, and the record stands at the position
+  # itself when that takes a fourth (nc_env_noted). A record's length is
+  # what it was with three-byte positions: a block is compiled in windows
+  # from a length of its environment on (ev_plain), and its code depends on
+  # that.
+  def nc_low(value: integer): integer do value-nc_units(value,16777216)*16777216 end
+  def nc_env_note(env: bytes, tag: integer, value: integer): bytes do
+    far = if value < 16777216 do 0 else value end
+    Enum.concat(env,nc_env_record(far,far,Enum.concat(b[tag],nc_u24(nc_low(value)))))
+  end
+  def nc_env_noted(env: bytes, offset: integer): integer do
+    if nc_long(env,offset) == 0 do nc_cursor(env,offset+8+nt_head(env,offset+7)) else nc_long(env,offset) end
+  end
   def nc_env_next(env: bytes, offset: integer): integer do
     nt_after(env,offset+7)
   end

@@ -442,9 +442,16 @@ defmodule NativeComprehensions do
   def wf_mark(env: bytes, pos: integer): bytes do
     at = wf_noted(env,3,-1)
     held = nt_read(env,at+7)
-    if pos < 0 do env else if at < 0 do wf_record(env,pos,Enum.concat(b[24],nc_u24(pos))) else if Enum.count(held) > 250 do wf_record(env,pos,Enum.concat(b[24],nc_u24(pos))) else
-      nc_join(nc_slice(env,0,at+7),nt_cell(Enum.concat(held,nc_u24(pos))),nc_slice(env,nt_after(env,at+7),Enum.count(env)))
+    if pos < 0 do env else if at < 0 do wf_record(env,pos,Enum.concat(b[24],nc_u24(nc_low(pos)))) else if Enum.count(held)+wf_far(env,at,pos)*251 > 250 do wf_record(env,pos,Enum.concat(b[24],nc_u24(nc_low(pos)))) else
+      nc_join(nc_slice(env,0,at+7),nt_cell(Enum.concat(held,nc_u24(nc_low(pos)))),nc_slice(env,nt_after(env,at+7),Enum.count(env)))
     end end end
+  end
+  # An end is noted by its low three bytes in a record that stands at the
+  # first end it notes: one within 8 MiB of that is told by them, and one
+  # farther away (wf_far) has a record of its own.
+  def wf_far(env: bytes, at: integer, pos: integer): integer do
+    gap = pos-nc_long(env,at)
+    if gap >= 8388608 do 1 else if gap <= -8388608 do 1 else 0 end end
   end
   # The offset of the last record that notes ends; found when there is none.
   def wf_noted(env: bytes, offset: integer, found: integer): integer do
@@ -467,7 +474,7 @@ defmodule NativeComprehensions do
   def wf_marked(env: bytes, pos: integer, offset: integer): integer do
     if pos < 0 do 0 else if offset >= Enum.count(env) do 0 else
       if nc_env_tag(env,offset) != 24 do wf_marked(env,pos,nc_env_next(env,offset)) else
-        if wf_among(env,offset+8+nt_head(env,offset+7),nc_env_next(env,offset),pos) == 1 do 1 else wf_marked(env,pos,nc_env_next(env,offset)) end
+        if (1-wf_far(env,offset,pos))*wf_among(env,offset+8+nt_head(env,offset+7),nc_env_next(env,offset),nc_low(pos)) == 1 do 1 else wf_marked(env,pos,nc_env_next(env,offset)) end
       end
     end end
   end
