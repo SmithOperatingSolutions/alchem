@@ -308,7 +308,7 @@ defmodule AlchemCheck do
           case source(path, given.overlay) do
             error(why) -> error(plain(shown(path) <> ": read source: open " <> shown(path) <> ": " <> unopened(why)))
             ok(text) ->
-              if byte_size(text) > 16776191 do error(plain(path <> ": read source: source exceeds 16776191 bytes")) else
+              if byte_size(text) > 1073740799 do error(plain(path <> ": read source: source exceeds 1073740799 bytes")) else
                 case AlchemParse.parse_module(text) do
                   error(why) -> error(syntax_problem(path, why))
                   ok(tree) ->

@@ -328,7 +328,7 @@ defmodule Bundler do
       if Map.has_key?(elem(state, 2), real) do ok(state) else
         case File.read(real) do
           # The pinned compiler reads no source file over 1 MiB.
-          ok(text) -> if byte_size(text) > 16776191 do error(real <> ": read source: source exceeds 16776191 bytes") else parse(text, real, root, stack, state) end
+          ok(text) -> if byte_size(text) > 1073740799 do error(real <> ": read source: source exceeds 1073740799 bytes") else parse(text, real, root, stack, state) end
           error(reason) -> error(reason)
         end
       end

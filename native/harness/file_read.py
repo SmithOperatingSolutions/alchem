@@ -92,11 +92,13 @@ def verify(compiler):
         assert (run.returncode,run.stdout,run.stderr)==(5000000%251,b'',b''),('File.read past 4 MiB',run)
         run=subprocess.run([str(huge)],capture_output=True,env={'PATH':''},timeout=120,preexec_fn=floor_arena(huge))
         assert (run.returncode,run.stdout,run.stderr)==(71,b'',b''),('File.read arena',run)
-        # The pinned runtime reads a file of at most 16,777,216 bytes.
-        (root/'most').write_bytes(b'z'*16777216);(root/'more').write_bytes(b'z'*16777217)
+        # A file of at most 1,073,741,824 bytes is read (the pinned runtime reads 16,777,216).
+        for name,size in [('past',16777217),('most',1073741824),('more',1073741825)]:
+            with open(root/name,'wb') as out:
+                for start in range(0,size,1<<24):out.write(b'z'*min(1<<24,size-start))
         size=lambda name:'IO.puts(case File.read('+literal(base+b'/'+name)+') do ok(text) -> Integer.to_string(byte_size(text)) error(e) -> e end)\n'
-        run=subprocess.run([str(build(compiler,'defmodule M do def main() do '+size(b'most')+size(b'more')+'System.halt(0) end end',root))],capture_output=True,env={'PATH':''},timeout=120)
-        assert (run.returncode,run.stdout,run.stderr)==(0,b'16777216\nfile exceeds 16777216 bytes\n',b''),('File.read limit',run.returncode,run.stdout[:200],run.stderr[:200])
+        run=subprocess.run([str(build(compiler,'defmodule M do def main() do '+size(b'past')+size(b'most')+size(b'more')+'System.halt(0) end end',root))],capture_output=True,env={'PATH':''},timeout=600)
+        assert (run.returncode,run.stdout,run.stderr)==(0,b'16777217\n1073741824\nfile exceeds 1073741824 bytes\n',b''),('File.read limit',run.returncode,run.stdout[:200],run.stderr[:200])
         # Every read closes its descriptor: 200 reads under a 16-descriptor limit.
         loop=f'def f(n: integer): integer do if n == 0 do 0 else case File.read({literal(base+b"/text")}) do ok(s) -> byte_size(s) error(e) -> 1000 end + f(n-1) end end '
         program=build(compiler,'defmodule M do '+loop+'def main() do System.halt(f(200)-200*'+str(len(files[b'text']))+'+42) end end',root,'reuse')
