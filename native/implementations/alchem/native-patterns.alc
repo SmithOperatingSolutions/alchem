@@ -509,9 +509,9 @@ defmodule NativePatterns do
     slot = nc_env_count(env,3)
     begin = nc_expect(source,nc_pos(value),b[100,111])
     held = Enum.concat(env,nc_env_record(at,at,nc_kind(value)))
-    first = if begin < 0 do b[] else pa_arms(source,held,table,nc_join(b[depth],nc_u24(slot),nc_u24(begin))) end
+    first = if begin < 0 do b[] else pa_arms(source,held,table,nc_join(b[depth],nc_u24(slot),nc_u32(begin))) end
     again = np_again(source,held,table,first)
-    second = if Enum.count(again) == 0 do b[] else pa_arms(source,again,table,nc_join(b[depth],nc_u24(slot),nc_u24(begin))) end
+    second = if Enum.count(again) == 0 do b[] else pa_arms(source,again,table,nc_join(b[depth],nc_u24(slot),nc_u32(begin))) end
     arms = np_settled(first,second)
     if nc_pos(arms) < 0 do b[] else if nj_ended(arms) == 1 do b[] else
       nw_keep(nc_value(nc_pos(arms),nc_join(nc_code(value),nc_slot(b[72,137,69],slot),nc_code(arms)),nc_kind(arms)),arms,b[])
