@@ -93,9 +93,12 @@ defmodule NativeSourceCompiler do
   end
   # places: the five positions; more: where the result type is written, the
   # number of defaults and where the guard starts (nc_record_more).
-  def nc_record(places: bytes, argc: integer, flags: integer, more: bytes, owner: integer): bytes do
-    nc_join(nc_join(places,b[argc-nc_hi(argc)*256,flags],more),b[nc_hi(argc)],Enum.concat(nc_u32(owner),b[0,0,0,0]))
+  # wide: 1 in a source of 16 MiB or more (nc_wide), where a position does
+  # not fit the three bytes that name a declared type (nd_key).
+  def nc_record(places: bytes, argc: integer, flags: integer, more: bytes, owner: integer, wide: integer): bytes do
+    nc_join(nc_join(places,b[argc-nc_hi(argc)*256,flags],more),b[nc_hi(argc)],Enum.concat(nc_u32(owner),b[wide,0,0,0]))
   end
+  def nc_wide(source: bytes): integer do if Enum.count(source) > 16777215 do 1 else 0 end end
   def nc_places(a: integer, b: integer, c: integer, d: integer, e: integer): bytes do
     nc_join(nc_join(nc_u32(a),nc_u32(b),nc_u32(c)),nc_u32(d),nc_u32(e))
   end
@@ -533,7 +536,7 @@ defmodule NativeSourceCompiler do
         if (first-65)*(90-first)+nd_lower(source,pos)*65536 < 0 do if nc_identifier(source,pos) == 0 do b[] else nc_value(nc_end(source,pos),b[],nu_variable(source,nc_start(source,pos))) end else
           # Name, Module.Name, or either with type arguments in brackets.
           if nc_word(source,nd_name_end(source,nc_start(source,pos)),b[91]) == 1 do nd_arguments(source,nc_start(source,pos),nc_end(source,nd_name_end(source,nc_start(source,pos))),b[]) else
-            nc_value(nd_name_end(source,nc_start(source,pos)),b[],Enum.concat(b[15],nc_u24(nc_start(source,pos))))
+            nc_value(nd_name_end(source,nc_start(source,pos)),b[],Enum.concat(b[15],nc_u32(nc_start(source,pos))))
           end
         end
       else nc_value(stop,b[],b[1]) end
@@ -740,7 +743,7 @@ defmodule NativeSourceCompiler do
       after = if body < 0 do -1 else nc_imports_end(source,body) end
       if after < 0 do b[] else
         previous = if count == 0 do 0 else nc_cursor(state,11)+count-nc_cursor(state,8)-1 end
-        record = nc_record(nc_places(name,nc_end(source,name),body,after,previous),0,32,nc_zeros(9),count)
+        record = nc_record(nc_places(name,nc_end(source,name),body,after,previous),0,32,nc_zeros(9),count,nc_wide(source))
         nc_table_state(after,0,nc_join(nc_u24(count+1),nc_u24(count),nc_u24(previous)),record,record,Enum.concat(nc_table_made(state),record))
       end
     end end end

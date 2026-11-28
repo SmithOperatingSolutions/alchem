@@ -44,9 +44,9 @@ defmodule NativeTypes do
   def nt_end_within(kind: bytes, offset: integer, depth: integer): integer do
     tag = Enum.at(kind,offset,255)
     if offset < 0 do -1 else if offset >= Enum.count(kind) do -1 else if depth == 0 do -1 else
-      if (tag-13)*(tag-14)*(tag-15) == 0 do if offset+4 > Enum.count(kind) do -1 else offset+4 end else
+      if (tag-13)*(tag-14)*(tag-15) == 0 do if offset+nt_named(tag) > Enum.count(kind) do -1 else offset+nt_named(tag) end else
       if tag == 16 do if offset+2+Enum.at(kind,offset+1,0) > Enum.count(kind) do -1 else offset+2+Enum.at(kind,offset+1,0) end else
-      if (tag-18)*(tag-19)*(tag-20) == 0 do if offset+5 > Enum.count(kind) do -1 else nt_ends_within(kind,nt_parts(kind,offset+4),nt_counted(kind,offset+4),depth-1) end else
+      if (tag-18)*(tag-19)*(tag-20) == 0 do if offset+nt_named(tag)+1 > Enum.count(kind) do -1 else nt_ends_within(kind,nt_parts(kind,offset+nt_named(tag)),nt_counted(kind,offset+nt_named(tag)),depth-1) end else
       if tag < 4 do offset+1 else if (tag-9)*(tag-22)*(tag-23)*(tag-24)*(tag-29) == 0 do offset+1 else
         if (tag-4)*(tag-7)*(tag-25)*(tag-26) == 0 do nt_end_within(kind,offset+1,depth-1) else
           if (tag-6)*(tag-8) == 0 do nt_ends_within(kind,offset+1,2,depth-1) else
@@ -63,6 +63,10 @@ defmodule NativeTypes do
       end
     end end end
   end
+  # The bytes a declared type starts with: its tag and three bytes that name
+  # its declaration (nd_key), or, for a name not yet resolved (tags 15 and
+  # 20), the four bytes of where it is written.
+  def nt_named(tag: integer): integer do if (tag-15)*(tag-20) == 0 do 5 else 4 end end
   def nt_ends_within(kind: bytes, offset: integer, count: integer, depth: integer): integer do
     if count == 0 do offset else nt_ends_within(kind,nt_end_within(kind,offset,depth),count-1,depth) end
   end
@@ -85,14 +89,14 @@ defmodule NativeTypes do
     if Enum.at(kind,offset,0) == 255 do offset+4 else offset+1 end
   end
   def nt_first(kind: bytes): integer do
-    if (nt_tag(kind)-5)*(nt_tag(kind)-10) == 0 do nt_parts(kind,1) else if (nt_tag(kind)-18)*(nt_tag(kind)-19)*(nt_tag(kind)-20) == 0 do nt_parts(kind,4) else 1 end end
+    if (nt_tag(kind)-5)*(nt_tag(kind)-10) == 0 do nt_parts(kind,1) else if (nt_tag(kind)-18)*(nt_tag(kind)-19)*(nt_tag(kind)-20) == 0 do nt_parts(kind,nt_named(nt_tag(kind))) else 1 end end
   end
   # Fields of a tuple, or parameters of a function.
   # Fields of a tuple, parameters of a function, or type arguments of a
   # generic struct or sum type (tags 18, 19 and, before it is resolved, 20:
   # the declaration's position, the count, then the arguments).
   def nt_count(kind: bytes): integer do
-    if (nt_tag(kind)-5)*(nt_tag(kind)-10) == 0 do nt_counted(kind,1) else if (nt_tag(kind)-18)*(nt_tag(kind)-19)*(nt_tag(kind)-20) == 0 do nt_counted(kind,4) else 0 end end
+    if (nt_tag(kind)-5)*(nt_tag(kind)-10) == 0 do nt_counted(kind,1) else if (nt_tag(kind)-18)*(nt_tag(kind)-19)*(nt_tag(kind)-20) == 0 do nt_counted(kind,nt_named(nt_tag(kind))) else 0 end end
   end
   def nt_child(kind: bytes, index: integer): bytes do
     first = nt_first(kind)

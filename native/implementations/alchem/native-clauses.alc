@@ -84,7 +84,7 @@ defmodule NativeClauses do
     # where they are needed (nj_defaulted).
     more = nc_record_more(if typed == 1 do nc_start(source,nc_end(source,after)) else 0 end,if nc_cursor(head,15) > 255 do 255 else nc_cursor(head,15) end,if guarded == 1 do nc_start(source,nc_end(source,rest)) else 0 end)
     if stop < 0 do b[] else if is_main*(nc_cursor(head,12)+typed+guarded+nc_word(source,pos,b[100,101,102,112])) != 0 do b[] else
-      nc_record(nc_places(nc_cursor(head,0),nc_cursor(head,3),nc_cursor(head,6),body,stop),nc_read(head,12),flags,more,owner)
+      nc_record(nc_places(nc_cursor(head,0),nc_cursor(head,3),nc_cursor(head,6),body,stop),nc_read(head,12),flags,more,owner,nc_wide(source))
     end end
   end
   # Record index of the table when it is a function of module owner with the

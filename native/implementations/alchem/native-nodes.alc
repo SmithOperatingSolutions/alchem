@@ -222,7 +222,7 @@ defmodule NativeNodes do
   # A declared type: a handle of the library holds nothing that is sent;
   # another is looked into, once, after its arguments.
   def dn_raw_named(source: bytes, table: bytes, owner: integer, kind: bytes, mode: bytes): integer do
-    id = nd_named(source,nc_cursor(kind,1),table,owner)
+    id = nd_named(source,nc_long(kind,1),table,owner)
     # A name that is no declared type has no number to note.
     inner = if id < 0 do b[] else nc_join(b[1,1],nc_slice(mode,2,Enum.count(mode)),nc_u24(id)) end
     start = if id < 0 do -1 else nc_meta(table,id,9) end
