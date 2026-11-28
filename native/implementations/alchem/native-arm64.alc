@@ -23,18 +23,19 @@ defmodule NativeArm64 do
     keep = nc_join(Enum.concat(a_mov(21,12),a_mov(22,13)),Enum.concat(a_mov(23,14),a_mov(24,15)),Enum.concat(a_ldr(16,26,a_got(i)),a4(3594452992+16*32)))
     nc_join(keep,Enum.concat(a_mov(12,21),a_mov(13,22)),Enum.concat(a_mov(14,23),a_mov(15,24)))
   end
-  # The words from 0x400420 and the table at 0x400480 (one slot for each of
-  # at most 65541 entries): the addresses the copy stands for.
-  def a_in_block(address: integer): integer do if address < 4195360 do 0 else if address >= 4719784 do 0 else 1 end end end
+  # The words from 0x400420 and the table at 0x400480, one slot for each
+  # entry, are the addresses the copy stands for: where a table of slots
+  # entries ends.
+  def a_block_end(slots: integer): integer do 4195456+slots*8 end
   # Where the copy is loaded, from the image's start: past the 1 GiB the code
   # may take. X26 holds the address of its first word; the word 16 bytes
   # before it holds how many words it has.
   def a_pic_data(): integer do 1073741824 end
   def a_block_addr(rd: integer, address: integer): bytes do Enum.concat(a_mov_imm(rd,address-4195360),a_add(rd,rd,26,0)) end
-  # rd = address, an address in the image (the copy, for the words and the
-  # table) or any other number.
+  # rd = address, that of one of the entry's words or of a slot of the
+  # table: in the copy where the program is position-independent.
   def a_image(rd: integer, address: integer): bytes do
-    if nc_pic()*a_in_block(address) == 1 do a_block_addr(rd,address) else a_mov_imm(rd,address) end
+    if nc_pic() == 1 do a_block_addr(rd,address) else a_mov_imm(rd,address) end
   end
   def a_executable(image: bytes, table: integer): bytes do
     if nc_darwin() == 1 do a_macho_image(image,table) else a_pic_image(image,table) end
@@ -215,7 +216,7 @@ defmodule NativeArm64 do
   # bytes of the entry, which must hold it.
   def a_entry(rest: bytes): bytes do
     start = nc_join(if nc_pic() == 1 do a_relocate() else b[] end,if nc_darwin() == 1 do a_darwin_args() else a_add_imm(14,31,0,0) end,a_sub_imm(31,if nc_darwin() == 1 do 14 else 31 end,2048,0))
-    made = nc_join(nc_join(start,a_arena_init(),a_stack_init()),xa_function(rest),b[])
+    made = nc_join(nc_join(start,a_arena_init(),a_stack_init()),xa_placed(rest,a_block_end(nc_slot_limit())),b[])
     if Enum.count(made) > 928 do b[] else Enum.concat(made,nc_zeros(1024-Enum.count(made))) end
   end
   # On macOS the entry is called as main is, argv in X1 and envp in X2, and

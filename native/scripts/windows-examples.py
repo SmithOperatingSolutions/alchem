@@ -14,7 +14,8 @@ programs of the gates follow, with the status and output frozen in
 harness/ (NNNN.code), but those Windows prints otherwise (GATE_SKIPPED). What
 Linux prints is what the pinned compiler's windows/amd64 programs print for
 all the others, under Wine (scripts/run-windows). WINDOWS_ONLY adds
-programs for Windows alone, with what they print there.
+programs for Windows alone, with what they print there, and a program of
+66,000 functions before its own follows (harness/past_limit.py).
 
 check (on Windows) builds each with the Windows compiler, runs it in an
 empty directory and compares what it prints; it ends 1 if any differs.
@@ -561,6 +562,12 @@ def prepare(out, compiler):
     assert len(programs) >= EXAMPLES_AT_LEAST, f'only {len(programs)} upstream examples build and run to exit 0 on Linux'
     programs += alike
     programs += [{'name': name, 'source': source, 'out': printed.encode()} for name, source, printed in WINDOWS_ONLY]
+    # A program of more than 65,535 functions (harness/past_limit.py): one,
+    # since each takes the compiler about 3 GB.
+    sys.path.insert(0, str(ROOT / 'harness'))
+    import past_limit
+    what, source, printed = past_limit.programs()[0]
+    programs.append({'name': 'past_limit/' + what.replace(' ', '_'), 'source': source, 'out': printed})
     for i, case in enumerate(programs):
         write_case(out, f'{i:04}', case)
     (out / 'names.txt').write_text(''.join(c['name'] + '\n' for c in programs))

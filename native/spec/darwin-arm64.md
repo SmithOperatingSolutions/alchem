@@ -28,6 +28,10 @@ made does the code change.
   (`call [0x400478]`, `cmp [0x400480+rdx*8], rbx`), and a 32-bit immediate
   among those addresses (`mov r11d, slot` before `call [r11]`, a function
   value), which is then written as 64 bits. Every other immediate is a number.
+  Those addresses are the ones from 0x400420 to where the program's own
+  table ends (`a_block_end`, which `xa_bundle` is given and `xa_block`
+  asks), so a table may have any number of slots; the entry, which is
+  made before the table is counted, takes the most a table may have.
 - The runtimes of their own table entry are translated with PIC defined
   (scripts/x86-to-arm64.py, `in_block`), and their sizes do not change.
 

@@ -5,8 +5,9 @@ two bytes, in the record of its module, in an environment and in the plans
 the compiler's parts hand each other; it is three bytes now. Each program
 here has 66,000 functions before its own, so that every function, struct
 and sum type it declares has a number past the old limit, and does what it
-does without them. Linux x86-64 only: the compilers for the other systems
-keep the old limit (nc_wide).
+does without them, on every system: a position-independent ARM64 program
+(macOS) told an address of its table from a number by where a table of
+65,541 slots ends, and now by where its own does (spec/darwin-arm64.md).
 
 - calls, a function of several clauses, a struct and a sum type made,
   matched and printed, a fn that holds a binding, a reference, a generic
@@ -86,6 +87,16 @@ def fill(indent='  '):
     return ''.join(f'{indent}def zz{i}(): integer do\n{indent}  {i}\n{indent}end\n' for i in range(FILL))
 
 
+def programs():
+    """What each is, its source and what it prints. scripts/windows-examples.py
+    runs the first on Windows."""
+    two = ('defmodule App do\n  import "module:Late"\n' + fill() + '  def main() do\n    IO.puts(Integer.to_string(Late.twice(zz65999()) + Late.one()))\n  end\nend\n'
+           'defmodule Late do\n  def twice(n: integer): integer do\n    n * 2\n  end\n  def one(): integer do\n    1\n  end\nend\n')
+    return [('one module', 'defmodule M do\n' + fill() + ONE + 'end\n', ONE_OUT),
+            ('a module after them', two, b'%d\n' % (65999 * 2 + 1)),
+            ('a macro', 'defmodule M do\n' + fill() + MACRO + 'end\n', b'%d\n' % (66000 * 2))]
+
+
 def verify(compiler):
     with tempfile.TemporaryDirectory(prefix='alchem-past-limit-') as top:
         def ran(source, what):
@@ -97,11 +108,8 @@ def verify(compiler):
             program.chmod(0o700)
             done = subprocess.run([str(program)], capture_output=True, env={'PATH': ''}, timeout=120)
             return done.returncode, done.stdout, done.stderr
-        assert ran('defmodule M do\n' + fill() + ONE + 'end\n', 'one module') == (0, ONE_OUT, b''), 'one module'
-        two = ('defmodule App do\n  import "module:Late"\n' + fill() + '  def main() do\n    IO.puts(Integer.to_string(Late.twice(zz65999()) + Late.one()))\n  end\nend\n'
-               'defmodule Late do\n  def twice(n: integer): integer do\n    n * 2\n  end\n  def one(): integer do\n    1\n  end\nend\n')
-        assert ran(two, 'a module after them') == (0, b'%d\n' % (65999 * 2 + 1), b''), 'a module after them'
-        assert ran('defmodule M do\n' + fill() + MACRO + 'end\n', 'a macro') == (0, b'%d\n' % (66000 * 2), b''), 'a macro'
+        for what, source, printed in programs():
+            assert ran(source, what) == (0, printed, b''), what
         tests = 'defmodule T do\n' + ''.join(f'  test "t{i}" do\n    assert(1 == 1)\n  end\n' for i in range(FILL)) + 'end\n'
         refused = at_limit([str(compiler)], input=tests.encode(), capture_output=True, env={'PATH': ''}, timeout=900)
         assert (refused.returncode, refused.stdout) == (65, b''), ('66,000 tests', refused.returncode)

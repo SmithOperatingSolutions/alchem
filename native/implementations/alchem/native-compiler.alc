@@ -1716,16 +1716,12 @@ defmodule NativeSourceCompiler do
   # is for), so tables stop at 16777215 records; the runtimes take the
   # slots after them, which call sites address with a 32-bit address.
   #
-  # Only a Linux x86-64 program has been run past 65535 functions; the
-  # compilers for the other systems keep that bound. A position-independent
-  # ARM64 program (macOS, and Linux with nc_arm() 2) tells an address of
-  # the table from a number by where a table of 65541 slots ends
-  # (a_in_block): a slot past that was not moved to where the image
-  # stands, and the program ended at its first call.
-  def nc_wide(): integer do if nc_arm()+nc_win() == 0 do 1 else 0 end end
-  def nc_function_limit(): integer do if nc_wide() == 1 do 16777214 else 65535 end end
-  def nc_record_limit(): integer do if nc_wide() == 1 do 16777215 else 65536 end end
-  def nc_slot_limit(): integer do if nc_wide() == 1 do 16777220 else 65541 end end
+  # A position-independent ARM64 program (macOS, and Linux with nc_arm() 2)
+  # tells an address of the table from a number by where its own table
+  # ends (xa_block), which the translation is given (a_block_end).
+  def nc_function_limit(): integer do 16777214 end
+  def nc_record_limit(): integer do 16777215 end
+  def nc_slot_limit(): integer do 16777220 end
   # One eight-byte entry per slot; code follows the table directly.
   def nc_addresses(lengths: bytes, id: integer, offset: integer): bytes do
     nc_address_range(lengths,id,nc_units(Enum.count(lengths),4),offset)
@@ -1933,7 +1929,7 @@ defmodule NativeSourceCompiler do
           plain_meta = nc_join(nc_built_meta(bundle),nc_bundle_meta(shared),if Enum.count(io) == 0 do b[] else nc_u32(Enum.count(io)) end)
           plain_code = nc_join(nc_built_code(bundle),nc_bundle_code(shared),io)
           # The ARM64 compiler translates every function (spec/arm64.md).
-          arm = if nc_a64() == 1 do xa_bundle(plain_meta,plain_code,0,nc_units(Enum.count(plain_meta),4),0) else b[] end
+          arm = if nc_a64() == 1 do xa_bundle(plain_meta,plain_code,0,nc_units(Enum.count(plain_meta),4),0,a_block_end(nc_units(Enum.count(plain_meta),4))) else b[] end
           meta = if nc_a64() == 1 do nc_slice(arm,4,4+nc_long(arm,0)) else plain_meta end
           translated = if nc_a64() == 1 do nc_slice(arm,4+nc_long(arm,0),Enum.count(arm)) else plain_code end
           # Coverage counts calls by where they stand: on ARM64 that is known now.

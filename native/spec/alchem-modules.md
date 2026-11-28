@@ -92,8 +92,7 @@ owning module; `Module.function` finds the header by name, checks that the
 caller is that module or imports it, and rejects another module's `defp`.
 
 Limits: 16,777,214 user functions across all modules and 16,777,215 table
-records in all for Linux x86-64 (65,535 and 65,536 for the other systems:
-`source-capacity.md`), where every module header, struct, sum type, exception and
+records in all (`source-capacity.md`), where every module header, struct, sum type, exception and
 further clause of a function is a record too. A record is named by a number
 of three bytes in an environment (its function) and in a record (its
 module), which is what bounds the table (two bytes, and 65,535 functions,
