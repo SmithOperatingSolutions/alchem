@@ -87,14 +87,14 @@ defmodule NativeScope do
   # slot order (pinned), the entries of those found by name in sorted runs,
   # the oldest first, the length of each run, and 26 bytes: the sizes of
   # these four, the first slot, the slot after the last and the function.
-  def ev_tail(store: bytes): integer do Enum.count(store)-26 end
+  def ev_tail(store: bytes): integer do Enum.count(store)-27 end
   def ev_records(store: bytes): integer do nc_long(store,ev_tail(store)) end
   def ev_pinned(store: bytes): integer do nc_long(store,ev_tail(store)+4) end
   def ev_sorted(store: bytes): integer do nc_long(store,ev_tail(store)+8) end
   def ev_base(store: bytes): integer do nc_long(store,ev_tail(store)+16) end
   def ev_total(store: bytes): integer do nc_long(store,ev_tail(store)+20) end
   def ev_empty(base: integer, id: integer): bytes do
-    Enum.concat(nc_zeros(16),nc_join(nc_u32(base),nc_u32(base),nc_u16(id)))
+    Enum.concat(nc_zeros(16),nc_join(nc_u32(base),nc_u32(base),nc_u24(id)))
   end
   # The number of records from offset on.
   def ev_count(run: bytes, offset: integer, count: integer): integer do
@@ -138,7 +138,7 @@ defmodule NativeScope do
     pinned = Enum.concat(nc_slice(store,held,held+ev_pinned(store)),ev_pick(source,entries,0,ev_units(entries),0))
     sizes = nc_join(Enum.concat(nc_u32(held+Enum.count(extra)),nc_u32(Enum.count(pinned))),Enum.concat(nc_u32(nc_long(runs,0)),nc_u32(Enum.count(runs)-4-nc_long(runs,0))),Enum.concat(nc_u32(ev_base(store)),nc_u32(nc_long(scan,4))))
     if Enum.count(extra) == 0 do store else
-      Enum.concat(nc_slice(store,0,held),Enum.concat(extra,Enum.concat(pinned,nc_join(nc_slice(runs,4,Enum.count(runs)),sizes,nc_slice(store,Enum.count(store)-2,Enum.count(store))))))
+      Enum.concat(nc_slice(store,0,held),Enum.concat(extra,Enum.concat(pinned,nc_join(nc_slice(runs,4,Enum.count(runs)),sizes,nc_slice(store,Enum.count(store)-3,Enum.count(store))))))
     end
   end
   # The runs of the store and their lengths with one more run: it is joined
@@ -252,28 +252,28 @@ defmodule NativeScope do
   end
   # The environment of a statement of these names, and the whole one.
   def ev_window(source: bytes, big: bytes, mid: bytes, small: bytes, names: bytes): bytes do
-    nc_join(nc_slice(big,Enum.count(big)-2,Enum.count(big)),Enum.concat(ev_view(source,big,names),ev_view(source,mid,names)),ev_sift(source,small,names,0,0-1,b[]))
+    nc_join(nc_slice(big,Enum.count(big)-3,Enum.count(big)),Enum.concat(ev_view(source,big,names),ev_view(source,mid,names)),ev_sift(source,small,names,0,0-1,b[]))
   end
   def ev_whole(big: bytes, mid: bytes, small: bytes): bytes do
-    nc_join(nc_slice(big,Enum.count(big)-2,Enum.count(big)),Enum.concat(nc_slice(big,0,ev_records(big)),nc_slice(mid,0,ev_records(mid))),small)
+    nc_join(nc_slice(big,Enum.count(big)-3,Enum.count(big)),Enum.concat(nc_slice(big,0,ev_records(big)),nc_slice(mid,0,ev_records(mid))),small)
   end
   # The environment for text from start to stop: env itself when it is
   # short, marked for a second compilation, or the text is not known to end.
   def ev_near(source: bytes, env: bytes, start: integer, stop: integer): bytes do
-    if Enum.count(env) <= ev_plain() do env else if stop < 0 do env else if ev_marked(env,2) == 1 do env else
-      ev_sift(source,env,ev_named_in(source,start,stop),2,0-1,nc_slice(env,0,2))
+    if Enum.count(env) <= ev_plain() do env else if stop < 0 do env else if ev_marked(env,3) == 1 do env else
+      ev_sift(source,env,ev_named_in(source,start,stop),3,0-1,nc_slice(env,0,3))
     end end end
   end
   # For the parts of a long literal (nl_items): 1 when count parts in env
   # are worth a store, the store, and the window of it for one part's text.
   def ev_wide(env: bytes, bounds: bytes, count: integer): integer do
-    if count < 64 do 0 else if Enum.at(bounds,6,0) >= 2 do 0 else if Enum.count(env) <= ev_plain() do 0 else 1-ev_marked(env,2) end end end
+    if count < 64 do 0 else if Enum.at(bounds,6,0) >= 2 do 0 else if Enum.count(env) <= ev_plain() do 0 else 1-ev_marked(env,3) end end end
   end
   def ev_stored(source: bytes, env: bytes): bytes do
-    ev_freeze(source,ev_empty(0,nc_read(env,0)),nc_slice(env,2,Enum.count(env)))
+    ev_freeze(source,ev_empty(0,nc_cursor(env,0)),nc_slice(env,3,Enum.count(env)))
   end
   def ev_part(source: bytes, store: bytes, start: integer, stop: integer): bytes do
-    Enum.concat(nc_slice(store,Enum.count(store)-2,Enum.count(store)),ev_view(source,store,ev_named_in(source,start,stop)))
+    Enum.concat(nc_slice(store,Enum.count(store)-3,Enum.count(store)),ev_view(source,store,ev_named_in(source,start,stop)))
   end
   # The names of the text from start to stop, and behind them the two.
   def ev_named_in(source: bytes, start: integer, stop: integer): bytes do
@@ -457,7 +457,7 @@ defmodule NativeScope do
   # with the short list (wc_both) given the first.
   def ev_big(source: bytes, plan: bytes, big: bytes, mid: bytes, fresh: bytes): bytes do
     if Enum.at(plan,3,0) == 0 do
-      if ev_turns(fresh,Enum.at(plan,1,0)) == 0 do fresh else ev_freeze(source,ev_empty(0,nc_read(fresh,0)),nc_slice(fresh,2,Enum.count(fresh))) end
+      if ev_turns(fresh,Enum.at(plan,1,0)) == 0 do fresh else ev_freeze(source,ev_empty(0,nc_cursor(fresh,0)),nc_slice(fresh,3,Enum.count(fresh))) end
     else
       if Enum.at(plan,1,0) < ev_many() do big else ev_freeze(source,big,Enum.concat(nc_slice(mid,0,ev_records(mid)),fresh)) end
     end
@@ -473,7 +473,7 @@ defmodule NativeScope do
   # 1 when a block gets its stores: after eight statements, with an
   # environment longer than ev_plain() that no second compilation marks.
   def ev_turns(env: bytes, level: integer): integer do
-    if level < 3 do 0 else if Enum.count(env) <= ev_plain() do 0 else 1-ev_marked(env,2) end end
+    if level < 3 do 0 else if Enum.count(env) <= ev_plain() do 0 else 1-ev_marked(env,3) end end
   end
   def ev_marked(env: bytes, offset: integer): integer do
     if offset >= Enum.count(env) do 0 else if nc_env_tag(env,offset) == 48 do 1 else ev_marked(env,nc_env_next(env,offset)) end end

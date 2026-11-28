@@ -3,7 +3,7 @@ defmodule NativeCollections do
   # and no binding called b holds a list, a map or a tuple, which b[0] reads.
   def nl_bytes(source: bytes, pos: integer, env: bytes): integer do
     start = nc_start(source,pos)
-    local = nc_lookup(source,start,env,2)
+    local = nc_lookup(source,start,env,3)
     held = if local < 0 do 0 else nt_tag(nt_read(env,nc_env_offset(env,local)+7)) end
     if nc_word(source,pos,b[98]) == 0 do 0 else if byte_at(source,start+1) != 91 do 0 else if (held-7)*(held-8)*(held-5) == 0 do 0 else 1 end end end
   end

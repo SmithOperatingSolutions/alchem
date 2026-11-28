@@ -45,11 +45,11 @@ defmodule NativeEquality do
     end
   end
   def nq_seen(seen: bytes, id: integer, offset: integer): integer do
-    if offset >= Enum.count(seen) do 0 else if nc_read(seen,offset) == id do 1 else nq_seen(seen,id,offset+2) end end
+    if offset >= Enum.count(seen) do 0 else if nc_cursor(seen,offset) == id do 1 else nq_seen(seen,id,offset+3) end end
   end
   def nq_comparable_named(source: bytes, table: bytes, id: integer, seen: bytes): integer do
     if id < 0 do 0 else if nq_seen(seen,id,0) == 1 do 1 else
-      nq_comparable_cells(source,table,nq_cells(source,table,id),Enum.concat(seen,nc_u16(id)),0)
+      nq_comparable_cells(source,table,nq_cells(source,table,id),Enum.concat(seen,nc_u24(id)),0)
     end end
   end
   def nq_comparable_cells(source: bytes, table: bytes, cells: bytes, seen: bytes, offset: integer): integer do
@@ -61,7 +61,7 @@ defmodule NativeEquality do
   # Every field type of a named type, as a type list: a struct's fields, or the
   # fields of all of a sum type's variants.
   def nq_cells(source: bytes, table: bytes, id: integer): bytes do
-    if Enum.at(table,id*27+16,0) == 64 do nq_struct_cells(source,table,id,0) else nq_sum_cells(source,table,id,0) end
+    if Enum.at(table,id*28+16,0) == 64 do nq_struct_cells(source,table,id,0) else nq_sum_cells(source,table,id,0) end
   end
   def nq_struct_cells(source: bytes, table: bytes, id: integer, index: integer): bytes do
     nq_struct_from(source,table,id,nc_meta(table,id,9))
@@ -287,7 +287,7 @@ defmodule NativeEquality do
     # A generic type's function first puts its comparators in a frame.
     frame = if generic == 0 do b[] else if generic > 6 do b[85,72,137,229,72,129,236,128,0,0,0,72,137,85,248] else b[85,72,137,229,72,129,236,128,0,0,0,72,137,85,248,72,137,77,240,76,137,69,232,76,137,77,224,76,137,85,216,72,137,69,208] end end
     guard = nc_join(b[73,59,102,248,15,131,12,0,0,0],nc_exit_code(70),nc_join(b[72,57,247],nq_jnz(2+Enum.count(nq_return(vars))),Enum.concat(b[176,1],nq_return(vars))))
-    body = if Enum.at(table,id*27+16,0) == 64 do nq_struct(source,table,id,vars) else nq_sum(source,table,id,vars) end
+    body = if Enum.at(table,id*28+16,0) == 64 do nq_struct(source,table,id,vars) else nq_sum(source,table,id,vars) end
     if Enum.count(body) == 0 do nc_join(frame,guard,Enum.concat(b[49,192],nq_return(vars))) else nc_join(frame,guard,body) end
   end
   # The type parameters of declaration id as vars: parameter i in slot i.
@@ -324,16 +324,16 @@ defmodule NativeEquality do
     end
   end
   def nq_arms(source: bytes, table: bytes, id: integer, index: integer, vars: bytes): bytes do
-    nq_arms_at(source,table,Enum.concat(nc_u16(id),nc_u24(nc_meta(table,id,9))),index,vars)
+    nq_arms_at(source,table,Enum.concat(nc_u24(id),nc_u24(nc_meta(table,id,9))),index,vars)
   end
-  # at: the type's id (2 bytes) and where variant index is declared.
+  # at: the type's id (3 bytes) and where variant index is declared.
   def nq_arms_at(source: bytes, table: bytes, at: bytes, index: integer, vars: bytes): bytes do
-    id = nc_read(at,0)
-    found = nv_here(source,nc_cursor(at,2))
+    id = nc_cursor(at,0)
+    found = nv_here(source,nc_cursor(at,3))
     variant = nc_code(found)
     if nc_pos(found) < 0 do b[] else
       body = nq_fields(source,table,nq_cells_of(source,table,id,variant),nc_join(nc_u24(0),nc_u24(nv_fields_of(variant)),b[16]),vars)
-      rest = nq_arms_at(source,table,Enum.concat(nc_slice(at,0,2),nc_u24(nc_pos(found))),index+1,vars)
+      rest = nq_arms_at(source,table,Enum.concat(nc_slice(at,0,3),nc_u24(nc_pos(found))),index+1,vars)
       if Enum.count(body) == 0 do b[] else
         nc_join(nc_join(b[72,61],nc_u32(index),nq_jnz(Enum.count(body)+Enum.count(nq_return(vars)))),Enum.concat(body,nq_return(vars)),rest)
       end

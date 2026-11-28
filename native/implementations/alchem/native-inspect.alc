@@ -71,10 +71,10 @@ defmodule NativeInspect do
     fixed = if nt_same(name,b[9,103,101,110,101,114,97,116,111,114]) == 1 do b[12,35,103,101,110,101,114,97,116,111,114,60,62,0] else ac_shown(nc_slice(name,1,Enum.count(name))) end
     # A date or time of the library is written as its sigil.
     sigil = sg_calendar(source,table,id)
-    count = if id < 0 do b[] else if Enum.count(name)*ni_narrow(seen) > 255 do b[] else if Enum.at(table,id*27+16,0) == 64 do ni_held(seen,ni_field_count(source,table,id,0)) else ni_held(seen,ni_variant_count(source,table,id,0)) end end end
+    count = if id < 0 do b[] else if Enum.count(name)*ni_narrow(seen) > 255 do b[] else if Enum.at(table,id*28+16,0) == 64 do ni_held(seen,ni_field_count(source,table,id,0)) else ni_held(seen,ni_variant_count(source,table,id,0)) end end end
     start = base+3+Enum.count(name)+Enum.count(count)
     if id < 0 do b[] else if sigil > 0 do ni_node(sigil,b[]) else if Enum.count(fixed) > 0 do ni_node(13,fixed) else if back >= 0 do ni_node(20,nc_u16(back)) else if start > 60000 do b[] else if Enum.count(kind) > 255 do b[] else if Enum.count(count) == 0 do b[] else
-      if Enum.at(table,id*27+16,0) == 64 do
+      if Enum.at(table,id*28+16,0) == 64 do
         ni_wrap(13,Enum.concat(name,count),ni_fields(source,table,kind,nc_join(nc_u24(0),nc_u24(start),nc_u24(nc_meta(table,id,9))),inner))
       else
         ni_wrap(14,Enum.concat(name,count),ni_variants(source,table,kind,nc_join(nc_u24(0),nc_u24(start),nc_u24(nc_meta(table,id,9))),inner))
@@ -144,7 +144,7 @@ defmodule NativeInspect do
   # The same where the type may mention the type variables of the function
   # the environment is of.
   def ni_shown_code(source: bytes, table: bytes, kind: bytes, env: bytes): bytes do
-    if nu_open(kind,0) == 0 do ni_code(source,table,kind) else jd_show(source,table,kind,nu_vars(env,2)) end
+    if nu_open(kind,0) == 0 do ni_code(source,table,kind) else jd_show(source,table,kind,nu_vars(env,3)) end
   end
   # inspect(value): its text.
   def ni_call(source: bytes, table: bytes, args: bytes, env: bytes): bytes do

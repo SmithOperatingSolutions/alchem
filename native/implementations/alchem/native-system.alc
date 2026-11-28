@@ -3,7 +3,7 @@ defmodule NativeSystem do
   # (spec/alchem-system.md). Only the appended library modules, whose names
   # start with Alchem, may call them; elsewhere Sys is an ordinary name.
   def nh_inside(source: bytes, start: integer, env: bytes, table: bytes): integer do
-    owner = nc_owner(table,nc_read(env,0))
+    owner = nc_owner(table,nc_cursor(env,0))
     if nc_word(source,start,b[83,121,115]) == 0 do 0 else if owner < 0 do 0 else
       nc_ours(source,nc_meta(table,owner,0))
     end end
@@ -135,7 +135,7 @@ defmodule NativeSystem do
   def nh_declare(source: bytes, table: bytes, declared: bytes, owner: integer): bytes do
     name = nc_cursor(declared,0)
     plain = if nc_cursor(declared,3) != nc_end(source,name) do 0 else if byte_at(source,name) > 90 do 0 else 1 end end
-    if Enum.count(declared) != 27 do declared else if plain == 1 do declared else
+    if Enum.count(declared) != 28 do declared else if plain == 1 do declared else
       if nt_same(nc_slice(source,nc_meta(table,owner,0),nc_meta(table,owner,3)),b[65,108,99,104,127,109,84,121,112,101,115]) == 1 do declared else b[] end
     end end
   end
@@ -149,7 +149,7 @@ defmodule NativeSystem do
   end
   # A module's records follow its header: those of owner from record at on.
   def nh_within(source: bytes, pos: integer, size: integer, table: bytes, at: integer, owner: integer): integer do
-    flags = if at*27+16 >= Enum.count(table) do 32 else Enum.at(table,at*27+16,0) end
+    flags = if at*28+16 >= Enum.count(table) do 32 else Enum.at(table,at*28+16,0) end
     start = if flags < 64 do 0 else nc_meta(table,at,0) end
     if at >= nc_records(Enum.count(table)) do -1 else if flags == 32 do -1 else
       match = if flags < 64 do 0 else if nc_meta(table,at,3)-start != size do 0 else nc_equal(source,pos,start,size) end end
@@ -175,7 +175,7 @@ defmodule NativeSystem do
   # a name that also has a form without a value, and the fn gives {}.
   def nh_effect(source: bytes, start: integer, env: bytes, ends: integer): integer do
     kind = if nc_word(source,start,b[73,79]) == 0 do 0 else ns_output_kind(source,nc_expect(source,nc_end(source,start),b[46])) end
-    if ends == 0 do 0 else if kind == 0 do 0 else if kind == 3 do 0 else if ends == 2 do 1 else if nt_tag(nj_context(env,2,b[])) == 41 do 1 else 0 end end end end end
+    if ends == 0 do 0 else if kind == 0 do 0 else if kind == 3 do 0 else if ends == 2 do 1 else if nt_tag(nj_context(env,3,b[])) == 41 do 1 else 0 end end end end end
   end
   # A call of a library function written in Alchem notes where it stands
   # (RBP-152) before it calls, for a failure inside the library to name it.
@@ -190,7 +190,7 @@ defmodule NativeSystem do
   # 1 for the word TLS in a module of the library: the pinned library has no
   # such module, so a program may have one, which the library never means.
   def nh_library(source: bytes, pos: integer, env: bytes, table: bytes): integer do
-    owner = nc_owner(table,nc_read(env,0))
+    owner = nc_owner(table,nc_cursor(env,0))
     if nc_word(source,pos,b[84,76,83]) == 0 do 0 else if owner < 0 do 0 else
       nc_ours(source,nc_meta(table,owner,0))
     end end

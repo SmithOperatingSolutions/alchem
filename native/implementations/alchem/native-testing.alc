@@ -18,7 +18,10 @@ defmodule NativeTesting do
   # describe block and depth, its name, its tags, its parameter, its do, the
   # end of its body, and its module.
   def tm_cursor(pos: integer, pending: integer, status: integer, rest: bytes): bytes do
-    nc_join(nc_u24(pos),Enum.concat(nc_u24(pending),b[status]),rest)
+    # A record's number is two bytes: a file of tests with 65,535 records
+    # is no program (tm_counted stops there), where it ended the compiler.
+    full = if Enum.count(rest) < 7 do 0 else if nc_read(rest,5) >= 65535 do 1 else 0 end end
+    nc_join(nc_u24(pos),Enum.concat(nc_u24(pending),b[if full == 1 do 2 else status end]),rest)
   end
   def tm_rest(cur: bytes): bytes do nc_slice(cur,7,48) end
   def tm_depth(cur: bytes): integer do Enum.at(cur,9,0) end
@@ -28,7 +31,7 @@ defmodule NativeTesting do
     nc_join(nc_slice(cur,7,10),b[guard],nc_slice(cur,11,48))
   end
   def tm_counted(cur: bytes): bytes do
-    nc_join(nc_slice(cur,7,10),b[0,Enum.at(cur,11,0)],Enum.concat(nc_u16(tm_count(cur)+1),nc_slice(cur,14,48)))
+    nc_join(nc_slice(cur,7,10),b[0,Enum.at(cur,11,0)],Enum.concat(nc_u16(if tm_count(cur) >= 65535 do 65535 else tm_count(cur)+1 end),nc_slice(cur,14,48)))
   end
   def tm_record(kind: integer, at: integer, cur: bytes, name: integer, fields: bytes): bytes do
     nc_join(Enum.concat(b[kind],nc_u24(at)),Enum.concat(nc_slice(cur,7,10),nc_u24(name)),nc_join(nc_slice(cur,3,6),fields,b[0,0,Enum.at(cur,11,0),0]))

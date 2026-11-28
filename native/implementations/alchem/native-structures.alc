@@ -4,7 +4,7 @@ defmodule NativeStructures do
       if nc_word(source,pos,b[101,108,101,109])*nc_word(source,nc_end(source,pos),b[40]) == 1 do nr_elem(source,pos,env,table,depth) else if nc_word(source,pos,b[112,117,116,95,101,108,101,109])*nc_word(source,nc_end(source,pos),b[40]) == 1 do nr_put_elem(source,pos,env,table,depth) else
         # ok(...) and error(...) build results unless the module has a function of that name.
         built = (nc_word(source,pos,b[111,107])+nc_word(source,pos,b[101,114,114,111,114]))*nc_word(source,nc_end(source,pos),b[40])
-        own = if built == 0 do 0 else if nc_find(source,nc_start(source,pos),table,nc_owner(table,nc_read(env,0))) < 0 do 0 else 1 end end
+        own = if built == 0 do 0 else if nc_find(source,nc_start(source,pos),table,nc_owner(table,nc_cursor(env,0))) < 0 do 0 else 1 end end
         if built-own == 1 do nr_constructor(source,pos,env,table,depth) else nm_unary(source,pos,env,table,depth) end
       end end
     end

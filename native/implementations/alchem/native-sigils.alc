@@ -406,7 +406,7 @@ defmodule NativeSigils do
     first = nc_cursor(bounds,0)
     stop = nc_cursor(bounds,3)
     middle = first+nc_half(stop-first)
-    flags = Enum.at(table,middle*27+16,0)
+    flags = Enum.at(table,middle*28+16,0)
     fits = if kind == 64 do if flags == 64 do 1 else 0 end else if flags < 32 do 1 else 0 end end
     mine = if owner < 0 do 1 else if nc_owner(table,middle) == owner do 1 else 0 end end
     same = if first >= stop do 0 else if fits*mine == 0 do 0 else nt_same(nc_slice(source,nc_meta(table,middle,0),nc_meta(table,middle,3)),name) end end
@@ -435,7 +435,7 @@ defmodule NativeSigils do
   # NaiveDateTime or DateTime, which inspect writes as a sigil; else 0.
   def sg_calendar(source: bytes, table: bytes, id: integer): integer do
     name = nc_slice(source,nc_meta(table,id,0),nc_meta(table,id,3))
-    found = if id < 0 do 0 else if Enum.at(table,id*27+16,0) != 64 do 0 else
+    found = if id < 0 do 0 else if Enum.at(table,id*28+16,0) != 64 do 0 else
       if nt_same(name,b[68,97,116,101]) == 1 do 30 else if nt_same(name,b[84,105,109,101]) == 1 do 31 else if nt_same(name,b[78,97,105,118,101,68,97,116,101,84,105,109,101]) == 1 do 32 else if nt_same(name,b[68,97,116,101,84,105,109,101]) == 1 do 33 else 0 end end end end
     end end
     if found == 0 do 0 else if nc_owner(table,id) != sg_types(source,table) do 0 else found end end
@@ -468,30 +468,30 @@ defmodule NativeSigils do
     nc_arg_packet(pos,count,Enum.concat(cells,nt_cell(nc_zeros(count))),code)
   end
   # A call of function target, or of the function of its name that takes
-  # the arguments, for the sigil at start. plan: the nesting, the target (2
+  # the arguments, for the sigil at start. plan: the nesting, the target (3
   # bytes), then the arguments.
   def sg_call(source: bytes, start: integer, env: bytes, table: bytes, plan: bytes): bytes do
-    packet = nc_slice(plan,3,Enum.count(plan))
-    fit = nj_form(source,table,nj_fit(source,table,nc_read(plan,1),nc_arg_count(packet)),packet)
+    packet = nc_slice(plan,4,Enum.count(plan))
+    fit = nj_form(source,table,nj_fit(source,table,nc_cursor(plan,1),nc_arg_count(packet)),packet)
     full = if fit < 0 do b[] else nj_full(source,table,fit,packet,start+2) end
-    if nc_pos(full) < 0 do b[] else nj_call(source,start,env,table,Enum.at(plan,0,0),Enum.concat(nc_u16(fit),full)) end
+    if nc_pos(full) < 0 do b[] else nj_call(source,start,env,table,Enum.at(plan,0,0),Enum.concat(nc_u24(fit),full)) end
   end
   # The function that gives a sigil of the program its meaning: sigil_x in
   # the one module that defines it, def or defp.
   def sg_handler(source: bytes, table: bytes, letter: integer): integer do
     name = Enum.concat(b[115,105,103,105,108,95],b[letter])
     found = sg_find(source,table,name,sg_all(table),-1,0)
-    if found < 0 do -1 else if sg_elsewhere(source,table,name,Enum.concat(nc_u16(nc_owner(table,found)),sg_all(table))) == 1 do -1 else found end end
+    if found < 0 do -1 else if sg_elsewhere(source,table,name,Enum.concat(nc_u24(nc_owner(table,found)),sg_all(table))) == 1 do -1 else found end end
   end
   # 1 when a module other than the one given defines a function called name.
-  # plan: the module (2 bytes), then the records to look at.
+  # plan: the module (3 bytes), then the records to look at.
   def sg_elsewhere(source: bytes, table: bytes, name: bytes, plan: bytes): integer do
-    first = nc_cursor(plan,2)
-    stop = nc_cursor(plan,5)
+    first = nc_cursor(plan,3)
+    stop = nc_cursor(plan,6)
     middle = first+nc_half(stop-first)
-    same = if first >= stop do 0 else if Enum.at(table,middle*27+16,0) >= 32 do 0 else if nc_owner(table,middle) == nc_read(plan,0) do 0 else nt_same(nc_slice(source,nc_meta(table,middle,0),nc_meta(table,middle,3)),name) end end end
+    same = if first >= stop do 0 else if Enum.at(table,middle*28+16,0) >= 32 do 0 else if nc_owner(table,middle) == nc_cursor(plan,0) do 0 else nt_same(nc_slice(source,nc_meta(table,middle,0),nc_meta(table,middle,3)),name) end end end
     if first >= stop do 0 else if same == 1 do 1 else
-      if sg_elsewhere(source,table,name,nc_join(nc_slice(plan,0,2),nc_u24(first),nc_u24(middle))) == 1 do 1 else sg_elsewhere(source,table,name,nc_join(nc_slice(plan,0,2),nc_u24(middle+1),nc_u24(stop))) end
+      if sg_elsewhere(source,table,name,nc_join(nc_slice(plan,0,3),nc_u24(first),nc_u24(middle))) == 1 do 1 else sg_elsewhere(source,table,name,nc_join(nc_slice(plan,0,3),nc_u24(middle+1),nc_u24(stop))) end
     end end
   end
   # sigil_x(text, modifiers) for a sigil of the program at start: value is
@@ -502,7 +502,7 @@ defmodule NativeSigils do
     target = sg_handler(source,table,Enum.at(spec,1,0))
     pushed = nc_join(Enum.concat(nc_code(value),b[80]),nc_text_emit(nc_slice(source,nc_cursor(spec,5),stop)),b[80])
     if target < 0 do b[] else if nc_tag(value) != 2 do b[] else
-      sg_call(source,start,env,table,nc_join(b[Enum.at(spec,0,0)],nc_u16(target),sg_packet(stop,2,b[1,2,1,2],pushed)))
+      sg_call(source,start,env,table,nc_join(b[Enum.at(spec,0,0)],nc_u24(target),sg_packet(stop,2,b[1,2,1,2],pushed)))
     end end
   end
   # A sigil whose text holds no value. spec as for sg_defined, then the text.
@@ -527,7 +527,7 @@ defmodule NativeSigils do
     home = ny_module(source,table,b[65,108,99,104,127,109,83,116,114,105,110,103,49],sg_all(table))
     split = if home < 0 do -1 else sg_find(source,table,b[115,112,108,105,116],sg_all(table),home,0) end
     if nc_pos(value) < 0 do b[] else if letter == 115 do nc_value(nc_cursor(spec,2),nc_code(value),b[2]) else
-      if letter == 119 do if split < 0 do b[] else sg_call(source,start,env,table,nc_join(b[Enum.at(spec,0,0)],nc_u16(split),sg_packet(nc_cursor(spec,2),1,b[1,2],Enum.concat(nc_code(value),b[80])))) end else
+      if letter == 119 do if split < 0 do b[] else sg_call(source,start,env,table,nc_join(b[Enum.at(spec,0,0)],nc_u24(split),sg_packet(nc_cursor(spec,2),1,b[1,2],Enum.concat(nc_code(value),b[80])))) end else
         if letter == 114 do sg_regex_filled(source,start,env,table,spec,value) else if (letter-99)*(letter-104) == 0 do b[] else sg_defined(source,start,env,table,spec,value) end end
       end
     end end
@@ -569,7 +569,7 @@ defmodule NativeSigils do
     start = nc_start(source,pos)
     value = byte_at(source,start)
     stop = nc_end(source,start)
-    owner = nc_owner(table,nc_read(env,0))
+    owner = nc_owner(table,nc_cursor(env,0))
     found = if value != 64 do -1 else if classify_ascii(byte_at(source,start+1)) != 2 do -1 else nk_declared(source,nc_meta(table,owner,0),nk_module_end(source,table,owner+1),start+1) end end
     inner = if budget == 0 do b[] else if (value-40)*(value-45) == 0 do sg_number(source,stop,env,table,budget-1) else if found < 0 do b[] else sg_number(source,nc_end(source,found+1),env,table,budget-1) end end end
     if start < 0 do b[] else
@@ -622,7 +622,7 @@ defmodule NativeSigils do
     if nw_marked(value)+nu_holes(nc_kind(value),0) > 0 do b[] else
       if tag == 5 do sg_index_tuple(source,value,env,table,open) else
         if stop < 0 do b[] else if nc_tag(index) == 12 do b[] else
-          if tag == 7 do sg_index_list(table,value,index,plan) else sg_index_map(table,value,index,Enum.concat(plan,nu_vars(env,2))) end
+          if tag == 7 do sg_index_list(table,value,index,plan) else sg_index_map(table,value,index,Enum.concat(plan,nu_vars(env,3))) end
         end end
       end
     end
@@ -647,7 +647,7 @@ defmodule NativeSigils do
     next = nc_pos(value)
     open = nc_start(source,next)
     after = if next < 0 do -1 else if byte_at(source,open) != 91 do -1 else if sg_same_line(source,next,open) == 0 do -1 else np_close(source,open,0,16777216) end end end
-    arm = if sg_arm_after(source,after) == 0 do 0 else 1-sg_in_condition(env,2,0) end
+    arm = if sg_arm_after(source,after) == 0 do 0 else 1-sg_in_condition(env,3,0) end
     if after < 0 do value else if nc_word(source,after,b[61])+arm > 0 do value else
       sg_indexed(source,nf_postfix(source,sg_index(source,value,env,table,depth),env,table,depth),env,table,depth)
     end end
@@ -697,7 +697,7 @@ defmodule NativeSigils do
     home = ny_module(source,table,if form == 1 do nc_slice(plan,1,Enum.count(plan)) else nc_join(nc_slice(plan,1,Enum.count(plan)),b[118,48+form],b[]) end,sg_all(table))
     target = if home < 0 do -1 else nc_find(source,last,table,home) end
     fit = if target < 0 do -1 else nj_form(source,table,nj_aimed(source,table,target,nc_arg_count(packet)),packet) end
-    call = if fit < 0 do b[] else nu_call(source,scope,table,0,packet,nc_u16(fit)) end
+    call = if fit < 0 do b[] else nu_call(source,scope,table,0,packet,nc_u24(fit)) end
     if nc_pos(call) >= 0 do call else if form >= 9 do b[] else sg_form(source,table,last,scope,packet,Enum.concat(b[form+1],nc_slice(plan,1,Enum.count(plan)))) end end
   end
   # &Module.name/arity at pos for a function of the library written in
@@ -707,14 +707,14 @@ defmodule NativeSigils do
     form = nf_library_form(source,pos,env,table)
     count = nt_items(words,0)
     captures = nf_captures(env,2)
-    scope = nf_capture_env(source,env,nf_unnamed(nc_u16(nc_read(env,0)),words,0),captures,0)
+    scope = nf_capture_env(source,env,nf_unnamed(nc_u24(nc_cursor(env,0)),words,0),captures,0)
     packet = nc_arg_packet(0,count,Enum.concat(words,nt_cell(nc_zeros(count))),nf_pushes(count,0))
-    value = if nc_pos(form) < 0 do b[] else if nc_tag(form) != count do b[] else if Enum.count(scope) == 0 do b[] else if nf_nested(source,env,2) == 1 do b[] else
+    value = if nc_pos(form) < 0 do b[] else if nc_tag(form) != count do b[] else if Enum.count(scope) == 0 do b[] else if nf_nested(source,env,3) == 1 do b[] else
       # A failure inside the library function names the reference.
       nh_placed(table,sg_form(source,table,sg_referred(source,pos),scope,packet,Enum.concat(b[1],sg_referred_module(source,pos,count))),nc_start(source,pos))
     end end end end
     kind = nt_function(Enum.concat(words,nt_cell(nc_kind(value))),count)
-    if nc_pos(value) < 0 do b[] else nc_value(nc_pos(form)+1,nf_code(count,gm_held(env,2),nc_join(nz_enter_plain(nc_start(source,pos)),zf_cover(source,table,env,nc_start(source,pos)),nc_code(value))),kind) end
+    if nc_pos(value) < 0 do b[] else nc_value(nc_pos(form)+1,nf_code(count,gm_held(env,3),nc_join(nz_enter_plain(nc_start(source,pos)),zf_cover(source,table,env,nc_start(source,pos)),nc_code(value))),kind) end
   end
   # The argument packet with delta added to where each lambda still to be
   # typed, from argument index on, places its code.
@@ -915,7 +915,7 @@ defmodule NativeSigils do
     code = if Enum.count(kept) == 0 do nc_code(value) else nc_join(nc_join(nc_text_emit(nc_join(b[40,63],kept,b[41])),b[80],nc_code(value)),b[80],ns_concat_emit()) end
     target = sg_library(source,table,b[65,108,99,104,127,109,82,101,103,101,120,49],b[99,111,109,112,105,108,101,33])
     if Enum.at(flags,0,1) == 0 do b[] else if target < 0 do b[] else if nc_tag(value) != 2 do b[] else
-      nh_placed(table,sg_call(source,start,env,table,nc_join(b[Enum.at(spec,0,0)],nc_u16(target),sg_packet(stop,1,b[1,2],Enum.concat(code,b[80])))),start)
+      nh_placed(table,sg_call(source,start,env,table,nc_join(b[Enum.at(spec,0,0)],nc_u24(target),sg_packet(stop,1,b[1,2],Enum.concat(code,b[80])))),start)
     end end end
   end
   # text =~ regex is String.match?(text, regex).
@@ -925,7 +925,7 @@ defmodule NativeSigils do
     target = sg_library(source,table,b[65,108,99,104,127,109,83,116,114,105,110,103,50,118,49,54],b[109,97,116,99,104,63])
     pushed = nc_join(Enum.concat(nc_code(left),b[80]),nc_code(right),b[80])
     if nc_pos(right) < 0 do b[] else if target < 0 do b[] else if nc_tag(left) != 2 do b[] else if nc_tag(right) != 29 do b[] else
-      nh_placed(table,sg_call(source,op,env,table,nc_join(b[depth],nc_u16(target),sg_packet(nc_pos(right),2,b[1,2,1,29],pushed))),op)
+      nh_placed(table,sg_call(source,op,env,table,nc_join(b[depth],nc_u24(target),sg_packet(nc_pos(right),2,b[1,2,1,29],pushed))),op)
     end end end end
   end
   # structs they make, for the library text to be chosen by.

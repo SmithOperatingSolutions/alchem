@@ -86,7 +86,7 @@ defmodule NativeOperators do
         if nc_word(source,op,b[46,46]) == 1 do nk_range(source,left,env,table,depth) else if nc_word(source,op,b[43,43])+nc_word(source,op,b[45,45]) == 0 do left else
           if budget <= 0 do b[] else
             right = nc_sum(source,nc_end(source,op),env,table,depth)
-            joined = if nc_pos(right) < 0 do b[] else nk_lists(source,table,Enum.concat(left,nc_u32(Enum.count(left))),right,Enum.concat(b[byte_at(source,op)],nu_vars(env,2))) end
+            joined = if nc_pos(right) < 0 do b[] else nk_lists(source,table,Enum.concat(left,nc_u32(Enum.count(left))),right,Enum.concat(b[byte_at(source,op)],nu_vars(env,3))) end
             nk_join_tail(source,joined,env,table,depth,budget-1)
           end
         end end
@@ -379,13 +379,13 @@ defmodule NativeOperators do
   # Where the module of header record owner ends: the next module's name.
   def nk_module_end(source: bytes, table: bytes, index: integer): integer do
     if index >= nc_records(Enum.count(table)) do Enum.count(source) else
-      if Enum.at(table,index*27+16,0) == 32 do nc_meta(table,index,0) else nk_module_end(source,table,index+1) end
+      if Enum.at(table,index*28+16,0) == 32 do nc_meta(table,index,0) else nk_module_end(source,table,index+1) end
     end
   end
   def nk_constant(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
-    owner = nc_owner(table,nc_read(env,0))
+    owner = nc_owner(table,nc_cursor(env,0))
     found = if classify_ascii(byte_at(source,start+1)) != 2 do -1 else nk_declared(source,nc_meta(table,owner,0),nk_module_end(source,table,owner+1),start+1) end
-    value = if found < 0 do b[] else if depth > 190 do b[] else nc_expression(source,nc_end(source,found+1),nc_u16(nc_read(env,0)),table,depth+1) end end
+    value = if found < 0 do b[] else if depth > 190 do b[] else nc_expression(source,nc_end(source,found+1),nc_u24(nc_cursor(env,0)),table,depth+1) end end
     if nc_pos(value) < 0 do b[] else nc_value(nc_end(source,start+1),nc_code(value),nc_kind(value)) end
   end
   # :name is an atom: at run time the string of its name, with a type of its own.
@@ -469,11 +469,11 @@ defmodule NativeOperators do
   # The argument of hd or tl (plan: the nesting and which) where the list needs the type of its elements from
   # what is expected of the call, whose "(" is at paren.
   def nk_head_wanted(source: bytes, paren: integer, env: bytes, table: bytes, plan: bytes): bytes do
-    wanted = nw_expected(env,paren,2)
+    wanted = nw_expected(env,paren,3)
     kind = if Enum.at(plan,1,0) == 8 do wanted else nt_unary(7,wanted) end
     # A list piped in that waits for its type ([fn -> 1 end] |> hd()) is
     # typed where it stands, and passes through its slot as nf_resolve has it.
-    piped = nc_kind(nf_piped_from(source,paren+1,env,2))
+    piped = nc_kind(nf_piped_from(source,paren+1,env,3))
     slot = if nt_tag(piped) != 11 do -1 else nc_cursor(piped,7)-1 end
     at = if slot < 0 do paren+1 else nc_cursor(piped,1) end
     value = if Enum.count(wanted) == 0 do b[] else nf_valued_held(source,at,env,table,kind,b[Enum.at(plan,0,0)+1,if slot < 0 do 0 else 1 end]) end

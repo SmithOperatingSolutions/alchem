@@ -18,9 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 # How an ARM64 program is run: directly on an ARM64 host, else under QEMU's
 # user mode from scripts/fetch-arm64-tools.sh.
 ARM64_RUN = [] if os.uname().machine == 'aarch64' else [str(ROOT / 'build/arm64-tools/bin/qemu-aarch64-static')]
-# The native compiler takes 65,535 functions. A program that large compiles in
-# about twenty seconds and three gigabytes, and several gates hold one, so at
-# most three such compiles run at a time across all gate processes.
+# The native compiler took 65,535 functions and no more (it takes more now:
+# harness/past_limit.py). A program that large compiles in about twenty
+# seconds and three gigabytes, and several gates hold one, so at most three
+# such compiles run at a time across all gate processes.
 FUNCTION_LIMIT = 65535
 
 

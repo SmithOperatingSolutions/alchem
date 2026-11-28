@@ -22,7 +22,7 @@ defmodule NativeTail do
   end
   # 1 when the call of function target whose arguments end at close is to jump.
   def tl_at(env: bytes, close: integer, target: integer): integer do
-    if target != nc_read(env,0) do 0 else if tl_noted(env,2,-1) == close do 1 else 0 end end
+    if target != nc_cursor(env,0) do 0 else if tl_noted(env,3,-1) == close do 1 else 0 end end
   end
   # After count pushed arguments: they take the place of the parameters (the
   # first six in their registers; with more than six all of them where the
@@ -53,8 +53,8 @@ defmodule NativeTail do
   # has in Go, may have them), and the statement stands in no fn, for, try
   # or form used as a value.
   def tl_allowed(source: bytes, env: bytes, table: bytes): integer do
-    id = nc_read(env,0)
-    if Enum.at(table,id*27+16,0) == 1 do 0 else if nc_argc(table,id) == 0 do 0 else if Enum.count(nj_context(env,2,b[])) > 0 do 0 else
+    id = nc_cursor(env,0)
+    if Enum.at(table,id*28+16,0) == 1 do 0 else if nc_argc(table,id) == 0 do 0 else if Enum.count(nj_context(env,3,b[])) > 0 do 0 else
       if nn_library(source,env,table) == 1 do 1 else if nu_name_count(nu_signature(source,table,id),0) > 0 do 0 else 1 end end
     end end end
   end
@@ -96,7 +96,7 @@ defmodule NativeTail do
   # 1 when value, what a statement's expression compiles to, ends in a call
   # of the function itself where that function may loop.
   def tl_wanted(source: bytes, env: bytes, table: bytes, value: bytes): integer do
-    id = nc_read(env,0)
+    id = nc_cursor(env,0)
     last = Enum.count(value)
     wide = if Enum.at(value,last-8,0)*256+Enum.at(value,last-7,0) == 18573 do 8 else 0 end
     shape = if last-wide < 14 do 0 else if Enum.at(value,last-wide-1,0) != 19 do 0 else nc_word_at(value,last-wide-9,nc_call(id),0) end end
@@ -127,7 +127,7 @@ defmodule NativeTail do
     if tl_wanted(source,env,table,value) == 0 do gm_valued(source,start,env,table,depth,value) else if wf_dropped(source,nc_pos(value),env,table) == 1 do value else tl_made(source,start,env,table,depth,value) end end
   end
   def tl_made(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, value: bytes): bytes do
-    id = nc_read(env,0)
+    id = nc_cursor(env,0)
     last = nz_before(source,nc_pos(value)-1)
     inner = if byte_at(source,last) != 41 do b[] else tl_target(source,nc_start(source,start),last,200) end
     close = nc_cursor(inner,3)

@@ -49,9 +49,14 @@ defmodule NativeProtocols do
   end
   # The functions a module has defined so far, from record at on.
   def mp_defined(ix: bytes, cur: integer, at: integer): integer do
+    mp_defined_from(ix,cur,at,0)
+  end
+  # A loop: a call inside the one before for every record would nest as
+  # deep as the program has records.
+  def mp_defined_from(ix: bytes, cur: integer, at: integer, count: integer): integer do
     kind = Enum.at(ix,at,0)
-    if at >= Enum.count(ix) do 0 else
-      (if (kind-3)*(kind-6) != 0 do 0 else if nc_read(ix,at+1) == cur do 1 else 0 end end)+mp_defined(ix,cur,at+24)
+    if at >= Enum.count(ix) do count else
+      mp_defined_from(ix,cur,at+24,count+(if (kind-3)*(kind-6) != 0 do 0 else if nc_read(ix,at+1) == cur do 1 else 0 end end))
     end
   end
   # 1 when the tokens from a up to stop are those from b up to end.
@@ -225,7 +230,7 @@ defmodule NativeProtocols do
     size = nc_end(source,name)-name
     wide = nc_end(source,pos)-pos
     start = nc_meta(table,index,0)
-    if Enum.at(table,index*27+16,0) >= 32 do 0 else if nc_meta(table,index,3)-start < size+wide+3 do 0 else
+    if Enum.at(table,index*28+16,0) >= 32 do 0 else if nc_meta(table,index,3)-start < size+wide+3 do 0 else
       if byte_at(source,start+size) != 127 do 0 else if byte_at(source,start+size+1+wide) != 127 do 0 else
         nc_equal(source,start,name,size)*nc_equal(source,start+size+1,pos,wide)
       end end
@@ -244,13 +249,13 @@ defmodule NativeProtocols do
   # each after the modules it imports, the entry last. state: how many
   # modules have been entered, their header records, then the order.
   def mp_entered(state: bytes, home: integer, at: integer): integer do
-    if at >= nc_read(state,0) do 0 else if nc_read(state,2+at*2) == home do 1 else mp_entered(state,home,at+1) end end
+    if at >= nc_cursor(state,0) do 0 else if nc_cursor(state,3+at*3) == home do 1 else mp_entered(state,home,at+1) end end
   end
   def mp_visit(source: bytes, table: bytes, home: integer, state: bytes): bytes do
-    count = nc_read(state,0)
+    count = nc_cursor(state,0)
     if home < 0 do state else if mp_entered(state,home,0) == 1 do state else
-      inner = mp_imports(source,table,nc_meta(table,home,6),nc_join(nc_u16(count+1),nc_slice(state,2,2+count*2),Enum.concat(nc_u16(home),nc_slice(state,2+count*2,Enum.count(state)))))
-      Enum.concat(inner,nc_u16(home))
+      inner = mp_imports(source,table,nc_meta(table,home,6),nc_join(nc_u24(count+1),nc_slice(state,3,3+count*3),Enum.concat(nc_u24(home),nc_slice(state,3+count*3,Enum.count(state)))))
+      Enum.concat(inner,nc_u24(home))
     end end
   end
   def mp_imports(source: bytes, table: bytes, pos: integer, state: bytes): bytes do
@@ -260,12 +265,12 @@ defmodule NativeProtocols do
     end
   end
   def mp_order(source: bytes, table: bytes): bytes do
-    state = mp_visit(source,table,0,b[0,0])
-    nc_slice(state,2+nc_read(state,0)*2,Enum.count(state))
+    state = mp_visit(source,table,0,b[0,0,0])
+    nc_slice(state,3+nc_cursor(state,0)*3,Enum.count(state))
   end
   # Where the records of a module stop, from record at on.
   def mp_module_end(table: bytes, at: integer): integer do
-    if at >= nc_records(Enum.count(table)) do at else if Enum.at(table,at*27+16,0) == 32 do at else mp_module_end(table,at+1) end end
+    if at >= nc_records(Enum.count(table)) do at else if Enum.at(table,at*28+16,0) == 32 do at else mp_module_end(table,at+1) end end
   end
   # The first implementation from first up to stop whose type the argument
   # of type kind fits.
@@ -276,9 +281,9 @@ defmodule NativeProtocols do
     end
   end
   def mp_pick(source: bytes, table: bytes, pos: integer, kind: bytes, order: bytes, at: integer): integer do
-    home = nc_read(order,at)
+    home = nc_cursor(order,at)
     found = if at >= Enum.count(order) do -1 else mp_pick_in(source,table,pos,kind,home+1,mp_module_end(table,home+1)) end
-    if at >= Enum.count(order) do -1 else if found >= 0 do found else mp_pick(source,table,pos,kind,order,at+2) end end
+    if at >= Enum.count(order) do -1 else if found >= 0 do found else mp_pick(source,table,pos,kind,order,at+3) end end
   end
   # The implementation is chosen by the type of the first argument alone,
   # which must be known where the call stands.
@@ -288,7 +293,7 @@ defmodule NativeProtocols do
     kind = nc_arg_kind(args,0)
     known = if nc_pos(args) < 0 do 0 else if nc_arg_count(args) == 0 do 0 else if nw_arg_marked(args,0) == 1 do 0 else 1-nu_holes(kind,0) end end end
     target = if known == 0 do -1 else mp_pick(source,table,pos,kind,mp_order(source,table),0) end
-    if target < 0 do b[] else nj_enter(source,open,env,table,depth,Enum.concat(nc_u16(target),b[0])) end
+    if target < 0 do b[] else nj_enter(source,open,env,table,depth,Enum.concat(nc_u24(target),b[0])) end
   end
   # A call of a module the program does not have: a protocol's function,
   # or a function of the library.
