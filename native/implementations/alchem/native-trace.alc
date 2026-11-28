@@ -3,8 +3,8 @@ defmodule NativeTrace do
   # it, naming the place, the reason and every active call (the routine is
   # spec/trace-x86_64.s). The compiler itself is not traced: nc_compile marks
   # byte 15 of the first table record when the program is a compiler entry.
-  def nz_on(table: bytes): integer do if Enum.at(table,15,0) == 1 do 0 else 1 end end
-  def nz_off(table: bytes): bytes do nc_join(nc_slice(table,0,15),b[1],nc_slice(table,16,Enum.count(table))) end
+  def nz_on(table: bytes): integer do if Enum.at(table,20,0) == 1 do 0 else 1 end end
+  def nz_off(table: bytes): bytes do nc_join(nc_slice(table,0,20),b[1],nc_slice(table,21,Enum.count(table))) end
   # The routine's table slot, after the four shared runtimes.
   def nz_slot(table: bytes): integer do nc_records(Enum.count(table))+4 end
   # A statement begins: its position goes to the frame.
@@ -46,7 +46,7 @@ defmodule NativeTrace do
   def nz_fail(table: bytes, pos: integer, reason: integer): bytes do
     if nz_on(table) == 0 do Enum.concat(nc_exit_code(70),b[144,144,144,144,144,144,144]) else
       # A default value fails at the call that left it out (nj_from).
-      nc_join(Enum.concat(b[191],nc_u32(if nc_cursor(table,21) == 0 do pos else nc_cursor(table,21) end)),Enum.concat(b[190],nc_u32(reason)),nc_call(nz_slot(table)))
+      nc_join(Enum.concat(b[191],nc_u32(if nc_long(table,27) == 0 do pos else nc_long(table,27) end)),Enum.concat(b[190],nc_u32(reason)),nc_call(nz_slot(table)))
     end
   end
   # Leave the program with the status in RAX. One outside 0..255 ends it as
@@ -150,7 +150,7 @@ defmodule NativeTrace do
     name = nc_join(nc_slice(source,nc_meta(table,owner,0),nc_meta(table,owner,3)),b[46],mp_shown(nc_slice(source,nc_meta(table,first,0),nc_meta(table,first,3)),0))
     if stop-first <= 0 do b[] else
       if stop-first == 1 do
-        if Enum.at(table,first*28+16,0) >= 32 do b[0] else if Enum.count(name) > 250 do b[0] else
+        if Enum.at(table,first*40+21,0) >= 32 do b[0] else if Enum.count(name) > 250 do b[0] else
           # A test or a setup block is shown as the pinned runtime names it.
           if tm_ours(source,nc_meta(table,first,0)) > 0 do nz_named(tm_shown(source,nc_meta(table,first,0),nc_meta(table,first,3))) else nz_named(Enum.concat(name,nj_form_suffix(source,table,first))) end
         end end

@@ -50,9 +50,9 @@ programs and the pinned compiler's outcome for each.
 
 ## How it is compiled
 
-A table record (27 bytes, `alchem-modules.md`) keeps after its flags where the
-result type is written (3 bytes, 0 for none), the number of defaults, and
-where the guard starts (3 bytes, 0 for none). The first clause of a function
+A table record (40 bytes, `alchem-modules.md`) keeps after its flags where the
+result type is written (4 bytes, 0 for none), the number of defaults, and
+where the guard starts (4 bytes, 0 for none). The first clause of a function
 has the function's record. Each further clause has a record with flags 40: it
 takes a table slot, no lookup finds it and it has no code. A form is a
 function record like any other, placed after the clauses of the form before.

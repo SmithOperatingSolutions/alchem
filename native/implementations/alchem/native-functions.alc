@@ -36,7 +36,7 @@ defmodule NativeFunctions do
     # A body that ends in a statement gives the empty tuple.
     unit = if nc_tag(inner) == 12 do 1 else 0 end
     begin = nc_start(source,nc_pos(spec))
-    enter = if form == 0 do tl_fn_enter(source,env,table,begin) else nz_enter_plain(if nc_cursor(table,21) == 0 do begin else nc_cursor(table,21) end) end
+    enter = if form == 0 do tl_fn_enter(source,env,table,begin) else nz_enter_plain(if nc_long(table,27) == 0 do begin else nc_long(table,27) end) end
     value = if nc_pos(inner) < 0 do b[] else nc_value(nc_pos(inner),nc_join(nc_join(enter,zf_cover_fn(source,table,env,nc_join(b[form],nc_u24(begin),nc_u24(if nc_tag(spec) != 9 do 0 else nc_cursor(nc_kind(spec),2) end)),Enum.count(np_tree(shaped))),np_tree(shaped)),nc_code(inner),Enum.concat(if unit == 1 do nc_join(nc_allocate_emit(0),b[72,199,2,0,0,0,0],b[72,137,208]) else b[] end,if form == 0 do tl_fn_leave(source,env,table) else b[] end)),if unit == 1 do b[5,0] else nc_kind(inner) end) end
     gm_shed(source,env,table,if form != 0 do 0 else if nc_tag(spec) == 9 do nc_cursor(nc_kind(spec),2) else nc_pos(spec) end end,nf_seal(source,spec,if nw_marked(inner) == 1 do nw_mark(value) else value end,words,gm_held(env,3),form))
   end
@@ -137,7 +137,7 @@ defmodule NativeFunctions do
     name = nc_start(source,nc_end(source,stop))
     if nc_word(source,stop,b[46]) != 1 do nc_find(source,pos,table,owner) else
       target = if home < 0 do -1 else if nc_imported(source,table,owner,home) == 0 do -1 else nc_find(source,name,table,home) end end
-      if target < 0 do -1 else if home == owner do target else if Enum.at(table,target*28+16,0) != 0 do -1 else target end end end
+      if target < 0 do -1 else if home == owner do target else if Enum.at(table,target*40+21,0) != 0 do -1 else target end end end
     end
   end
   # "&1,&2" for count placeholders.
@@ -631,7 +631,7 @@ defmodule NativeFunctions do
     id = if named < 0 do -1 else if slashed == 1 do nj_fit_from(source,table,named,given,b[0,0,0,1]) else if nj_alone(source,table,named) == 1 do named else -1 end end end
     stop = if slashed == 1 do nc_end(source,nc_end(source,pos)) else pos end
     # A generic function has no plain reference: its comparators come with each use.
-    if id < 0 do b[] else if Enum.at(table,id*28+16,0) == 1 do b[] else if strict*Enum.at(table,id*28+16,0) != 0 do b[] else if nu_generic(source,table,id) == 1 do b[] else
+    if id < 0 do b[] else if Enum.at(table,id*40+21,0) == 1 do b[] else if strict*Enum.at(table,id*40+21,0) != 0 do b[] else if nu_generic(source,table,id) == 1 do b[] else
       kind = nt_function(Enum.concat(nj_cells(source,table,id),nt_cell(nc_return_kind(source,table,id))),nc_argc(table,id))
       if nt_tag(kind) < 0 do b[] else nc_value(stop,Enum.concat(b[184],nc_u32(4195456+id*8)),kind) end
     end end end end

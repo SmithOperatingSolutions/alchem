@@ -71,10 +71,10 @@ arena and executable-size limits still apply.
 Compiler packets use a u24 source cursor, the type's length byte and the type.
 Environment records, argument packets and type lists hold each type after its
 length byte, so records vary in size and are walked in slot order. The function table holds the position of each
-result annotation instead of a type, so its records keep their 27 bytes.
-Function records are27 bytes: five u24 source positions, argc, flags, eight
-bytes (the position of the result annotation, the number of defaults and the
-position of the guard) and the u16 index of the owning module header. Flags are
+result annotation instead of a type, so its records keep one size.
+Function records are 40 bytes (`alchem-modules.md`): five u32 source positions,
+argc, flags, the position of the result annotation, the number of defaults,
+the position of the guard and the u32 index of the owning module header. Flags are
 main1, public helper0, private helper16, module header32 or further clause40;
 see alchem-modules.md and alchem-clauses.md.
 Argument packets store six full type words. Environments have a u16 function

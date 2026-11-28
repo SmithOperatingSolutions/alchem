@@ -379,7 +379,7 @@ defmodule NativeOperators do
   # Where the module of header record owner ends: the next module's name.
   def nk_module_end(source: bytes, table: bytes, index: integer): integer do
     if index >= nc_records(Enum.count(table)) do Enum.count(source) else
-      if Enum.at(table,index*28+16,0) == 32 do nc_meta(table,index,0) else nk_module_end(source,table,index+1) end
+      if Enum.at(table,index*40+21,0) == 32 do nc_meta(table,index,0) else nk_module_end(source,table,index+1) end
     end
   end
   def nk_constant(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do

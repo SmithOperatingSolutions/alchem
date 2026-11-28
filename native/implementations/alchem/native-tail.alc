@@ -54,7 +54,7 @@ defmodule NativeTail do
   # or form used as a value.
   def tl_allowed(source: bytes, env: bytes, table: bytes): integer do
     id = nc_cursor(env,0)
-    if Enum.at(table,id*28+16,0) == 1 do 0 else if nc_argc(table,id) == 0 do 0 else if Enum.count(nj_context(env,3,b[])) > 0 do 0 else
+    if Enum.at(table,id*40+21,0) == 1 do 0 else if nc_argc(table,id) == 0 do 0 else if Enum.count(nj_context(env,3,b[])) > 0 do 0 else
       if nn_library(source,env,table) == 1 do 1 else if nu_name_count(nu_signature(source,table,id),0) > 0 do 0 else 1 end end
     end end end
   end

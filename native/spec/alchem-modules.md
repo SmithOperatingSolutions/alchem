@@ -73,10 +73,17 @@ longer than a program may be; packages
 
 ## Compiler representation
 
-Table records are 28 bytes: five u24 source positions, argc, flags, eight
-bytes (for a function: where its result type is written, the number of its
-default arguments and where its guard starts) and the u24 index of the owning
-module's header. A further clause of a function has a record of its own with
+Table records are 40 bytes: five u32 source positions, argc, flags, ten
+bytes (for a function: the u32 of where its result type is written, the
+number of its default arguments, the u32 of where its guard starts and the
+high byte of argc), the u32 index of the owning module's header and four
+bytes of zero. The record has room for positions and numbers of four bytes,
+though a position is still at most 24 bits and a record's number three
+bytes where the compiler's parts hand it on (`source-capacity.md`). The
+first record also keeps two things of the whole table where a header has
+no use for them: how the program is compiled (byte 20: 1 untraced, 2 and 3
+counting coverage) and the call a default value is compiled for (the u32
+at 27). A further clause of a function has a record of its own with
 flags 40, which no lookup finds and which has no code (alchem-clauses.md). Each
 module contributes a header record (flags 32) holding its name span, the start
 of its import lines and the number of user functions declared before it. A

@@ -59,11 +59,11 @@ defmodule NativeFailures do
   end
   # The program fails at pos with text as the reason; nothing follows.
   def zf_fail(table: bytes, pos: integer, text: bytes): bytes do
-    at = if nc_cursor(table,21) == 0 do pos else nc_cursor(table,21) end
+    at = if nc_long(table,27) == 0 do pos else nc_long(table,27) end
     nc_join(Enum.concat(b[191],nc_u32(at)),Enum.concat(xa_mark(8+Enum.count(text),b[72,141,53,9,0,0,0]),nc_call(nz_slot(table))),Enum.concat(nt_word(Enum.count(text)),text))
   end
   def zf_fail_given(table: bytes, pos: integer): bytes do
-    at = if nc_cursor(table,21) == 0 do pos else nc_cursor(table,21) end
+    at = if nc_long(table,27) == 0 do pos else nc_long(table,27) end
     Enum.concat(Enum.concat(b[191],nc_u32(at)),nc_call(nz_slot(table)))
   end
   # A failure of the runtime itself (a panic of the pinned one): it names no
@@ -489,11 +489,11 @@ defmodule NativeFailures do
   end
   # Coverage (spec/alchem-testing-gen.md). A program the test rewriting gave
   # a main (module Alchem<127>TProcess) counts how often each statement of
-  # the files under test runs: byte 15 of the first table record is 2.
+  # the files under test runs: byte 20 of the first table record is 2.
   def zf_covered(source: bytes, table: bytes): bytes do
     count = nc_records(Enum.count(table))
     test = ny_module(source,table,b[65,108,99,104,127,109,127,84,80,114,111,99,101,115,115],Enum.concat(nc_u24(0),nc_u24(count)))
-    if test < 0 do table else if count+8 > nc_slot_limit() do table else nc_join(nc_slice(table,0,15),b[2],nc_slice(table,16,Enum.count(table))) end end
+    if test < 0 do table else if count+8 > nc_slot_limit() do table else nc_join(nc_slice(table,0,20),b[2],nc_slice(table,21,Enum.count(table))) end end
   end
   def zf_cover_slot(table: bytes): integer do nc_records(Enum.count(table))+8 end
   # The routine of spec/cover-x86_64.s.
@@ -502,11 +502,11 @@ defmodule NativeFailures do
   # of the program other than the one that holds the tests (the first) and
   # in no test or setup block: a call of the routine and the position.
   def zf_cover(source: bytes, table: bytes, env: bytes, pos: integer): bytes do
-    if Enum.at(table,15,0) != 2 do b[] else zf_cover_in(source,table,nc_cursor(env,0),pos) end
+    if Enum.at(table,20,0) != 2 do b[] else zf_cover_in(source,table,nc_cursor(env,0),pos) end
   end
   def zf_cover_in(source: bytes, table: bytes, id: integer, pos: integer): bytes do
     owner = nc_owner(table,id)
-    if Enum.at(table,15,0) != 2 do b[] else if owner == zf_entry(table,0) do b[] else if nc_ours(source,nc_meta(table,owner,0)) == 1 do b[] else if tm_ours(source,nc_meta(table,id,0)) > 0 do b[] else
+    if Enum.at(table,20,0) != 2 do b[] else if owner == zf_entry(table,0) do b[] else if nc_ours(source,nc_meta(table,owner,0)) == 1 do b[] else if tm_ours(source,nc_meta(table,id,0)) > 0 do b[] else
       zf_cover_call(table,pos)
     end end end end
   end
@@ -565,7 +565,7 @@ defmodule NativeFailures do
   # statement that starts with one counts nothing here (nk_cond_arms counts
   # the arms).
   def zf_cover_step(source: bytes, table: bytes, env: bytes, pos: integer): bytes do
-    if Enum.at(table,15,0) != 2 do b[] else if nc_word(source,pos,b[99,111,110,100])*nc_word(source,nc_end(source,pos),b[100,111]) == 1 do b[] else if zf_asserting(source,pos) == 1 do b[] else zf_cover(source,table,env,pos) end end end
+    if Enum.at(table,20,0) != 2 do b[] else if nc_word(source,pos,b[99,111,110,100])*nc_word(source,nc_end(source,pos),b[100,111]) == 1 do b[] else if zf_asserting(source,pos) == 1 do b[] else zf_cover(source,table,env,pos) end end end
   end
   # 1 for a statement the rewriting of an assert made inside the one that
   # stands for it (tm_: case left do l -> case T.__as(l, right) do r -> if
@@ -592,7 +592,7 @@ defmodule NativeFailures do
   # An arm of a cond whose condition starts at pos: its if is counted, but
   # for an arm that is just true, which is the else of the one before.
   def zf_cover_arm(source: bytes, table: bytes, env: bytes, condition: bytes, pos: integer): bytes do
-    count = if Enum.at(table,15,0) != 2 do b[] else if zf_else(source,pos) == 1 do b[] else zf_cover(source,table,env,nc_start(source,pos)) end end
+    count = if Enum.at(table,20,0) != 2 do b[] else if zf_else(source,pos) == 1 do b[] else zf_cover(source,table,env,nc_start(source,pos)) end end
     if Enum.count(count) == 0 do condition else if nc_pos(condition) < 0 do condition else Enum.concat(nc_slice(condition,0,nt_after(condition,4)),Enum.concat(count,nc_code(condition))) end end
   end
   def zf_else(source: bytes, pos: integer): integer do
@@ -615,37 +615,37 @@ defmodule NativeFailures do
   # its arity) is a function of one statement where it stands; a fn whose
   # parameters are patterns matches them in a statement of its own. plan:
   # the form (0 for fn), where the body starts and where the parameters
-  # stand. A capture compiled from a text of the compiler's own (byte 15 is
+  # stand. A capture compiled from a text of the compiler's own (byte 20 is
   # 3: zf_cover_text) is counted where the table says the capture stands.
   def zf_cover_fn(source: bytes, table: bytes, env: bytes, plan: bytes, shaped: integer): bytes do
-    flag = Enum.at(table,15,0)
+    flag = Enum.at(table,20,0)
     if flag < 2 do b[] else
       if Enum.at(plan,0,0) == 0 do if shaped == 0 do b[] else if nc_cursor(plan,4) == 0 do b[] else zf_cover(source,table,env,nc_cursor(plan,4)) end end else
-        if flag == 3 do zf_cover_call(table,nc_cursor(table,21)) else zf_cover(source,table,env,nc_cursor(plan,1)) end
+        if flag == 3 do zf_cover_call(table,nc_long(table,27)) else zf_cover(source,table,env,nc_cursor(plan,1)) end
       end
     end
   end
   # The table for compiling a capture from a text of the compiler's own:
-  # nothing in that text is counted but the capture itself (byte 15: 3), and
+  # nothing in that text is counted but the capture itself (byte 20: 3), and
   # not even that where the capture stands in code that is not counted.
   def zf_cover_text(source: bytes, table: bytes, env: bytes, pos: integer): bytes do
-    flag = Enum.at(table,15,0)
-    if flag != 2 do table else nc_join(nc_slice(table,0,15),b[if Enum.count(zf_cover(source,table,env,pos)) == 0 do 0 else 3 end],nc_slice(table,16,Enum.count(table))) end
+    flag = Enum.at(table,20,0)
+    if flag != 2 do table else nc_join(nc_slice(table,0,20),b[if Enum.count(zf_cover(source,table,env,pos)) == 0 do 0 else 3 end],nc_slice(table,21,Enum.count(table))) end
   end
   # An if, unless, case or with used as a value is a statement of its own to
   # the pinned compiler, where it stands.
   def zf_valued(source: bytes, table: bytes, env: bytes, value: bytes, pos: integer): bytes do
-    count = if Enum.at(table,15,0) != 2 do b[] else if nc_pos(value) < 0 do b[] else zf_cover(source,table,env,pos) end end
+    count = if Enum.at(table,20,0) != 2 do b[] else if nc_pos(value) < 0 do b[] else zf_cover(source,table,env,pos) end end
     if Enum.count(count) == 0 do value else Enum.concat(nc_slice(value,0,nt_after(value,4)),Enum.concat(count,nc_code(value))) end
   end
   # The first module of the program: the one whose tests run.
   def zf_entry(table: bytes, index: integer): integer do
-    if index >= nc_records(Enum.count(table)) do -1 else if Enum.at(table,index*28+16,0) == 32 do index else zf_entry(table,index+1) end end
+    if index >= nc_records(Enum.count(table)) do -1 else if Enum.at(table,index*40+21,0) == 32 do index else zf_entry(table,index+1) end end
   end
   # Sys.cover(): the address of the coverage routine and what follows it, 0
   # in a program that counts nothing.
   def zf_cover_at(table: bytes): bytes do
-    if Enum.at(table,15,0) != 2 do b[49,192] else Enum.concat(b[72,139,4,37],nc_u32(4195456+zf_cover_slot(table)*8)) end
+    if Enum.at(table,20,0) != 2 do b[49,192] else Enum.concat(b[72,139,4,37],nc_u32(4195456+zf_cover_slot(table)*8)) end
   end
   # The routine as an extra table entry, slot functions+8: its code (the word
   # at 4 says how long it is), then the address of the trace routine's
@@ -658,12 +658,12 @@ defmodule NativeFailures do
     # put in once the code is translated (zf_cover_arm_points).
     routine = if nc_a64() == 1 do cv_blob_arm() else zf_cover_code() end
     call = zf_cover_site(table)
-    points = if Enum.at(table,15,0) != 2 do b[] else zf_points(code,call,0,Enum.count(code)-Enum.count(call)-3) end
+    points = if Enum.at(table,20,0) != 2 do b[] else zf_points(code,call,0,Enum.count(code)-Enum.count(call)-3) end
     head = nc_join(nc_slice(routine,0,4),nc_u32(Enum.count(routine)),nc_slice(routine,8,Enum.count(routine)))
     trace = if nc_a64() == 1 do Enum.count(tr_blob_arm()) else Enum.count(tr_blob()) end
     # Where the code starts: after the table, which has nine more slots than the program has records.
     blob = nc_join(head,nc_join(nc_u32(4195456+nz_slot(table)*8),nc_u32(trace),Enum.concat(nc_u32(nc_units(Enum.count(points),8)),nc_u32(4195456+nc_records(Enum.count(table))*8+72))),points)
-    if Enum.at(table,15,0) != 2 do shared else nh_slot(shared,if nc_a64() == 1 do xa_raw(blob) else blob end,32) end
+    if Enum.at(table,20,0) != 2 do shared else nh_slot(shared,if nc_a64() == 1 do xa_raw(blob) else blob end,32) end
   end
   # The calls of the routine in code from first up to stop: where each
   # stands (32 bits) and the word behind it, which is the position of its
@@ -708,7 +708,7 @@ defmodule NativeFailures do
     third = zf_count(table,nc_slice(arms,nc_long(cuts,0),nc_long(cuts,4)))
     fourth = zf_count(table,nc_slice(arms,nc_long(cuts,4),Enum.count(arms)))
     fifth = zf_count(table,block)
-    if Enum.at(table,15,0) != 2 do b[] else if first+second+third+fourth+fifth == 0 do b[] else
+    if Enum.at(table,20,0) != 2 do b[] else if first+second+third+fourth+fifth == 0 do b[] else
       marks = nc_join(zf_cover_call(table,1073741824+first),nc_join(zf_cover_call(table,805306368+second),zf_cover_call(table,805306368+third),zf_cover_call(table,805306368+fourth)),zf_cover_call(table,805306368+fifth))
       Enum.concat(if Enum.count(marks) < 128 do b[235,Enum.count(marks)] else Enum.concat(b[233],nc_u32(Enum.count(marks))) end,marks)
     end end

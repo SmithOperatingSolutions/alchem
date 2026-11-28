@@ -323,7 +323,7 @@ defmodule NativeArms do
   def pc_step(source: bytes, table: bytes, ctx: bytes, before: bytes): bytes do
     clause = nc_cursor(before,0)
     shaped = pc_shape(source,table,ctx,clause)
-    at = nc_cursor(table,clause*28+21)
+    at = nc_long(table,clause*40+27)
     guard = if nc_pos(shaped) < 0 do b[] else if at == 0 do nc_value(0,b[],b[3]) else nc_condition(source,at,np_env(shaped),table,1) end end
     opened = if nc_pos(guard) < 0 do 0 else if at == 0 do 1 else if nc_expect(source,nc_pos(guard),b[100,111]) == nc_meta(table,clause,9) do 1 else 0 end end end
     body = if opened == 0 do b[] else nj_body(source,table,Enum.concat(nc_slice(ctx,0,3),nc_u24(clause)),np_env(shaped)) end
@@ -471,7 +471,7 @@ defmodule NativeArms do
   def pk_arms(source: bytes, env: bytes, table: bytes, plan: bytes): bytes do
     # A program whose coverage is counted has a count at each arm that
     # depends on the arm after it (zf_cover_rest): nk_cond_arms makes those.
-    if Enum.at(table,15,0) == 2 do nk_cond_arms(source,nc_cursor(plan,4),env,table,Enum.at(plan,0,0),nc_cursor(plan,1)) else pk_arms_plain(source,env,table,plan) end
+    if Enum.at(table,20,0) == 2 do nk_cond_arms(source,nc_cursor(plan,4),env,table,Enum.at(plan,0,0),nc_cursor(plan,1)) else pk_arms_plain(source,env,table,plan) end
   end
   def pk_arms_plain(source: bytes, env: bytes, table: bytes, plan: bytes): bytes do
     run = pk_grow(source,pk_step(source,nc_slice(plan,4,7),env,table,plan),env,table,plan,0)

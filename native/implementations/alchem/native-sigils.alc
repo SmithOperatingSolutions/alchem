@@ -406,7 +406,7 @@ defmodule NativeSigils do
     first = nc_cursor(bounds,0)
     stop = nc_cursor(bounds,3)
     middle = first+nc_half(stop-first)
-    flags = Enum.at(table,middle*28+16,0)
+    flags = Enum.at(table,middle*40+21,0)
     fits = if kind == 64 do if flags == 64 do 1 else 0 end else if flags < 32 do 1 else 0 end end
     mine = if owner < 0 do 1 else if nc_owner(table,middle) == owner do 1 else 0 end end
     same = if first >= stop do 0 else if fits*mine == 0 do 0 else nt_same(nc_slice(source,nc_meta(table,middle,0),nc_meta(table,middle,3)),name) end end
@@ -435,7 +435,7 @@ defmodule NativeSigils do
   # NaiveDateTime or DateTime, which inspect writes as a sigil; else 0.
   def sg_calendar(source: bytes, table: bytes, id: integer): integer do
     name = nc_slice(source,nc_meta(table,id,0),nc_meta(table,id,3))
-    found = if id < 0 do 0 else if Enum.at(table,id*28+16,0) != 64 do 0 else
+    found = if id < 0 do 0 else if Enum.at(table,id*40+21,0) != 64 do 0 else
       if nt_same(name,b[68,97,116,101]) == 1 do 30 else if nt_same(name,b[84,105,109,101]) == 1 do 31 else if nt_same(name,b[78,97,105,118,101,68,97,116,101,84,105,109,101]) == 1 do 32 else if nt_same(name,b[68,97,116,101,84,105,109,101]) == 1 do 33 else 0 end end end end
     end end
     if found == 0 do 0 else if nc_owner(table,id) != sg_types(source,table) do 0 else found end end
@@ -489,7 +489,7 @@ defmodule NativeSigils do
     first = nc_cursor(plan,3)
     stop = nc_cursor(plan,6)
     middle = first+nc_half(stop-first)
-    same = if first >= stop do 0 else if Enum.at(table,middle*28+16,0) >= 32 do 0 else if nc_owner(table,middle) == nc_cursor(plan,0) do 0 else nt_same(nc_slice(source,nc_meta(table,middle,0),nc_meta(table,middle,3)),name) end end end
+    same = if first >= stop do 0 else if Enum.at(table,middle*40+21,0) >= 32 do 0 else if nc_owner(table,middle) == nc_cursor(plan,0) do 0 else nt_same(nc_slice(source,nc_meta(table,middle,0),nc_meta(table,middle,3)),name) end end end
     if first >= stop do 0 else if same == 1 do 1 else
       if sg_elsewhere(source,table,name,nc_join(nc_slice(plan,0,3),nc_u24(first),nc_u24(middle))) == 1 do 1 else sg_elsewhere(source,table,name,nc_join(nc_slice(plan,0,3),nc_u24(middle+1),nc_u24(stop))) end
     end end
@@ -549,7 +549,7 @@ defmodule NativeSigils do
   end
   # The program ends naming pos, with a message and the active calls.
   def sg_fail(table: bytes, pos: integer, message: bytes): bytes do
-    place = if nc_cursor(table,21) == 0 do pos else nc_cursor(table,21) end
+    place = if nc_long(table,27) == 0 do pos else nc_long(table,27) end
     if nz_on(table) == 0 do nc_exit_code(70) else nc_join(nc_literal_emit(message),b[72,137,198],Enum.concat(Enum.concat(b[191],nc_u32(place)),nc_call(nz_slot(table)))) end
   end
   # 1 when no line ends from pos up to stop.

@@ -53,8 +53,8 @@ defmodule NativeTry do
   # field message: string and no type parameters.
   def ty_declare(source: bytes, pos: integer, owner: integer): bytes do
     record = nd_declare(source,pos,owner,64)
-    if Enum.count(record) != 28 do b[] else if nc_argc(record,0) != 0 do b[] else
-      if ty_messaged(source,nc_cursor(record,9),nc_cursor(record,12),16777216) == 0 do b[] else record end
+    if Enum.count(record) != 40 do b[] else if nc_argc(record,0) != 0 do b[] else
+      if ty_messaged(source,nc_meta(record,0,9),nc_meta(record,0,12),16777216) == 0 do b[] else record end
     end end
   end
   def ty_messaged(source: bytes, pos: integer, stop: integer, budget: integer): integer do
@@ -69,7 +69,7 @@ defmodule NativeTry do
   # 1 when declaration id was written with defexception.
   def ty_exception(source: bytes, table: bytes, id: integer): integer do
     stop = if id < 0 do -1 else nz_before(source,nc_meta(table,id,0)-1) end
-    if stop < 11 do 0 else if Enum.at(table,id*28+16,0) != 64 do 0 else nc_word_at(source,stop-11,b[100,101,102,101,120,99,101,112,116,105,111,110],0) end end
+    if stop < 11 do 0 else if Enum.at(table,id*40+21,0) != 64 do 0 else nc_word_at(source,stop-11,b[100,101,102,101,120,99,101,112,116,105,111,110],0) end end
   end
   # The index of the field message of exception id.
   def ty_message(source: bytes, table: bytes, id: integer, index: integer): integer do

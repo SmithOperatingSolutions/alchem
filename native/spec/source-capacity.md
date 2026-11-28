@@ -121,8 +121,10 @@ Seed IR V11 reads up to 16,777,216 bytes (`bytes.read`; versions before it keep
   the context of a function's clauses and in the plans the compiler's parts
   hand each other (the call's target, a struct's or a sum type's number, a
   module in the order of the modules, a function asked about for equality
-  or for JSON). Each is three bytes now; the record is 28 bytes for 27 and
-  an environment's records start at its fourth byte. None of this is in
+  or for JSON). Each is three bytes now, and an environment's records
+  start at its fourth byte. The table's record went from 27 bytes to 40,
+  with four bytes for each position and for its module, so that it need
+  not change when positions or numbers grow. None of this is in
   what the compiler makes: every program compiles to the bytes it did, and
   the compiler from the pinned release makes itself. `harness/past_limit.py`
   holds programs whose every function, struct and sum type stands behind
