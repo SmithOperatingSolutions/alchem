@@ -412,8 +412,8 @@ defmodule NativeFailures do
   # string literal, as the texts of native-testing.alc are.
   def zf_markup(source: bytes, s: integer): bytes do
     shape = sg_shape(source,s)
-    plan = Enum.concat(nc_slice(shape,3,12),nc_u24(s))
-    first = nc_cursor(shape,0)
+    plan = Enum.concat(nc_slice(shape,4,15),nc_u32(s))
+    first = nc_long(shape,0)
     if Enum.count(shape) == 0 do tm_no() else
       name = mh_hex(zf_markup_sum(source,plan,first,b[37,35,34,132,228,156,242,203]),7)
       fixed = zf_markup_fixed(source,plan,first,0)
@@ -465,24 +465,24 @@ defmodule NativeFailures do
   end
   # Where the #{ of the next value stands from from on, the text's end for none.
   def zf_markup_hole(source: bytes, plan: bytes, from: integer): integer do
-    if Enum.at(plan,2,0) == 0 do nc_cursor(plan,6) else sg_hole_at(source,from,nc_cursor(plan,6)) end
+    if Enum.at(plan,2,0) == 0 do nc_long(plan,7) else sg_hole_at(source,from,nc_long(plan,7)) end
   end
   def zf_markup_sum(source: bytes, plan: bytes, from: integer, sum: bytes): bytes do
     hole = zf_markup_hole(source,plan,from)
     text = sg_text(source,from,hole,plan)
     next = mh_hash(mh_hash(sum,text,0,Enum.count(text)),b[0],0,1)
-    close = if hole >= nc_cursor(plan,6) do -1 else sg_hole_end(source,hole+2,1) end
+    close = if hole >= nc_long(plan,7) do -1 else sg_hole_end(source,hole+2,1) end
     if close < 0 do next else zf_markup_sum(source,plan,close+1,next) end
   end
   def zf_markup_fixed(source: bytes, plan: bytes, from: integer, count: integer): bytes do
     hole = zf_markup_hole(source,plan,from)
     piece = nc_join(if count == 0 do b[92,34] else b[44,32,92,34] end,tm_quoted_all(sg_text(source,from,hole,plan),0),b[92,34])
-    close = if hole >= nc_cursor(plan,6) do -1 else sg_hole_end(source,hole+2,1) end
+    close = if hole >= nc_long(plan,7) do -1 else sg_hole_end(source,hole+2,1) end
     if close < 0 do piece else Enum.concat(piece,zf_markup_fixed(source,plan,close+1,count+1)) end
   end
   def zf_markup_values(source: bytes, plan: bytes, from: integer, count: integer): bytes do
     hole = zf_markup_hole(source,plan,from)
-    close = if hole >= nc_cursor(plan,6) do -1 else sg_hole_end(source,hole+2,1) end
+    close = if hole >= nc_long(plan,7) do -1 else sg_hole_end(source,hole+2,1) end
     if close < 0 do b[] else
       tm_cat(if count == 0 do b[77,97,114,107,117,112,46,111,102,40] else b[44,32,77,97,114,107,117,112,46,111,102,40] end,tm_fmt(source,hole+2,close,0),Enum.concat(b[41],zf_markup_values(source,plan,close+1,count+1)))
     end

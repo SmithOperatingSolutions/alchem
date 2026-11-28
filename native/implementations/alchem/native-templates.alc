@@ -43,7 +43,7 @@ defmodule NativeTemplates do
   # sigil that holds values, the closing line and where the text stops),
   # then where the sigil stands.
   def mh_copy(ctx: bytes, plan: bytes, first: integer, stop: integer): bytes do
-    if stop <= first do b[] else mx_fixed(ctx,first,stop,nc_cursor(plan,9)) end
+    if stop <= first do b[] else mx_fixed(ctx,first,stop,nc_long(plan,11)) end
   end
   # The text of the template from first up to stop as the inside of a
   # string literal.
@@ -57,7 +57,7 @@ defmodule NativeTemplates do
     next = Enum.concat(nc_u24(pos+1),nc_slice(places,3,6))
     if pos >= nc_cursor(places,3) do mh_copy(ctx,plan,run,pos) else
       if kept*mh_plain(value) == 1 do mh_emit_run(work,ctx,plan,next,run) else
-        nc_join(mh_copy(ctx,plan,run,pos),if kept == 1 do mx_lit(ctx,mh_escape(value),nc_cursor(plan,9)) else b[] end,mh_emit_run(work,ctx,plan,next,pos+1))
+        nc_join(mh_copy(ctx,plan,run,pos),if kept == 1 do mx_lit(ctx,mh_escape(value),nc_long(plan,11)) else b[] end,mh_emit_run(work,ctx,plan,next,pos+1))
       end
     end
   end
@@ -99,13 +99,13 @@ defmodule NativeTemplates do
   # One fixed piece of a template as a string literal, after a comma unless
   # it is the first.
   def mh_fixed(work: bytes, ctx: bytes, plan: bytes, places: bytes, count: integer): bytes do
-    at = nc_cursor(plan,9)
+    at = nc_long(plan,11)
     nc_join(if count == 0 do mx_lit(ctx,b[34],at) else mx_lit(ctx,b[44,32,34],at) end,mh_emit(work,ctx,plan,nc_cursor(places,0),nc_cursor(places,3)),mx_lit(ctx,b[34],at))
   end
   # One value: Markup.of(code). places: the #{, its closing brace and the
   # column of the code.
   def mh_value(work: bytes, ix: bytes, ctx: bytes, plan: bytes, places: bytes, count: integer): bytes do
-    at = nc_cursor(plan,9)
+    at = nc_long(plan,11)
     hole = nc_cursor(places,0)
     close = nc_cursor(places,3)
     inner = if close < hole+2 do mx_fail() else mx_walk(work,ix,ctx,hole+2,close,0) end
@@ -118,7 +118,7 @@ defmodule NativeTemplates do
   # length and the values. The result is the sum, then the same two lists.
   def mh_parts(work: bytes, ix: bytes, ctx: bytes, plan: bytes, acc: bytes): bytes do
     from = nc_cursor(acc,0)
-    stop = nc_cursor(plan,6)
+    stop = nc_long(plan,7)
     count = nc_read(acc,14)
     hole = if Enum.at(plan,2,0) == 0 do stop else sg_hole_at(work,from,stop) end
     text = sg_text(work,from,hole,plan)
@@ -138,8 +138,8 @@ defmodule NativeTemplates do
     pos = nc_cursor(state,0)
     shape = sg_shape(work,pos)
     stop = nc_end(work,pos)
-    plan = Enum.concat(nc_slice(shape,3,12),nc_u24(pos))
-    made = if Enum.count(shape) == 0 do b[] else if nc_cursor(shape,12) != stop do b[] else mh_parts(work,ix,ctx,plan,nc_join(mx_two(nc_cursor(shape,0),1),b[37,35,34,132,228,156,242,203],b[0,0,0,0,0])) end end
+    plan = Enum.concat(nc_slice(shape,4,15),nc_u32(pos))
+    made = if Enum.count(shape) == 0 do b[] else if nc_long(shape,15) != stop do b[] else mh_parts(work,ix,ctx,plan,nc_join(mx_two(nc_long(shape,0),1),b[37,35,34,132,228,156,242,203],b[0,0,0,0,0])) end end
     head = nc_join(mx_run(ctx,nc_cursor(state,9),pos),mh_word(ctx,b[77,97,114,107,117,112,46,116,101,109,112,108,97,116,101,40,34],pos),mh_word(ctx,Enum.concat(mh_hex(made,7),b[34,44,32,91]),pos))
     if Enum.count(made) < 11 do b[] else
       mx_done(state,stop,stop,nc_join(nc_join(head,nc_slice(made,11,11+nc_cursor(made,8)),mx_lit(ctx,b[93,44,32,91],pos)),nc_slice(made,11+nc_cursor(made,8),Enum.count(made)),mx_lit(ctx,b[93,41],pos)))
