@@ -842,7 +842,7 @@ defmodule NativeX86Arm do
     scanned = if Enum.count(marks) == 0 do first else xa_scan(code,0,Enum.count(code),Enum.count(code),Enum.concat(head,marks)) end
     list = xa_scan_list(scanned)
     mp = nc_slice(xa_offsets(list,0,a_div(Enum.count(list),16),0),4,4+Enum.count(list))
-    made = xa_emit(code,mp,0,a_div(Enum.count(mp),16),big,last)
+    made = xa_emit(code,mp,0,a_div(Enum.count(mp),16),nc_slice(head,2,7))
     if Enum.count(made)-4*a_div(Enum.count(made),4) != 0 do b[] else made end
   end
   # A scan: u32 where it stopped, u16 the length of the state, the state
@@ -999,31 +999,32 @@ defmodule NativeX86Arm do
       end
     end
   end
-  def xa_emit(code: bytes, mp: bytes, first: integer, stop: integer, big: integer, last: integer): bytes do
-    if stop-first == 1 do xa_emit_one(code,mp,first*16,big,last) else
+  # ends: whether the code is big, then the u32 of where the table ends.
+  def xa_emit(code: bytes, mp: bytes, first: integer, stop: integer, ends: bytes): bytes do
+    if stop-first == 1 do xa_emit_one(code,mp,first*16,ends) else
       if stop <= first do b[] else
         middle = first+a_div(stop-first,2)
-        Enum.concat(xa_emit(code,mp,first,middle,big,last),xa_emit(code,mp,middle,stop,big,last))
+        Enum.concat(xa_emit(code,mp,first,middle,ends),xa_emit(code,mp,middle,stop,ends))
       end
     end
   end
-  def xa_emit_one(code: bytes, mp: bytes, at: integer, big: integer, last: integer): bytes do
+  def xa_emit_one(code: bytes, mp: bytes, at: integer, ends: bytes): bytes do
     p = nc_long(mp,at)
     here = nc_long(mp,at+4)
     kind = Enum.at(mp,at+11,0)
     span = nc_long(mp,at+12)
     next = if at+16 < Enum.count(mp) do nc_long(mp,at+20) else -1 end
     made = if kind == 1 do Enum.concat(nc_slice(code,p,p+span),nc_zeros(xa_pad(span))) else if kind == 2 do a4(Enum.at(code,p,0)+256*Enum.at(code,p+1,0)) else if kind == 3 do Enum.concat(nc_slice(code,p+7,p+span),nc_zeros(xa_pad(span-7))) else
-      xa_emit_insn(code,mp,at,here,kind,big,last)
+      xa_emit_insn(code,mp,at,here,kind,ends)
     end end end
     # Each translation must come out at the size pass 1 measured; one that
     # does not leaves a byte that no instruction is, which xa_function sees.
     if next >= 0 do (if here+Enum.count(made) != next do b[1] else made end) else made end
   end
   # An instruction, C turned over before it (kind 4) and after it (8).
-  def xa_emit_insn(code: bytes, mp: bytes, at: integer, here: integer, kind: integer, big: integer, last: integer): bytes do
+  def xa_emit_insn(code: bytes, mp: bytes, at: integer, here: integer, kind: integer, ends: bytes): bytes do
     before = if kind-8*a_div(kind,8) == 4 do xa_flip() else b[] end
-    made = xa_insn(xd(code,nc_long(mp,at)),mp,here+Enum.count(before),Enum.concat(b[Enum.at(mp,at+8,0),Enum.at(mp,at+9,0),Enum.at(mp,at+10,0),big],nc_u32(last)))
+    made = xa_insn(xd(code,nc_long(mp,at)),mp,here+Enum.count(before),Enum.concat(b[Enum.at(mp,at+8,0),Enum.at(mp,at+9,0),Enum.at(mp,at+10,0)],ends))
     nc_join(before,made,if kind >= 8 do xa_flip() else b[] end)
   end
   def xa_pad(span: integer): integer do 4*a_div(span+3,4)-span end

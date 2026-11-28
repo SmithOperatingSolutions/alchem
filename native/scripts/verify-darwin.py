@@ -58,7 +58,7 @@ SECONDS = {'front_end': 2169, 'ordering': 1242, 'core_modules': 1185, 'corpus': 
            'fixtures': 585, 'lists': 581, 'programs': 488, 'type_words': 456, 'boolean_library': 397,
            'replaced': 320, 'nodes': 298, 'library': 284, 'maps': 278, 'fetch': 270, 'lsp': 263, 'string_case': 198,
            'testing': 193, 'binary': 188, 'processes': 166, 'failures': 159, 'commands': 150, 'refusals': 150,
-           'regex': 136, 'nil_forms': 129, 'options': 113, 'streams': 108, 'comprehensions': 94, 'json_library': 93,
+           'regex': 136, 'past_limit': 130, 'nil_forms': 129, 'options': 113, 'streams': 108, 'comprehensions': 94, 'json_library': 93,
            'long_bodies': 90, 'described': 83, 'sets': 76, 'macros': 75, 'floats': 69, 'gen': 68, 'crypto': 64,
            'speed': 62, 'written': 60, 'clauses': 57, 'sigils': 44, 'protocols': 31, 'exceptions': 27, 'parsing': 25,
            'operators': 23, 'closures': 20, 'diskstore': 20, 'equality': 19, 'templates': 19, 'patterns': 12,
