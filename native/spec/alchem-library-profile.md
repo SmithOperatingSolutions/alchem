@@ -52,9 +52,11 @@ O_CLOEXEC and mode0644 (an existing file keeps its mode), writes any bytes, retr
 EINTR, continues after short writes and reports a failed close. The shared file
 runtime (spec/file-read-x86_64.s with Go 1.27.4's errno texts from
 spec/errno-messages.json, about4KB) is emitted once per program in the table
-slot after the Integer.parse slot. A file of more than the pinned16,777,216 bytes is
-error("file exceeds 16777216 bytes"), as there (it is read first; one that exhausts
-the arena exits71).
+slot after the Integer.parse slot. A file of more than 1,073,741,824 bytes is
+error("file exceeds 1073741824 bytes") (it is read first; one that exhausts
+the arena exits71). The pinned runtime reads 16,777,216 bytes
+(`file exceeds 16777216 bytes`): a deliberate difference, so that a source file
+may be as long as a program (`alchem-modules.md`).
 
 Native entry stubs keep the initial stack pointer in R14 (argc, argv, envp), which
 generated code and runtime routines otherwise leave untouched. Environment values

@@ -149,7 +149,7 @@ call whose name also has a form without a value.
 - Every value comes from the arena (16 GiB reserved lazily,
   `alchem-tail-calls.md`), which is never given back: a file or a
   command's output larger than what is left ends the program with status
-  71 (upstream: 16 MiB for `File.read_binary`, no limit for the rest). Working buffers are mapped memory outside the
+  71 (upstream: 16 MiB for `File.read_binary`, which is 1 GiB here as for `File.read`, no limit for the rest). Working buffers are mapped memory outside the
   arena.
 - `System.monotonic_time` counts from its first call: the entry stub does
   not record when the program started. `System.memory` reports the arena

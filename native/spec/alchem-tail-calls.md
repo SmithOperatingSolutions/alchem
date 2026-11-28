@@ -111,11 +111,12 @@ reservation halves down to its 4 MiB floor (`floor_arena`: the image and
 7 MiB), so the exact boundaries of the 4 MiB arena are still tested, and
 `harness/collection_memory.py` measures the same program at both sizes.
 
-File and input sizes are now the pinned runtime's instead of the arena's:
-`File.read` of more than 16,777,216 bytes is
-`error("file exceeds 16777216 bytes")` and `IO.read_all` of more input ends
-the program with `input exceeds 16777216 bytes` at the call (both read the
-whole of it first).
+File and input sizes have their own limits instead of the arena's:
+`File.read` of more than 1,073,741,824 bytes is
+`error("file exceeds 1073741824 bytes")` (the pinned runtime's limit is
+16,777,216) and `IO.read_all` of more than 16,777,216 bytes of input ends
+the program with `input exceeds 16777216 bytes` at the call, as the pinned
+runtime does (both read the whole of it first).
 
 ### Measured against the pinned compiler
 

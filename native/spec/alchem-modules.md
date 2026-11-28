@@ -18,10 +18,9 @@ accepts a bundle of several modules.
 - Imported modules cannot define `main`; a program has exactly one.
 - Import cycles and duplicate module names are errors. Importing a file twice,
   or along several paths, includes it once.
-- No file, the entry or an imported one, may be longer than 16,776,191
-  bytes (`File.read` gives 16 MiB; a program of several files may have
-  1,073,740,799, `nc_limit`, `source-capacity.md`):
-  `PATH: read source: source exceeds 16776191 bytes`. The pinned compiler
+- No file, the entry or an imported one, may be longer than a program:
+  1,073,740,799 bytes (`nc_limit`, `source-capacity.md`; `File.read` gives
+  1 GiB): `PATH: read source: source exceeds 1073740799 bytes`. The pinned compiler
   reads no file over 1 MiB (`source exceeds 1048576 bytes`), though it
   builds a program of several such files: this is a deliberate difference,
   in the bundlers, `alchem check`, `alchem fmt` and the parser of

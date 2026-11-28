@@ -25,6 +25,17 @@ def padded(text,size):
     return text+'#'*(size-len(text)-1)+'\n'
 
 
+def lined(text,size):
+    """text with comment lines of 71 bytes, and a last shorter one, that make it size bytes."""
+    rest=size-len(text)
+    return text+('#'*70+'\n')*(rest//71)+('#'*(rest%71-1)+'\n' if rest%71 else '')
+
+
+def long(text,size):
+    """The same for a file too long to hold here: write() makes it in pieces."""
+    return (text,size)
+
+
 # (files, stdout): outcomes confirmed against the pinned upstream `alchem run`.
 PROJECTS=[
     ({'app.alc':app(['lib/math.alc'],['IO.puts(Integer.to_string(Math.double(21)))','IO.puts(Integer.to_string(double(1)))','IO.puts(Integer.to_string(Math.helper(1)))'],
@@ -47,9 +58,10 @@ PROJECTS=[
       'a.alc':'defmodule A do\n  import "tagger.alc"\n\n  def name(): string do\n    "a" <> Tagger.tag()\n  end\nend\n',
       'b.alc':'defmodule B do\n  import "tagger.alc"\n\n  def name(): string do\n    "b" <> Tagger.tag()\n  end\nend\n',
       'tagger.alc':'defmodule Tagger do\n  def tag(): string do\n    "!"\n  end\nend\n'},b'a!b!\n'),
-    # A file of 1 MiB, the most the pinned compiler reads, and one of 3 MiB: a file may be as long as a program (UNBUNDLED).
+    # A file of 1 MiB, the most the pinned compiler reads, one of 3 MiB, and one past the 16 MiB File.read once gave: a file may be as long as a program (UNBUNDLED).
     ({'app.alc':app(['big.alc'],['IO.puts(Integer.to_string(Util.twice(1)))']),'big.alc':padded(UTIL,1048576)},b'2\n'),
     ({'app.alc':app(['big.alc'],['IO.puts(Integer.to_string(Util.twice(2)))']),'big.alc':padded(UTIL,3145728)},b'4\n'),
+    ({'app.alc':app(['big.alc'],['IO.puts(Integer.to_string(Util.twice(3)))']),'big.alc':lined(UTIL,16777217)},b'6\n'),
 ]
 # Compiler rejections (exit65) for bundles that break a visibility rule.
 REJECTED=[
@@ -69,10 +81,10 @@ UNBUNDLED=[
     ({'app.alc':app(['lib/cyc.alc'],['IO.puts("x")']),'lib/cyc.alc':'defmodule Cyc do\n  import "../app.alc"\n\n  def f(n: integer): integer do\n    n\n  end\nend\n'},'import cycle'),
     ({'app.alc':app(['util.alc','other.alc'],['IO.puts("x")']),'util.alc':UTIL,'other.alc':UTIL},'duplicate module Util'),
     ({'app.alc':app(['tool.alc'],['IO.puts("x")']),'tool.alc':'defmodule Tool do\n  def main() do\n    System.halt(1)\n  end\nend\n'},'imported modules cannot define main'),
-    # No file is longer than a program may be (16,776,191 bytes: the pinned
+    # No file is longer than a program may be (1,073,740,799 bytes: the pinned
     # compiler reads none over 1 MiB), imported or the entry.
-    ({'app.alc':app(['big.alc'],['IO.puts("x")']),'big.alc':padded(UTIL,16776192)},'read source: source exceeds 16776191 bytes'),
-    ({'app.alc':padded(app([],['IO.puts("x")']),16776192)},'read source: source exceeds 16776191 bytes'),
+    ({'app.alc':app(['big.alc'],['IO.puts("x")']),'big.alc':long(UTIL,1073740800)},'read source: source exceeds 1073740799 bytes'),
+    ({'app.alc':long(app([],['IO.puts("x")']),1073740800)},'read source: source exceeds 1073740799 bytes'),
 ]
 ONE='defmodule Util do def twice(n: integer): integer do n * 2 end end'
 # Raw bundle text the compiler must reject.
@@ -94,7 +106,7 @@ INVALID=[
 
 
 # What tools/alchem-bundle.alc reports on standard error for each UNBUNDLED project.
-NATIVE_ERRORS=['no such file or directory','import cycle','duplicate module Util','imported modules cannot define main','big.alc: read source: source exceeds 16776191 bytes','app.alc: read source: source exceeds 16776191 bytes']
+NATIVE_ERRORS=['no such file or directory','import cycle','duplicate module Util','imported modules cannot define main','big.alc: read source: source exceeds 1073740799 bytes','app.alc: read source: source exceeds 1073740799 bytes']
 
 
 def native_bundler(compiler,base):
@@ -112,7 +124,7 @@ def native_bundler(compiler,base):
             assert (done.returncode,done.stdout,done.stderr)==(0,want,b''),('native bundle',index,argument,done.returncode,done.stderr)
             bundles+=1
     for index,((files,_),message) in enumerate(zip(UNBUNDLED,NATIVE_ERRORS)):
-        done=subprocess.run([str(tool),str(write(base/f'nativebad{index}',files))],capture_output=True,env={'PATH':''},timeout=120)
+        done=subprocess.run([str(tool),str(write(base/f'unbundled{index}',files))],capture_output=True,env={'PATH':''},timeout=120)
         assert (done.returncode,done.stdout)==(1,b'') and done.stderr.startswith(b'E_BUNDLE: ') and message.encode() in done.stderr,('native bundler error',message,done)
     for arguments in [[],['a.alc','b.alc'],['--locked']]:
         done=subprocess.run([str(tool)]+arguments,capture_output=True,env={'PATH':''},timeout=120)
@@ -128,7 +140,15 @@ def native_bundler(compiler,base):
 
 def write(root,files):
     for name,text in files.items():
-        path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(text)
+        path=root/name;path.parent.mkdir(parents=True,exist_ok=True)
+        if isinstance(text,str):path.write_text(text);continue
+        text,size=text;left=size-len(text)-1
+        if path.exists() and path.stat().st_size==size:continue    # made for the other bundler
+        with open(path,'w') as out:
+            out.write(text)
+            while left:
+                piece=min(left,1<<20);out.write('#'*piece);left-=piece
+            out.write('\n')
     return root/next(iter(files))
 
 

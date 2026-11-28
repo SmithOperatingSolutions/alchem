@@ -11,15 +11,17 @@ limit to hold them is compiled without them, as before. It was 16,776,191
 bytes while a position was three bytes (issue #72), and 4,194,303 and
 1,048,576 before that.
 
-Three things keep their own, smaller bound:
+A source *file* may be as long as a program for the bundlers and `alchem`
+(`alchem-modules.md`): `File.read` gives 1,073,741,824 bytes, where the
+pinned runtime gives 16,777,216, and a file was held to 16,776,191 bytes
+until it did. The pinned compiler refuses a source file past 1,048,576
+bytes (`source exceeds 1048576 bytes`) but not a program; a single source
+given to `alchem-compiler` directly may be larger than a megabyte because
+the compiler's own source has to pass through it; these are deliberate
+differences.
 
-- A source *file* is at most 16,776,191 bytes for the bundlers and `alchem`
-  (`alchem-modules.md`; `File.read` gives 16 MiB). A program of several files
-  may be as long as a source may be. The pinned compiler refuses a source
-  file past 1,048,576 bytes (`source exceeds 1048576 bytes`) but not a
-  program; a single source given to `alchem-compiler` directly may be larger
-  than a megabyte because the compiler's own source has to pass through it;
-  this is a deliberate difference.
+Two things keep their own, smaller bound:
+
 - The rewriting of macros, protocols, HTML templates and an `fn` whose
   clauses stand on the lines after it (`native-macros.alc`) keeps a place in
   three bytes. A text of 16 MiB or more that may hold one of them
@@ -263,7 +265,7 @@ What remains fixed, with the reason:
 
 | Limit | Number | Why |
 | --- | --- | --- |
-| Source | 1,073,740,799 bytes; 16,776,191 a file, and for a text with a macro, a protocol, a template, a clause-style `fn` or tests | a failure passes its position in 30 bits; `File.read`; the rewriting keeps a place in three bytes (above); the pinned compiler stops at 1,048,576 a file |
+| Source | 1,073,740,799 bytes, a file or a program; 16,776,191 for a text with a macro, a protocol, a template, a clause-style `fn` or tests | a failure passes its position in 30 bits; the rewriting keeps a place in three bytes (above); the pinned compiler stops at 1,048,576 a file |
 | Functions; table records | 16,777,214; 16,777,215 | 24-bit numbers ("Limits that remain"); 65,535 and 65,536 until they were widened |
 | Parameters of one function | 65,534 | two bytes of the table record (the pinned compiler takes what its megabyte holds, about 140,000 one-letter parameters) |
 | The description of a type for `inspect`, the JSON library and node messages | 64 KiB a node: a struct of about 3,000 fields, a sum type of about 4,000 variants | a node's length is 16 bits in the format the inspect routine (`spec/integer-parse-x86_64.s`), `library/JSON.alc` and the node codec read. Counts and name lengths in it are one byte, or 255 and four bytes (`ni_count`, `ins_count`), which `inspect` reads; JSON and node messages read one byte, so a type with 255 fields, variants or tuple parts or more has no JSON or wire form (it is refused at compilation: `ni_held`, `ni_small`) |
@@ -516,7 +518,10 @@ end of sources of 16,777,217 and 20,971,521 bytes, programs of 16,776,192
 and 25,165,825 bytes that run, and refusal of 1,073,740,800 bytes as they
 are read; the compiler under 3 GiB of address space
 (the arena is halved until it is granted) and under 512 MiB (exit 71); and a
-21.6 MB image whose one function holds more than 16 MiB of code. `harness/compiler_entry.py` reads
+21.6 MB image whose one function holds more than 16 MiB of code. `harness/modules.py` builds a project
+whose imported file is 16,777,217 bytes, with both bundlers, and has both
+refuse a file of 1,073,740,800 bytes, imported or the entry; `harness/file_read.py`
+reads files of 16,777,217 and 1,073,741,824 bytes and is given the error for one byte more. `harness/compiler_entry.py` reads
 binary standard input of 65,535, 65,536, 1,048,575, 1,048,576, 4,194,303,
 4,194,304 bytes through a compiler entry and is refused past
 1,073,740,799; `harness/input.py` does the same for seed IR V11 at 4,194,303,

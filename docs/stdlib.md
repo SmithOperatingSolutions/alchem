@@ -36,7 +36,7 @@ A square root is `Float.pow(x, 0.5)`.
 
 | Function | Result |
 | --- | --- |
-| `File.read(path)` | `result[string,string]`: `ok(contents)`, or `error(reason)` when the file is missing, unreadable or a directory (the operating system's message), larger than 16 MiB (`file exceeds 16777216 bytes`) or not UTF-8 (`file is not valid UTF-8`) |
+| `File.read(path)` | `result[string,string]`: `ok(contents)`, or `error(reason)` when the file is missing, unreadable or a directory (the operating system's message), larger than 1 GiB (`file exceeds 1073741824 bytes`) or not UTF-8 (`file is not valid UTF-8`) |
 | `File.write(path, content)`, `File.append(path, content)` | `result[tuple[],string]`; files are created with mode 0644 and written in place |
 | `File.remove(path)` | `result[tuple[],string]` |
 | `File.list(directory)` | `result[list[string],string]`: entry names, sorted |

@@ -54,7 +54,7 @@
     r = if fd < 0 do 0 else Sys.load(fd) end
     if fd < 0 do error(Sys.fail("open", p, fd)) else
       Sys.call(3, fd)
-      if r < 0 do error(Sys.fail("read", p, r)) else if Sys.peek(s + 64) > 16777216 do error("file exceeds 16777216 bytes") else ok(Sys.got()) end end
+      if r < 0 do error(Sys.fail("read", p, r)) else if Sys.peek(s + 64) > 1073741824 do error("file exceeds 1073741824 bytes") else ok(Sys.got()) end end
     end
   end
 #: read_binary!/1 needs read_binary/1
