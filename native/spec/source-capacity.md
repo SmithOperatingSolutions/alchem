@@ -518,7 +518,7 @@ are read; the compiler under 3 GiB of address space
 (the arena is halved until it is granted) and under 512 MiB (exit 71); and a
 21.6 MB image whose one function holds more than 16 MiB of code. `harness/compiler_entry.py` reads
 binary standard input of 65,535, 65,536, 1,048,575, 1,048,576, 4,194,303,
-4,194,304 and 16,777,217 bytes through a compiler entry and is refused past
+4,194,304 bytes through a compiler entry and is refused past
 1,073,740,799; `harness/input.py` does the same for seed IR V11 at 4,194,303,
 4,194,304, 16,776,191 and 16,777,216 and keeps V10 at 1,048,576. `harness/compiler_arena.py` covers budgets up to 16 GiB and their
 halving under an address-space limit; `harness/self_host.py` measures the

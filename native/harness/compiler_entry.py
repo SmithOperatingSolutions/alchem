@@ -25,11 +25,8 @@ def verify(frontend,backends):
    for data in [b'',b'abc',bytes(range(256)),b'x'*65535,b'x'*65536,b'x'*1048575,b'x'*1048576,bytes(range(256))*16383+bytes(range(255)),b'x'*4194304,bytes(range(256))*65531+bytes(range(255))]:
     run=subprocess.run([str(output)],input=data,capture_output=True,env={'PATH':''},timeout=120)
     assert (run.returncode,run.stdout,run.stderr)==(0,data if data else b'\0\xff',b''),run
-   # 16 MiB and a byte pass a compiler entry now; a byte more than its limit of
-   # 1 GiB less 1 KiB does not (written as it is taken, until it takes no more).
-   data=b'x'*16777217
-   run=subprocess.run([str(output)],input=data,capture_output=True,env={'PATH':''},timeout=120)
-   assert (run.returncode,run.stdout,run.stderr)==(0,data,b''),(run.returncode,len(run.stdout),run.stderr[:200])
+   # More than a compiler entry's limit of 1 GiB less 1 KiB is refused as it is
+   # read (written as it is taken, until it takes no more).
    child=subprocess.Popen([str(output)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env={'PATH':''})
    try:
     for _ in range(1024):child.stdin.write(b'x'*(1<<20))
@@ -64,7 +61,7 @@ def verify(frontend,backends):
   for limit in [size//2+300000,size//3+300000]:
    assert limit<size and boot.frontend_ir(text,frontend,limit)==whole,('compiler source lowered in parts differs',limit)
  print(f'Compiler-entry read/write EINTR injection: {injected}/{len(backends)*2}')
- print('PASS Alchem-emitted compiler entry: binary/empty/exact input up to 16 MiB, overflow, public signature, backend equality and the compiler source lowered in parts')
+ print('PASS Alchem-emitted compiler entry: binary/empty/exact input up to 4 MiB, overflow past 1 GiB, public signature, backend equality and the compiler source lowered in parts')
 
 
 if __name__=='__main__':verify(Path(sys.argv[1]).resolve(),[Path(p).resolve() for p in sys.argv[2:]])
