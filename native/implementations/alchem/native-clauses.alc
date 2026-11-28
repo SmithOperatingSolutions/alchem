@@ -585,7 +585,7 @@ defmodule NativeClauses do
   # The environment of a fn: spec holds its declared result type, unknown
   # (9) when its body is to give it.
   def nj_scoped(env: bytes, spec: bytes): bytes do
-    if Enum.count(env) == 0 do b[] else nj_mark(env,Enum.concat(b[41],if nc_tag(spec) == 9 do if Enum.count(nc_kind(spec)) > 5 do nc_slice(nc_kind(spec),5,Enum.count(nc_kind(spec))) else b[9] end else nc_kind(spec) end)) end
+    if Enum.count(env) == 0 do b[] else nj_mark(env,Enum.concat(b[41],if nc_tag(spec) == 9 do if Enum.count(nc_kind(spec)) > 6 do nc_slice(nc_kind(spec),6,Enum.count(nc_kind(spec))) else b[9] end else nc_kind(spec) end)) end
   end
   # The body of a fn. When its result type comes from its body and it holds
   # a return, the body is compiled again with that type for each return to

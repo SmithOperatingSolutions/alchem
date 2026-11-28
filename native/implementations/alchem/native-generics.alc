@@ -195,7 +195,7 @@ defmodule NativeGenerics do
     given = nc_arg_kind(args,index)
     if index == nc_arg_count(args) do 0 else
       if nt_tag(given) != 11 do nu_unshaped(source,cells,args,index+1) else
-        if nf_general(source,nu_bare(source,nc_cursor(given,1),64)) == 1 do nu_unshaped(source,cells,args,index+1) else
+        if nf_general(source,nu_bare(source,nc_long(given,1),64)) == 1 do nu_unshaped(source,cells,args,index+1) else
           if nt_tag(nt_item(cells,index)) != 10 do 1 else nu_unshaped(source,cells,args,index+1) end
         end
       end
@@ -510,7 +510,7 @@ defmodule NativeGenerics do
   # 1 when a deferred argument is a reference to a generic function, which
   # needs a function type no parameter with type variables can give.
   def nw_generic_reference(source: bytes, env: bytes, table: bytes, pending: bytes): integer do
-    start = nc_cursor(pending,1)
+    start = nc_long(pending,1)
     if nt_tag(pending) != 11 do 0 else if byte_at(source,start) != 38 do 0 else
       # A function of several forms is no such reference: the element type says which form.
       if nf_capture_form(source,start) == 1 do 0 else if nf_target(source,nc_start(source,nc_end(source,start)),env,table) < 0 do 0 else 1-nj_formed(source,table,nf_target(source,nc_start(source,nc_end(source,start)),env,table)) end end

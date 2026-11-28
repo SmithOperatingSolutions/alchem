@@ -560,7 +560,7 @@ defmodule NativeSourceCompiler do
     if count < 0 do b[] else
       next = nc_parameter(source,pos)
       if next < 0 do b[] else
-        if nc_word(source,next,b[41]) == 1 do Enum.concat(nc_u24(nc_end(source,next)),nc_u24(count+1)) else
+        if nc_word(source,next,b[41]) == 1 do Enum.concat(nc_u32(nc_end(source,next)),nc_u24(count+1)) else
           if nc_word(source,next,b[44]) == 1 do nc_parameters(source,nc_end(source,next),count+1) else b[] end
         end
       end
@@ -978,7 +978,7 @@ defmodule NativeSourceCompiler do
     at = if shift == 0 do Enum.count(cells) else nc_arg_next(cells,offset) end
     held = nt_read(cells,at)
     if at >= Enum.count(cells) do nc_slice(cells,offset,Enum.count(cells)) else
-      nc_join(nc_slice(cells,offset,at),nt_cell(nc_join(nc_slice(held,0,4),nc_u24(nc_cursor(held,4)+shift),nc_slice(held,7,10))),nc_arg_shift(cells,nt_after(cells,at),shift))
+      nc_join(nc_slice(cells,offset,at),nt_cell(nc_join(nc_slice(held,0,5),nc_u24(nc_cursor(held,5)+shift),nc_slice(held,8,11))),nc_arg_shift(cells,nt_after(cells,at),shift))
     end
   end
   # A run of arguments: 1 when a deferred lambda is among them, the length
@@ -1004,7 +1004,7 @@ defmodule NativeSourceCompiler do
     tried = if deferred == 0 do nc_expression(source,pos,nf_unexpected(source,env,table),table,depth+2) else b[] end
     # An argument that needs its parameter's type for a lambda inside it waits as a lambda does.
     late = if deferred != 0 do deferred else if nc_pos(tried) >= 0 do 0 else nf_late(source,pos,depth) end end
-    arg = if late == 0 do tried else if late < 0 do b[] else nc_value(late,b[],nc_join(b[11],nc_u24(nc_start(source,pos)),b[0,0,0])) end end
+    arg = if late == 0 do tried else if late < 0 do b[] else nc_value(late,b[],nc_join(b[11],nc_u32(nc_start(source,pos)),b[0,0,0])) end end
     stop = nc_pos(arg)
     last = if stop < 0 do 0 else nc_word(source,stop,b[41]) end
     code = if late == 0 do Enum.concat(nc_code(arg),b[80]) else b[] end

@@ -720,7 +720,7 @@ defmodule NativeSigils do
   # typed, from argument index on, places its code.
   def sg_shift(args: bytes, index: integer, delta: integer): bytes do
     held = nc_arg_kind(args,index)
-    moved = if nt_tag(held) != 11 do args else nc_arg_packet(nc_pos(args),nc_arg_count(args),nt_replace(nc_arg_types(args),index,nc_join(nc_slice(held,0,4),nc_u24(nc_cursor(held,4)+delta),nc_slice(held,7,10))),nc_arg_code(args)) end
+    moved = if nt_tag(held) != 11 do args else nc_arg_packet(nc_pos(args),nc_arg_count(args),nt_replace(nc_arg_types(args),index,nc_join(nc_slice(held,0,5),nc_u24(nc_cursor(held,5)+delta),nc_slice(held,8,11))),nc_arg_code(args)) end
     if index >= nc_arg_count(args) do args else sg_shift(moved,index+1,delta) end
   end
   # Calls of the program's own generic functions are strict about a library
@@ -741,7 +741,7 @@ defmodule NativeSigils do
   # those of its parameters, and for a library function passed by arity to
   # a strict call those of its result too.
   def sg_lambda_names(source: bytes, env: bytes, table: bytes, given: bytes, wanted: bytes, strict: integer): bytes do
-    start = nc_cursor(given,1)
+    start = nc_long(given,1)
     form = if strict == 0 do b[] else if byte_at(source,start) != 38 do b[] else if nf_capture_form(source,start) == 1 do b[] else nf_library_form(source,start,env,table) end end end
     known = if nc_pos(form) < 0 do 0 else nf_target(source,nc_start(source,nc_end(source,start)),env,table) end
     if nc_pos(form) < 0 do nw_parameter_names(wanted,0,b[]) else if known >= 0 do nw_parameter_names(wanted,0,b[]) else nu_names(wanted,0,b[]) end end

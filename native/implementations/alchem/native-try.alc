@@ -75,7 +75,7 @@ defmodule NativeTry do
   def ty_message(source: bytes, table: bytes, id: integer, index: integer): integer do
     field = nd_field_at(source,table,id,index)
     if nc_pos(field) < 0 do -1 else
-      if nc_word(source,nc_cursor(nc_code(field),0),b[109,101,115,115,97,103,101]) == 1 do index else ty_message(source,table,id,index+1) end
+      if nc_word(source,nc_long(nc_code(field),0),b[109,101,115,115,97,103,101]) == 1 do index else ty_message(source,table,id,index+1) end
     end
   end
   # A type as a failure record holds it: a string of its bytes.
