@@ -21,22 +21,22 @@ defmodule NativeStructures do
     end end
   end
   def nr_items(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, plan: integer): bytes do
-    all = nr_grow(source,nr_step(source,nc_join(nc_u24(pos),b[0],nc_u24(0)),env,table,b[plan,depth]),env,table,b[plan,depth],0)
-    run = nc_slice(all,7,Enum.count(all))
-    if Enum.count(all) == 0 do b[] else nc_arg_packet(nc_cursor(all,0),nc_cursor(all,4),nc_run_kinds(run),nc_run_code(run)) end
+    all = nr_grow(source,nr_step(source,nc_join(nc_u32(pos),b[0],nc_u24(0)),env,table,b[plan,depth]),env,table,b[plan,depth],0)
+    run = nc_slice(all,8,Enum.count(all))
+    if Enum.count(all) == 0 do b[] else nc_arg_packet(nc_long(all,0),nc_cursor(all,5),nc_run_kinds(run),nc_run_code(run)) end
   end
   # The part of a tuple that stands where before says, of the index it says:
   # where the next one starts (the position after the "}" with a 1), the
   # index of the next, then the part as a run (nc_run). plan: 1 when the
   # parts are expected to hold functions, and the nesting.
   def nr_step(source: bytes, before: bytes, env: bytes, table: bytes, plan: bytes): bytes do
-    pos = nc_cursor(before,0)
-    index = nc_cursor(before,4)
+    pos = nc_long(before,0)
+    index = nc_cursor(before,5)
     arg = nc_expression(source,pos,if Enum.at(plan,0,0) == 0 do env else nf_expecting(source,env,pos,nf_part(source,env,table,index)) end,table,Enum.at(plan,1,0)+2)
     stop = nc_pos(arg)
     last = if stop < 0 do 0 else nc_word(source,stop,b[125]) end
     if stop < 0 do b[] else if last+nc_word(source,stop,b[44]) == 0 do b[] else
-      Enum.concat(nc_join(nc_u24(nc_end(source,stop)),b[last],nc_u24(index+1)),nc_run(0,nt_cell(nc_kind(arg)),b[0],Enum.concat(nc_code(arg),b[80])))
+      Enum.concat(nc_join(nc_u32(nc_end(source,stop)),b[last],nc_u24(index+1)),nc_run(0,nt_cell(nc_kind(arg)),b[0],Enum.concat(nc_code(arg),b[80])))
     end end
   end
   # Up to 2^level parts after those of before; runs are joined in doubling
@@ -44,16 +44,16 @@ defmodule NativeStructures do
   def nr_more(source: bytes, before: bytes, env: bytes, table: bytes, plan: bytes, level: integer): bytes do
     if level == 0 do nr_step(source,before,env,table,plan) else
       first = nr_more(source,before,env,table,plan,level-1)
-      if Enum.count(first) == 0 do b[] else if Enum.at(first,3,0) == 1 do first else nr_joined(first,nr_more(source,first,env,table,plan,level-1)) end end
+      if Enum.count(first) == 0 do b[] else if Enum.at(first,4,0) == 1 do first else nr_joined(first,nr_more(source,first,env,table,plan,level-1)) end end
     end
   end
   def nr_joined(first: bytes, second: bytes): bytes do
     if Enum.count(first) == 0 do b[] else if Enum.count(second) == 0 do b[] else
-      Enum.concat(nc_slice(second,0,7),nc_run_both(nc_slice(first,7,Enum.count(first)),nc_slice(second,7,Enum.count(second))))
+      Enum.concat(nc_slice(second,0,8),nc_run_both(nc_slice(first,8,Enum.count(first)),nc_slice(second,8,Enum.count(second))))
     end end
   end
   def nr_grow(source: bytes, done: bytes, env: bytes, table: bytes, plan: bytes, level: integer): bytes do
-    if Enum.count(done) == 0 do b[] else if Enum.at(done,3,0) == 1 do done else
+    if Enum.count(done) == 0 do b[] else if Enum.at(done,4,0) == 1 do done else
       nr_grow(source,nr_joined(done,nr_more(source,done,env,table,plan,level)),env,table,plan,level+1)
     end end
   end

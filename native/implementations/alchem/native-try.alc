@@ -9,18 +9,20 @@ defmodule NativeTry do
   # that record in its first slot and the value of its body in its second.
   def ty_u32(data: bytes, pos: integer): integer do nc_read(data,pos)+nc_read(data,pos+2)*65536 end
   # The frame word that stands `lines` lines after the one given: the
-  # position in the low 24 bits, the lines above them (tr_place).
-  def ty_past(line: integer, lines: integer): integer do line+lines*16777216 end
+  # position in the low 32 bits, the lines above them (nz_low, nz_high).
+  def ty_past(line: integer, lines: integer): integer do line+lines*4294967296 end
+  # A line (nz_low) is kept in eight bytes.
+  def ty_held(data: bytes, pos: integer): integer do nt_read_word(data,pos) end
   # The packet with other code, and with code before its own.
   def ty_recode(value: bytes, code: bytes): bytes do
-    if nc_pos(value) < 0 do b[] else Enum.concat(nc_slice(value,0,nt_after(value,4)),code) end
+    if nc_pos(value) < 0 do b[] else Enum.concat(nc_slice(value,0,nt_after(value,5)),code) end
   end
   def ty_before(code: bytes, value: bytes): bytes do ty_recode(value,Enum.concat(code,nc_code(value))) end
   # A run of arms carries, before its code, the line the pinned compiler's
   # code stands on after it.
-  def ty_lined(value: bytes, line: integer): bytes do ty_before(nc_u32(line),value) end
-  def ty_line(value: bytes): integer do ty_u32(nc_code(value),0) end
-  def ty_unlined(value: bytes): bytes do ty_recode(value,nc_slice(nc_code(value),4,Enum.count(nc_code(value)))) end
+  def ty_lined(value: bytes, line: integer): bytes do ty_before(nt_word(line),value) end
+  def ty_line(value: bytes): integer do ty_held(nc_code(value),0) end
+  def ty_unlined(value: bytes): bytes do ty_recode(value,nc_slice(nc_code(value),8,Enum.count(nc_code(value)))) end
   # 1 when rescue, catch or after stands at pos as a word of a try: neither
   # = nor a colon follows it.
   def ty_word(source: bytes, pos: integer): integer do
@@ -54,7 +56,7 @@ defmodule NativeTry do
   def ty_declare(source: bytes, pos: integer, owner: integer): bytes do
     record = nd_declare(source,pos,owner,64)
     if Enum.count(record) != 40 do b[] else if nc_argc(record,0) != 0 do b[] else
-      if ty_messaged(source,nc_meta(record,0,9),nc_meta(record,0,12),16777216) == 0 do b[] else record end
+      if ty_messaged(source,nc_meta(record,0,9),nc_meta(record,0,12),1073741824) == 0 do b[] else record end
     end end
   end
   def ty_messaged(source: bytes, pos: integer, stop: integer, budget: integer): integer do
@@ -75,7 +77,7 @@ defmodule NativeTry do
   def ty_message(source: bytes, table: bytes, id: integer, index: integer): integer do
     field = nd_field_at(source,table,id,index)
     if nc_pos(field) < 0 do -1 else
-      if nc_word(source,nc_cursor(nc_code(field),0),b[109,101,115,115,97,103,101]) == 1 do index else ty_message(source,table,id,index+1) end
+      if nc_word(source,nc_long(nc_code(field),0),b[109,101,115,115,97,103,101]) == 1 do index else ty_message(source,table,id,index+1) end
     end
   end
   # A type as a failure record holds it: a string of its bytes.
@@ -128,23 +130,23 @@ defmodule NativeTry do
     end
   end
   # Where the words of the try stand whose body starts at pos: rescue, catch,
-  # else, after and end, three bytes each, 0 for one that is not there. They
+  # else, after and end, four bytes each, 0 for one that is not there. They
   # come in that order.
   def ty_sections(source: bytes, pos: integer, found: bytes): bytes do
     at = wc_scan(source,pos,6)
     index = if nc_word(source,at,b[114,101,115,99,117,101]) == 1 do 0 else if nc_word(source,at,b[99,97,116,99,104]) == 1 do 1 else if nc_word(source,at,b[101,108,115,101]) == 1 do 2 else if nc_word(source,at,b[97,102,116,101,114]) == 1 do 3 else 4 end end end end
-    count = nc_units(Enum.count(found),3)
+    count = nc_units(Enum.count(found),4)
     if at < 0 do b[] else if index < count do b[] else
-      grown = nc_join(found,nc_zeros((index-count)*3),nc_u24(at))
+      grown = nc_join(found,nc_zeros((index-count)*4),nc_u32(at))
       if index == 4 do grown else if index < 3 do ty_sections(source,nc_end(source,at),grown) else
         # In the after block the words of a try are names like any other.
-        if wc_scan(source,nc_end(source,at),0) < 0 do b[] else Enum.concat(grown,nc_u24(wc_scan(source,nc_end(source,at),0))) end
+        if wc_scan(source,nc_end(source,at),0) < 0 do b[] else Enum.concat(grown,nc_u32(wc_scan(source,nc_end(source,at),0))) end
       end end
     end end
   end
   # The first word of the try at or after section index.
   def ty_next(plan: bytes, index: integer): integer do
-    if index >= 4 do nc_cursor(plan,20) else if nc_cursor(plan,8+index*3) != 0 do nc_cursor(plan,8+index*3) else ty_next(plan,index+1) end end
+    if index >= 4 do nc_long(plan,25) else if nc_long(plan,9+index*4) != 0 do nc_long(plan,9+index*4) else ty_next(plan,index+1) end end
   end
   # 1 when a rescue arm from pos up to stop takes every failure: a name or _
   # with no guard. The pinned compiler's code is then one line longer.
@@ -160,7 +162,7 @@ defmodule NativeTry do
   end
   # try do body rescue arms catch arms else arms after block end. mode 1: the
   # try is a statement. plan: the depth, the try's first slot, 1 when its
-  # value is dropped, where it stands (3 bytes) and its words (ty_sections);
+  # value is dropped, where it stands (4 bytes) and its words (ty_sections);
   # then the line the pinned compiler's handler starts on, the line a
   # handler's arm leaves the try's closure on and the line after the body (4
   # bytes each).
@@ -175,41 +177,41 @@ defmodule NativeTry do
   end
   def ty_try_once(source: bytes, start: integer, env: bytes, table: bytes, depth: integer, mode: integer): bytes do
     marks = if ty_keyword(source,start,env) == 0 do b[] else if depth > 190 do b[] else if nz_on(table) == 0 do b[] else ty_sections(source,nc_end(source,nc_end(source,start)),b[]) end end end
-    stop = nc_end(source,nc_cursor(marks,12))
-    dropped = if Enum.count(marks) != 15 do 0 else if mode == 0 do 0 else wf_dropped(source,stop,env,table) end end
-    base = if dropped == 1 do wf_mark(env,nc_cursor(marks,12)) else env end
+    stop = nc_end(source,nc_long(marks,16))
+    dropped = if Enum.count(marks) != 20 do 0 else if mode == 0 do 0 else wf_dropped(source,stop,env,table) end end
+    base = if dropped == 1 do wf_mark(env,nc_long(marks,16)) else env end
     slot = nc_env_count(base,3)
     held = nj_valued(wf_record(wf_record(base,start,b[0]),start,b[0]))
-    if Enum.count(marks) != 15 do b[] else if nc_cursor(marks,0)+nc_cursor(marks,3)+nc_cursor(marks,9) == 0 do b[] else if slot < 0 do b[] else
-      ty_build(source,table,nc_join(Enum.concat(b[depth],nc_u24(slot)),Enum.concat(b[dropped],nc_u24(start)),marks),held)
+    if Enum.count(marks) != 20 do b[] else if nc_long(marks,0)+nc_long(marks,4)+nc_long(marks,12) == 0 do b[] else if slot < 0 do b[] else
+      ty_build(source,table,nc_join(Enum.concat(b[depth],nc_u24(slot)),Enum.concat(b[dropped],nc_u32(start)),marks),held)
     end end end
   end
   # The after block first: the pinned compiler's code holds it before the
   # handler, whose lines follow from it.
   def ty_build(source: bytes, table: bytes, plan: bytes, env: bytes): bytes do
-    after = nc_cursor(plan,17)
+    after = nc_long(plan,21)
     depth = Enum.at(plan,0,0)
-    cleanup = if after == 0 do b[] else wf_block(source,nc_end(source,after),wf_mark(nj_mark(env,b[44]),nc_cursor(plan,20)),table,depth+1) end
+    cleanup = if after == 0 do b[] else wf_block(source,nc_end(source,after),wf_mark(nj_mark(env,b[44]),nc_long(plan,25)),table,depth+1) end
     done = wc_first(cleanup)
-    fine = if after == 0 do 1 else if nc_pos(done) < 0 do 0 else if nc_start(source,nc_pos(done)) != nc_cursor(plan,20) do 0 else 1-nx_pure(done) end end end
-    base = if after == 0 do ty_past(nc_cursor(plan,5),2) else if fine == 0 do 0 else ty_past(wf_after(source,wc_second(cleanup),table,depth+1),1) end end
-    certain = if nc_cursor(plan,8) == 0 do 0 else ty_certain(source,nc_end(source,nc_cursor(plan,8)),ty_next(plan,1),16777216) end
-    line = ty_past(base,certain+(if nc_cursor(plan,14) == 0 do 0 else 2 end))
-    if fine == 0 do b[] else ty_body(source,table,Enum.concat(plan,nc_u32(line)),nj_mark(env,b[43]),nc_code(done)) end
+    fine = if after == 0 do 1 else if nc_pos(done) < 0 do 0 else if nc_start(source,nc_pos(done)) != nc_long(plan,25) do 0 else 1-nx_pure(done) end end end
+    base = if after == 0 do ty_past(nc_long(plan,5),2) else if fine == 0 do 0 else ty_past(wf_after(source,wc_second(cleanup),table,depth+1),1) end end
+    certain = if nc_long(plan,9) == 0 do 0 else ty_certain(source,nc_end(source,nc_long(plan,9)),ty_next(plan,1),1073741824) end
+    line = ty_past(base,certain+(if nc_long(plan,17) == 0 do 0 else 2 end))
+    if fine == 0 do b[] else ty_body(source,table,Enum.concat(plan,nt_word(line)),nj_mark(env,b[43]),nc_code(done)) end
   end
   def ty_body(source: bytes, table: bytes, plan: bytes, env: bytes, cleanup: bytes): bytes do
     depth = Enum.at(plan,0,0)
-    block = wf_block(source,nc_end(source,nc_end(source,nc_cursor(plan,5))),env,table,depth+1)
+    block = wf_block(source,nc_end(source,nc_end(source,nc_long(plan,5))),env,table,depth+1)
     body = wc_first(block)
     fits = if nc_pos(body) < 0 do 0 else if nc_start(source,nc_pos(body)) == ty_next(plan,0) do 1 else 0 end end
     line = if fits == 0 do 0 else wf_after(source,wc_second(block),table,depth+1) end
     # A body that does not compile has no last statement to place.
     last = if fits == 0 do 0 else nc_pos(wc_second(block)) end
-    plain = if nc_cursor(plan,14) == 0 do 1 else 0 end
+    plain = if nc_long(plan,17) == 0 do 1 else 0 end
     ended = if plain*Enum.at(plan,4,0) == 0 do body else ty_recode(zf_unit(source,table,env,body,last),Enum.concat(nc_code(zf_unit(source,table,env,body,last)),nz_at(table,last))) end
-    stub = if nc_cursor(plan,17)*(nc_cursor(plan,8)+nc_cursor(plan,11)) == 0 do last else ty_stub(source,last,wc_first(nc_code(wc_second(block))),table,depth+1) end
-    if fits == 0 do b[] else if (1-plain)*(nc_tag(body)-12) == 0 do if plain == 1 do ty_chain(source,table,nc_join(plan,nc_u32(stub),nc_u32(line)),env,wc_both(cleanup,ended)) else b[] end else
-      ty_chain(source,table,nc_join(plan,nc_u32(ty_past(line,1)),nc_u32(line)),env,wc_both(cleanup,ended))
+    stub = if nc_long(plan,21)*(nc_long(plan,9)+nc_long(plan,13)) == 0 do last else ty_stub(source,last,wc_first(nc_code(wc_second(block))),table,depth+1) end
+    if fits == 0 do b[] else if (1-plain)*(nc_tag(body)-12) == 0 do if plain == 1 do ty_chain(source,table,nc_join(plan,nt_word(stub),nt_word(line)),env,wc_both(cleanup,ended)) else b[] end else
+      ty_chain(source,table,nc_join(plan,nt_word(ty_past(line,1)),nt_word(line)),env,wc_both(cleanup,ended))
     end end
   end
   # The statement the try's closure is shown on once an arm of its handler
@@ -224,12 +226,12 @@ defmodule NativeTry do
     other = if opener < 0 do -1 else wc_scan(source,nc_end(source,opener),2) end
     form = if nc_word(source,last,b[105,102])+nc_word(source,last,b[117,110,108,101,115,115]) == 1 do 1 else if nc_word(source,last,b[99,111,110,100]) == 1 do 2 else if nc_word(source,last,b[99,97,115,101]) == 1 do 3 else 0 end end end
     arrows = if form < 2 do b[] else if opener < 0 do b[] else ty_arrows(source,nc_end(source,opener),b[]) end end
-    count = nc_units(Enum.count(arrows),3)
+    count = nc_units(Enum.count(arrows),4)
     if depth > 150 do last else if form == 0 do last else if nc_opens(source,opener) == 0 do last else
       if form == 1 do
-        if nc_word(source,other,b[101,108,115,101]) == 0 do last else ty_branches(source,wc_both(wf_last(source,nc_end(source,opener),env,table,depth),wf_last(source,nc_end(source,other),env,table,depth)),table,nc_join(nc_u24(last),b[depth],b[])) end
+        if nc_word(source,other,b[101,108,115,101]) == 0 do last else ty_branches(source,wc_both(wf_last(source,nc_end(source,opener),env,table,depth),wf_last(source,nc_end(source,other),env,table,depth)),table,nc_join(nc_u32(last),b[depth],b[])) end
       else
-        if count == 0 do last else ty_ending(source,nc_cursor(arrows,(if form == 2 do count-1 else if count == 2 do 1 else 0 end end)*3)+2,env,table,depth) end
+        if count == 0 do last else ty_ending(source,nc_long(arrows,(if form == 2 do count-1 else if count == 2 do 1 else 0 end end)*4)+2,env,table,depth) end
       end
     end end end
   end
@@ -237,8 +239,8 @@ defmodule NativeTry do
   def ty_branches(source: bytes, both: bytes, table: bytes, plan: bytes): integer do
     first = nc_pos(wc_first(both))
     second = wc_second(both)
-    if nc_pos(second) < 0 do nc_cursor(plan,0) else
-      if ty_leaves(source,first)*(1-ty_leaves(source,nc_pos(second))) == 1 do first else ty_stub(source,nc_pos(second),wc_first(nc_code(second)),table,Enum.at(plan,3,0)+1) end
+    if nc_pos(second) < 0 do nc_long(plan,0) else
+      if ty_leaves(source,first)*(1-ty_leaves(source,nc_pos(second))) == 1 do first else ty_stub(source,nc_pos(second),wc_first(nc_code(second)),table,Enum.at(plan,4,0)+1) end
     end
   end
   # The statement the block at pos ends in, followed in the same way.
@@ -246,50 +248,50 @@ defmodule NativeTry do
     found = wf_last(source,pos,env,table,depth)
     if nc_pos(found) < 0 do nc_start(source,pos) else ty_stub(source,nc_pos(found),wc_first(nc_code(found)),table,depth+1) end
   end
-  # Where the arrows of the arms of the block at pos stand, three bytes each.
+  # Where the arrows of the arms of the block at pos stand, four bytes each.
   def ty_arrows(source: bytes, pos: integer, found: bytes): bytes do
     at = wc_scan(source,pos,4)
-    if at < 0 do found else if nc_word(source,at,b[45,62]) == 0 do found else if Enum.count(found) > 3000 do found else ty_arrows(source,at+2,Enum.concat(found,nc_u24(at))) end end end
+    if at < 0 do found else if nc_word(source,at,b[45,62]) == 0 do found else if Enum.count(found) > 4000 do found else ty_arrows(source,at+2,Enum.concat(found,nc_u32(at))) end end end
   end
   # The arms, last section first: each run of arms ends in what follows it.
   # A state is: the section (0 rescue, 1 catch, 2 else), 1 for its first arm,
-  # the line the arm stands on (4 bytes), where the section ends (3 bytes),
+  # the line the arm stands on (8 bytes), where the section ends (4 bytes),
   # the type the arms match after its length, and what follows the section.
   # The arms, and where they did not compile the arms held to the type of
   # the body, which is the try's where it has no else (nf_led).
   def ty_chain(source: bytes, table: bytes, plan: bytes, env: bytes, pair: bytes): bytes do
     plain = ty_chained(source,table,plan,env,pair)
     body = wc_second(pair)
-    led = if nc_pos(plain) >= 0 do b[] else if nc_cursor(plan,14) != 0 do b[] else if nc_pos(body) < 0 do b[] else nf_led(source,env,table,nc_value(ty_next(plan,0),b[],nc_kind(body)),ty_next(plan,0)) end end end
+    led = if nc_pos(plain) >= 0 do b[] else if nc_long(plan,17) != 0 do b[] else if nc_pos(body) < 0 do b[] else nf_led(source,env,table,nc_value(ty_next(plan,0),b[],nc_kind(body)),ty_next(plan,0)) end end end
     if Enum.count(led) == 0 do plain else ty_chained(source,table,plan,led,pair) end
   end
   def ty_chained(source: bytes, table: bytes, plan: bytes, env: bytes, pair: bytes): bytes do
-    other = nc_cursor(plan,14)
-    final = nc_cursor(plan,20)
+    other = nc_long(plan,17)
+    final = nc_long(plan,25)
     body = wc_second(pair)
-    state = nc_join(Enum.concat(b[2,1],nc_u32(ty_past(ty_u32(plan,31),3))),nc_u24(ty_next(plan,3)),nt_cell(nc_kind(body)))
-    tail = if other == 0 do nc_value(final,nc_u32(0),b[9,2]) else ty_arms(source,nc_end(source,other),env,table,plan,state) end
+    state = nc_join(Enum.concat(b[2,1],nt_word(ty_past(ty_held(plan,45),3))),nc_u32(ty_next(plan,3)),nt_cell(nc_kind(body)))
+    tail = if other == 0 do nc_value(final,nt_word(0),b[9,2]) else ty_arms(source,nc_end(source,other),env,table,plan,state) end
     if nc_pos(tail) < 0 do b[] else ty_catch(source,table,plan,env,pair,tail) end
   end
   def ty_catch(source: bytes, table: bytes, plan: bytes, env: bytes, pair: bytes, tail: bytes): bytes do
-    catch = nc_cursor(plan,11)
-    first = ty_u32(plan,23)
+    catch = nc_long(plan,13)
+    first = ty_held(plan,29)
     code = nc_code(wc_second(pair))
-    state = nc_join(Enum.concat(b[1,1],nc_u32(ty_past(first,4))),nc_u24(ty_next(plan,2)),Enum.concat(nt_cell(ty_thrown(code,0,Enum.count(code))),ty_unlined(tail)))
+    state = nc_join(Enum.concat(b[1,1],nt_word(ty_past(first,4))),nc_u32(ty_next(plan,2)),Enum.concat(nt_cell(ty_thrown(code,0,Enum.count(code))),ty_unlined(tail)))
     arms = if catch == 0 do ty_lined(ty_before(ty_decline(table,plan,ty_past(first,4)),ty_unlined(tail)),ty_past(first,1)) else
       ty_arms(source,nc_end(source,catch),env,table,plan,state)
     end
     whole = if catch == 0 do ty_unlined(arms) else ty_before(b[72,139,76,36,24,76,139,121,24],ty_unlined(arms)) end
-    sizes = nc_join(nc_u32(Enum.count(nc_code(whole))),nc_u32(Enum.count(nc_code(tail))-4),nc_u32(ty_past(ty_line(tail),2)))
-    if nc_pos(arms) < 0 do b[] else ty_rescue(source,table,nc_join(plan,sizes,nc_u32(ty_past(ty_line(arms),2))),env,pair,whole) end
+    sizes = nc_join(nc_u32(Enum.count(nc_code(whole))),nc_u32(Enum.count(nc_code(tail))-8),nt_word(ty_past(ty_line(tail),2)))
+    if nc_pos(arms) < 0 do b[] else ty_rescue(source,table,nc_join(plan,sizes,nt_word(ty_past(ty_line(arms),2))),env,pair,whole) end
   end
   # plan now also holds the length of the code from the catch arms on, that
   # of the else arms, the line the function stands on while a try with else
   # runs, and the line the rescue arms' code starts on.
   def ty_rescue(source: bytes, table: bytes, plan: bytes, env: bytes, pair: bytes, tail: bytes): bytes do
-    rescue = nc_cursor(plan,8)
-    first = ty_u32(plan,47)
-    state = nc_join(Enum.concat(b[0,1],nc_u32(ty_past(first,3))),nc_u24(ty_next(plan,1)),Enum.concat(b[0],tail))
+    rescue = nc_long(plan,9)
+    first = ty_held(plan,69)
+    state = nc_join(Enum.concat(b[0,1],nt_word(ty_past(first,3))),nc_u32(ty_next(plan,1)),Enum.concat(b[0],tail))
     arms = if rescue == 0 do ty_before(ty_decline(table,plan,first),tail) else
       ty_before(b[72,139,76,36,24,76,139,121,24],ty_unlined(ty_arms(source,nc_end(source,rescue),env,table,plan,state)))
     end
@@ -302,11 +304,11 @@ defmodule NativeTry do
   end
   def ty_arms(source: bytes, pos: integer, env: bytes, table: bytes, plan: bytes, state: bytes): bytes do
     start = nc_start(source,pos)
-    line = ty_u32(state,2)
-    tail = nc_slice(state,nt_after(state,9),Enum.count(state))
+    line = ty_held(state,2)
+    tail = nc_slice(state,nt_after(state,14),Enum.count(state))
     if start < 0 do b[] else
-      if start == nc_cursor(state,6) do
-        if Enum.at(state,1,0) == 1 do b[] else if Enum.at(state,0,0) == 2 do nc_value(start,nc_join(nc_u32(line),nz_at(table,line),wc_fail(table,nc_cursor(plan,5),b[110,111,32,101,108,115,101,32,99,108,97,117,115,101,32,111,102,32,116,104,105,115,32,116,114,121,32,109,97,116,99,104,101,100])),b[9,2]) else
+      if start == nc_long(state,10) do
+        if Enum.at(state,1,0) == 1 do b[] else if Enum.at(state,0,0) == 2 do nc_value(start,nc_join(nt_word(line),nz_at(table,line),wc_fail(table,nc_long(plan,5),b[110,111,32,101,108,115,101,32,99,108,97,117,115,101,32,111,102,32,116,104,105,115,32,116,114,121,32,109,97,116,99,104,101,100])),b[9,2]) else
           ty_lined(ty_before(ty_decline(table,plan,line),tail),line)
         end end
       else
@@ -324,7 +326,7 @@ defmodule NativeTry do
     mode = Enum.at(state,0,0)
     next = nc_end(source,start)
     owner = nc_owner(table,nc_cursor(env,0))
-    given = nt_read(state,9)
+    given = nt_read(state,14)
     named = Enum.at(state,1,0)*(nc_identifier(source,start)+nc_word(source,start,b[95]))
     if mode == 2 do wc_both(np_parse(source,start,env,table,given),given) else
       if mode == 0 do
@@ -378,9 +380,9 @@ defmodule NativeTry do
     mode = Enum.at(state,0,0)
     typed = if mode == 1 do 1 else if mode == 2 do 0 else if nt_tag(wc_second(head)) == 2 do 0 else 1 end end end
     after = if nc_pos(wc_first(block)) < 0 do 0 else wf_after(source,wc_second(block),table,depth+1) end
-    next = if mode == 2 do ty_past(after,2) else ty_past(after,3+typed+(if nc_cursor(plan,14) == 0 do 0 else 1 end)) end
-    rest = if nc_pos(wc_first(block)) < 0 do b[] else ty_arms(source,nc_pos(wc_first(block)),env,table,plan,nc_join(b[mode,0],nc_u32(next),nc_slice(state,6,Enum.count(state)))) end
-    spec = nc_join(b[mode,typed,guarded,nc_env_count(scope,3)-nc_env_count(env,3)],nc_u32(ty_u32(state,2)),nc_u32(after))
+    next = if mode == 2 do ty_past(after,2) else ty_past(after,3+typed+(if nc_long(plan,17) == 0 do 0 else 1 end)) end
+    rest = if nc_pos(wc_first(block)) < 0 do b[] else ty_arms(source,nc_pos(wc_first(block)),env,table,plan,nc_join(b[mode,0],nt_word(next),nc_slice(state,10,Enum.count(state)))) end
+    spec = nc_join(b[mode,typed,guarded,nc_env_count(scope,3)-nc_env_count(env,3)],nt_word(ty_held(state,2)),nt_word(after))
     ended = if Enum.at(plan,4,0) == 0 do wc_first(block) else zf_unit(source,table,scope,wc_first(block),nc_pos(wc_second(block))) end
     if nc_pos(rest) < 0 do b[] else ty_joined(source,table,plan,spec,wc_both(head,wc_both(guard,ended)),rest) end
   end
@@ -391,7 +393,7 @@ defmodule NativeTry do
   def ty_joined(source: bytes, table: bytes, plan: bytes, spec: bytes, parts: bytes, rest: bytes): bytes do
     mode = Enum.at(spec,0,0)
     typed = Enum.at(spec,1,0)
-    line = ty_u32(spec,4)
+    line = ty_held(spec,4)
     parsed = wc_first(wc_first(parts))
     body = wc_second(wc_second(parts))
     slot = nc_cursor(plan,1)
@@ -401,7 +403,7 @@ defmodule NativeTry do
     tested = if typed == 0 do inner else nc_join(ty_same(slot,wc_second(wc_first(parts))),Enum.concat(b[132,192,15,132],nc_u32(Enum.count(inner))),inner) end
     check = if Enum.at(spec,2,0) == 0 do b[] else Enum.concat(nc_code(wc_first(wc_second(parts))),b[72,133,192,15,132]) end
     done = if mode == 2 do Enum.concat(b[143,133,112,255,255,255,89],nz_at(table,ty_past(line,1+Enum.at(spec,3,0)))) else ty_leave(table,plan) end
-    taken = ty_recode(body,nc_join(ty_record(ty_u32(spec,8)),nc_code(body),done))
+    taken = ty_recode(body,nc_join(ty_record(ty_held(spec,12),nd_wide(table)),nc_code(body),done))
     if Enum.count(emitted) == 0 do b[] else
       ty_lined(np_join(nc_join(nz_at(table,ty_past(line,typed)),tested,b[132,192,15,132]),check,taken,ty_unlined(rest)),ty_line(rest))
     end
@@ -411,8 +413,8 @@ defmodule NativeTry do
   # A line is a 32-bit word here (a position and up to 255 lines past it,
   # ty_past); push sign-extends, so from bit 31 on the high half is set
   # after it.
-  def ty_record(line: integer): bytes do
-    pushed = if line < 2147483648 do Enum.concat(b[104],nc_u32(line)) else nc_join(b[104],nc_u32(line),b[199,68,36,4,0,0,0,0]) end
+  def ty_record(line: integer, wide: integer): bytes do
+    pushed = if nz_short(line,wide) == 1 do Enum.concat(b[104],nc_u32(nz_low(line,wide))) else nc_join(b[104],nc_u32(nz_low(line,wide)),Enum.concat(b[199,68,36,4],nc_u32(nz_high(line,wide)))) end
     Enum.concat(pushed,b[255,181,112,255,255,255,72,137,165,112,255,255,255])
   end
   # 1 or 0 in AL: the failure in the slot carries a value of type kind.
@@ -424,8 +426,8 @@ defmodule NativeTry do
   # (above the handler record of an after block), the try's closure is the
   # frame's again and stands on the line the pinned compiler's code returns on.
   def ty_leave(table: bytes, plan: bytes): bytes do
-    drop = if nc_cursor(plan,14) == 0 do 32 else 48 end
-    nc_join(Enum.concat(nc_slot(b[72,139,77],nc_cursor(plan,1)),b[72,139,97,24,72,131,196,drop]),Enum.concat(if nc_cursor(plan,17) == 0 do b[72,137,225] else b[72,141,76,36,32] end,b[72,137,141,112,255,255,255]),nz_at(table,ty_u32(plan,27)))
+    drop = if nc_long(plan,17) == 0 do 32 else 48 end
+    nc_join(Enum.concat(nc_slot(b[72,139,77],nc_cursor(plan,1)),b[72,139,97,24,72,131,196,drop]),Enum.concat(if nc_long(plan,21) == 0 do b[72,137,225] else b[72,141,76,36,32] end,b[72,137,141,112,255,255,255]),nz_at(table,ty_held(plan,37)))
   end
   # A handler record whose handler stands `distance` bytes after it.
   def ty_handler(distance: integer): bytes do
@@ -439,19 +441,19 @@ defmodule NativeTry do
   def ty_emit(source: bytes, table: bytes, plan: bytes, pair: bytes, chain: bytes): bytes do
     slot = nc_cursor(plan,1)
     body = wc_second(pair)
-    other = if nc_cursor(plan,14) == 0 do 0 else 1 end
-    arms = if nc_cursor(plan,8)+nc_cursor(plan,11) == 0 do 0 else 1 end
+    other = if nc_long(plan,17) == 0 do 0 else 1 end
+    arms = if nc_long(plan,9)+nc_long(plan,13) == 0 do 0 else 1 end
     whole = Enum.count(nc_code(chain))
-    handler = if arms == 0 do nc_slice(nc_code(chain),whole-ty_u32(plan,39),whole) else
-      nc_join(Enum.concat(nc_slot(b[72,137,101],slot),b[72,141,68,36,1,72,137,133,112,255,255,255]),nc_join(b[72,131,124,36,64,9,15,132],nc_u32(whole-ty_u32(plan,35)),nc_code(chain)),b[])
+    handler = if arms == 0 do nc_slice(nc_code(chain),whole-ty_u32(plan,57),whole) else
+      nc_join(Enum.concat(nc_slot(b[72,137,101],slot),b[72,141,68,36,1,72,137,133,112,255,255,255]),nc_join(b[72,131,124,36,64,9,15,132],nc_u32(whole-ty_u32(plan,53)),nc_code(chain)),b[])
     end
-    left = nc_join(if arms == 0 do b[] else b[65,143,70,240,72,131,196,24] end,if other == 0 do b[] else Enum.concat(b[143,133,112,255,255,255,89],nc_slot(b[72,137,69],slot+1)) end,if arms == 0 do b[] else Enum.concat(b[233],nc_u32(Enum.count(handler)-ty_u32(plan,39))) end)
-    inner = nc_join(if other == 0 do b[] else ty_record(ty_u32(plan,31)) end,if arms == 0 do b[] else ty_handler(Enum.count(nc_code(body))+Enum.count(left)) end,nc_join(nc_code(body),left,handler))
+    left = nc_join(if arms == 0 do b[] else b[65,143,70,240,72,131,196,24] end,if other == 0 do b[] else Enum.concat(b[143,133,112,255,255,255,89],nc_slot(b[72,137,69],slot+1)) end,if arms == 0 do b[] else Enum.concat(b[233],nc_u32(Enum.count(handler)-ty_u32(plan,57))) end)
+    inner = nc_join(if other == 0 do b[] else ty_record(ty_held(plan,45),nd_wide(table)) end,if arms == 0 do b[] else ty_handler(Enum.count(nc_code(body))+Enum.count(left)) end,nc_join(nc_code(body),left,handler))
     kind = if other == 1 do nc_kind(chain) else nx_join(body,chain) end
-    made = if nc_cursor(plan,17) == 0 do inner else ty_after(table,slot,inner,wc_first(pair)) end
-    core = Enum.concat(zf_tried(table,nc_code(body),nc_code(chain),Enum.concat(nc_u32(whole-ty_u32(plan,35)),nc_u32(whole-ty_u32(plan,39))),wc_first(pair)),made)
+    made = if nc_long(plan,21) == 0 do inner else ty_after(table,slot,inner,wc_first(pair)) end
+    core = Enum.concat(zf_tried(table,nc_code(body),nc_code(chain),Enum.concat(nc_u32(whole-ty_u32(plan,53)),nc_u32(whole-ty_u32(plan,57))),wc_first(pair)),made)
     if nt_tag(kind) < 0 do b[] else
-      nw_meet(ty_closed(source,table,nc_value(nc_end(source,nc_cursor(plan,20)),if nc_cursor(plan,11) == 0 do core else ty_hide(core,0,Enum.count(core)) end,kind),plan),if other == 1 do b[] else body end,chain)
+      nw_meet(ty_closed(source,table,nc_value(nc_end(source,nc_long(plan,25)),if nc_long(plan,13) == 0 do core else ty_hide(core,0,Enum.count(core)) end,kind),plan),if other == 1 do b[] else body end,chain)
     end
   end
   def ty_after(table: bytes, slot: integer, inner: bytes, cleanup: bytes): bytes do
@@ -466,11 +468,11 @@ defmodule NativeTry do
   # the function stands there afterwards (a call the try is an argument of,
   # or is piped into, stays where its statement stands, as in nz_closure).
   def ty_closed(source: bytes, table: bytes, value: bytes, plan: bytes): bytes do
-    start = nc_cursor(plan,5)
+    start = nc_long(plan,5)
     next = byte_at(source,nc_start(source,nc_pos(value)))
     inside = if next*256+byte_at(source,nc_start(source,nc_pos(value))+1) == 31806 do 1 else if (next-41)*(next-44)*(next-93)*(next-125) != 0 do 0 else 1-nz_grouped(source,start) end end
-    line = if nc_cursor(plan,14) == 0 do start else ty_u32(plan,43) end
-    enter = Enum.concat(if inside == 1 do b[72,139,133,120,255,255,255,80] else b[] end,ty_record(line))
+    line = if nc_long(plan,17) == 0 do start else ty_held(plan,61) end
+    enter = Enum.concat(if inside == 1 do b[72,139,133,120,255,255,255,80] else b[] end,ty_record(line,nd_wide(table)))
     leave = Enum.concat(b[143,133,112,255,255,255,89],if inside == 1 do b[89,72,137,141,120,255,255,255] else nz_at(table,line) end)
     ty_recode(value,nc_join(enter,nc_code(value),leave))
   end

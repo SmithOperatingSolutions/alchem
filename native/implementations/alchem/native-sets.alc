@@ -169,8 +169,8 @@ defmodule NativeSets do
     inner = if nt_tag(kind) != 25 do 1 else if nu_open(nt_child(kind,0),0) == 0 do 1 else nn_library(source,env,table) end end
     keyed = if (nt_tag(kind)-25)*(nt_tag(kind)-8) != 0 do 1 else inner*(nn_key(nt_child(kind,0))+nn_open(nt_child(kind,0))) end
     if nc_pos(made) < 0 do b[] else if keyed == 0 do b[] else
-      if enum == 0 do if nc_word(source,pos,b[83,116,114,101,97,109])*nc_word(source,name,b[114,117,110]) == 1 do nc_join(nc_slice(made,0,4),b[1,12],nc_code(made)) else made end else
-        if nc_word(source,name,b[101,97,99,104]) == 1 do nc_join(nc_slice(made,0,4),b[1,12],nc_code(made)) else
+      if enum == 0 do if nc_word(source,pos,b[83,116,114,101,97,109])*nc_word(source,name,b[114,117,110]) == 1 do nc_join(nc_slice(made,0,5),b[1,12],nc_code(made)) else made end else
+        if nc_word(source,name,b[101,97,99,104]) == 1 do nc_join(nc_slice(made,0,5),b[1,12],nc_code(made)) else
           if nc_word(source,name,b[105,110,116,111]) == 0 do made else if Enum.at(plan,3+Enum.at(plan,3,0),0) != 51 do made else if nu_holes(kind,0) == 1 do made else nc_value(nc_pos(made),nc_code(made),kind) end end end
         end
       end
@@ -234,7 +234,7 @@ defmodule NativeSets do
     base = Enum.concat(b[65,108,99,104,127,109,83,116,114,101,97,109],nc_slice(plan,14,4+size))
     made = if nn_lazy(nc_slice(plan,4+size,Enum.count(plan)),0) == 0 do b[] else nn_forms(source,name,env,table,nc_join(b[Enum.at(plan,0,0),1,5,Enum.count(base)],base,nc_slice(plan,4+size,Enum.count(plan)))) end
     kind = nt_unary(7,nt_child(nc_kind(made),0))
-    if nc_tag(made) != 26 do b[] else nc_join(nc_slice(made,0,4),Enum.concat(b[Enum.count(kind)],kind),Enum.concat(nc_code(made),nn_stream_list())) end
+    if nc_tag(made) != 26 do b[] else nc_join(nc_slice(made,0,5),Enum.concat(b[Enum.count(kind)],kind),Enum.concat(nc_code(made),nn_stream_list())) end
   end
   # 1 when an argument from index on is a stream or a range.
   def nn_lazy(args: bytes, index: integer): integer do
@@ -269,7 +269,7 @@ defmodule NativeSets do
   # range.
   def nn_expected(value: bytes, kind: bytes, table: bytes): bytes do
     if nt_same(kind,b[26,0]) == 0 do value else if nn_written(value) == 0 do value else
-      nc_join(nc_slice(value,0,4),b[2,26,0],nc_join(nc_code(value),zf_stepped(table),nn_range_stream()))
+      nc_join(nc_slice(value,0,5),b[2,26,0],nc_join(nc_code(value),zf_stepped(table),nn_range_stream()))
     end end
   end
   # 1 for a range as it is written: the code ends in the making of it. As
@@ -287,7 +287,7 @@ defmodule NativeSets do
     if nc_tag(piped) != 27 do marks else Enum.concat(b[2],nc_slice(marks,1,Enum.count(marks))) end
   end
   def nn_plain(value: bytes): bytes do
-    if nc_tag(value) != 27 do value else nc_join(nc_slice(value,0,4),b[1,23],nc_code(value)) end
+    if nc_tag(value) != 27 do value else nc_join(nc_slice(value,0,5),b[1,23],nc_code(value)) end
   end
   def nn_returned(source: bytes, table: bytes, id: integer, body: bytes): bytes do
     if nc_tag(body) != 23 do body else nn_expected(body,nc_return_kind(source,table,id),table) end

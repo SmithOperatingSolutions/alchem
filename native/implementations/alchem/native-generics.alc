@@ -195,7 +195,7 @@ defmodule NativeGenerics do
     given = nc_arg_kind(args,index)
     if index == nc_arg_count(args) do 0 else
       if nt_tag(given) != 11 do nu_unshaped(source,cells,args,index+1) else
-        if nf_general(source,nu_bare(source,nc_cursor(given,1),64)) == 1 do nu_unshaped(source,cells,args,index+1) else
+        if nf_general(source,nu_bare(source,nc_long(given,1),64)) == 1 do nu_unshaped(source,cells,args,index+1) else
           if nt_tag(nt_item(cells,index)) != 10 do 1 else nu_unshaped(source,cells,args,index+1) end
         end
       end
@@ -402,10 +402,10 @@ defmodule NativeGenerics do
   # a parameter of settled type, a result) accepts it, and one that gives none
   # (a binding without annotation, an operand) rejects it.
   def nw_mark(value: bytes): bytes do
-    if nc_pos(value) < 0 do b[] else if nw_marked(value) == 1 do value else Enum.concat(nc_slice(value,0,3),Enum.concat(b[Enum.at(value,3,0)+128],nc_slice(value,4,Enum.count(value)))) end end
+    if nc_pos(value) < 0 do b[] else if nw_marked(value) == 1 do value else Enum.concat(nc_slice(value,0,4),Enum.concat(b[Enum.at(value,4,0)+128],nc_slice(value,5,Enum.count(value)))) end end
   end
   def nw_marked(value: bytes): integer do
-    if Enum.count(value) < 4 do 0 else if Enum.at(value,3,0) >= 128 do 1 else 0 end end
+    if Enum.count(value) < 5 do 0 else if Enum.at(value,4,0) >= 128 do 1 else 0 end end
   end
   # 1 when part leaves its mark on a value made of it. A part of no type of
   # its own (hd([])) that met one in the value, as the other branch of an if
@@ -461,7 +461,7 @@ defmodule NativeGenerics do
   def nw_expected(env: bytes, paren: integer, offset: integer): bytes do
     kind = nt_read(env,offset+7)
     if offset >= Enum.count(env) do b[] else
-      if nc_cursor(env,offset) != paren do nw_expected(env,paren,nc_env_next(env,offset)) else
+      if nc_long(env,offset) != paren do nw_expected(env,paren,nc_env_next(env,offset)) else
         if nt_tag(kind) != 21 do nw_expected(env,paren,nc_env_next(env,offset)) else nc_slice(kind,1,Enum.count(kind)) end
       end
     end
@@ -481,7 +481,7 @@ defmodule NativeGenerics do
     value = byte_at(source,start)
     # if (x) do ... and fn(v: t) ... are no calls.
     paren = if nx_form(source,start)+nc_word(source,start,b[102,110]) > 0 do -1 else nf_pipe_target(source,start) end
-    stop = if paren >= 0 do np_close(source,paren,0,16777216) else if (value-91)*(value-123)*(value-40) == 0 do np_close(source,start,0,16777216) else nc_end(source,start) end end
+    stop = if paren >= 0 do np_close(source,paren,0,1073741824) else if (value-91)*(value-123)*(value-40) == 0 do np_close(source,start,0,1073741824) else nc_end(source,start) end end
     found = nw_last_piped(source,paren,stop,1024)
     # ( call ) is the call.
     alone = if found >= 0 do 0 else if value != 40 do 0 else if stop < 0 do 0 else if nw_operator(source,nc_start(source,stop)) > 0 do 0 else 1 end end end end
@@ -491,7 +491,7 @@ defmodule NativeGenerics do
     next = nc_start(source,stop)
     piped = if stop < 0 do 0 else if byte_at(source,next)*256+byte_at(source,next+1) == 31806 do 1 else 0 end end
     target = if piped == 0 do -1 else nf_pipe_target(source,nc_start(source,next+2)) end
-    close = if target < 0 do -1 else np_close(source,target,0,16777216) end
+    close = if target < 0 do -1 else np_close(source,target,0,1073741824) end
     if budget == 0 do -1 else if piped == 1 do if close < 0 do -1 else nw_last_piped(source,target,close,budget-1) end else
       if stop < 0 do -1 else if nw_operator(source,next) > 0 do -1 else paren end end
     end end
@@ -510,7 +510,7 @@ defmodule NativeGenerics do
   # 1 when a deferred argument is a reference to a generic function, which
   # needs a function type no parameter with type variables can give.
   def nw_generic_reference(source: bytes, env: bytes, table: bytes, pending: bytes): integer do
-    start = nc_cursor(pending,1)
+    start = nc_long(pending,1)
     if nt_tag(pending) != 11 do 0 else if byte_at(source,start) != 38 do 0 else
       # A function of several forms is no such reference: the element type says which form.
       if nf_capture_form(source,start) == 1 do 0 else if nf_target(source,nc_start(source,nc_end(source,start)),env,table) < 0 do 0 else 1-nj_formed(source,table,nf_target(source,nc_start(source,nc_end(source,start)),env,table)) end end

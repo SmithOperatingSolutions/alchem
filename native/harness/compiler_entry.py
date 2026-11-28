@@ -25,8 +25,15 @@ def verify(frontend,backends):
    for data in [b'',b'abc',bytes(range(256)),b'x'*65535,b'x'*65536,b'x'*1048575,b'x'*1048576,bytes(range(256))*16383+bytes(range(255)),b'x'*4194304,bytes(range(256))*65531+bytes(range(255))]:
     run=subprocess.run([str(output)],input=data,capture_output=True,env={'PATH':''},timeout=120)
     assert (run.returncode,run.stdout,run.stderr)==(0,data if data else b'\0\xff',b''),run
-   run=subprocess.run([str(output)],input=b'x'*16776192,capture_output=True,env={'PATH':''},timeout=120)
-   assert (run.returncode,run.stdout,run.stderr)==(65,b'',b'E_RUNTIME_INPUT: input exceeds byte limit\n'),run
+   # More than a compiler entry's limit of 1 GiB less 1 KiB is refused as it is
+   # read (written as it is taken, until it takes no more).
+   child=subprocess.Popen([str(output)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env={'PATH':''})
+   try:
+    for _ in range(1024):child.stdin.write(b'x'*(1<<20))
+    child.stdin.close()
+   except (BrokenPipeError,OSError):pass
+   said=(child.stdout.read(),child.stderr.read());status=child.wait(timeout=300)
+   assert (status,said)==(65,(b'',b'E_RUNTIME_INPUT: input exceeds byte limit\n')),(status,said[1][:200])
    run=subprocess.run([str(output)],capture_output=True,preexec_fn=lambda:os.close(0),timeout=120)
    assert (run.returncode,run.stdout,run.stderr)==(74,b'',b'E_RUNTIME_IO: input read failed\n'),run
    with open('/dev/full','wb') as full:
@@ -54,7 +61,7 @@ def verify(frontend,backends):
   for limit in [size//2+300000,size//3+300000]:
    assert limit<size and boot.frontend_ir(text,frontend,limit)==whole,('compiler source lowered in parts differs',limit)
  print(f'Compiler-entry read/write EINTR injection: {injected}/{len(backends)*2}')
- print('PASS Alchem-emitted compiler entry: binary/empty/exact input up to 16 MiB, overflow, public signature, backend equality and the compiler source lowered in parts')
+ print('PASS Alchem-emitted compiler entry: binary/empty/exact input up to 4 MiB, overflow past 1 GiB, public signature, backend equality and the compiler source lowered in parts')
 
 
 if __name__=='__main__':verify(Path(sys.argv[1]).resolve(),[Path(p).resolve() for p in sys.argv[2:]])

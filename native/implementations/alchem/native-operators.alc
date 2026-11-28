@@ -244,7 +244,7 @@ defmodule NativeOperators do
   # at a line break unless an operator stands beside it. A state is the
   # position, the nesting and 2 while the answer is open, else the answer.
   def nk_state(pos: integer, depth: integer, verdict: integer): bytes do
-    if depth > 2000 do b[0,0,0,0,0,0] else nc_join(nc_u24(pos),nc_u16(depth),b[verdict]) end
+    if depth > 2000 do b[0,0,0,0,0,0,0] else nc_join(nc_u32(pos),nc_u16(depth),b[verdict]) end
   end
   def nk_arm_step(source: bytes, pos: integer, depth: integer): bytes do
     start = nc_start(source,pos)
@@ -281,15 +281,15 @@ defmodule NativeOperators do
   # size tokens on from a state, by halves.
   def nk_arm_run(source: bytes, state: bytes, size: integer): bytes do
     half = nc_half(size)
-    if Enum.at(state,5,0) != 2 do state else
-      if size == 1 do nk_arm_step(source,nc_cursor(state,0),nc_read(state,3)) else
+    if Enum.at(state,6,0) != 2 do state else
+      if size == 1 do nk_arm_step(source,nc_long(state,0),nc_read(state,4)) else
         nk_arm_run(source,nk_arm_run(source,state,half),size-half)
       end
     end
   end
   def nk_arm_starts(source: bytes, start: integer): integer do
     if start < 0 do 0 else if nc_word(source,start,b[45,62]) == 1 do 0 else
-      if Enum.at(nk_arm_run(source,nk_state(start,0,2),16777216),5,0) == 1 do 1 else 0 end
+      if Enum.at(nk_arm_run(source,nk_state(start,0,2),1073741824),6,0) == 1 do 1 else 0 end
     end end
   end
   # 1 when a |> stands at the outer level between start and stop: the
@@ -307,14 +307,14 @@ defmodule NativeOperators do
   end
   def nk_pipe_run(source: bytes, state: bytes, size: integer, stop: integer): bytes do
     half = nc_half(size)
-    if Enum.at(state,5,0) != 2 do state else
-      if size == 1 do nk_pipe_step(source,nc_cursor(state,0),nc_read(state,3),stop) else
+    if Enum.at(state,6,0) != 2 do state else
+      if size == 1 do nk_pipe_step(source,nc_long(state,0),nc_read(state,4),stop) else
         nk_pipe_run(source,nk_pipe_run(source,state,half,stop),size-half,stop)
       end
     end
   end
   def nk_piped(source: bytes, start: integer, stop: integer): integer do
-    if Enum.at(nk_pipe_run(source,nk_state(start,0,2),16777216,stop),5,0) == 1 do 1 else 0 end
+    if Enum.at(nk_pipe_run(source,nk_state(start,0,2),1073741824,stop),6,0) == 1 do 1 else 0 end
   end
   # Where the expression that starts at a position ends: brackets and do/fn
   # ... end nest, and at the outer level a line break ends it unless an
@@ -340,15 +340,15 @@ defmodule NativeOperators do
   end
   def nk_end_run(source: bytes, state: bytes, size: integer): bytes do
     half = nc_half(size)
-    if Enum.at(state,5,0) != 2 do state else
-      if size == 1 do nk_end_step(source,nc_cursor(state,0),nc_read(state,3)) else
+    if Enum.at(state,6,0) != 2 do state else
+      if size == 1 do nk_end_step(source,nc_long(state,0),nc_read(state,4)) else
         nk_end_run(source,nk_end_run(source,state,half),size-half)
       end
     end
   end
   def nk_value_end(source: bytes, pos: integer): integer do
-    state = nk_end_run(source,nk_state(pos,0,2),16777216)
-    if pos < 0 do -1 else if Enum.at(state,5,0) == 1 do nc_cursor(state,0) else -1 end end
+    state = nk_end_run(source,nk_state(pos,0,2),1073741824)
+    if pos < 0 do -1 else if Enum.at(state,6,0) == 1 do nc_long(state,0) else -1 end end
   end
   # @name value declares a module constant and @name stands for the value,
   # compiled where it is used with no bindings in reach. The declaration is
@@ -418,9 +418,9 @@ defmodule NativeOperators do
     begin = nc_expect(source,nc_end(source,start),b[100,111])
     if depth > 251 do b[] else if begin < 0 do b[] else
       if nc_word(source,begin,b[101,110,100]) == 1 do b[] else
-        first = pk_arms(source,env,table,nc_join(b[depth],nc_u24(start),nc_u24(begin)))
+        first = pk_arms(source,env,table,nc_join(b[depth],nc_u32(start),nc_u32(begin)))
         again = np_again(source,env,table,first)
-        np_settled(first,if Enum.count(again) == 0 do b[] else pk_arms(source,again,table,nc_join(b[depth],nc_u24(start),nc_u24(begin))) end)
+        np_settled(first,if Enum.count(again) == 0 do b[] else pk_arms(source,again,table,nc_join(b[depth],nc_u32(start),nc_u32(begin))) end)
       end
     end end
   end
@@ -474,8 +474,8 @@ defmodule NativeOperators do
     # A list piped in that waits for its type ([fn -> 1 end] |> hd()) is
     # typed where it stands, and passes through its slot as nf_resolve has it.
     piped = nc_kind(nf_piped_from(source,paren+1,env,3))
-    slot = if nt_tag(piped) != 11 do -1 else nc_cursor(piped,7)-1 end
-    at = if slot < 0 do paren+1 else nc_cursor(piped,1) end
+    slot = if nt_tag(piped) != 11 do -1 else nc_cursor(piped,8)-1 end
+    at = if slot < 0 do paren+1 else nc_long(piped,1) end
     value = if Enum.count(wanted) == 0 do b[] else nf_valued_held(source,at,env,table,kind,b[Enum.at(plan,0,0)+1,if slot < 0 do 0 else 1 end]) end
     close = if nc_pos(value) < 0 do -1 else nc_expect(source,if slot < 0 do nc_pos(value) else paren+1 end,b[41]) end
     kept = if slot < 0 do b[] else Enum.concat(nc_slot(b[72,137,69],slot),nc_slot(b[72,139,69],slot)) end

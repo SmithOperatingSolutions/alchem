@@ -107,14 +107,14 @@ defmodule NativeFloats do
   # Where the number that starts at start ends. A float has digits on both
   # sides of its point and may have an exponent: e, a sign and digits.
   def ne_end(source: bytes, start: integer): integer do
-    whole = ne_digits(source,start,16777216)
-    part = if whole < 0 do -1 else if byte_at(source,whole) != 46 do whole else if is_digit(byte_at(source,whole+1)) == 0 do whole else nc_scan(source,whole+1,3,16777216) end end end
+    whole = ne_digits(source,start,1073741824)
+    part = if whole < 0 do -1 else if byte_at(source,whole) != 46 do whole else if is_digit(byte_at(source,whole+1)) == 0 do whole else nc_scan(source,whole+1,3,1073741824) end end end
     if part <= whole do part else ne_exponent_end(source,part) end
   end
   def ne_exponent_end(source: bytes, pos: integer): integer do
     sign = byte_at(source,pos+1)
     first = if (sign-43)*(sign-45) == 0 do pos+2 else pos+1 end
-    if byte_at(source,pos) != 101 do pos else if is_digit(byte_at(source,first)) == 0 do pos else nc_scan(source,first,3,16777216) end end
+    if byte_at(source,pos) != 101 do pos else if is_digit(byte_at(source,first)) == 0 do pos else nc_scan(source,first,3,1073741824) end end
   end
   # 1 when underscores separate the digits from pos to stop.
   def ne_separated(source: bytes, pos: integer, stop: integer): integer do
@@ -130,7 +130,7 @@ defmodule NativeFloats do
   end
   # 1 when the number from pos to stop is a float.
   def ne_is(source: bytes, pos: integer, stop: integer): integer do
-    point = ne_digits(source,pos,16777216)
+    point = ne_digits(source,pos,1073741824)
     if point < 0 do 0 else if point >= stop do 0 else if byte_at(source,point) == 46 do 1 else 0 end end end
   end
   # The digits of a literal as an integer, without leading zeros and at most
@@ -159,8 +159,8 @@ defmodule NativeFloats do
   end
   # The 8 bytes of the float literal from pos to stop; b[] when it is too large.
   def ne_bits(source: bytes, pos: integer, stop: integer, negative: integer): bytes do
-    point = ne_digits(source,pos,16777216)
-    part = nc_scan(source,point+1,3,16777216)
+    point = ne_digits(source,pos,1073741824)
+    part = nc_scan(source,point+1,3,1073741824)
     state = ne_collect(source,pos,part,b[0,0,0,0,0])
     kept = nc_read(state,0)
     power = ne_power(source,part,stop)-(part-point-1)+nc_read(state,2)
@@ -268,7 +268,7 @@ defmodule NativeFloats do
   # 1 for a float Go's compiler knows at compile time: a literal, or a value
   # with bit 8 of its flags (a name bound to one, an operation on two).
   def ne_go_constant(value: bytes): integer do
-    if ne_constant(value) == 1 do 1 else if Enum.count(value) < 4 do 0 else if Enum.at(value,3,0)-16*a_div(Enum.at(value,3,0),16) >= 8 do 1 else 0 end end end
+    if ne_constant(value) == 1 do 1 else if Enum.count(value) < 5 do 0 else if Enum.at(value,4,0)-16*a_div(Enum.at(value,4,0),16) >= 8 do 1 else 0 end end end
   end
   # A call of function id on ARM64 whose body Go's compiler inlines and
   # whose value is a product is a product where it is called: the factors
@@ -409,9 +409,9 @@ defmodule NativeFloats do
     at = nc_env_offset(env,local)
     first = nc_env_next(env,at)
     if first >= Enum.count(env) do 0 else
-      start = nc_read(env,at)+65536*Enum.at(env,at+2,0)
-      one = nc_read(env,first)+65536*Enum.at(env,first+2,0)
-      ends = nc_read(env,first+3)+65536*Enum.at(env,first+5,0)
+      start = nc_long(env,at)
+      one = nc_long(env,first)
+      ends = nc_env_stop(env,first)
       kind = nt_read(env,first+7)
       if one != start do 0 else if ends != one do 0 else if Enum.count(kind) != 2 do 0 else if Enum.at(kind,1,0) == 197 do 1 else 0 end end end end
     end
@@ -421,10 +421,10 @@ defmodule NativeFloats do
     first = nc_env_next(env,at)
     second = if first >= Enum.count(env) do Enum.count(env) else nc_env_next(env,first) end
     if second >= Enum.count(env) do 0 else
-      start = nc_read(env,at)+65536*Enum.at(env,at+2,0)
-      one = nc_read(env,first)+65536*Enum.at(env,first+2,0)
-      two = nc_read(env,second)+65536*Enum.at(env,second+2,0)
-      ends = nc_read(env,first+3)+65536*Enum.at(env,first+5,0)
+      start = nc_long(env,at)
+      one = nc_long(env,first)
+      two = nc_long(env,second)
+      ends = nc_env_stop(env,first)
       if one != start do 0 else if two != start do 0 else if ends != one do 0 else
         if nt_tag(nt_read(env,first+7))*nt_tag(nt_read(env,second+7)) == 576 do 1 else 0 end
       end end end
@@ -436,12 +436,12 @@ defmodule NativeFloats do
     constant = if nc_arm() == 0 do 0 else ne_go_constant(inside) end
     if kind == 0 do (if constant == 1 do ne_flag(value,8) else value end) else if Enum.count(nc_code(value)) != Enum.count(nc_code(inside)) do value else ne_flag(value,if kind == 1 do 32 else 16 end) end end
   end
-  def ne_flag(value: bytes, bit: integer): bytes do Enum.concat(nc_slice(value,0,3),Enum.concat(b[Enum.at(value,3,0)+bit],nc_slice(value,4,Enum.count(value)))) end
+  def ne_flag(value: bytes, bit: integer): bytes do Enum.concat(nc_slice(value,0,4),Enum.concat(b[Enum.at(value,4,0)+bit],nc_slice(value,5,Enum.count(value)))) end
   def ne_multiply_tail(): bytes do b[89,102,72,15,110,193,102,72,15,110,200,242,15,89,193,102,72,15,126,192] end
   # 1 for a product, 2 for a negated product, else 0.
   def ne_is_product(value: bytes): integer do
-    if Enum.count(value) < 4 do 0 else
-      flags = Enum.at(value,3,0)-64*a_div(Enum.at(value,3,0),64)
+    if Enum.count(value) < 5 do 0 else
+      flags = Enum.at(value,4,0)-64*a_div(Enum.at(value,4,0),64)
       code = nc_code(value)
       if flags >= 32 do (if Enum.count(code) < 20 do 0 else zf_same(code,Enum.count(code)-20,ne_multiply_tail(),0) end) else
         if flags >= 16 do (if Enum.count(code) < 25 do 0 else 2*zf_same(code,Enum.count(code)-25,Enum.concat(ne_multiply_tail(),b[72,15,186,248,63]),0) end) else 0 end
@@ -572,7 +572,7 @@ defmodule NativeFloats do
   # ---- the Float module ----
   def ne_unary(source: bytes, start: integer, env: bytes, table: bytes, depth: integer): bytes do
     dot = if nc_word(source,start,b[70,108,111,97,116]) == 0 do -1 else nc_expect(source,nc_end(source,start),b[46]) end
-    if dot < 0 do nb_unary(source,start,env,table,depth) else ne_module(source,nc_start(source,dot),env,table,Enum.concat(nc_u24(depth),nc_u24(start))) end
+    if dot < 0 do nb_unary(source,start,env,table,depth) else ne_module(source,nc_start(source,dot),env,table,Enum.concat(nc_u24(depth),nc_u32(start))) end
   end
   def ne_name(source: bytes, name: integer): integer do
     if nc_word(source,name,b[102,114,111,109,95,105,110,116,101,103,101,114]) == 1 do 1 else if nc_word(source,name,b[116,111,95,115,116,114,105,110,103]) == 1 do 2 else
@@ -587,7 +587,7 @@ defmodule NativeFloats do
     op = ne_name(source,name)
     begin = nc_expect(source,nc_end(source,name),b[40])
     args = if op == 0 do b[] else if begin < 0 do b[] else nc_arguments(source,begin,env,table,nc_cursor(plan,0)) end end
-    if nc_pos(args) < 0 do b[] else nw_library(ne_function(source,table,args,op+nc_arg_count(args)*16,nc_cursor(plan,3)),args,0) end
+    if nc_pos(args) < 0 do b[] else nw_library(ne_function(source,table,args,op+nc_arg_count(args)*16,nc_long(plan,3)),args,0) end
   end
   def ne_places_message(): bytes do b[112,114,101,99,105,115,105,111,110,32,109,117,115,116,32,98,101,32,98,101,116,119,101,101,110,32,48,32,97,110,100,32,49,53] end
   # plan: the function and 16 times the number of arguments.

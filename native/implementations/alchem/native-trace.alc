@@ -2,23 +2,64 @@ defmodule NativeTrace do
   # Failure traces: what a program needs to end as the pinned runtime ends
   # it, naming the place, the reason and every active call (the routine is
   # spec/trace-x86_64.s). The compiler itself is not traced: nc_compile marks
-  # byte 15 of the first table record when the program is a compiler entry.
+  # byte 20 of the first table record when the program is a compiler entry.
   def nz_on(table: bytes): integer do if Enum.at(table,20,0) == 1 do 0 else 1 end end
   def nz_off(table: bytes): bytes do nc_join(nc_slice(table,0,20),b[1],nc_slice(table,21,Enum.count(table))) end
   # The routine's table slot, after the four shared runtimes.
   def nz_slot(table: bytes): integer do nc_records(Enum.count(table))+4 end
   # A statement begins: its position goes to the frame.
-  # The frame's word is 64 bits: the position in its low 22 bits and above
-  # them a count of lines past that position's own (see wf_at). One that
-  # does not fit a sign-extended 32-bit immediate is stored in two halves.
-  def nz_set(pos: integer): bytes do
-    high = nc_units(pos,4294967296)
-    if pos < 2147483648 do Enum.concat(b[72,199,133,120,255,255,255],nc_u32(pos)) else
-      nc_join(Enum.concat(b[199,133,120,255,255,255],nc_u32(pos-high*4294967296)),b[199,133,124,255,255,255],nc_u32(high))
+  # The frame's word is 64 bits: a position alone here (nz_put has the
+  # lines of a for and of a try above it). One that does not fit a
+  # sign-extended 32-bit immediate is stored in two halves.
+  def nz_set(pos: integer): bytes do nz_put(pos,1) end
+  # A line as the compiler counts with it: a position, and above its low
+  # 32 bits the lines past the position's own. The word a frame holds is
+  # that in a source of 16 MiB or more (wide: nd_wide); in a shorter one it
+  # has the lines above the low 24 bits, as it had when a position took
+  # three bytes, and the trace routine reads it so (nz_routine). nz_low and
+  # nz_high are the word's two halves, nz_line the line of two such halves.
+  # A word with nothing above bit 30 is set as one sign-extended immediate.
+  def nz_past(line: integer): integer do nc_units(line,4294967296) end
+  def nz_place(line: integer): integer do line-nz_past(line)*4294967296 end
+  def nz_low(line: integer, wide: integer): integer do
+    if wide == 1 do nz_place(line) else nz_place(line)+(nz_past(line)-nc_units(nz_past(line),256)*256)*16777216 end
+  end
+  def nz_high(line: integer, wide: integer): integer do
+    if wide == 1 do nz_past(line) else nc_units(nz_past(line),256) end
+  end
+  def nz_short(line: integer, wide: integer): integer do
+    if nz_high(line,wide) != 0 do 0 else if nz_low(line,wide) < 2147483648 do 1 else 0 end end
+  end
+  def nz_line(low: integer, high: integer, wide: integer): integer do
+    if wide == 1 do low+high*4294967296 else nc_low(low)+(nc_units(low,16777216)+high*256)*4294967296 end
+  end
+  def nz_put(line: integer, wide: integer): bytes do
+    if nz_short(line,wide) == 1 do Enum.concat(b[72,199,133,120,255,255,255],nc_u32(nz_low(line,wide))) else
+      nc_join(Enum.concat(b[199,133,120,255,255,255],nc_u32(nz_low(line,wide))),b[199,133,124,255,255,255],nc_u32(nz_high(line,wide)))
     end
   end
+  # The trace routine for a source of 16 MiB or more: it takes the low 32
+  # bits of a frame's word for the position and the bits above them for the
+  # lines, where the routine as it is assembled takes 24 (tr_place in
+  # spec/trace-x86_64.s: the mask and the shift; on ARM64 the upper half of
+  # the mask and the shift). b[] when the routine is not what this knows.
+  def nz_routine(blob: bytes, wide: integer): bytes do
+    if wide == 0 do blob else if nc_a64() == 1 do nz_swap(nz_swap(blob,b[244,255,159,210,244,31,160,242,115,2,20,10],b[244,255,159,210,244,255,191,242,115,2,20,10]),b[243,3,0,170,115,254,88,211],b[243,3,0,170,115,254,96,211]) else
+      nz_swap(blob,b[65,129,224,255,255,255,0,72,193,232,24],b[65,129,224,255,255,255,255,72,193,232,32])
+    end end
+  end
+  def nz_swap(blob: bytes, old: bytes, new: bytes): bytes do
+    at = nz_seek(blob,old,0,Enum.count(blob)-Enum.count(old)+1)
+    if at < 0 do b[] else nc_join(nc_slice(blob,0,at),new,nc_slice(blob,at+Enum.count(old),Enum.count(blob))) end
+  end
+  def nz_seek(blob: bytes, old: bytes, first: integer, stop: integer): integer do
+    middle = first+nc_half(stop-first)
+    if stop-first <= 0 do -1 else if stop-first == 1 do if nc_word_at(blob,first,old,0) == 1 do first else -1 end else
+      if nz_seek(blob,old,first,middle) >= 0 do nz_seek(blob,old,first,middle) else nz_seek(blob,old,middle,stop) end
+    end end
+  end
   def nz_at(table: bytes, pos: integer): bytes do
-    if nz_on(table) == 0 do b[] else nz_set(pos) end
+    if nz_on(table) == 0 do b[] else nz_put(pos,nd_wide(table)) end
   end
   # A function (closure 0) or lambda (1) is entered, its parameters stored: it
   # has no closure records yet, runs its first statement, and is one more
@@ -104,7 +145,7 @@ defmodule NativeTrace do
   end
   def nz_digits(source: bytes, pos: integer, value: integer): integer do
     # No file is longer than a source may be: more digits than that say no more.
-    if is_digit(byte_at(source,pos)) == 0 do value else if value > 16777216 do value else nz_digits(source,pos+1,value*10+byte_at(source,pos)-48) end end
+    if is_digit(byte_at(source,pos)) == 0 do value else if value > 1073741824 do value else nz_digits(source,pos+1,value*10+byte_at(source,pos)-48) end end
   end
   def nz_digits_end(source: bytes, pos: integer): integer do
     if is_digit(byte_at(source,pos)) == 0 do pos else nz_digits_end(source,pos+1) end
@@ -117,24 +158,24 @@ defmodule NativeTrace do
   def nz_manifest(source: bytes, pos: integer, left: integer, found: bytes): bytes do
     size = nz_digits_end(source,pos+2)
     stop = nz_line_end(source,size)
-    if left == 0 do Enum.concat(nc_u24(pos),found) else
+    if left == 0 do Enum.concat(nc_u32(pos),found) else
       if byte_at(source,pos)*256+byte_at(source,pos+1) != 8992 do b[] else if byte_at(source,size) != 32 do b[] else if stop >= Enum.count(source) do b[] else if nz_digits(source,pos+2,0) > Enum.count(source) do b[] else
-        nz_manifest(source,stop+1,left-1,nc_join(found,nc_u32(nz_digits(source,pos+2,0)),Enum.concat(nc_u24(size+1),nc_u24(stop))))
+        nz_manifest(source,stop+1,left-1,nc_join(found,nc_u32(nz_digits(source,pos+2,0)),Enum.concat(nc_u32(size+1),nc_u32(stop))))
       end end end end
     end
   end
   # Where each file starts, the length of its path and the path.
   def nz_file_records(source: bytes, found: bytes, offset: integer, start: integer): bytes do
-    first = nc_cursor(found,offset+4)
-    stop = nc_cursor(found,offset+7)
+    first = nc_long(found,offset+4)
+    stop = nc_long(found,offset+8)
     if offset >= Enum.count(found) do b[] else
-      nc_join(Enum.concat(nc_u32(start),nc_u16(stop-first)),nc_slice(source,first,stop),nz_file_records(source,found,offset+10,start+nc_read(found,offset)+nc_read(found,offset+2)*65536))
+      nc_join(Enum.concat(nc_u32(start),nc_u16(stop-first)),nc_slice(source,first,stop),nz_file_records(source,found,offset+12,start+nc_read(found,offset)+nc_read(found,offset+2)*65536))
     end
   end
   def nz_files(source: bytes): bytes do
     count = nz_digits(source,15,0)
     found = if nz_bundled(source) == 0 do b[] else nz_manifest(source,nz_line_end(source,15)+1,count,b[]) end
-    if Enum.count(found) < 3 do b[0,0,0,0,7,0,60,115,116,100,105,110,62] else nz_file_records(source,found,3,nc_cursor(found,0)) end
+    if Enum.count(found) < 4 do b[0,0,0,0,7,0,60,115,116,100,105,110,62] else nz_file_records(source,found,4,nc_long(found,0)) end
   end
   def nz_file_count(files: bytes, offset: integer): integer do
     if offset >= Enum.count(files) do 0 else 1+nz_file_count(files,offset+6+nc_read(files,offset+4)) end
@@ -176,7 +217,8 @@ defmodule NativeTrace do
     second = nc_join(nc_u32(nz_file_count(files,0)),nc_u32(40+Enum.count(lines)+Enum.count(files)),nc_u32(nc_records(Enum.count(table))))
     words = nc_join(nc_join(first,second,Enum.concat(nc_u32(after),nc_u32(nc_units(Enum.count(inside),4)))),nc_u32(after+Enum.count(inside)),nc_u32(nc_units(Enum.count(moved),16)))
     tables = nc_join(words,nc_join(lines,files,names),Enum.concat(inside,moved))
-    if nz_on(table) == 0 do b[] else if nc_a64() == 1 do xa_raw(Enum.concat(tr_blob_arm(),tables)) else Enum.concat(tr_blob(),tables) end end
+    routine = nz_routine(if nc_a64() == 1 do tr_blob_arm() else tr_blob() end,nd_wide(table))
+    if nz_on(table) == 0 do b[] else if Enum.count(routine) == 0 do b[] else if nc_a64() == 1 do xa_raw(Enum.concat(routine,tables)) else Enum.concat(routine,tables) end end end
   end
   # Native smoke test; assembled with the compiler.
   def main() do System.halt(0) end

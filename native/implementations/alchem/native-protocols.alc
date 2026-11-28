@@ -161,7 +161,7 @@ defmodule NativeProtocols do
   def mp_outline(work: bytes, name: integer): bytes do
     stop = nc_end(work,name)
     open = nc_expect(work,stop,b[40])
-    spans = if nc_word(work,open,b[41]) == 1 do b[] else nc_code(nc_list_collect(work,open,b[],0,41)) end
+    spans = if nc_word(work,open,b[41]) == 1 do b[] else mx_narrow(nc_code(nc_list_collect(work,open,b[],0,41))) end
     close = np_close(work,stop,0,16777216)
     typed = nc_expect(work,close,b[58])
     Enum.concat(b[nc_units(Enum.count(spans),6)],if typed < 0 do b[0,0,0,0,0,0] else mx_two(typed,nc_pos(nc_type(work,typed))) end)

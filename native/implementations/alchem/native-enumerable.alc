@@ -30,7 +30,7 @@ defmodule NativeEnumerable do
   # Where argument index starts, of those from start on; -1 when they are
   # not plainly separated by commas.
   def en_start(source: bytes, start: integer, index: integer): integer do
-    stop = if index <= 0 do start else nc_span(source,nc_span_state(start,0,0,0,0),16777216) end
+    stop = if index <= 0 do start else nc_span(source,nc_span_state(start,0,0,0,0),1073741824) end
     if index <= 0 do start else if stop <= start do -1 else if nc_word(source,stop,b[44]) == 0 do -1 else
       en_start(source,nc_start(source,nc_end(source,stop)),index-1)
     end end end
@@ -63,10 +63,10 @@ defmodule NativeEnumerable do
   # place: where the arguments start, where the call's name does and 1 when
   # the first argument is piped in.
   def en_refused(source: bytes, args: bytes, mask: integer, index: integer, place: bytes): integer do
-    piped = Enum.at(place,6,0)
+    piped = Enum.at(place,8,0)
     half = nt_div(mask,2)
-    at = if index < piped do -1 else en_start(source,nc_start(source,nc_cursor(place,0)),index-piped) end
-    literal = if index < piped do en_piped(source,nc_cursor(place,3)) else if at < 0 do 1 else en_empty(source,at) end end
+    at = if index < piped do -1 else en_start(source,nc_start(source,nc_long(place,0)),index-piped) end
+    literal = if index < piped do en_piped(source,nc_long(place,4)) else if at < 0 do 1 else en_empty(source,at) end end
     if mask == 0 do 0 else
       if mask-half*2 == 0 do en_refused(source,args,half,index+1,place) else
         if en_need(args,index) == 0 do en_refused(source,args,half,index+1,place) else
@@ -85,7 +85,7 @@ defmodule NativeEnumerable do
     needy = if nc_pos(args) < 0 do 0 else if (first-65)*(90-first) < 0 do 0 else en_need(args,0)+en_need(args,1)+en_need(args,2) end end
     mask = if needy == 0 do 0 else if nn_library(source,env,table) == 1 do 0 else en_find(source,name,pos-1-name,nc_arg_count(args),en_table(),0) end end
     piped = if mask == 0 do 0 else if nc_pos(nf_piped(source,pos,env)) < 0 do 0 else 1 end end
-    if mask == 0 do args else if en_refused(source,args,mask,0,nc_join(nc_u24(pos),nc_u24(name),b[piped])) == 1 do b[] else args end end
+    if mask == 0 do args else if en_refused(source,args,mask,0,nc_join(nc_u32(pos),nc_u32(name),b[piped])) == 1 do b[] else args end end
   end
   # Native smoke test; enum parameters of the library.
   def main() do System.halt(0) end

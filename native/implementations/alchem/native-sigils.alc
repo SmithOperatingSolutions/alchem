@@ -22,7 +22,7 @@ defmodule NativeSigils do
   # below -1.
   def sg_hole_some(source: bytes, pos: integer, depth: integer, left: integer): integer do
     value = byte_at(source,pos)
-    if pos < 0 do -1 else if pos >= Enum.count(source) do -1 else if value == 10 do -1 else if left == 0 do 0-2-pos-depth*16777216 else
+    if pos < 0 do -1 else if pos >= Enum.count(source) do -1 else if value == 10 do -1 else if left == 0 do 0-2-pos-depth*4294967296 else
       if value == 34 do sg_hole_some(source,ns_quoted_end(source,pos+1),depth,left-1) else
         if value == 123 do sg_hole_some(source,pos+1,depth+1,left-1) else
           if value != 125 do sg_hole_some(source,pos+1,depth,left-1) else if depth == 1 do pos else sg_hole_some(source,pos+1,depth-1,left-1) end end
@@ -32,8 +32,8 @@ defmodule NativeSigils do
   end
   def sg_hole_end(source: bytes, pos: integer, depth: integer): integer do
     next = sg_hole_some(source,pos,depth,64)
-    deep = nc_units(0-2-next,16777216)
-    if next >= -1 do next else sg_hole_end(source,0-2-next-deep*16777216,deep) end
+    deep = nc_units(0-2-next,4294967296)
+    if next >= -1 do next else sg_hole_end(source,0-2-next-deep*4294967296,deep) end
   end
   # Where the delimiter stands that closes a one-line sigil whose text starts
   # at pos, -1 when its line ends first. A backslash keeps the byte after it
@@ -75,11 +75,11 @@ defmodule NativeSigils do
       end
     end
   end
-  # What the sigil at start holds: where its text starts (3 bytes); the plan
+  # What the sigil at start holds: where its text starts (4 bytes); the plan
   # of its text: the closing delimiter (0 for a heredoc), the indentation of
   # a heredoc's closing line, 1 when #{ } holds a value, then where that
-  # closing line starts and where the text stops (3 bytes each); and where
-  # its modifiers start (3 bytes). b[] for none.
+  # closing line starts and where the text stops (4 bytes each); and where
+  # its modifiers start (4 bytes). b[] for none.
   def sg_shape(source: bytes, start: integer): bytes do
     opener = byte_at(source,start+2)
     tall = if opener != 34 do 0 else ns_tripled(source,start+2) end
@@ -88,9 +88,9 @@ defmodule NativeSigils do
     indent = if tall == 1 do nc_blank_end(source,close)-close else 0 end
     opened = byte_at(source,nc_blank_end(source,start+5))
     stop = if tall == 1 do close else sg_scan(source,start+3,sg_closer(opener),sg_lower(byte_at(source,start+1))) end
-    plan = nc_join(b[if tall == 1 do 0 else sg_closer(opener) end,if indent > 255 do 0 else indent end,sg_lower(byte_at(source,start+1))],nc_u24(if close < 0 do 0 else close end),nc_u24(if stop < 0 do 0 else stop end))
+    plan = nc_join(b[if tall == 1 do 0 else sg_closer(opener) end,if indent > 255 do 0 else indent end,sg_lower(byte_at(source,start+1))],nc_u32(if close < 0 do 0 else close end),nc_u32(if stop < 0 do 0 else stop end))
     if sg_starts(source,start) == 0 do b[] else if stop < 0 do b[] else if indent > 255 do b[] else if tall*(opened-10)*(opened-13) != 0 do b[] else
-      nc_join(nc_u24(first),plan,nc_u24(if tall == 1 do nc_blank_end(source,close)+3 else stop+1 end))
+      nc_join(nc_u32(first),plan,nc_u32(if tall == 1 do nc_blank_end(source,close)+3 else stop+1 end))
     end end end end
   end
   # The first #{ from first up to stop, stop when there is none.
@@ -119,9 +119,9 @@ defmodule NativeSigils do
     blank = if (value-32)*(value-9) == 0 do 1 else 0 end
     start = if closer != 0 do pos else if indent*blank == 0 do pos else sg_blank_start(source,pos,indent) end end
     if closer != 0 do
-      if value != 92 do 1 else if pos+1 >= nc_cursor(plan,6) do 1 else if byte_at(source,pos+1) == closer do 0 else 1 end end end
+      if value != 92 do 1 else if pos+1 >= nc_long(plan,7) do 1 else if byte_at(source,pos+1) == closer do 0 else 1 end end end
     else
-      if indent*blank == 0 do 1 else if byte_at(source,start-1) != 10 do 1 else if pos-start >= indent do 1 else 1-nc_equal(source,start,nc_cursor(plan,3),indent) end end end
+      if indent*blank == 0 do 1 else if byte_at(source,start-1) != 10 do 1 else if pos-start >= indent do 1 else 1-nc_equal(source,start,nc_long(plan,3),indent) end end end
     end
   end
   # The bytes of the text from first up to stop. Each byte is judged by
@@ -137,25 +137,25 @@ defmodule NativeSigils do
   # The text from pos up to where it stops (flag 1) or up to a #{ that holds
   # a value (flag 2): position, flag, bytes.
   def sg_piece(source: bytes, pos: integer, plan: bytes): bytes do
-    stop = nc_cursor(plan,6)
+    stop = nc_long(plan,7)
     hole = if Enum.at(plan,2,0) == 0 do stop else sg_hole_at(source,pos,stop) end
-    nc_join(nc_u24(if hole >= stop do stop else hole end),b[if hole >= stop do 1 else 2 end],sg_text(source,pos,if hole >= stop do stop else hole end,plan))
+    nc_join(nc_u32(if hole >= stop do stop else hole end),b[if hole >= stop do 1 else 2 end],sg_text(source,pos,if hole >= stop do stop else hole end,plan))
   end
   # The string a sigil's text makes from pos on: text, then for each
   # #{expression} its value as text and what follows. plan: that of
   # sg_shape, then the nesting.
   def sg_parts(source: bytes, pos: integer, env: bytes, table: bytes, plan: bytes): bytes do
-    depth = Enum.at(plan,9,0)
-    stop = nc_cursor(plan,6)
+    depth = Enum.at(plan,11,0)
+    stop = nc_long(plan,7)
     piece = sg_piece(source,pos,plan)
     hole = nc_pos(piece)
-    inner = if Enum.at(piece,3,0) != 2 do b[] else if depth > 252 do b[] else nc_expression(source,hole+2,env,table,depth+1) end end
+    inner = if Enum.at(piece,4,0) != 2 do b[] else if depth > 252 do b[] else nc_expression(source,hole+2,env,table,depth+1) end end
     shown = ns_shown(inner)
     after = nc_expect(source,nc_pos(inner),b[125])
     fits = if after < 0 do 0 else if after > stop do 0 else sg_same_line(source,hole,after) end end
     rest = if Enum.count(shown)*fits == 0 do b[] else sg_parts(source,after,env,table,plan) end
     if nc_pos(piece) < 0 do b[] else
-      if Enum.at(piece,3,0) == 1 do nc_value(stop,nc_text_emit(nc_slice(piece,4,Enum.count(piece))),b[2]) else ns_joined(nc_text_emit(nc_slice(piece,4,Enum.count(piece))),shown,rest) end
+      if Enum.at(piece,4,0) == 1 do nc_value(stop,nc_text_emit(nc_slice(piece,5,Enum.count(piece))),b[2]) else ns_joined(nc_text_emit(nc_slice(piece,5,Enum.count(piece))),shown,rest) end
     end
   end
   # The length of the white space character at a position of a text, 0 when
@@ -496,11 +496,11 @@ defmodule NativeSigils do
   end
   # sigil_x(text, modifiers) for a sigil of the program at start: value is
   # the text, a string. spec: the nesting, the letter, where the sigil ends
-  # and where its modifiers start (3 bytes each).
+  # and where its modifiers start (4 bytes each).
   def sg_defined(source: bytes, start: integer, env: bytes, table: bytes, spec: bytes, value: bytes): bytes do
-    stop = nc_cursor(spec,2)
+    stop = nc_long(spec,2)
     target = sg_handler(source,table,Enum.at(spec,1,0))
-    pushed = nc_join(Enum.concat(nc_code(value),b[80]),nc_text_emit(nc_slice(source,nc_cursor(spec,5),stop)),b[80])
+    pushed = nc_join(Enum.concat(nc_code(value),b[80]),nc_text_emit(nc_slice(source,nc_long(spec,6),stop)),b[80])
     if target < 0 do b[] else if nc_tag(value) != 2 do b[] else
       sg_call(source,start,env,table,nc_join(b[Enum.at(spec,0,0)],nc_u24(target),sg_packet(stop,2,b[1,2,1,2],pushed)))
     end end
@@ -508,13 +508,13 @@ defmodule NativeSigils do
   # A sigil whose text holds no value. spec as for sg_defined, then the text.
   def sg_plain(source: bytes, start: integer, env: bytes, table: bytes, spec: bytes): bytes do
     letter = Enum.at(spec,1,0)
-    stop = nc_cursor(spec,2)
-    text = nc_slice(spec,8,Enum.count(spec))
+    stop = nc_long(spec,2)
+    text = nc_slice(spec,10,Enum.count(spec))
     if (letter-115)*(letter-83) == 0 do nc_value(stop,nc_text_emit(text),b[2]) else
       if letter == 119 do sg_listed(stop,sg_words(text,0,Enum.count(text)),b[2]) else
         if (letter-99)*(letter-67) == 0 do sg_listed(stop,sg_points(text,0,Enum.count(text)),b[0]) else
           if (letter-68)*(letter-84)*(letter-78)*(letter-85) == 0 do nf_postfix(source,sg_calendar_value(source,table,letter,stop,text),env,table,Enum.at(spec,0,0)) else
-            if letter == 114 do sg_regex(stop,nc_slice(source,nc_cursor(spec,5),stop),text) else if (letter-104)*(letter-72) == 0 do b[] else sg_defined(source,start,env,table,nc_slice(spec,0,8),nc_value(stop,nc_literal_emit(text),b[2])) end end
+            if letter == 114 do sg_regex(stop,nc_slice(source,nc_long(spec,6),stop),text) else if (letter-104)*(letter-72) == 0 do b[] else sg_defined(source,start,env,table,nc_slice(spec,0,10),nc_value(stop,nc_literal_emit(text),b[2])) end end
           end
         end
       end
@@ -526,8 +526,8 @@ defmodule NativeSigils do
     letter = Enum.at(spec,1,0)
     home = ny_module(source,table,b[65,108,99,104,127,109,83,116,114,105,110,103,49],sg_all(table))
     split = if home < 0 do -1 else sg_find(source,table,b[115,112,108,105,116],sg_all(table),home,0) end
-    if nc_pos(value) < 0 do b[] else if letter == 115 do nc_value(nc_cursor(spec,2),nc_code(value),b[2]) else
-      if letter == 119 do if split < 0 do b[] else sg_call(source,start,env,table,nc_join(b[Enum.at(spec,0,0)],nc_u24(split),sg_packet(nc_cursor(spec,2),1,b[1,2],Enum.concat(nc_code(value),b[80])))) end else
+    if nc_pos(value) < 0 do b[] else if letter == 115 do nc_value(nc_long(spec,2),nc_code(value),b[2]) else
+      if letter == 119 do if split < 0 do b[] else sg_call(source,start,env,table,nc_join(b[Enum.at(spec,0,0)],nc_u24(split),sg_packet(nc_long(spec,2),1,b[1,2],Enum.concat(nc_code(value),b[80])))) end else
         if letter == 114 do sg_regex_filled(source,start,env,table,spec,value) else if (letter-99)*(letter-104) == 0 do b[] else sg_defined(source,start,env,table,spec,value) end end
       end
     end end
@@ -537,13 +537,13 @@ defmodule NativeSigils do
     letter = byte_at(source,start+1)
     shape = sg_shape(source,start)
     stop = nc_end(source,start)
-    plan = nc_slice(shape,3,12)
+    plan = nc_slice(shape,4,15)
     doc = if letter != 115 do 0 else if Enum.at(plan,0,0) == 0 do 1 else 0 end end
-    piece = if Enum.count(shape) == 0 do b[] else sg_piece(source,nc_cursor(shape,0),plan) end
-    spec = nc_join(b[depth,letter],nc_u24(if stop < 0 do 0 else stop end),nc_slice(shape,12,15))
+    piece = if Enum.count(shape) == 0 do b[] else sg_piece(source,nc_long(shape,0),plan) end
+    spec = nc_join(b[depth,letter],nc_u32(if stop < 0 do 0 else stop end),nc_slice(shape,15,19))
     if nc_pos(piece) < 0 do b[] else if stop < 0 do b[] else if depth > 252 do b[] else
       if doc == 1 do ns_heredoc(source,start+2,env,table,depth) else
-        if Enum.at(piece,3,0) == 1 do sg_plain(source,start,env,table,Enum.concat(spec,nc_slice(piece,4,Enum.count(piece)))) else sg_filled(source,start,env,table,spec,sg_parts(source,nc_cursor(shape,0),env,table,Enum.concat(plan,b[depth]))) end
+        if Enum.at(piece,4,0) == 1 do sg_plain(source,start,env,table,Enum.concat(spec,nc_slice(piece,5,Enum.count(piece)))) else sg_filled(source,start,env,table,spec,sg_parts(source,nc_long(shape,0),env,table,Enum.concat(plan,b[depth]))) end
       end
     end end end
   end
@@ -563,7 +563,7 @@ defmodule NativeSigils do
   end
   # The number an index of a tuple is written as, from pos on: digits, the
   # same in parentheses or after a minus sign, or a module constant that is
-  # one. The position after it (3 bytes) and the number; b[] for anything
+  # one. The position after it (4 bytes) and the number; b[] for anything
   # else, and for a number that is no position of a tuple.
   def sg_number(source: bytes, pos: integer, env: bytes, table: bytes, budget: integer): bytes do
     start = nc_start(source,pos)
@@ -573,12 +573,12 @@ defmodule NativeSigils do
     found = if value != 64 do -1 else if classify_ascii(byte_at(source,start+1)) != 2 do -1 else nk_declared(source,nc_meta(table,owner,0),nk_module_end(source,table,owner+1),start+1) end end
     inner = if budget == 0 do b[] else if (value-40)*(value-45) == 0 do sg_number(source,stop,env,table,budget-1) else if found < 0 do b[] else sg_number(source,nc_end(source,found+1),env,table,budget-1) end end end
     if start < 0 do b[] else
-      if is_digit(value) == 1 do if decimal_status(source,start,stop,0,7) != 0 do b[] else if decimal_digits(source,start,stop,0) < -255 do b[] else Enum.concat(nc_u24(stop),b[0-decimal_digits(source,start,stop,0)]) end end else
+      if is_digit(value) == 1 do if decimal_status(source,start,stop,0,7) != 0 do b[] else if decimal_digits(source,start,stop,0) < -255 do b[] else Enum.concat(nc_u32(stop),b[0-decimal_digits(source,start,stop,0)]) end end else
         if nc_pos(inner) < 0 do b[] else
-          if value == 40 do if nc_word(source,nc_pos(inner),b[41]) == 0 do b[] else Enum.concat(nc_u24(nc_end(source,nc_pos(inner))),nc_slice(inner,3,4)) end else
-            if value == 45 do if Enum.at(inner,3,0) != 0 do b[] else inner end else
+          if value == 40 do if nc_word(source,nc_pos(inner),b[41]) == 0 do b[] else Enum.concat(nc_u32(nc_end(source,nc_pos(inner))),nc_slice(inner,4,5)) end else
+            if value == 45 do if Enum.at(inner,4,0) != 0 do b[] else inner end else
               # The constant's value is that number and nothing more.
-              if nc_start(source,nc_pos(inner)) != nc_start(source,nk_value_end(source,nc_end(source,found+1))) do b[] else Enum.concat(nc_u24(nc_end(source,start+1)),nc_slice(inner,3,4)) end
+              if nc_start(source,nc_pos(inner)) != nc_start(source,nk_value_end(source,nc_end(source,found+1))) do b[] else Enum.concat(nc_u32(nc_end(source,start+1)),nc_slice(inner,4,5)) end
             end
           end
         end
@@ -589,27 +589,27 @@ defmodule NativeSigils do
   def sg_index_tuple(source: bytes, value: bytes, env: bytes, table: bytes, open: integer): bytes do
     index = sg_number(source,nc_end(source,open),env,table,16)
     after = nc_expect(source,nc_pos(index),b[93])
-    if nc_pos(index) < 0 do b[] else if Enum.at(index,3,0) >= nt_count(nc_kind(value)) do b[] else if after < 0 do b[] else
-      nc_value(after,nc_join(nc_code(value),b[72,139,128],nc_u32(8+Enum.at(index,3,0)*8)),nt_child(nc_kind(value),Enum.at(index,3,0)))
+    if nc_pos(index) < 0 do b[] else if Enum.at(index,4,0) >= nt_count(nc_kind(value)) do b[] else if after < 0 do b[] else
+      nc_value(after,nc_join(nc_code(value),b[72,139,128],nc_u32(8+Enum.at(index,4,0)*8)),nt_child(nc_kind(value),Enum.at(index,4,0)))
     end end end
   end
   # list[index]: the element at a position from 0, and the program ends
   # naming the bracket when there is none.
   def sg_index_list(table: bytes, value: bytes, index: bytes, plan: bytes): bytes do
-    fail = sg_fail(table,nc_cursor(plan,0),b[108,105,115,116,32,105,110,100,101,120,32,111,117,116,32,111,102,32,98,111,117,110,100,115])
+    fail = sg_fail(table,nc_long(plan,0),b[108,105,115,116,32,105,110,100,101,120,32,111,117,116,32,111,102,32,98,111,117,110,100,115])
     if nj_integer(index) == 0 do b[] else
-      nc_value(nc_cursor(plan,3),nc_join(nc_join(nc_code(value),b[80],nc_code(index)),nc_join(b[89,72,59,1,15,130],nc_u32(Enum.count(fail)),fail),b[72,141,12,193,72,139,68,193,8]),nt_child(nc_kind(value),0))
+      nc_value(nc_long(plan,4),nc_join(nc_join(nc_code(value),b[80],nc_code(index)),nc_join(b[89,72,59,1,15,130],nc_u32(Enum.count(fail)),fail),b[72,141,12,193,72,139,68,193,8]),nt_child(nc_kind(value),0))
     end
   end
   # map[key]: the value of a key, and the program ends naming the bracket
   # when the map does not hold it. plan: the bracket and the position after
-  # the index (3 bytes each), then the type variables in reach.
+  # the index (4 bytes each), then the type variables in reach.
   def sg_index_map(table: bytes, value: bytes, index: bytes, plan: bytes): bytes do
-    fail = sg_fail(table,nc_cursor(plan,0),b[109,97,112,32,107,101,121,32,110,111,116,32,102,111,117,110,100])
+    fail = sg_fail(table,nc_long(plan,0),b[109,97,112,32,107,101,121,32,110,111,116,32,102,111,117,110,100])
     pushed = nc_join(Enum.concat(nc_code(value),b[80]),nc_code(index),b[80])
-    found = nm_get(sg_packet(nc_cursor(plan,3),2,Enum.concat(nt_cell(nc_kind(value)),nt_cell(nc_kind(index))),pushed),2,nc_slice(plan,6,Enum.count(plan)))
+    found = nm_get(sg_packet(nc_long(plan,4),2,Enum.concat(nt_cell(nc_kind(value)),nt_cell(nc_kind(index))),pushed),2,nc_slice(plan,8,Enum.count(plan)))
     if nc_pos(found) < 0 do b[] else
-      nc_value(nc_cursor(plan,3),nc_join(nc_code(found),nc_join(b[72,133,192,15,133],nc_u32(Enum.count(fail)),fail),b[72,139,64,8]),nt_child(nc_kind(found),0))
+      nc_value(nc_long(plan,4),nc_join(nc_code(found),nc_join(b[72,133,192,15,133],nc_u32(Enum.count(fail)),fail),b[72,139,64,8]),nt_child(nc_kind(found),0))
     end
   end
   # value[index] for the bracket after a value.
@@ -618,7 +618,7 @@ defmodule NativeSigils do
     tag = nt_tag(nc_kind(value))
     index = if (tag-7)*(tag-8) != 0 do b[] else if depth > 252 do b[] else nc_expression(source,nc_end(source,open),env,table,depth+1) end end
     stop = nc_expect(source,nc_pos(index),b[93])
-    plan = Enum.concat(nc_u24(open),nc_u24(if stop < 0 do 0 else stop end))
+    plan = Enum.concat(nc_u32(open),nc_u32(if stop < 0 do 0 else stop end))
     if nw_marked(value)+nu_holes(nc_kind(value),0) > 0 do b[] else
       if tag == 5 do sg_index_tuple(source,value,env,table,open) else
         if stop < 0 do b[] else if nc_tag(index) == 12 do b[] else
@@ -646,7 +646,7 @@ defmodule NativeSigils do
   def sg_indexed(source: bytes, value: bytes, env: bytes, table: bytes, depth: integer): bytes do
     next = nc_pos(value)
     open = nc_start(source,next)
-    after = if next < 0 do -1 else if byte_at(source,open) != 91 do -1 else if sg_same_line(source,next,open) == 0 do -1 else np_close(source,open,0,16777216) end end end
+    after = if next < 0 do -1 else if byte_at(source,open) != 91 do -1 else if sg_same_line(source,next,open) == 0 do -1 else np_close(source,open,0,1073741824) end end end
     arm = if sg_arm_after(source,after) == 0 do 0 else 1-sg_in_condition(env,3,0) end
     if after < 0 do value else if nc_word(source,after,b[61])+arm > 0 do value else
       sg_indexed(source,nf_postfix(source,sg_index(source,value,env,table,depth),env,table,depth),env,table,depth)
@@ -720,7 +720,7 @@ defmodule NativeSigils do
   # typed, from argument index on, places its code.
   def sg_shift(args: bytes, index: integer, delta: integer): bytes do
     held = nc_arg_kind(args,index)
-    moved = if nt_tag(held) != 11 do args else nc_arg_packet(nc_pos(args),nc_arg_count(args),nt_replace(nc_arg_types(args),index,nc_join(nc_slice(held,0,4),nc_u24(nc_cursor(held,4)+delta),nc_slice(held,7,10))),nc_arg_code(args)) end
+    moved = if nt_tag(held) != 11 do args else nc_arg_packet(nc_pos(args),nc_arg_count(args),nt_replace(nc_arg_types(args),index,nc_join(nc_slice(held,0,5),nc_u24(nc_cursor(held,5)+delta),nc_slice(held,8,11))),nc_arg_code(args)) end
     if index >= nc_arg_count(args) do args else sg_shift(moved,index+1,delta) end
   end
   # Calls of the program's own generic functions are strict about a library
@@ -741,7 +741,7 @@ defmodule NativeSigils do
   # those of its parameters, and for a library function passed by arity to
   # a strict call those of its result too.
   def sg_lambda_names(source: bytes, env: bytes, table: bytes, given: bytes, wanted: bytes, strict: integer): bytes do
-    start = nc_cursor(given,1)
+    start = nc_long(given,1)
     form = if strict == 0 do b[] else if byte_at(source,start) != 38 do b[] else if nf_capture_form(source,start) == 1 do b[] else nf_library_form(source,start,env,table) end end end
     known = if nc_pos(form) < 0 do 0 else nf_target(source,nc_start(source,nc_end(source,start)),env,table) end
     if nc_pos(form) < 0 do nw_parameter_names(wanted,0,b[]) else if known >= 0 do nw_parameter_names(wanted,0,b[]) else nu_names(wanted,0,b[]) end end
@@ -781,14 +781,14 @@ defmodule NativeSigils do
   def sg_holes_constant(source: bytes, pos: integer, plan: bytes, strict: integer): integer do
     piece = sg_piece(source,pos,plan)
     close = sg_hole_end(source,nc_pos(piece)+2,1)
-    if nc_pos(piece) < 0 do 0 else if Enum.at(piece,3,0) == 1 do 1 else if strict == 1 do 0 else if close < 0 do 0 else
-      if nj_constant(source,nc_pos(piece)+2,close,16777216) == 0 do 0 else sg_holes_constant(source,close+1,plan,strict) end
+    if nc_pos(piece) < 0 do 0 else if Enum.at(piece,4,0) == 1 do 1 else if strict == 1 do 0 else if close < 0 do 0 else
+      if nj_constant(source,nc_pos(piece)+2,close,1073741824) == 0 do 0 else sg_holes_constant(source,close+1,plan,strict) end
     end end end end
   end
   # 1 when the token at start is no sigil, or a sigil that is a constant.
   def sg_sigil_constant(source: bytes, start: integer, strict: integer): integer do
     shape = sg_shape(source,start)
-    if sg_starts(source,start) == 0 do 1 else if Enum.count(shape) == 0 do 0 else sg_holes_constant(source,nc_cursor(shape,0),nc_slice(shape,3,12),strict) end end
+    if sg_starts(source,start) == 0 do 1 else if Enum.count(shape) == 0 do 0 else sg_holes_constant(source,nc_long(shape,0),nc_slice(shape,4,15),strict) end end
   end
   # 1 when the name at start may stand in the value of a module constant:
   # true, false, none and the operators written as words, an atom's name,
@@ -831,7 +831,7 @@ defmodule NativeSigils do
     # The text of a @doc may be a ~S or ~s sigil that holds no value.
     letter = byte_at(source,first+1)
     plain = if byte_at(source,first) == 34 do sg_string_plain(source,first) else if byte_at(source,first) == 126 do if (letter-115)*(letter-83) != 0 do 0 else sg_sigil_constant(source,first,1) end else nc_word(source,first,b[102,97,108,115,101]) end end
-    if stop < 0 do 0 else if nc_word(source,name,b[100,111,99])+nc_word(source,name,b[109,111,100,117,108,101,100,111,99]) == 0 do sg_constant_tokens(source,first,stop,-1,16777216) else
+    if stop < 0 do 0 else if nc_word(source,name,b[100,111,99])+nc_word(source,name,b[109,111,100,117,108,101,100,111,99]) == 0 do sg_constant_tokens(source,first,stop,-1,1073741824) else
       if nc_start(source,nc_end(source,first)) != nc_start(source,stop) do 0 else plain end
     end end
   end
@@ -909,8 +909,8 @@ defmodule NativeSigils do
   end
   # A ~r with values: Regex.compile! of its flags and the string it makes.
   def sg_regex_filled(source: bytes, start: integer, env: bytes, table: bytes, spec: bytes, value: bytes): bytes do
-    stop = nc_cursor(spec,2)
-    flags = sg_mods(nc_slice(source,nc_cursor(spec,5),stop),0)
+    stop = nc_long(spec,2)
+    flags = sg_mods(nc_slice(source,nc_long(spec,6),stop),0)
     kept = sg_drop(flags,0)
     code = if Enum.count(kept) == 0 do nc_code(value) else nc_join(nc_join(nc_text_emit(nc_join(b[40,63],kept,b[41])),b[80],nc_code(value)),b[80],ns_concat_emit()) end
     target = sg_library(source,table,b[65,108,99,104,127,109,82,101,103,101,120,49],b[99,111,109,112,105,108,101,33])
@@ -951,7 +951,7 @@ defmodule NativeSigils do
   def sg_filled_run(source: bytes, pos: integer, stop: integer): integer do
     shape = if byte_at(source,pos)*256+byte_at(source,pos+1) != 32370 do b[] else sg_shape(source,pos) end
     if pos >= stop do 0 else
-      if Enum.count(shape) == 0 do sg_filled_run(source,pos+1,stop) else if Enum.at(sg_piece(source,nc_cursor(shape,0),nc_slice(shape,3,12)),3,0) == 2 do 1 else sg_filled_run(source,pos+1,stop) end end
+      if Enum.count(shape) == 0 do sg_filled_run(source,pos+1,stop) else if Enum.at(sg_piece(source,nc_long(shape,0),nc_slice(shape,4,15)),4,0) == 2 do 1 else sg_filled_run(source,pos+1,stop) end end
     end
   end
   def sg_hints(source: bytes): bytes do

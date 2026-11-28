@@ -141,7 +141,7 @@ defmodule NativeFailures do
       code = nc_code(value)
       size = Enum.count(code)
       fixed = zf_patch(code,table,pos,if size > 1400 do size-1400 else 0 end)
-      if Enum.count(fixed) == size do value else Enum.concat(nc_slice(value,0,nt_after(value,4)),fixed) end
+      if Enum.count(fixed) == size do value else Enum.concat(nc_slice(value,0,nt_after(value,5)),fixed) end
     end end
   end
   # The range in RAX, written where a stream is expected: one written with
@@ -190,7 +190,7 @@ defmodule NativeFailures do
   # slot: the failure of a nil, named where the case stands (np_case).
   def zf_unmatched(table: bytes, env: bytes, slot: integer): bytes do
     at = nc_env_offset(env,slot)
-    if zf_nil(nt_read(env,at+7),0) == 0 do b[] else wc_fail(table,nc_cursor(env,at),b[110,111,32,99,97,115,101,32,98,114,97,110,99,104,32,109,97,116,99,104,101,100]) end
+    if zf_nil(nt_read(env,at+7),0) == 0 do b[] else wc_fail(table,nc_long(env,at),b[110,111,32,99,97,115,101,32,98,114,97,110,99,104,32,109,97,116,99,104,101,100]) end
   end
   # The test that the option in RAX is none. In the library a nil is one
   # too: the pinned runtime's own functions ask only whether a value is some.
@@ -216,7 +216,7 @@ defmodule NativeFailures do
   # statement of a block may be; else 0.
   def zf_formed(source: bytes, table: bytes, env: bytes, value: bytes, start: integer): integer do
     stop = nc_start(source,nc_pos(value))
-    close = if byte_at(source,start) != 40 do -1 else np_close(source,start,0,16777216) end
+    close = if byte_at(source,start) != 40 do -1 else np_close(source,start,0,1073741824) end
     last = zf_last(source,start,stop)
     name = if nc_word(source,last,b[75,101,114,110,101,108])*nc_word(source,nc_end(source,last),b[46]) == 1 do nc_start(source,nc_end(source,nc_end(source,last))) else last end
     owner = nc_owner(table,nc_cursor(env,0))
@@ -242,18 +242,18 @@ defmodule NativeFailures do
   end
   # Where the last part of the pipeline from start up to stop begins.
   def zf_last(source: bytes, start: integer, stop: integer): integer do
-    state = zf_pipe_run(source,nk_state(start,0,2),16777216,stop)
-    if Enum.at(state,5,0) != 1 do start else zf_last(source,nc_start(source,nc_cursor(state,0)),stop) end
+    state = zf_pipe_run(source,nk_state(start,0,2),1073741824,stop)
+    if Enum.at(state,6,0) != 1 do start else zf_last(source,nc_start(source,nc_long(state,0)),stop) end
   end
   # As nk_pipe_step, with the position after the |> it finds.
   def zf_pipe_step(source: bytes, pos: integer, depth: integer, stop: integer): bytes do
     found = nk_pipe_step(source,pos,depth,stop)
-    if Enum.at(found,5,0) != 1 do found else nk_state(nc_start(source,pos)+2,0,1) end
+    if Enum.at(found,6,0) != 1 do found else nk_state(nc_start(source,pos)+2,0,1) end
   end
   def zf_pipe_run(source: bytes, state: bytes, size: integer, stop: integer): bytes do
     half = nc_half(size)
-    if Enum.at(state,5,0) != 2 do state else
-      if size == 1 do zf_pipe_step(source,nc_cursor(state,0),nc_read(state,3),stop) else
+    if Enum.at(state,6,0) != 2 do state else
+      if size == 1 do zf_pipe_step(source,nc_long(state,0),nc_read(state,4),stop) else
         zf_pipe_run(source,zf_pipe_run(source,state,half,stop),size-half,stop)
       end
     end
@@ -273,7 +273,7 @@ defmodule NativeFailures do
   # calls keep the tuple[] they are written with).
   def zf_voided(source: bytes, table: bytes, env: bytes, made: bytes, void: integer): bytes do
     if void == 0 do made else if nc_pos(made) < 0 do made else if (void-1)*nt_tag(nc_kind(made)) > 0 do if nt_tag(nc_kind(made)) != 5 do made else zf_voided(source,table,env,made,1) end else
-      if nc_ours(source,nc_meta(table,nc_owner(table,nc_cursor(env,0)),0)) == 1 do made else nc_join(nc_slice(made,0,4),b[1,12],nc_code(made)) end
+      if nc_ours(source,nc_meta(table,nc_owner(table,nc_cursor(env,0)),0)) == 1 do made else nc_join(nc_slice(made,0,5),b[1,12],nc_code(made)) end
     end end end
   end
   def zf_nils(cells: bytes, count: integer): integer do
@@ -412,8 +412,8 @@ defmodule NativeFailures do
   # string literal, as the texts of native-testing.alc are.
   def zf_markup(source: bytes, s: integer): bytes do
     shape = sg_shape(source,s)
-    plan = Enum.concat(nc_slice(shape,3,12),nc_u24(s))
-    first = nc_cursor(shape,0)
+    plan = Enum.concat(nc_slice(shape,4,15),nc_u32(s))
+    first = nc_long(shape,0)
     if Enum.count(shape) == 0 do tm_no() else
       name = mh_hex(zf_markup_sum(source,plan,first,b[37,35,34,132,228,156,242,203]),7)
       fixed = zf_markup_fixed(source,plan,first,0)
@@ -465,24 +465,24 @@ defmodule NativeFailures do
   end
   # Where the #{ of the next value stands from from on, the text's end for none.
   def zf_markup_hole(source: bytes, plan: bytes, from: integer): integer do
-    if Enum.at(plan,2,0) == 0 do nc_cursor(plan,6) else sg_hole_at(source,from,nc_cursor(plan,6)) end
+    if Enum.at(plan,2,0) == 0 do nc_long(plan,7) else sg_hole_at(source,from,nc_long(plan,7)) end
   end
   def zf_markup_sum(source: bytes, plan: bytes, from: integer, sum: bytes): bytes do
     hole = zf_markup_hole(source,plan,from)
     text = sg_text(source,from,hole,plan)
     next = mh_hash(mh_hash(sum,text,0,Enum.count(text)),b[0],0,1)
-    close = if hole >= nc_cursor(plan,6) do -1 else sg_hole_end(source,hole+2,1) end
+    close = if hole >= nc_long(plan,7) do -1 else sg_hole_end(source,hole+2,1) end
     if close < 0 do next else zf_markup_sum(source,plan,close+1,next) end
   end
   def zf_markup_fixed(source: bytes, plan: bytes, from: integer, count: integer): bytes do
     hole = zf_markup_hole(source,plan,from)
     piece = nc_join(if count == 0 do b[92,34] else b[44,32,92,34] end,tm_quoted_all(sg_text(source,from,hole,plan),0),b[92,34])
-    close = if hole >= nc_cursor(plan,6) do -1 else sg_hole_end(source,hole+2,1) end
+    close = if hole >= nc_long(plan,7) do -1 else sg_hole_end(source,hole+2,1) end
     if close < 0 do piece else Enum.concat(piece,zf_markup_fixed(source,plan,close+1,count+1)) end
   end
   def zf_markup_values(source: bytes, plan: bytes, from: integer, count: integer): bytes do
     hole = zf_markup_hole(source,plan,from)
-    close = if hole >= nc_cursor(plan,6) do -1 else sg_hole_end(source,hole+2,1) end
+    close = if hole >= nc_long(plan,7) do -1 else sg_hole_end(source,hole+2,1) end
     if close < 0 do b[] else
       tm_cat(if count == 0 do b[77,97,114,107,117,112,46,111,102,40] else b[44,32,77,97,114,107,117,112,46,111,102,40] end,tm_fmt(source,hole+2,close,0),Enum.concat(b[41],zf_markup_values(source,plan,close+1,count+1)))
     end
@@ -593,7 +593,7 @@ defmodule NativeFailures do
   # for an arm that is just true, which is the else of the one before.
   def zf_cover_arm(source: bytes, table: bytes, env: bytes, condition: bytes, pos: integer): bytes do
     count = if Enum.at(table,20,0) != 2 do b[] else if zf_else(source,pos) == 1 do b[] else zf_cover(source,table,env,nc_start(source,pos)) end end
-    if Enum.count(count) == 0 do condition else if nc_pos(condition) < 0 do condition else Enum.concat(nc_slice(condition,0,nt_after(condition,4)),Enum.concat(count,nc_code(condition))) end end
+    if Enum.count(count) == 0 do condition else if nc_pos(condition) < 0 do condition else Enum.concat(nc_slice(condition,0,nt_after(condition,5)),Enum.concat(count,nc_code(condition))) end end
   end
   def zf_else(source: bytes, pos: integer): integer do
     nc_word(source,pos,b[116,114,117,101])*nc_word(source,nc_end(source,pos),b[45,62])
@@ -608,7 +608,7 @@ defmodule NativeFailures do
     size = Enum.count(lead)
     if size == 0 do rest else if zf_else(source,pos) == 0 do rest else if nc_pos(rest) < 0 do rest else if nc_tag(rest) != 9 do rest else
       code = nc_code(rest)
-      if zf_same(code,0,nc_slice(lead,0,size-4),0) == 0 do rest else Enum.concat(nc_slice(rest,0,nt_after(rest,4)),nc_slice(code,size,Enum.count(code))) end
+      if zf_same(code,0,nc_slice(lead,0,size-4),0) == 0 do rest else Enum.concat(nc_slice(rest,0,nt_after(rest,5)),nc_slice(code,size,Enum.count(code))) end
     end end end end
   end
   # A function value. A capture (&(...), &name(&1), a library function by
@@ -620,8 +620,8 @@ defmodule NativeFailures do
   def zf_cover_fn(source: bytes, table: bytes, env: bytes, plan: bytes, shaped: integer): bytes do
     flag = Enum.at(table,20,0)
     if flag < 2 do b[] else
-      if Enum.at(plan,0,0) == 0 do if shaped == 0 do b[] else if nc_cursor(plan,4) == 0 do b[] else zf_cover(source,table,env,nc_cursor(plan,4)) end end else
-        if flag == 3 do zf_cover_call(table,nc_long(table,27)) else zf_cover(source,table,env,nc_cursor(plan,1)) end
+      if Enum.at(plan,0,0) == 0 do if shaped == 0 do b[] else if nc_long(plan,5) == 0 do b[] else zf_cover(source,table,env,nc_long(plan,5)) end end else
+        if flag == 3 do zf_cover_call(table,nc_long(table,27)) else zf_cover(source,table,env,nc_long(plan,1)) end
       end
     end
   end
@@ -636,7 +636,7 @@ defmodule NativeFailures do
   # the pinned compiler, where it stands.
   def zf_valued(source: bytes, table: bytes, env: bytes, value: bytes, pos: integer): bytes do
     count = if Enum.at(table,20,0) != 2 do b[] else if nc_pos(value) < 0 do b[] else zf_cover(source,table,env,pos) end end
-    if Enum.count(count) == 0 do value else Enum.concat(nc_slice(value,0,nt_after(value,4)),Enum.concat(count,nc_code(value))) end
+    if Enum.count(count) == 0 do value else Enum.concat(nc_slice(value,0,nt_after(value,5)),Enum.concat(count,nc_code(value))) end
   end
   # The first module of the program: the one whose tests run.
   def zf_entry(table: bytes, index: integer): integer do
@@ -688,7 +688,7 @@ defmodule NativeFailures do
   # A value whose code counts one more statement at pos before it runs.
   def zf_counted(source: bytes, table: bytes, env: bytes, value: bytes, pos: integer): bytes do
     count = if nc_pos(value) < 0 do b[] else zf_cover(source,table,env,pos) end
-    if Enum.count(count) == 0 do value else Enum.concat(nc_slice(value,0,nt_after(value,4)),Enum.concat(count,nc_code(value))) end
+    if Enum.count(count) == 0 do value else Enum.concat(nc_slice(value,0,nt_after(value,5)),Enum.concat(count,nc_code(value))) end
   end
   # How many calls of the routine a piece of code holds.
   def zf_count(table: bytes, code: bytes): integer do
@@ -720,7 +720,7 @@ defmodule NativeFailures do
   # statement starts; a block that ends in {} has it already.
   def zf_unit(source: bytes, table: bytes, env: bytes, value: bytes, last: integer): bytes do
     count = if nc_pos(value) < 0 do b[] else if last < 0 do b[] else if byte_at(source,last)*256+byte_at(source,nc_start(source,last+1)) == 31613 do b[] else zf_cover(source,table,env,last) end end end
-    if Enum.count(count) == 0 do value else Enum.concat(nc_slice(value,0,nt_after(value,4)),Enum.concat(nc_code(value),count)) end
+    if Enum.count(count) == 0 do value else Enum.concat(nc_slice(value,0,nt_after(value,5)),Enum.concat(nc_code(value),count)) end
   end
   # Sys.panic(text): the library fails as the pinned runtime's own panics do.
   def zf_panic_call(table: bytes, args: bytes): bytes do

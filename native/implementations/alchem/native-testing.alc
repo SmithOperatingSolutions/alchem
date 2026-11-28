@@ -528,9 +528,11 @@ defmodule NativeTesting do
   # text and its tail (mx_made).
   def tm_prepare(given: bytes): bytes do
     size = Enum.count(given)
-    if mx_raw(given,0,size,b[116,101,115,116]) == 0 do b[0] else
+    # A test file is under 16 MiB (its rewriting keeps a place in three
+    # bytes): a longer text is compiled as it is.
+    if size > 16777215 do b[0] else if mx_raw(given,0,size,b[116,101,115,116]) == 0 do b[0] else
       if tm_entry(given,0) == 1 do b[0] else tm_found(given,tm_walk(given,tm_cursor(0,0,3,nc_zeros(41)))) end
-    end
+    end end
   end
   # 1 when the program defines native_compile, a compiler entry, which has
   # no tests: the word elsewhere (a comment, a string) makes no entry.
@@ -561,14 +563,14 @@ defmodule NativeTesting do
 
   # The rewritten text is rewritten as any program is, and compiled.
   def tm_then(tested: bytes, explain: integer): bytes do
-    size = nc_cursor(tested,1)
-    code = nc_slice(tested,4,4+size)
-    tm_after(code,nc_slice(tested,4+size,Enum.count(tested)),mx_prepare(code),explain)
+    size = nc_long(tested,1)
+    code = nc_slice(tested,5,5+size)
+    tm_after(code,nc_slice(tested,5+size,Enum.count(tested)),mx_prepare(code),explain)
   end
   def tm_after(code: bytes, tail: bytes, made: bytes, explain: integer): bytes do
-    after = nc_slice(made,4,4+nc_cursor(made,1))
+    after = nc_slice(made,5,5+nc_long(made,1))
     if Enum.count(made) == 0 do b[] else
-      if Enum.count(made) == 1 do nc_compile_with(code,ny_prelude(code),tail,explain) else nc_compile_with(after,ny_prelude(after),tm_composed(nc_slice(made,4+nc_cursor(made,1),Enum.count(made)),tail,Enum.count(after)),explain) end
+      if Enum.count(made) == 1 do nc_compile_with(code,ny_prelude(code),tail,explain) else nc_compile_with(after,ny_prelude(after),tm_composed(nc_slice(made,5+nc_long(made,1),Enum.count(made)),tail,Enum.count(after)),explain) end
     end
   end
   # The tail of a text rewritten twice: the tables of the program as

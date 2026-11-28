@@ -479,7 +479,7 @@ defmodule AlchemCommand do
 
   # Bundle the file and compile it into out. "" when that worked, else what
   # the bundler or the compiler said: the compiler has one message for every
-  # program it does not take, and takes a source of at most 16776191 bytes,
+  # program it does not take, and takes a source of at most 1073740799 bytes,
   # as alchem-compiler reads one (nc_limit).
   # What is said of a program the compiler refuses: the one message, and
   # when the compiler can name the function it could not make, where that
@@ -577,7 +577,7 @@ defmodule AlchemCommand do
       # to the compiler, which may take it.
       found = AlchemCheck.load(origin, File.cwd!())
       if found != none do said(found) else
-      if Enum.count(source) > 16776191 do "E_RUNTIME_INPUT: input exceeds byte limit" else
+      if Enum.count(source) > 1073740799 do "E_RUNTIME_INPUT: input exceeds byte limit" else
         # A check makes no program: the functions the file has are compiled.
         fine = out == "" and Enum.count(AlchemCompiler.nc_checked(source)) == 1
         image = if fine do b[] else AlchemCompiler.nc_compile(source) end

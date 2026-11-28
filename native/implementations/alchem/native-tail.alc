@@ -13,11 +13,11 @@ defmodule NativeTail do
   # under a record with no name whose type is tag 45 and the position. The
   # call that ends there (nj_call, nu_call_finish) jumps when it is a call
   # of the function it stands in.
-  def tl_mark(env: bytes, close: integer): bytes do nj_mark(env,Enum.concat(b[45],nc_u24(close))) end
+  def tl_mark(env: bytes, close: integer): bytes do nc_env_note(env,45,close) end
   # The end noted last, -1 when none is.
   def tl_noted(env: bytes, offset: integer, found: integer): integer do
     if offset >= Enum.count(env) do found else
-      tl_noted(env,nc_env_next(env,offset),if nc_env_tag(env,offset) == 45 do nc_cursor(env,offset+8+nt_head(env,offset+7)) else found end)
+      tl_noted(env,nc_env_next(env,offset),if nc_env_tag(env,offset) == 45 do nc_env_noted(env,offset) else found end)
     end
   end
   # 1 when the call of function target whose arguments end at close is to jump.
@@ -61,24 +61,24 @@ defmodule NativeTail do
   # From pos, the "(" at the outer level whose ")" stands at close.
   def tl_step(source: bytes, pos: integer, close: integer): bytes do
     start = nc_start(source,pos)
-    after = if byte_at(source,start) == 40 do np_close(source,start,0,16777216) else nc_end(source,start) end
+    after = if byte_at(source,start) == 40 do np_close(source,start,0,1073741824) else nc_end(source,start) end
     if start < 0 do nk_state(0,0,0) else if start >= close do nk_state(0,0,0) else if after <= start do nk_state(0,0,0) else
       if byte_at(source,start) != 40 do nk_state(after,0,2) else if after-1 == close do nk_state(start,0,1) else nk_state(after,0,2) end end
     end end end
   end
   def tl_run(source: bytes, state: bytes, size: integer, close: integer): bytes do
     half = nc_half(size)
-    if Enum.at(state,5,0) != 2 do state else
-      if size == 1 do tl_step(source,nc_cursor(state,0),close) else tl_run(source,tl_run(source,state,half,close),size-half,close) end
+    if Enum.at(state,6,0) != 2 do state else
+      if size == 1 do tl_step(source,nc_long(state,0),close) else tl_run(source,tl_run(source,state,half,close),size-half,close) end
     end
   end
   def tl_open(source: bytes, start: integer, close: integer): integer do
-    state = tl_run(source,nk_state(start,0,2),16777216,close)
-    if Enum.at(state,5,0) == 1 do nc_cursor(state,0) else -1 end
+    state = tl_run(source,nk_state(start,0,2),1073741824,close)
+    if Enum.at(state,6,0) == 1 do nc_long(state,0) else -1 end
   end
   # The expression from start to the ")" at close, once the parentheses
   # around the whole of it are taken off: where it then starts and its last
-  # ")" (3 bytes each), when it is one call that ends there: a name and its
+  # ")" (4 bytes each), when it is one call that ends there: a name and its
   # arguments, or anything piped into such a call. Nothing otherwise. A pipe
   # binds looser than every operator the expression is then read with
   # (nc_math), so the call is its value.
@@ -89,7 +89,7 @@ defmodule NativeTail do
     inner = nz_before(source,close-1)
     if open < 0 do b[] else if budget == 0 do b[] else
       if open == start do if byte_at(source,inner) != 41 do b[] else tl_target(source,nc_start(source,start+1),inner,budget-1) end else
-        if name == start do Enum.concat(nc_u24(start),nc_u24(close)) else if byte_at(source,before)*256+byte_at(source,before-1) == 15996 do Enum.concat(nc_u24(start),nc_u24(close)) else b[] end end
+        if name == start do Enum.concat(nc_u32(start),nc_u32(close)) else if byte_at(source,before)*256+byte_at(source,before-1) == 15996 do Enum.concat(nc_u32(start),nc_u32(close)) else b[] end end
       end
     end end
   end
@@ -130,10 +130,10 @@ defmodule NativeTail do
     id = nc_cursor(env,0)
     last = nz_before(source,nc_pos(value)-1)
     inner = if byte_at(source,last) != 41 do b[] else tl_target(source,nc_start(source,start),last,200) end
-    close = nc_cursor(inner,3)
-    again = if Enum.count(inner) == 0 do b[] else nc_math(source,nc_cursor(inner,0),tl_mark(gm_handing(source,env,nc_cursor(inner,0),close),close+1),table,depth) end
+    close = nc_long(inner,4)
+    again = if Enum.count(inner) == 0 do b[] else nc_math(source,nc_long(inner,0),tl_mark(gm_handing(source,env,nc_long(inner,0),close),close+1),table,depth) end
     fits = if nc_pos(again) < 0 do 0 else if nz_before(source,nc_pos(again)-1) != close do 0 else tl_ends(again,tl_jump(tl_count(source,table,id),id,1-od_library(source,table,id))) end end
-    if fits == 0 do value else Enum.concat(nc_slice(value,0,nt_after(value,4)),nc_code(again)) end
+    if fits == 0 do value else Enum.concat(nc_slice(value,0,nt_after(value,5)),nc_code(again)) end
   end
   # The library written in Alchem is Go in the pinned compiler, where its
   # loops and searches are no calls of the program. Its functions and their

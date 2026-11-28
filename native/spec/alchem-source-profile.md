@@ -79,7 +79,7 @@ assembled source uses a wrapper calling nc_compile. This source convention is
 explicit and reserved; it is not arbitrary runtime entry selection.
 
 The entry reserves a 16 GiB RW arena lazily (or the largest half of that the system grants,
-down to 1 GiB), reads up to 16776191 bytes through EOF with one-byte
+down to 1 GiB), reads up to 1073740799 bytes through EOF with one-byte
 lookahead, calls the typed function, writes a nonempty result completely and
 exits 0. Empty result attempts E_COMPILE: invalid or unsupported Alchem function
 program plus LF and exits 65, with no stdout. Oversized input reports
@@ -91,7 +91,7 @@ All entry instructions/data are emitted in Alchem; no host wrapper patches ELF.
 
 ## Bounds and storage
 
-Source<=16776191 bytes, functions<=65535, list elements<=128, body tokens<=1024,
+Source<=1073740799 bytes (`source-capacity.md`), functions<=65535, list elements<=128, body tokens<=1024,
 identifier/numeric runs<=64 bytes. Unary/parenthesis/if expression nesting and
 successive operators per sum/product level cap at 16. Main binding/branch traversal
 has a combined budget16. Comment lines use at most 64 chunks of 16 bytes; balanced

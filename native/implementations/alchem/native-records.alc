@@ -14,11 +14,11 @@ defmodule NativeRecords do
     first = byte_at(source,name)
     # Name[a, b] takes type parameters: their number is the record's count.
     count = nd_parameters(source,nd_name_end(source,name),0)
-    after = if count <= 0 do nd_name_end(source,name) else np_close(source,nd_name_end(source,name),0,16777216) end
+    after = if count <= 0 do nd_name_end(source,name) else np_close(source,nd_name_end(source,name),0,1073741824) end
     body = nc_expect(source,after,b[100,111])
-    stop = if body < 0 do -1 else nc_body_end(source,body,16777216) end
+    stop = if body < 0 do -1 else nc_body_end(source,body,1073741824) end
     if nc_identifier(source,name) == 0 do b[] else if (first-65)*(90-first)+nd_lower(source,name)*65536 < 0 do b[] else if stop < 0 do b[] else if count < 0 do b[] else
-      nc_record(nc_places(name,nd_name_end(source,name),body,body,stop),count,flag,nc_zeros(9),owner)
+      nc_record(nc_places(name,nd_name_end(source,name),body,body,stop),count,flag,nc_zeros(9),owner,nc_wide(source))
     end end end end
   end
   # The number of type parameters written from pos on: 0 without brackets, -1
@@ -54,8 +54,8 @@ defmodule NativeRecords do
   def nd_instance(source: bytes, table: bytes, id: integer, subst: bytes): bytes do
     count = nc_argc(table,id)
     tag = if Enum.at(table,id*40+21,0) == 64 do 13 else 14 end
-    if count == 0 do Enum.concat(b[tag],nc_u24(nc_meta(table,id,0))) else
-      nt_sized(nc_join(Enum.concat(b[tag+5],nc_u24(nc_meta(table,id,0))),nt_counter(count),nd_instance_from(source,table,id,0,subst)))
+    if count == 0 do Enum.concat(b[tag],nd_key(table,id)) else
+      nt_sized(nc_join(Enum.concat(b[tag+5],nd_key(table,id)),nt_counter(count),nd_instance_from(source,table,id,0,subst)))
     end
   end
   def nd_instance_from(source: bytes, table: bytes, id: integer, index: integer, subst: bytes): bytes do
@@ -114,15 +114,26 @@ defmodule NativeRecords do
       end
     end
   end
+  # The three bytes that name declaration id in a type: where its name is
+  # declared, which compiled programs hold (a throw's type, a process's
+  # message type) and so stays what it was; in a source of 16 MiB or more
+  # (nc_wide), where that does not fit, the number of its record.
+  def nd_wide(table: bytes): integer do Enum.at(table,36,0) end
+  def nd_key(table: bytes, id: integer): bytes do
+    nc_u24(if nd_wide(table) == 1 do id else nc_meta(table,id,0) end)
+  end
+  def nd_keyed(table: bytes, key: integer): integer do
+    if nd_wide(table) == 0 do nd_record(table,key,0,nc_records(Enum.count(table))) else if key >= nc_records(Enum.count(table)) do -1 else if Enum.at(table,key*40+21,0) < 64 do -1 else key end end end
+  end
   def nd_id(table: bytes, kind: bytes): integer do
-    if (nt_tag(kind)-13)*(nt_tag(kind)-14)*(nt_tag(kind)-18)*(nt_tag(kind)-19) != 0 do -1 else nd_record(table,nc_cursor(kind,1),0,nc_records(Enum.count(table))) end
+    if (nt_tag(kind)-13)*(nt_tag(kind)-14)*(nt_tag(kind)-18)*(nt_tag(kind)-19) != 0 do -1 else nd_keyed(table,nc_cursor(kind,1)) end
   end
   # Replace each name written in a parsed type by its declaration; b[] when a
   # name is unknown in module owner.
   def nd_resolve(source: bytes, table: bytes, owner: integer, kind: bytes): bytes do
     tag = nt_tag(kind)
     if Enum.count(kind) < 4 do nn_set_type(source,table,owner,kind) else
-      if tag == 15 do nd_plain(table,nd_named(source,nc_cursor(kind,1),table,owner)) else
+      if tag == 15 do nd_plain(table,nd_named(source,nc_long(kind,1),table,owner)) else
         if tag == 20 do nd_resolve_instance(source,table,owner,kind) else
         if (tag-4)*(tag-7)*(tag-25)*(tag-26) == 0 do nn_set_type(source,table,owner,nt_unary(tag,nd_resolve(source,table,owner,nt_child(kind,0)))) else
           if (tag-6)*(tag-8) == 0 do nn_set_type(source,table,owner,nt_binary(tag,nd_resolve(source,table,owner,nt_child(kind,0)),nd_resolve(source,table,owner,nt_child(kind,1)))) else
@@ -139,10 +150,10 @@ defmodule NativeRecords do
   end
   # Name[arguments]: as many as the declaration has parameters.
   def nd_resolve_instance(source: bytes, table: bytes, owner: integer, kind: bytes): bytes do
-    id = nd_named(source,nc_cursor(kind,1),table,owner)
+    id = nd_named(source,nc_long(kind,1),table,owner)
     tag = if id < 0 do 0 else if Enum.at(table,id*40+21,0) == 64 do 18 else 19 end end
     if id < 0 do b[] else if nc_argc(table,id) != nt_count(kind) do b[] else
-      dn_checked(source,table,owner,kind,nd_resolve_arguments(source,table,owner,kind,nc_join(b[tag],nc_u24(nc_meta(table,id,0)),nt_counter(nt_count(kind)))))
+      dn_checked(source,table,owner,kind,nd_resolve_arguments(source,table,owner,kind,nc_join(b[tag],nd_key(table,id),nt_counter(nt_count(kind)))))
     end end
   end
   def nd_resolve_arguments(source: bytes, table: bytes, owner: integer, kind: bytes, result: bytes): bytes do
@@ -163,7 +174,7 @@ defmodule NativeRecords do
     next = nc_pos(item)
     count = nd_arguments_in(types,0,0)
     if next < 0 do b[] else if count < 0 do b[] else
-      if nc_word(source,next,b[93]) == 1 do nc_value(nc_end(source,next),b[],nt_sized(nc_join(Enum.concat(b[20],nc_u24(pos)),nt_counter(count+1),Enum.concat(types,nc_kind(item))))) else
+      if nc_word(source,next,b[93]) == 1 do nc_value(nc_end(source,next),b[],nt_sized(nc_join(Enum.concat(b[20],nc_u32(pos)),nt_counter(count+1),Enum.concat(types,nc_kind(item))))) else
         if nc_word(source,next,b[44]) == 0 do b[] else nd_arguments(source,pos,nc_end(source,next),Enum.concat(types,nc_kind(item))) end
       end
     end end
@@ -181,10 +192,10 @@ defmodule NativeRecords do
     end
   end
   def nd_declared(table: bytes, id: integer): bytes do
-    if id < 0 do b[] else Enum.concat(b[if Enum.at(table,id*40+21,0) == 64 do 13 else 14 end],nc_u24(nc_meta(table,id,0))) end
+    if id < 0 do b[] else Enum.concat(b[if Enum.at(table,id*40+21,0) == 64 do 13 else 14 end],nd_key(table,id)) end
   end
   # The field declared at pos in struct id: the position after it, with the
-  # name position and the default's position (3 bytes each, 0 for no default)
+  # name position and the default's position (4 bytes each, 0 for no default)
   # as code, and the field's type.
   def nd_field(source: bytes, table: bytes, id: integer, pos: integer): bytes do
     name = nc_start(source,pos)
@@ -194,7 +205,7 @@ defmodule NativeRecords do
     given = if nc_word(source,after,b[61]) == 1 do nc_start(source,nc_end(source,after)) else 0 end
     value = if given == 0 do nc_value(after,b[],kind) else nc_expression(source,given,nc_u24(id),table,0) end
     if nv_member(source,name) == 0 do b[] else if nc_pos(value) < 0 do b[] else
-      if no_compatible(kind,nc_kind(value)) == 0 do b[] else nc_value(nc_pos(value),Enum.concat(nc_u24(name),nc_u24(given)),kind) end
+      if no_compatible(kind,nc_kind(value)) == 0 do b[] else nc_value(nc_pos(value),Enum.concat(nc_u32(name),nc_u32(given)),kind) end
     end end
   end
   # Field index of struct id (see nd_field); b[] past the last field.
@@ -213,16 +224,16 @@ defmodule NativeRecords do
   end
   # The index of the field named at pos, from index on; -1 if there is none.
   def nd_search(source: bytes, table: bytes, id: integer, pos: integer, index: integer): integer do
-    nd_seek(source,table,Enum.concat(nc_u24(id),nc_u24(nc_meta(table,id,9))),pos,0)
+    nd_seek(source,table,Enum.concat(nc_u24(id),nc_u32(nc_meta(table,id,9))),pos,0)
   end
   # at: the struct's id (3 bytes) and where the field of that index is declared.
   def nd_seek(source: bytes, table: bytes, at: bytes, pos: integer, index: integer): integer do
-    field = if nc_word(source,nc_cursor(at,3),b[101,110,100]) == 1 do b[] else nd_field(source,table,nc_cursor(at,0),nc_cursor(at,3)) end
-    start = nc_cursor(nc_code(field),0)
+    field = if nc_word(source,nc_long(at,3),b[101,110,100]) == 1 do b[] else nd_field(source,table,nc_cursor(at,0),nc_long(at,3)) end
+    start = nc_long(nc_code(field),0)
     size = nc_end(source,start)-start
     if nc_pos(field) < 0 do -1 else
       same = if nc_end(source,pos)-pos != size do 0 else nc_equal(source,pos,start,size) end
-      if same == 1 do index else nd_seek(source,table,Enum.concat(nc_slice(at,0,3),nc_u24(nc_pos(field))),pos,index+1) end
+      if same == 1 do index else nd_seek(source,table,Enum.concat(nc_slice(at,0,3),nc_u32(nc_pos(field))),pos,index+1) end
     end
   end
   # The number of fields; -1 when a declaration before the closing end is malformed.
@@ -255,7 +266,7 @@ defmodule NativeRecords do
     variant = nv_here(source,index)
     count = nv_fields_of(nc_code(variant))
     if nc_pos(variant) < 0 do 1 else
-      cells = if count == 0 do b[] else nl_parameter_words(source,nc_cursor(nc_code(variant),3),count,table,nc_owner(table,id)) end
+      cells = if count == 0 do b[] else nl_parameter_words(source,nc_long(nc_code(variant),4),count,table,nc_owner(table,id)) end
       if nd_closed_cells(nu_apply_cells(cells,subst,0),0) == 0 do 0 else nd_closed_variants(source,table,id,nc_pos(variant),subst) end
     end
   end
@@ -293,13 +304,13 @@ defmodule NativeRecords do
       # values, lambdas among them.
       wanted = nf_goal(source,nc_start(source,pos),env,table)
       seed = if (nt_tag(wanted)-18)*(nt_tag(wanted)-13) != 0 do b[] else if nd_id(table,wanted) != id do b[] else nd_subst(source,table,wanted) end end
-      built = nd_build(source,open,env,table,depth,nc_join(nc_join(nc_u24(id),nc_u24(count),nc_join(nc_u24(0),nc_u24(nc_meta(table,id,9)),nc_zeros(count))),seed,b[]))
+      built = nd_build(source,open,env,table,depth,nc_join(nc_join(nc_u24(id),nc_u24(count),nc_join(nc_u24(0),nc_u32(nc_meta(table,id,9)),nc_zeros(count))),seed,b[]))
       if nc_pos(built) < 0 do b[] else nf_postfix(source,nc_value(nc_pos(built),Enum.concat(nc_code(built),b[88]),nc_kind(built)),env,table,depth) end
     end end
   end
   # spec: the struct's id (2 bytes), its field count (3 bytes), the index of
-  # the field after the one given last and where it is declared (3 bytes
-  # each: a literal that gives its fields in the order they are declared
+  # the field after the one given last and where it is declared (3 and 4 bytes
+  # : a literal that gives its fields in the order they are declared
   # finds each where it looks first), one byte per field (0 not
   # given, 1 given, 2 copied from the base of an update), then the substitution
   # for its type parameters so far. The result's type is the instance built. The new record's pointer stays
@@ -315,7 +326,7 @@ defmodule NativeRecords do
     else
       base = nc_expression(source,open,env,table,depth+1)
       bar = nc_expect(source,nc_pos(base),b[124])
-      rest = if bar < 0 do b[] else if nd_id(table,nc_kind(base)) != nc_cursor(spec,0) do b[] else nd_given(source,bar,env,table,depth,nc_join(nc_slice(spec,0,12),nd_copied(count),nd_subst(source,table,nc_kind(base)))) end end
+      rest = if bar < 0 do b[] else if nd_id(table,nc_kind(base)) != nc_cursor(spec,0) do b[] else nd_given(source,bar,env,table,depth,nc_join(nc_slice(spec,0,13),nd_copied(count),nd_subst(source,table,nc_kind(base)))) end end
       # Push the base, allocate, copy every field, then leave the copy on the stack.
       copy = nc_join(Enum.concat(nc_code(base),b[80]),nc_join(nc_allocate_emit(count*8),Enum.concat(b[72,199,2],nc_u32(count)),b[72,139,12,36]),Enum.concat(nd_copies(count,0),b[72,137,20,36]))
       if nc_pos(rest) < 0 do b[] else nc_value(nc_pos(rest),Enum.concat(copy,nc_code(rest)),nc_kind(rest)) end
@@ -335,60 +346,60 @@ defmodule NativeRecords do
   end
   def nd_given(source: bytes, pos: integer, env: bytes, table: bytes, depth: integer, spec: bytes): bytes do
     all = nd_given_grow(source,nd_given_step(source,nd_given_run(pos,0,spec,b[]),env,table,depth),env,table,depth,0)
-    if Enum.count(all) == 0 do b[] else nc_value(nc_cursor(all,0),nd_given_code(all),nd_given_spec(all)) end
+    if Enum.count(all) == 0 do b[] else nc_value(nc_long(all,0),nd_given_code(all),nd_given_spec(all)) end
   end
   # The fields given so far: where the next one stands (the position after
   # the literal, with a 1, once the closing brace was met), the spec behind
   # its length (4 bytes; the type made, once the brace was met), then the
   # code that stores them. Fields are joined in runs of doubling length.
   def nd_given_run(pos: integer, done: integer, spec: bytes, code: bytes): bytes do
-    nc_join(nc_join(nc_u24(pos),b[done],nc_u32(Enum.count(spec))),spec,code)
+    nc_join(nc_join(nc_u32(pos),b[done],nc_u32(Enum.count(spec))),spec,code)
   end
-  def nd_given_spec(run: bytes): bytes do nc_slice(run,8,8+nc_long(run,4)) end
-  def nd_given_code(run: bytes): bytes do nc_slice(run,8+nc_long(run,4),Enum.count(run)) end
+  def nd_given_spec(run: bytes): bytes do nc_slice(run,9,9+nc_long(run,5)) end
+  def nd_given_code(run: bytes): bytes do nc_slice(run,9+nc_long(run,5),Enum.count(run)) end
   def nd_given_joined(first: bytes, second: bytes): bytes do
     if Enum.count(first) == 0 do b[] else if Enum.count(second) == 0 do b[] else
-      nc_join(nc_slice(second,0,8+nc_long(second,4)),nd_given_code(first),nd_given_code(second))
+      nc_join(nc_slice(second,0,9+nc_long(second,5)),nd_given_code(first),nd_given_code(second))
     end end
   end
   def nd_given_more(source: bytes, before: bytes, env: bytes, table: bytes, depth: integer, level: integer): bytes do
     if level == 0 do nd_given_step(source,before,env,table,depth) else
       first = nd_given_more(source,before,env,table,depth,level-1)
-      if Enum.count(first) == 0 do b[] else if Enum.at(first,3,0) == 1 do first else nd_given_joined(first,nd_given_more(source,first,env,table,depth,level-1)) end end
+      if Enum.count(first) == 0 do b[] else if Enum.at(first,4,0) == 1 do first else nd_given_joined(first,nd_given_more(source,first,env,table,depth,level-1)) end end
     end
   end
   def nd_given_grow(source: bytes, done: bytes, env: bytes, table: bytes, depth: integer, level: integer): bytes do
-    if Enum.count(done) == 0 do b[] else if Enum.at(done,3,0) == 1 do done else
+    if Enum.count(done) == 0 do b[] else if Enum.at(done,4,0) == 1 do done else
       nd_given_grow(source,nd_given_joined(done,nd_given_more(source,done,env,table,depth,level)),env,table,depth,level+1)
     end end
   end
   # The field named at pos of the struct of spec: its index (3 bytes) and
-  # where the field after it is declared (3 bytes), then its packet
+  # where the field after it is declared (4 bytes), then its packet
   # (nd_field); b[] when the struct has none of that name. Looked for from
   # the field after the one given last, then from the first.
   def nd_located(source: bytes, table: bytes, spec: bytes, pos: integer): bytes do
-    near = nd_locate(source,table,nc_join(nc_slice(spec,0,3),nc_slice(spec,9,12),nc_slice(spec,6,9)),pos)
-    if Enum.count(near) > 0 do near else if nc_cursor(spec,6) == 0 do b[] else nd_locate(source,table,nc_join(nc_slice(spec,0,3),nc_u24(nc_meta(table,nc_cursor(spec,0),9)),nc_u24(0)),pos) end end
+    near = nd_locate(source,table,nc_join(nc_slice(spec,0,3),nc_slice(spec,9,13),nc_slice(spec,6,9)),pos)
+    if Enum.count(near) > 0 do near else if nc_cursor(spec,6) == 0 do b[] else nd_locate(source,table,nc_join(nc_slice(spec,0,3),nc_u32(nc_meta(table,nc_cursor(spec,0),9)),nc_u24(0)),pos) end end
   end
   # at: the struct's id (3 bytes), where a field is declared and its index.
   def nd_locate(source: bytes, table: bytes, at: bytes, pos: integer): bytes do
-    field = nd_field_here(source,table,nc_cursor(at,0),nc_cursor(at,3))
-    start = nc_cursor(nc_code(field),0)
+    field = nd_field_here(source,table,nc_cursor(at,0),nc_long(at,3))
+    start = nc_long(nc_code(field),0)
     size = nc_end(source,start)-start
     if nc_pos(field) < 0 do b[] else
       same = if nc_end(source,pos)-pos != size do 0 else nc_equal(source,pos,start,size) end
-      if same == 1 do nc_join(nc_slice(at,6,9),nc_u24(nc_pos(field)),field) else nd_locate(source,table,nc_join(nc_slice(at,0,3),nc_u24(nc_pos(field)),nc_u24(nc_cursor(at,6)+1)),pos) end
+      if same == 1 do nc_join(nc_slice(at,7,10),nc_u32(nc_pos(field)),field) else nd_locate(source,table,nc_join(nc_slice(at,0,3),nc_u32(nc_pos(field)),nc_u24(nc_cursor(at,7)+1)),pos) end
     end
   end
   def nd_given_step(source: bytes, before: bytes, env: bytes, table: bytes, depth: integer): bytes do
-    pos = nc_cursor(before,0)
+    pos = nc_long(before,0)
     spec = nd_given_spec(before)
     name = nc_start(source,pos)
     found = if nc_word(source,pos,b[125]) == 1 do b[] else nd_located(source,table,spec,name) end
     last = if nc_word(source,pos,b[125]) == 1 do nd_defaults(source,table,spec,nc_end(source,pos),0) else b[] end
     begin = nc_expect(source,nc_end(source,name),b[58])
-    field = nc_slice(found,6,Enum.count(found))
-    wanted = nu_apply(nc_kind(field),nc_slice(spec,12+nc_cursor(spec,3),Enum.count(spec)))
+    field = nc_slice(found,7,Enum.count(found))
+    wanted = nu_apply(nc_kind(field),nc_slice(spec,13+nc_cursor(spec,3),Enum.count(spec)))
     # A value that is one call gets the field's type as what the call is expected to give, as a binding's declared type is.
     called = if Enum.count(found) == 0 do -1 else if nu_open(wanted,0)+nu_holes(wanted,0) > 0 do -1 else nw_last_call(source,begin) end end
     value = if Enum.count(found) == 0 do b[] else nc_expression(source,begin,if called >= 0 do nw_expect(env,called,wanted) else nf_expecting(source,env,begin,wanted) end,table,depth+1) end
@@ -407,10 +418,10 @@ defmodule NativeRecords do
     after = if nc_word(source,next,b[44]) == 1 do nc_end(source,next) else next end
     # The field's declared type, which may mention the struct's parameters,
     # settles them from the value.
-    settled = nu_unify(nc_kind(nc_slice(found,6,Enum.count(found))),nc_kind(value),nc_slice(spec,12+count,Enum.count(spec)))
-    marked = nc_join(nc_slice(spec,12,12+index),b[1],nc_slice(spec,13+index,12+count))
-    if nc_word(source,next,b[44])+nc_word(source,next,b[125]) == 0 do b[] else if Enum.at(spec,12+index,1) == 1 do b[] else if Enum.count(settled) == 0 do b[] else
-      nd_given_run(after,0,nc_join(nc_join(nc_slice(spec,0,6),nc_u24(index+1),nc_slice(found,3,6)),marked,nc_slice(settled,1,Enum.count(settled))),Enum.concat(nc_code(value),nd_store(index)))
+    settled = nu_unify(nc_kind(nc_slice(found,7,Enum.count(found))),nc_kind(value),nc_slice(spec,13+count,Enum.count(spec)))
+    marked = nc_join(nc_slice(spec,13,13+index),b[1],nc_slice(spec,14+index,13+count))
+    if nc_word(source,next,b[44])+nc_word(source,next,b[125]) == 0 do b[] else if Enum.at(spec,13+index,1) == 1 do b[] else if Enum.count(settled) == 0 do b[] else
+      nd_given_run(after,0,nc_join(nc_join(nc_slice(spec,0,6),nc_u24(index+1),nc_slice(found,3,7)),marked,nc_slice(settled,1,Enum.count(settled))),Enum.concat(nc_code(value),nd_store(index)))
     end end end
   end
   # After the closing brace at stop: every field not given takes its default.
@@ -421,11 +432,11 @@ defmodule NativeRecords do
   def nd_defaults_at(source: bytes, table: bytes, spec: bytes, stop: integer, index: integer, at: integer): bytes do
     id = nc_cursor(spec,0)
     count = nc_cursor(spec,3)
-    if index == count do nc_value(stop,b[],nd_instance(source,table,id,nc_slice(spec,12+count,Enum.count(spec)))) else
+    if index == count do nc_value(stop,b[],nd_instance(source,table,id,nc_slice(spec,13+count,Enum.count(spec)))) else
       field = nd_field_here(source,table,id,at)
       rest = nd_defaults_at(source,table,spec,stop,index+1,nc_pos(field))
-      given = nc_cursor(nc_code(field),3)
-      if nc_pos(rest) < 0 do b[] else if Enum.at(spec,12+index,0) != 0 do rest else if given == 0 do b[] else
+      given = nc_long(nc_code(field),4)
+      if nc_pos(rest) < 0 do b[] else if Enum.at(spec,13+index,0) != 0 do rest else if given == 0 do b[] else
         value = nc_expression(source,given,nc_u24(id),table,0)
         if nc_pos(value) < 0 do b[] else nc_value(stop,nc_join(nc_code(value),nd_store(index),nc_code(rest)),nc_kind(rest)) end
       end end end
@@ -436,7 +447,7 @@ defmodule NativeRecords do
   # count plus one, the variant's index, then its fields.
   #
   # The variant declared at pos: the position after it, with its name position
-  # (3 bytes), parameter list position (3 bytes, 0 for none) and field count
+  # (4 bytes), parameter list position (4 bytes, 0 for none) and field count
   # as code.
   # 1 for a name a variant or a field may have: any name but the words the
   # pinned language keeps (integer, string and list are names like others).
@@ -449,15 +460,15 @@ defmodule NativeRecords do
   def nv_variant(source: bytes, pos: integer): bytes do
     name = nc_start(source,pos)
     open = nc_end(source,name)
-    shape = if nc_word(source,open,b[40]) != 1 do Enum.concat(nc_u24(open),b[0,0,0]) else nc_parameters(source,nc_end(source,open),0) end
+    shape = if nc_word(source,open,b[40]) != 1 do Enum.concat(nc_u32(open),b[0,0,0]) else nc_parameters(source,nc_end(source,open),0) end
     params = if nc_word(source,open,b[40]) != 1 do 0 else nc_end(source,open) end
     # A variant name is not capitalized.
     if nv_member(source,name) == 0 do b[] else if nc_pos(shape) < 0 do b[] else if (byte_at(source,name)-65)*(90-byte_at(source,name)) >= 0 do b[] else
-      nc_value(nc_pos(shape),nc_join(nc_u24(name),nc_u24(params),nc_slice(shape,3,6)),b[0])
+      nc_value(nc_pos(shape),nc_join(nc_u32(name),nc_u32(params),nc_slice(shape,4,7)),b[0])
     end end end
   end
   # How many fields the variant of a packet's code has.
-  def nv_fields_of(variant: bytes): integer do nc_cursor(variant,6) end
+  def nv_fields_of(variant: bytes): integer do nc_cursor(variant,8) end
   def nv_at(source: bytes, table: bytes, id: integer, index: integer): bytes do
     if index < 0 do b[] else nv_walk(source,nc_meta(table,id,9),index) end
   end
@@ -559,7 +570,7 @@ defmodule NativeRecords do
     open = nc_end(source,name)
     args = if count == 0 do nc_arg_packet(open,0,b[0],b[]) else if nc_word(source,open,b[40]) != 1 do b[] else nc_arguments(source,nc_end(source,open),env,table,depth) end end
     if index < 0 do b[] else if nc_pos(args) < 0 do b[] else if nc_arg_count(args) != count do b[] else if nv_count(source,table,id,0) == 0 do b[] else
-      cells = nl_parameter_words(source,nc_cursor(variant,3),count,table,nc_owner(table,id))
+      cells = nl_parameter_words(source,nc_long(variant,4),count,table,nc_owner(table,id))
       settled = nu_arguments(cells,args,b[],0)
       order = nw_order(source,env,table,cells,args,nq_parameter_names(source,table,id,0))
       if Enum.count(settled) == 0 do b[] else if order == 2 do b[] else

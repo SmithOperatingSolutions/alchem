@@ -75,9 +75,9 @@ defmodule NativeInspect do
     start = base+3+Enum.count(name)+Enum.count(count)
     if id < 0 do b[] else if sigil > 0 do ni_node(sigil,b[]) else if Enum.count(fixed) > 0 do ni_node(13,fixed) else if back >= 0 do ni_node(20,nc_u16(back)) else if start > 60000 do b[] else if Enum.count(kind) > 255 do b[] else if Enum.count(count) == 0 do b[] else
       if Enum.at(table,id*40+21,0) == 64 do
-        ni_wrap(13,Enum.concat(name,count),ni_fields(source,table,kind,nc_join(nc_u24(0),nc_u24(start),nc_u24(nc_meta(table,id,9))),inner))
+        ni_wrap(13,Enum.concat(name,count),ni_fields(source,table,kind,nc_join(nc_u24(0),nc_u24(start),nc_u32(nc_meta(table,id,9))),inner))
       else
-        ni_wrap(14,Enum.concat(name,count),ni_variants(source,table,kind,nc_join(nc_u24(0),nc_u24(start),nc_u24(nc_meta(table,id,9))),inner))
+        ni_wrap(14,Enum.concat(name,count),ni_variants(source,table,kind,nc_join(nc_u24(0),nc_u24(start),nc_u32(nc_meta(table,id,9))),inner))
       end
     end end end end end end end
   end
@@ -93,7 +93,7 @@ defmodule NativeInspect do
   # byte 127, which only the library can write, is not: inspect and == pass
   # over it and those after it (Markup keeps there how it was made).
   def ni_shown(source: bytes, field: bytes): integer do
-    if nc_pos(field) < 0 do 0 else if byte_at(source,nc_end(source,nc_cursor(nc_code(field),0))-1) == 127 do 0 else 1 end end
+    if nc_pos(field) < 0 do 0 else if byte_at(source,nc_end(source,nc_long(nc_code(field),0))-1) == 127 do 0 else 1 end end
   end
   def ni_variant_count(source: bytes, table: bytes, id: integer, index: integer): integer do
     nv_count(source,table,id,0)
@@ -103,15 +103,15 @@ defmodule NativeInspect do
   def ni_fields(source: bytes, table: bytes, kind: bytes, place: bytes, seen: bytes): bytes do
     index = nc_cursor(place,0)
     base = nc_cursor(place,3)
-    field = nd_field_here(source,table,nd_id(table,kind),nc_cursor(place,6))
+    field = nd_field_here(source,table,nd_id(table,kind),nc_long(place,6))
     shown = ni_shown(source,field)
-    name = if shown == 0 do b[] else ni_text(nc_slice(source,nc_cursor(nc_code(field),0),nc_end(source,nc_cursor(nc_code(field),0)))) end
+    name = if shown == 0 do b[] else ni_text(nc_slice(source,nc_long(nc_code(field),0),nc_end(source,nc_long(nc_code(field),0)))) end
     plain = if shown == 0 do b[] else if Enum.count(name)*ni_narrow(seen) > 255 do b[] else ni_describe(source,table,nu_apply(nc_kind(field),nd_subst(source,table,kind)),base+Enum.count(name),seen) end end
     # For JSON.decode_as (seen starts with a type of the one byte 255) an
     # option that a type variable stands for is tag 34: such a field may
     # not be left out, as one declared an option may.
     node = if Enum.at(seen,1,0) != 255 do plain else if nt_tag(nc_kind(field)) != 16 do plain else if Enum.at(plain,2,0) != 4 do plain else nc_join(nc_slice(plain,0,2),b[34],nc_slice(plain,3,Enum.count(plain))) end end end
-    rest = if Enum.count(node) == 0 do b[] else ni_fields(source,table,kind,nc_join(nc_u24(index+1),nc_u24(base+Enum.count(name)+Enum.count(node)),nc_u24(nc_pos(field))),seen) end
+    rest = if Enum.count(node) == 0 do b[] else ni_fields(source,table,kind,nc_join(nc_u24(index+1),nc_u24(base+Enum.count(name)+Enum.count(node)),nc_u32(nc_pos(field))),seen) end
     if shown == 0 do b[1] else if Enum.count(rest) == 0 do b[] else
       nc_join(b[1],Enum.concat(name,node),nc_slice(rest,1,Enum.count(rest)))
     end end
@@ -122,13 +122,13 @@ defmodule NativeInspect do
     index = nc_cursor(place,0)
     base = nc_cursor(place,3)
     id = nd_id(table,kind)
-    variant = nv_here(source,nc_cursor(place,6))
-    name = if nc_pos(variant) < 0 do b[] else ni_text(nc_slice(source,nc_cursor(nc_code(variant),0),nc_end(source,nc_cursor(nc_code(variant),0)))) end
+    variant = nv_here(source,nc_long(place,6))
+    name = if nc_pos(variant) < 0 do b[] else ni_text(nc_slice(source,nc_long(nc_code(variant),0),nc_end(source,nc_long(nc_code(variant),0)))) end
     count = if Enum.count(name)*ni_narrow(seen) > 255 do b[] else ni_held(seen,nv_fields_of(nc_code(variant))) end
     cells = if nc_pos(variant) < 0 do b[] else nu_apply_cells(nq_cells_of(source,table,id,nc_code(variant)),nd_subst(source,table,kind),0) end
     items = if nc_pos(variant) < 0 do b[] else if Enum.count(count) == 0 do b[] else ni_items(source,table,cells,Enum.concat(nc_u24(0),nc_u24(base+2+Enum.count(name)+Enum.count(count))),seen) end end
     record = nc_join(name,count,nc_slice(items,1,Enum.count(items)))
-    rest = if Enum.count(items) == 0 do b[] else if Enum.count(record) > 65000 do b[] else ni_variants(source,table,kind,nc_join(nc_u24(index+1),nc_u24(base+2+Enum.count(record)),nc_u24(nc_pos(variant))),seen) end end
+    rest = if Enum.count(items) == 0 do b[] else if Enum.count(record) > 65000 do b[] else ni_variants(source,table,kind,nc_join(nc_u24(index+1),nc_u24(base+2+Enum.count(record)),nc_u32(nc_pos(variant))),seen) end end
     if nc_pos(variant) < 0 do b[1] else if Enum.count(rest) == 0 do b[] else
       nc_join(b[1],Enum.concat(nc_u16(Enum.count(record)+2),record),nc_slice(rest,1,Enum.count(rest)))
     end end

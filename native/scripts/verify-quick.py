@@ -177,7 +177,7 @@ def build(from_source=False,converge=False):
     if converge:
         if (WORK/'A2').read_bytes()!=(WORK/'A3').read_bytes():sys.exit('FAIL A2/A3 fixpoint mismatch')
         print(f'A2==A3: {len(source):,} source bytes -> {(WORK/"A3").stat().st_size:,} compiler bytes (A1 {"==" if (WORK/"A1").read_bytes()==(WORK/"A2").read_bytes() else "!="} A2)',flush=True)
-        (WORK/'A2').write_bytes((WORK/'A3').read_bytes())
+        # A2 is A3, byte for byte: nothing is written over the program that just ran.
         return frontend,backend,WORK/'A2'
     if (WORK/'A1').read_bytes()!=(WORK/'A2').read_bytes():sys.exit('FAIL A1/A2 fixpoint mismatch')
     print(f'A1==A2: {len(source):,} source bytes -> {(WORK/"A2").stat().st_size:,} compiler bytes',flush=True)

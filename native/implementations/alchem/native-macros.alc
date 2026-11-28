@@ -529,12 +529,20 @@ defmodule NativeMacros do
     named = Enum.concat(mx_fixed(ctx,nc_cursor(ix,home+3),nc_cursor(ix,home+6),pos),mx_lit(ctx,b[46],pos))
     if home < 0 do b[] else mx_done(state,nc_end(work,pos),pos,Enum.concat(mx_run(ctx,nc_cursor(state,9),pos),named)) end
   end
+  # The spans of a list as nc_list_collect has them (start and stop, four
+  # bytes each) with three bytes each.
+  def mx_narrow(spans: bytes): bytes do mx_narrow_run(spans,0,nc_units(Enum.count(spans),8)) end
+  def mx_narrow_run(spans: bytes, first: integer, stop: integer): bytes do
+    if stop-first <= 0 do b[] else if stop-first == 1 do Enum.concat(nc_slice(spans,first*8,first*8+3),nc_slice(spans,first*8+4,first*8+7)) else
+      Enum.concat(mx_narrow_run(spans,first,first+nc_half(stop-first)),mx_narrow_run(spans,first+nc_half(stop-first),stop))
+    end end
+  end
   # fn(name: type, ...): the names are bound.
   def mx_lambda(work: bytes, ctx: bytes, state: bytes): bytes do
     pos = nc_cursor(state,0)
     paren = nc_blank_end(work,nc_end(work,pos))
     spans = if nc_word(work,paren+1,b[41]) == 1 do nc_value(nc_end(work,paren+1),b[],b[1]) else nc_list_collect(work,paren+1,b[],0,41) end
-    made = if nc_pos(spans) < 0 do b[] else mx_lambda_names(work,ctx,nc_code(spans),0,Enum.concat(nc_u24(nc_cursor(state,9)),b[])) end
+    made = if nc_pos(spans) < 0 do b[] else mx_lambda_names(work,ctx,mx_narrow(nc_code(spans)),0,Enum.concat(nc_u24(nc_cursor(state,9)),b[])) end
     if Enum.count(made) < 3 do b[] else mx_done(state,nc_pos(spans),nc_cursor(made,0),nc_slice(made,3,Enum.count(made))) end
   end
   def mx_lambda_names(work: bytes, ctx: bytes, spans: bytes, at: integer, made: bytes): bytes do
@@ -560,7 +568,7 @@ defmodule NativeMacros do
     from = if blocked == 0 do after else nc_end(work,word) end
     to = if blocked == 0 do after else nc_body_end(work,from,16777216) end
     if after < 0 do b[] else if to < 0 do b[] else
-      nc_join(nc_join(mx_three(name,paren,after),mx_two(from,to),nc_u24(if blocked == 0 do after else nc_end(work,to) end)),b[blocked],nc_code(spans))
+      nc_join(nc_join(mx_three(name,paren,after),mx_two(from,to),nc_u24(if blocked == 0 do after else nc_end(work,to) end)),b[blocked],mx_narrow(nc_code(spans)))
     end end
   end
   # The names of a macro's parameters from pos, six bytes each: do: name is
@@ -828,7 +836,7 @@ defmodule NativeMacros do
   def mb_typed(work: bytes, start: integer): bytes do
     paren = nc_blank_end(work,nc_end(work,start))
     spans = if nc_word(work,paren+1,b[41]) == 1 do b[] else nc_list_collect(work,paren+1,b[],0,41) end
-    if nc_pos(spans) < 0 do b[] else mb_typed_names(work,nc_code(spans),0) end
+    if nc_pos(spans) < 0 do b[] else mb_typed_names(work,mx_narrow(nc_code(spans)),0) end
   end
   def mb_typed_names(work: bytes, spans: bytes, at: integer): bytes do
     name = nc_cursor(spans,at)
@@ -1235,9 +1243,11 @@ defmodule NativeMacros do
     end
   end
   # The program as it is compiled: b[0] as it is, b[] for one that cannot be
-  # compiled, or 1, the length of the rewritten text, the text and its tail.
+  # compiled, or 1, the length of the rewritten text (4 bytes), the text and
+  # its tail. The rewriting keeps a place in three bytes: a text of 16 MiB or
+  # more that may hold something to rewrite is not compiled.
   def mx_prepare(given: bytes): bytes do
-    if mx_wanted(given) == 0 do b[0] else mx_indexed(given,mt_index(given,mt_cursor(0,0,0),b[],b[],b[],-1)) end
+    if mx_wanted(given) == 0 do b[0] else if Enum.count(given) > 16777215 do b[] else mx_indexed(given,mt_index(given,mt_cursor(0,0,0),b[],b[],b[],-1)) end end
   end
   def mx_indexed(given: bytes, ix: bytes): bytes do
     if Enum.count(ix) < 3 do b[] else mx_planned(given,ix) end
@@ -1263,7 +1273,7 @@ defmodule NativeMacros do
     inside = nz_marks(given,0,Enum.count(given),128,191)
     sizes = nc_join(Enum.concat(nc_u32(Enum.count(moved)),nc_u32(Enum.count(lines))),Enum.concat(nc_u32(Enum.count(files)),nc_u32(Enum.count(inside))),b[0,77,88,0])
     if Enum.count(pieces) == 1 do b[] else if Enum.count(code) > nc_limit() do b[] else
-      nc_join(Enum.concat(b[1],nc_u24(Enum.count(code))),code,nc_join(nc_join(b[10,0],moved,lines),Enum.concat(files,inside),sizes))
+      nc_join(Enum.concat(b[1],nc_u32(Enum.count(code))),code,nc_join(nc_join(b[10,0],moved,lines),Enum.concat(files,inside),sizes))
     end end
   end
   # Native smoke test; assembled with the compiler.

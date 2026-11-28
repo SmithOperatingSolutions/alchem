@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real code and source metadata up to the 16 MiB input limit; exact input/overflow boundaries."""
+"""Real code and source metadata across 16 MiB of source, where a position takes its fourth byte; the input limit."""
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import re
@@ -10,7 +10,9 @@ import tempfile
 import sys
 from self_hosted_components import verify_program
 
-LIMIT=16776191
+LIMIT=1073740799
+# Where a position was three bytes: the last source that fitted, and the first that did not.
+OLD=16776191
 OVER=b'E_RUNTIME_INPUT: input exceeds byte limit\n'
 REJECTED=b'E_COMPILE: invalid or unsupported Alchem function program\n'
 
@@ -108,9 +110,9 @@ def verify(compiler):
         for size in [65520,65540,131072,262144]:
             source=program(size)
             verify_program(source,compiler,root,('source capacity',len(source)),42)
-        base=program(0);remaining=LIMIT-len(base.encode());prefix='# padding\n'*(remaining//10)+' '*(remaining%10)
+        base=program(0);remaining=OLD-len(base.encode());prefix='# padding\n'*(remaining//10)+' '*(remaining%10)
         exact=base.replace('def answer()',prefix+'def answer()',1)
-        assert len(exact.encode())==LIMIT
+        assert len(exact.encode())==OLD
         def exact_runs():
             built=subprocess.run([str(compiler)],input=exact.encode(),capture_output=True,env={'PATH':''},timeout=300)
             assert (built.returncode,built.stderr)==(0,b''),('exact limit compile',built.returncode,built.stderr)
@@ -120,17 +122,47 @@ def verify(compiler):
         def refused(bad,message):
             result=subprocess.run([str(compiler)],input=bad.encode(),capture_output=True,env={'PATH':''},timeout=300)
             assert (result.returncode,result.stdout,result.stderr)==(65,b'',message),('capacity rejection',len(bad),result.returncode,result.stderr)
+        def past(size,status):
+            """A source one byte past the old limit, and further, compiles and runs."""
+            source=program(0).replace('def answer()','# padding\n'*((size-len(base.encode()))//10)+'def answer()',1)
+            built=subprocess.run([str(compiler)],input=source.encode(),capture_output=True,env={'PATH':''},timeout=600)
+            assert (built.returncode,built.stderr)==(0,b''),('past the old limit',size,built.returncode,built.stderr)
+            out=root/f'past-{size}';out.unlink(missing_ok=True);out.write_bytes(built.stdout);out.chmod(0o700)
+            run=started(out)
+            assert (run.returncode,run.stdout,run.stderr)==(status,b'',b''),('past the old limit run',size,run)
+        def over():
+            """One byte more than the limit is refused as it is read: the bytes are
+            written as the compiler takes them, and it stops taking them."""
+            child=subprocess.Popen([str(compiler)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env={'PATH':''})
+            block=b' '*(1<<20);left=LIMIT+1
+            try:
+                while left>0:
+                    child.stdin.write(block[:left]);left-=min(left,len(block))
+                child.stdin.close()
+            except (BrokenPipeError,OSError):pass
+            out,err=child.stdout.read(),child.stderr.read();status=child.wait(timeout=300)
+            assert (status,out,err)==(65,b'',OVER),('input limit',status,err[:200])
         # The large sources are compiled side by side: each takes seconds. Positions
         # past 1, 2, 3, 4, 8 and 12 MiB carry bits 20 to 23, all of a position's
         # 24 (a value's flags are a byte of their own); the trace word keeps a
         # for's lines above bit 23.
         with ThreadPoolExecutor(4) as pool:
-            jobs=[pool.submit(traced,compiler,root,total) for total in [0,1048575,1048577,2097200,3200000,4194305,8388609,12582913,LIMIT]]
-            jobs+=[pool.submit(deep,compiler,root,0),pool.submit(deep,compiler,root,LIMIT),pool.submit(exact_runs),pool.submit(refused,exact+' ',OVER),pool.submit(refused,exact+'x'*4096,OVER),
+            jobs=[pool.submit(traced,compiler,root,total) for total in [0,1048575,1048577,2097200,3200000,4194305,8388609,12582913,OLD]]
+            jobs+=[pool.submit(deep,compiler,root,0),pool.submit(deep,compiler,root,OLD),pool.submit(exact_runs),
                    pool.submit(refused,exact.replace('value+2','missing',1),REJECTED)]
             results=[job.result() for job in jobs]
         last=results[8]
         assert last.startswith('<stdin>:1677672:28: division by zero\n  at M.f0 (<stdin>:1677672)\n') and last.endswith('  at M.main (<stdin>:1258258)\n'),last
+        # Past 16 MiB a position has a fourth byte, and a frame's word its lines
+        # above bit 31 (the trace routine is told: nz_routine): the same program
+        # with its functions further apart, a for whose lines pass the 127 a
+        # sign-extended immediate holds, and sources that only run. Two at a
+        # time: each takes two to three GB.
+        with ThreadPoolExecutor(2) as pool:
+            jobs=[pool.submit(traced,compiler,root,total) for total in [OLD+2,16777217,20971521]]
+            jobs+=[pool.submit(deep,compiler,root,OLD+1026),pool.submit(deep,compiler,root,20971521),pool.submit(past,OLD+1,42),pool.submit(past,25165825,42),pool.submit(over)]
+            wide=[job.result() for job in jobs]
+        assert int(wide[2].split(':')[1])>2000000,wide[2][:200]
         # The compiler's arena is every program's: 16 GiB reserved lazily, halved
         # until the system grants it down to 4 MiB, and collected, so a small
         # address space is enough for a small program: 3 GiB and 32 MiB are,
@@ -162,7 +194,7 @@ def verify(compiler):
         out=root/'calls';out.unlink(missing_ok=True);out.write_bytes(small.stdout);out.chmod(0o700)
         run=started(out)
         assert (run.returncode,run.stdout,run.stderr)==(42,f'{count-1}\n'.encode()*lines,b''),('1 MiB image run',run.returncode,len(run.stdout))
-    print(f'PASS widened source cursors: declarations, bindings, calls, Unicode and failure traces up to the {LIMIT}-byte limit, refusal past it; a {len(built.stdout)}-byte image with one function above 16 MiB')
+    print(f'PASS widened source cursors: declarations, bindings, calls, Unicode and failure traces up to {OLD} bytes and past 16 MiB, refusal past the {LIMIT}-byte limit; a {len(built.stdout)}-byte image with one function above 16 MiB')
 
 
 if __name__=='__main__':verify(Path(sys.argv[1]).resolve())

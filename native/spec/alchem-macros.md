@@ -123,5 +123,8 @@ whose own names hold the byte is rejected (`mx_tainted`).
   another macro call or `unquote`, is rejected: the value's pieces are
   already written when the pipe is met, and only the program's own text is
   cut back.
-- A program may hold 64 nested expansions and, rewritten, 4,194,303 bytes.
+- A program may hold 64 nested expansions. The rewriting keeps a place in
+  three bytes: a text of 16 MiB or more that may hold something to rewrite
+  is not compiled (`mx_prepare`, `source-capacity.md`); what a rewriting
+  makes may be as long as a source may be.
 - Every compile error is `E_COMPILE`.

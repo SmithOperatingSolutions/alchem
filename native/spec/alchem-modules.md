@@ -18,8 +18,9 @@ accepts a bundle of several modules.
 - Imported modules cannot define `main`; a program has exactly one.
 - Import cycles and duplicate module names are errors. Importing a file twice,
   or along several paths, includes it once.
-- No file, the entry or an imported one, may be longer than a program may
-  be, 16,776,191 bytes (`nc_limit`, `source-capacity.md`):
+- No file, the entry or an imported one, may be longer than 16,776,191
+  bytes (`File.read` gives 16 MiB; a program of several files may have
+  1,073,740,799, `nc_limit`, `source-capacity.md`):
   `PATH: read source: source exceeds 16776191 bytes`. The pinned compiler
   reads no file over 1 MiB (`source exceeds 1048576 bytes`), though it
   builds a program of several such files: this is a deliberate difference,
@@ -77,9 +78,10 @@ Table records are 40 bytes: five u32 source positions, argc, flags, ten
 bytes (for a function: the u32 of where its result type is written, the
 number of its default arguments, the u32 of where its guard starts and the
 high byte of argc), the u32 index of the owning module's header and four
-bytes of zero. The record has room for positions and numbers of four bytes,
-though a position is still at most 24 bits and a record's number three
-bytes where the compiler's parts hand it on (`source-capacity.md`). The
+bytes whose first is 1 in a source of 16 MiB or more and else 0
+(`nc_wide`: what names a declared type in a type, `nd_key`). A position is
+four bytes here as wherever the compiler keeps one; a record's number is
+three bytes where the compiler's parts hand it on (`source-capacity.md`). The
 first record also keeps two things of the whole table where a header has
 no use for them: how the program is compiled (byte 20: 1 untraced, 2 and 3
 counting coverage) and the call a default value is compiled for (the u32
