@@ -885,7 +885,7 @@ defmodule NativeFunctions do
       mark = if paren < 0 do 0 else paren end
       # A function that waits for its type is kept by how far before the
       # "(" it stands (three bytes: the record is as long as it was, ev_plain).
-      record = nc_env_record(mark,mark,if nc_tag(left) == 11 do nc_join(b[11],nc_u24(nc_low(mark-nc_long(nc_kind(left),1))),Enum.concat(nc_slice(nc_kind(left),5,8),nc_u24(slot+1))) else nn_waiting(left) end)
+      record = nc_env_record(mark,mark,if nc_tag(left) == 11 do nc_join(b[11],nc_u24(if mark < nc_long(nc_kind(left),1) do 0 else nc_low(mark-nc_long(nc_kind(left),1)) end),Enum.concat(nc_slice(nc_kind(left),5,8),nc_u24(slot+1))) else nn_waiting(left) end)
       # The target is a call: value.(arguments) after it is no part of it.
       far = if nc_tag(left) != 11 do 0 else if mark-nc_long(nc_kind(left),1) >= 16777216 do 1 else 0 end end
       call = if paren < 0 do b[] else if far == 1 do b[] else sg_indexed(source,gm_unary(source,target,Enum.concat(env,record),table,depth+1),Enum.concat(env,record),table,depth+1) end end
