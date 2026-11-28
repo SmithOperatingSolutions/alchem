@@ -1864,9 +1864,9 @@ defmodule NativeSourceCompiler do
   end
   def nc_rewritten_plain(source: bytes, explain: integer): bytes do
     made = mx_prepare(source)
-    code = nc_slice(made,4,4+nc_cursor(made,1))
+    code = nc_slice(made,5,5+nc_long(made,1))
     if Enum.count(made) == 0 do b[] else
-      if Enum.count(made) == 1 do nc_compile_with(source,ny_prelude(source),b[],explain) else nc_compile_with(code,ny_prelude(code),nc_slice(made,4+nc_cursor(made,1),Enum.count(made)),explain) end
+      if Enum.count(made) == 1 do nc_compile_with(source,ny_prelude(source),b[],explain) else nc_compile_with(code,ny_prelude(code),nc_slice(made,5+nc_long(made,1),Enum.count(made)),explain) end
     end
   end
   # A program at the source or function limit has no room for library
